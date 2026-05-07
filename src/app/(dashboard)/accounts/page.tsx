@@ -132,6 +132,7 @@ const emptyForm = {
   credit_limit: "",
   payment_terms: PAYMENT_TERMS_OPTIONS[1].value,
   bu_id: "" as string,
+  default_client_cancel_fee_gbp: "",
 };
 
 export default function AccountsPage() {
@@ -295,6 +296,8 @@ export default function AccountsPage() {
         payment_terms: form.payment_terms,
         bu_id: form.bu_id || null,
         contract_url: null,
+        default_client_cancel_fee_gbp:
+          Number(form.default_client_cancel_fee_gbp) > 0 ? Math.round(Number(form.default_client_cancel_fee_gbp) * 100) / 100 : null,
       });
       setCreateOpen(false);
       setForm(emptyForm);
@@ -637,6 +640,18 @@ export default function AccountsPage() {
             />
           </div>
           <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Default client cancellation fee (£)</label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={form.default_client_cancel_fee_gbp}
+              onChange={(e) => setForm((f) => ({ ...f, default_client_cancel_fee_gbp: e.target.value }))}
+              placeholder="Optional — suggested when cancelling jobs"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">Shown in Cancel job modal; office can override.</p>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Business Unit</label>
             <BusinessUnitSelect
               value={form.bu_id || null}
@@ -688,6 +703,8 @@ function AccountDetailDrawer({
   const [clientsPage, setClientsPage] = useState(0);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsUsedFallback, setClientsUsedFallback] = useState(false);
+  const [clientsSearchInput, setClientsSearchInput] = useState("");
+  const clientsQueryRef = useRef("");
   const CLIENTS_PAGE_SIZE = 20;
   const [saving, setSaving] = useState(false);
   const [syncingAccount, setSyncingAccount] = useState(false);
@@ -715,6 +732,7 @@ function AccountDetailDrawer({
     payment_terms: "",
     logo_url: "",
     contract_url: "",
+    default_client_cancel_fee_gbp: "",
   });
 
   useEffect(() => {
@@ -738,6 +756,10 @@ function AccountDetailDrawer({
       payment_terms: account.payment_terms,
       logo_url: account.logo_url ?? "",
       contract_url: account.contract_url ?? "",
+      default_client_cancel_fee_gbp:
+        account.default_client_cancel_fee_gbp != null && Number(account.default_client_cancel_fee_gbp) > 0
+          ? String(account.default_client_cancel_fee_gbp)
+          : "",
     });
   }, [account]);
 
@@ -782,15 +804,18 @@ function AccountDetailDrawer({
     return () => { cancelled = true; };
   }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load clients page (triggered by tab activation or page change)
-  const loadClientsPage = useCallback(async (acct: Account, page: number) => {
+  /** `searchNorm` omit → use applied `clientsQuery` (pagination). Explicit string for account switch / programmatic loads. */
+  const fetchClientsPage = useCallback(async (acct: Account, page: number, searchNorm?: string) => {
     setClientsLoading(true);
     try {
+      const searchParam =
+        searchNorm !== undefined ? (searchNorm.trim() || undefined) : (clientsQueryRef.current.trim() || undefined);
       const { rows, total, usedFallback } = await listClientsLinkedToAccountPaged(
         acct.id,
         acct.company_name,
         page,
         CLIENTS_PAGE_SIZE,
+        searchParam,
       );
       setClientsRows(rows);
       setClientsTotal(total);
@@ -801,22 +826,36 @@ function AccountDetailDrawer({
     } finally {
       setClientsLoading(false);
     }
-  }, []); // CLIENTS_PAGE_SIZE is a module-level constant, no runtime dep needed // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Load clients page eagerly when account opens (so count shows in header/tab badge immediately)
-  // Also triggered when clients tab is activated for subsequent pages
+  // Reset list + search when drawer account changes (or clears)
   useEffect(() => {
     if (!account) {
       setClientsRows([]);
       setClientsTotal(0);
       setClientsPage(0);
+      setClientsSearchInput("");
+      clientsQueryRef.current = "";
       return;
     }
-    loadClientsPage(account, 0);
-  }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setClientsSearchInput("");
+    clientsQueryRef.current = "";
+    void fetchClientsPage(account, 0, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap only when account identity changes
+  }, [account?.id]);
 
-  // When clicking clients tab after already loaded, no extra fetch needed —
-  // pagination controls inside the tab trigger loadClientsPage directly
+  // Debounced server search from input
+  useEffect(() => {
+    if (!account) return;
+    const delayMs = clientsSearchInput.trim().length > 0 ? 300 : 0;
+    const t = window.setTimeout(() => {
+      const trimmed = clientsSearchInput.trim();
+      clientsQueryRef.current = trimmed;
+      void fetchClientsPage(account, 0, trimmed);
+    }, delayMs);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce clientsSearchInput; fetchClientsPage stable
+  }, [clientsSearchInput, account?.id]);
 
   if (!account) {
     return null;
@@ -918,6 +957,10 @@ function AccountDetailDrawer({
         billing_type: billingType,
         email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
         email_include_report_on_final: emailIncludeReportOnFinal,
+        default_client_cancel_fee_gbp:
+          Number(edit.default_client_cancel_fee_gbp) > 0
+            ? Math.round(Number(edit.default_client_cancel_fee_gbp) * 100) / 100
+            : null,
       });
       const fresh = await getAccount(account.id);
       const next = fresh ?? updated;
@@ -1244,6 +1287,20 @@ function AccountDetailDrawer({
               </div>
 
               <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Default client cancel fee (£)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={edit.default_client_cancel_fee_gbp}
+                  onChange={(e) => setEdit((p) => ({ ...p, default_client_cancel_fee_gbp: e.target.value }))}
+                  placeholder="Optional"
+                  disabled={saving}
+                />
+                <p className="text-[10px] text-text-tertiary mt-1">Suggested in Cancel job for clients linked to this account.</p>
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Address</label>
                 <Input value={edit.address} onChange={(e) => setEdit((p) => ({ ...p, address: e.target.value }))} />
               </div>
@@ -1385,6 +1442,13 @@ function AccountDetailDrawer({
         {/* ── Clients tab ─────────────────────────────────────────── */}
         {tab === "clients" && (
           <div className="space-y-3">
+            <SearchInput
+              placeholder="Search clients by name, email, phone, address…"
+              className="w-full"
+              value={clientsSearchInput}
+              onChange={(e) => setClientsSearchInput(e.target.value)}
+              aria-label="Search clients linked to this account"
+            />
             {clientsUsedFallback && (
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-400 flex items-center gap-2">
                 <span>⚠</span>
@@ -1399,8 +1463,17 @@ function AccountDetailDrawer({
             ) : clientsRows.length === 0 ? (
               <div className="text-center py-12">
                 <Users className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No clients linked to this account yet.</p>
-                <p className="text-xs text-text-tertiary mt-1">Go to Clients and set their Account field to <strong>{account.company_name}</strong>.</p>
+                {clientsSearchInput.trim() ? (
+                  <>
+                    <p className="text-sm text-text-tertiary">No clients match your search.</p>
+                    <p className="text-xs text-text-tertiary mt-1">Try another name, email or phone fragment.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-text-tertiary">No clients linked to this account yet.</p>
+                    <p className="text-xs text-text-tertiary mt-1">Go to Clients and set their Account field to <strong>{account.company_name}</strong>.</p>
+                  </>
+                )}
               </div>
             ) : (
               <>
@@ -1443,12 +1516,12 @@ function AccountDetailDrawer({
                 {Math.ceil(clientsTotal / CLIENTS_PAGE_SIZE) > 1 && (
                   <div className="flex items-center justify-between pt-1">
                     <Button variant="outline" size="sm" disabled={clientsPage === 0 || clientsLoading}
-                      onClick={() => loadClientsPage(account, clientsPage - 1)}>← Previous</Button>
+                      onClick={() => fetchClientsPage(account, clientsPage - 1)}>← Previous</Button>
                     <span className="text-xs text-text-tertiary">
                       {clientsPage * CLIENTS_PAGE_SIZE + 1}–{Math.min((clientsPage + 1) * CLIENTS_PAGE_SIZE, clientsTotal)} of {clientsTotal}
                     </span>
                     <Button variant="outline" size="sm" disabled={(clientsPage + 1) * CLIENTS_PAGE_SIZE >= clientsTotal || clientsLoading}
-                      onClick={() => loadClientsPage(account, clientsPage + 1)}>Next →</Button>
+                      onClick={() => fetchClientsPage(account, clientsPage + 1)}>Next →</Button>
                   </div>
                 )}
               </>

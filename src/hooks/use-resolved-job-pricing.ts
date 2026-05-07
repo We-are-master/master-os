@@ -5,6 +5,7 @@ import { getSupabase } from "@/services/base";
 import { getAccountServicePrice } from "@/services/account-service-prices";
 import { getPartnerServicePrice } from "@/services/partner-service-prices";
 import { resolveJobPricing, type ResolvedJobPricing } from "@/lib/job-pricing-resolver";
+import { mergeCatalogWithPricingPreset } from "@/lib/catalog-pricing-presets";
 import type { CatalogService } from "@/types/database";
 
 /**
@@ -16,12 +17,14 @@ import type { CatalogService } from "@/types/database";
  * fetch is in flight. Caller should refrain from auto-filling until the
  * value resolves to non-null.
  *
- * Re-runs whenever any of the three IDs change.
+ * Re-runs whenever any of the IDs change (catalog service and optional pricing preset).
  */
 export function useResolvedJobPricing(input: {
   accountId?: string | null;
   partnerId?: string | null;
   catalogServiceId?: string | null;
+  /** When set, merge matching preset from catalog.pricing_presets before resolving. */
+  pricingPresetId?: string | null;
 }): {
   pricing: ResolvedJobPricing | null;
   loading: boolean;
@@ -34,6 +37,7 @@ export function useResolvedJobPricing(input: {
   const accountId = input.accountId?.trim() || null;
   const partnerId = input.partnerId?.trim() || null;
   const catalogServiceId = input.catalogServiceId?.trim() || null;
+  const pricingPresetId = input.pricingPresetId?.trim() || null;
 
   useEffect(() => {
     if (!catalogServiceId) {
@@ -66,6 +70,7 @@ export function useResolvedJobPricing(input: {
           return;
         }
         const catalogRow = catRow as CatalogService;
+        const effectiveCatalog = mergeCatalogWithPricingPreset(catalogRow, pricingPresetId);
 
         const [accountOverride, partnerOverride] = await Promise.all([
           accountId ? getAccountServicePrice(accountId, catalogServiceId).catch(() => null) : Promise.resolve(null),
@@ -74,7 +79,7 @@ export function useResolvedJobPricing(input: {
 
         if (cancelled) return;
         const resolved = resolveJobPricing({
-          catalog: catalogRow,
+          catalog: effectiveCatalog,
           accountOverride,
           partnerOverride,
         });
@@ -91,7 +96,7 @@ export function useResolvedJobPricing(input: {
     })();
 
     return () => { cancelled = true; };
-  }, [accountId, partnerId, catalogServiceId]);
+  }, [accountId, partnerId, catalogServiceId, pricingPresetId]);
 
   return { pricing, loading, catalog };
 }

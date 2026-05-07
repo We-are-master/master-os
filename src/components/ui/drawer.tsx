@@ -15,6 +15,8 @@ interface DrawerProps {
   children: React.ReactNode;
   /** Renders below the scroll area (e.g. sticky chat input). */
   footer?: React.ReactNode;
+  /** Applied to the fixed footer wrapper (padding, tint). */
+  footerClassName?: string;
   width?: string;
   className?: string;
 }
@@ -27,6 +29,7 @@ export function Drawer({
   headerExtra,
   children,
   footer,
+  footerClassName,
   width = "w-[440px]",
   className,
 }: DrawerProps) {
@@ -75,7 +78,9 @@ export function Drawer({
             )}
             <div className="flex flex-1 flex-col min-h-0">
               <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
-              {footer != null ? <div className="shrink-0 border-t border-border-light bg-surface">{footer}</div> : null}
+              {footer != null ? (
+                <div className={cn("shrink-0 border-t border-border-light bg-surface", footerClassName)}>{footer}</div>
+              ) : null}
             </div>
           </motion.div>
         </>

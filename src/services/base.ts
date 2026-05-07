@@ -36,6 +36,18 @@ export interface ListParams {
    * When set, do not pass `statusIn` (this replaces the status filter).
    */
   jobsUnassignedPipelineTab?: boolean;
+  /**
+   * Jobs only: Action Required tab — same rows as Unassigned pipeline **plus** `on_hold`
+   * (unified Ops attention queue). Mutually exclusive with `jobsUnassignedPipelineTab`.
+   */
+  jobsActionRequiredTab?: boolean;
+  /**
+   * Jobs only: Closed tab — finished / lost / soft-deleted (`awaiting_payment`, `completed`,
+   * `cancelled` with `deleted_at` null, or `deleted` with `deleted_at` set).
+   */
+  jobsClosedTab?: boolean;
+  /** Jobs only: when `status === "closed"`, narrow the fetch to one UI bucket. */
+  jobsClosedBucket?: "paid" | "awaiting_payment" | "archived" | "lost";
   /** Jobs only: Scheduled / In progress tabs — require `partner_id` or non-empty `partner_ids`. */
   jobsRequirePartnerSet?: boolean;
   /**
@@ -121,21 +133,34 @@ export async function queryList<T>(
   const to = from + pageSize - 1;
 
   let query = supabase.from(table).select("*", { count: "exact" });
-  if (params.archivedOnly) {
-    query = query.not("deleted_at", "is", null);
-  } else {
-    query = query.is("deleted_at", null);
+  const closedJobsTab = table === "jobs" && params.jobsClosedTab;
+  if (!closedJobsTab) {
+    if (params.archivedOnly) {
+      query = query.not("deleted_at", "is", null);
+    } else {
+      query = query.is("deleted_at", null);
+    }
   }
 
   const uTab = params.jobsUnassignedPipelineTab;
+  const actionTab = params.jobsActionRequiredTab;
+  const closedTab = params.jobsClosedTab;
   const reqPartner = params.jobsRequirePartnerSet;
 
-  if (table === "jobs" && uTab) {
-    const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
+  if (table === "jobs" && closedTab) {
     query = query.or(
-      `status.in.(unassigned,auto_assigning),` +
-        `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,partner_ids.eq.{})`,
+      "and(status.in.(awaiting_payment,completed,cancelled),deleted_at.is.null)," +
+        "and(status.eq.deleted,deleted_at.not.is.null)",
     );
+  } else if (table === "jobs" && actionTab) {
+    const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
+    /** `partner_ids` may be NULL on older rows; treat like empty (no co-assignees). */
+    const bookedNoPartner = `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,or(partner_ids.is.null,partner_ids.eq.{}))`;
+    query = query.or(`status.in.(unassigned,auto_assigning),${bookedNoPartner},status.eq.on_hold`);
+  } else if (table === "jobs" && uTab) {
+    const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
+    const bookedNoPartner = `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,or(partner_ids.is.null,partner_ids.eq.{}))`;
+    query = query.or(`status.in.(unassigned,auto_assigning),${bookedNoPartner}`);
   } else if (params.statusIn && params.statusIn.length > 0) {
     query = query.in("status", params.statusIn);
   } else if (params.status && params.status !== "all") {

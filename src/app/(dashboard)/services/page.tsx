@@ -13,7 +13,7 @@ import { Select } from "@/components/ui/select";
 import { Tabs } from "@/components/ui/tabs";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { CatalogService, CatalogPricingMode } from "@/types/database";
+import type { CatalogService, CatalogPricingMode, ServicePricingPreset } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
 import { useAdminConfig } from "@/hooks/use-admin-config";
@@ -24,8 +24,10 @@ import {
   deleteCatalogService,
 } from "@/services/catalog-services";
 import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
+import { parsePricingPresets, sortPricingPresetsDisplay } from "@/lib/catalog-pricing-presets";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { getSupabase } from "@/services/base";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 
 const emptyForm = {
   name: "",
@@ -38,6 +40,79 @@ const emptyForm = {
   sort_order: "0",
   is_active: true,
 };
+
+type PresetFormRow = {
+  id: string;
+  label: string;
+  fixed_price: string;
+  hourly_rate: string;
+  default_hours: string;
+  partner_cost: string;
+};
+
+function newPresetFormRow(): PresetFormRow {
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `p_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  return { id, label: "", fixed_price: "", hourly_rate: "", default_hours: "", partner_cost: "" };
+}
+
+function presetRowsFromCatalogRow(row: CatalogService): PresetFormRow[] {
+  return sortPricingPresetsDisplay(parsePricingPresets(row.pricing_presets)).map((p) => ({
+    id: p.id,
+    label: p.label,
+    fixed_price: p.fixed_price != null ? String(p.fixed_price) : "",
+    hourly_rate: p.hourly_rate != null ? String(p.hourly_rate) : "",
+    default_hours: p.default_hours != null ? String(p.default_hours) : "",
+    partner_cost: p.partner_cost != null ? String(p.partner_cost) : "",
+  }));
+}
+
+function buildPricingPresetsPayload(
+  rows: PresetFormRow[],
+): { ok: true; presets: ServicePricingPreset[] } | { ok: false; message: string } {
+  const seen = new Set<string>();
+  const out: ServicePricingPreset[] = [];
+  let ord = 0;
+  for (const r of rows) {
+    const label = r.label.trim();
+    if (!label) continue;
+    const id = r.id.trim();
+    if (!id) {
+      return { ok: false, message: "Each pricing preset needs an ID." };
+    }
+    if (seen.has(id)) {
+      return { ok: false, message: `Duplicate preset ID: ${id}` };
+    }
+    seen.add(id);
+    const preset: ServicePricingPreset = { id, label, sort_order: ord * 10 };
+    ord += 1;
+
+    if (r.fixed_price.trim() !== "") {
+      const n = Number(r.fixed_price);
+      if (!Number.isFinite(n)) return { ok: false, message: `Invalid fixed price in preset "${label}".` };
+      preset.fixed_price = n;
+    }
+    if (r.hourly_rate.trim() !== "") {
+      const n = Number(r.hourly_rate);
+      if (!Number.isFinite(n)) return { ok: false, message: `Invalid hourly rate in preset "${label}".` };
+      preset.hourly_rate = n;
+    }
+    if (r.default_hours.trim() !== "") {
+      const n = Number(r.default_hours);
+      if (!Number.isFinite(n)) return { ok: false, message: `Invalid default hours in preset "${label}".` };
+      preset.default_hours = n;
+    }
+    if (r.partner_cost.trim() !== "") {
+      const n = Number(r.partner_cost);
+      if (!Number.isFinite(n)) return { ok: false, message: `Invalid partner cost in preset "${label}".` };
+      preset.partner_cost = n;
+    }
+    out.push(preset);
+  }
+  return { ok: true, presets: out };
+}
 
 export default function ServicesCatalogPage() {
   const router = useRouter();
@@ -55,12 +130,13 @@ export default function ServicesCatalogPage() {
     status,
     setStatus,
     refresh,
-  } = useSupabaseList<CatalogService>({ fetcher: listCatalogServices, realtimeTable: "service_catalog", pageSize: 15 });
+  } = useSupabaseList<CatalogService>({ fetcher: listCatalogServices, realtimeTable: "service_catalog", pageSize: 100 });
 
   const [counts, setCounts] = useState({ all: 0, active: 0, inactive: 0 });
   const [createOpen, setCreateOpen] = useState(false);
   const [editRow, setEditRow] = useState<CatalogService | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [presetRows, setPresetRows] = useState<PresetFormRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   const loadCounts = useCallback(async () => {
@@ -108,11 +184,13 @@ export default function ServicesCatalogPage() {
 
   const openCreate = () => {
     setForm(emptyForm);
+    setPresetRows([]);
     setCreateOpen(true);
   };
 
   const openEdit = (row: CatalogService) => {
     setEditRow(row);
+    setPresetRows(presetRowsFromCatalogRow(row));
     setForm({
       name: row.name,
       pricing_mode: row.pricing_mode,
@@ -144,9 +222,14 @@ export default function ServicesCatalogPage() {
       toast.error("Name is required");
       return;
     }
+    const presetBuild = buildPricingPresetsPayload(presetRows);
+    if (!presetBuild.ok) {
+      toast.error(presetBuild.message);
+      return;
+    }
     setSubmitting(true);
     try {
-      await createCatalogService(parsePayload());
+      await createCatalogService({ ...parsePayload(), pricing_presets: presetBuild.presets });
       toast.success("Service saved to catalog");
       setCreateOpen(false);
       refresh();
@@ -164,9 +247,14 @@ export default function ServicesCatalogPage() {
       toast.error("Name is required");
       return;
     }
+    const presetBuild = buildPricingPresetsPayload(presetRows);
+    if (!presetBuild.ok) {
+      toast.error(presetBuild.message);
+      return;
+    }
     setSubmitting(true);
     try {
-      await updateCatalogService(editRow.id, parsePayload());
+      await updateCatalogService(editRow.id, { ...parsePayload(), pricing_presets: presetBuild.presets });
       toast.success("Service updated");
       setEditRow(null);
       refresh();
@@ -209,7 +297,7 @@ export default function ServicesCatalogPage() {
       render: (item) => (
         <div className="text-xs text-text-secondary">
           <Badge variant="outline" size="sm" className="mb-1">
-            {item.pricing_mode === "fixed" ? "Fixed" : "Hourly"}
+            {pricingModeLabel(item.pricing_mode)}
           </Badge>
           <p>
             {item.pricing_mode === "fixed"
@@ -284,8 +372,8 @@ export default function ServicesCatalogPage() {
         value={form.pricing_mode}
         onChange={(e) => setForm((f) => ({ ...f, pricing_mode: e.target.value as CatalogPricingMode }))}
         options={[
-          { value: "fixed", label: "Fixed price" },
-          { value: "hourly", label: "Per hour" },
+          { value: "fixed", label: pricingModeLabel("fixed") },
+          { value: "hourly", label: pricingModeLabel("hourly") },
         ]}
       />
       {form.pricing_mode === "fixed" ? (
@@ -366,6 +454,133 @@ export default function ServicesCatalogPage() {
           </p>
         </div>
       </div>
+      <div className="rounded-xl border border-dashed border-border bg-surface-hover/40 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-text-primary">Pricing presets (optional)</p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              Bands merged on top of this row before account or partner overrides (e.g. 1–2 rooms). Only fill numbers you want to override per band.
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setPresetRows((r) => [...r, newPresetFormRow()])}>
+            Add preset
+          </Button>
+        </div>
+        {presetRows.length === 0 ? (
+          <p className="text-[11px] text-text-tertiary italic">No presets — a single price uses the fields above.</p>
+        ) : (
+          <div className="space-y-2">
+            {presetRows.map((prow, idx) => (
+              <div
+                key={`${prow.id}-${idx}`}
+                className="rounded-lg border border-border-light bg-card p-3 space-y-2"
+              >
+                <div className="flex flex-wrap items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={idx === 0}
+                    onClick={() =>
+                      setPresetRows((rows) => {
+                        const next = [...rows];
+                        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                        return next;
+                      })
+                    }
+                    aria-label="Move up"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={idx === presetRows.length - 1}
+                    onClick={() =>
+                      setPresetRows((rows) => {
+                        const next = [...rows];
+                        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                        return next;
+                      })
+                    }
+                    aria-label="Move down"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 text-red-600 ml-auto"
+                    onClick={() => setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
+                    aria-label="Remove preset"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-medium text-text-secondary mb-1">ID *</label>
+                    <Input
+                      value={prow.id}
+                      onChange={(e) =>
+                        setPresetRows((rows) =>
+                          rows.map((x, i) => (i === idx ? { ...x, id: e.target.value } : x)),
+                      )
+                      }
+                      placeholder="e.g. rooms_1_2"
+                      className="text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-text-secondary mb-1">Label *</label>
+                    <Input
+                      value={prow.label}
+                      onChange={(e) =>
+                        setPresetRows((rows) =>
+                          rows.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)),
+                      )
+                      }
+                      placeholder="e.g. 1–2 rooms"
+                      className="text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(
+                    [
+                      ["fixed_price", "Fixed £", prow.fixed_price],
+                      ["hourly_rate", "Hourly £", prow.hourly_rate],
+                      ["default_hours", "Hours", prow.default_hours],
+                      ["partner_cost", "Partner £", prow.partner_cost],
+                    ] as const
+                  ).map(([field, lbl, val]) => (
+                    <div key={field}>
+                      <label className="block text-[10px] font-medium text-text-secondary mb-1">{lbl}</label>
+                      <Input
+                        type="number"
+                        step={field === "default_hours" ? "0.25" : "0.01"}
+                        min={0}
+                        value={val}
+                        onChange={(e) =>
+                          setPresetRows((rows) =>
+                            rows.map((x, i) => (i === idx ? { ...x, [field]: e.target.value } : x)),
+                        )
+                        }
+                        placeholder="—"
+                        className="text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">Default description (optional)</label>
         <textarea
@@ -399,7 +614,10 @@ export default function ServicesCatalogPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Service catalog" subtitle="Fixed and hourly templates — requests and quotes stay fully editable.">
+        <PageHeader
+          title="Service catalog"
+          subtitle="Master list of types of work and default sell / partner pay."
+        >
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openCreate}>
             New service
           </Button>

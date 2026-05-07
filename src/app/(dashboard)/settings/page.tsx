@@ -44,6 +44,7 @@ import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride 
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
+import { SetupTab } from "./setup-tab";
 import { getAllConfigurableComplianceRequirementDefs } from "@/lib/partner-required-docs";
 
 const settingsTabs = [
@@ -51,6 +52,7 @@ const settingsTabs = [
   { id: "team", label: "Users Access" },
   { id: "tiers", label: "Dashboard" },
   { id: "ai-briefs", label: "AI & Daily brief" },
+  { id: "setup", label: "Setup" },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
@@ -86,6 +88,7 @@ export default function SettingsPage() {
           {activeTab === "team" && isAdmin && <TeamTab />}
           {activeTab === "tiers" && isAdmin && <DashboardTab />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
+          {activeTab === "setup" && isAdmin && <SetupTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}
@@ -1469,6 +1472,8 @@ function SystemTab() {
     quote_footer_notes: "",
     currency: "GBP",
     dashboard_sales_goal_monthly: "35000",
+    partner_cancellation_fee_gbp: "",
+    default_client_cancel_fee_gbp: "",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [complianceExcludedDocIds, setComplianceExcludedDocIds] = useState<string[]>([]);
@@ -1509,6 +1514,14 @@ function SystemTab() {
             const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
             return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
           })(),
+          partner_cancellation_fee_gbp: (() => {
+            const v = (data as { partner_cancellation_fee_gbp?: number | null }).partner_cancellation_fee_gbp;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "";
+          })(),
+          default_client_cancel_fee_gbp: (() => {
+            const v = (data as { default_client_cancel_fee_gbp?: number | null }).default_client_cancel_fee_gbp;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "";
+          })(),
         });
       }
       setLoading(false);
@@ -1521,8 +1534,18 @@ function SystemTab() {
     setSaving(true);
     try {
       const supabase = getSupabase();
+      const partnerFee = Number(form.partner_cancellation_fee_gbp);
+      const clientFallbackFee = Number(form.default_client_cancel_fee_gbp);
       const payload = {
         ...form,
+        partner_cancellation_fee_gbp:
+          form.partner_cancellation_fee_gbp?.trim() !== "" && Number.isFinite(partnerFee) && partnerFee > 0
+            ? Math.round(partnerFee * 100) / 100
+            : null,
+        default_client_cancel_fee_gbp:
+          form.default_client_cancel_fee_gbp?.trim() !== "" && Number.isFinite(clientFallbackFee) && clientFallbackFee > 0
+            ? Math.round(clientFallbackFee * 100) / 100
+            : null,
         vat_percent: Number(form.vat_percent) || 20,
         currency: ["GBP", "USD", "EUR", "BRL"].includes(form.currency) ? form.currency : "GBP",
         logo_light_theme_url: form.logo_light_theme_url.trim() || null,
@@ -1609,6 +1632,33 @@ function SystemTab() {
               <Input type="number" min={0} max={100} step={0.5} value={form.vat_percent} onChange={(e) => update("vat_percent", e.target.value)} placeholder="20" />
               <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner app cancel fee (£)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.partner_cancellation_fee_gbp}
+                  onChange={(e) => update("partner_cancellation_fee_gbp", e.target.value)}
+                  placeholder="Optional default when partner cancels in app"
+                  disabled={!canEditConfig}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Fallback client cancel fee (£)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.default_client_cancel_fee_gbp}
+                  onChange={(e) => update("default_client_cancel_fee_gbp", e.target.value)}
+                  placeholder="When account has no default"
+                  disabled={!canEditConfig}
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-text-tertiary mb-1">Used to pre-fill dashboard Cancel job modal (always overridable).</p>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Custom monthly goal (£) — this browser only

@@ -26,7 +26,7 @@ export type JobExtraEntry = {
   extra_type: string;
   reason: string;
   amount: number;
-  allocation: "extras" | "materials" | "partner_cost";
+  allocation: "labour" | "extras" | "materials" | "partner_cost";
   linked_group_id?: string | null;
   created_by?: string | null;
   created_by_name?: string | null;
@@ -73,7 +73,7 @@ type CreateJobExtraEntryInput = {
   extra_type: string;
   reason: string;
   amount: number;
-  allocation: "extras" | "materials" | "partner_cost";
+  allocation: "labour" | "extras" | "materials" | "partner_cost";
   linked_group_id?: string;
   created_by?: string;
   created_by_name?: string;

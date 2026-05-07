@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
+import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
@@ -91,7 +91,9 @@ import {
   partnerReasonLabel,
   shouldForceActivateAck,
 } from "@/lib/partner-status";
-import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { GENERAL_MAINTENANCE_LABEL, typeOfWorkLabelsFromCatalog, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { catalogServiceIdsForTradeLabels } from "@/lib/catalog-trade-ids";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import {
   formatUkSortCodeForDisplay,
   normalizeUkAccountNumberInput,
@@ -136,8 +138,11 @@ const tradeColors: Record<string, string> = {
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = [...TYPE_OF_WORK_OPTIONS];
-const KNOWN_TRADES = new Set<string>(TRADES);
+let partnersActiveTradeLabels: readonly string[] = [];
+
+function syncPartnersTradePickLabels(labels: readonly string[]): void {
+  partnersActiveTradeLabels = labels;
+}
 
 /** Minimum blended compliance score (0–100) to activate without explicit authorization. */
 const ACTIVATION_COMPLIANCE_MIN_SCORE = 95;
@@ -154,11 +159,21 @@ const LEGACY_TRADE_ALIASES: Record<string, string> = {
 function normalizeTradeName(value?: string | null): string | null {
   const raw = (value ?? "").trim();
   if (!raw) return null;
-  if (KNOWN_TRADES.has(raw)) return raw;
+  for (const p of partnersActiveTradeLabels) {
+    if (p.toLowerCase() === raw.toLowerCase()) return p;
+  }
   const legacy = LEGACY_TRADE_ALIASES[raw.toLowerCase()];
-  if (legacy && KNOWN_TRADES.has(legacy)) return legacy;
+  if (legacy) {
+    for (const p of partnersActiveTradeLabels) {
+      if (p.toLowerCase() === legacy.toLowerCase()) return p;
+    }
+  }
   const fromWork = normalizeTypeOfWork(raw);
-  if (fromWork && KNOWN_TRADES.has(fromWork)) return fromWork;
+  if (fromWork) {
+    for (const p of partnersActiveTradeLabels) {
+      if (p.toLowerCase() === fromWork.toLowerCase()) return p;
+    }
+  }
   return null;
 }
 
@@ -168,7 +183,8 @@ function normalizeTrades(values: Array<string | null | undefined>): string[] {
     const normalized = normalizeTradeName(value);
     if (normalized) seen.add(normalized);
   }
-  return seen.size > 0 ? Array.from(seen) : [TRADES[0]];
+  const fallback = partnersActiveTradeLabels[0] ?? GENERAL_MAINTENANCE_LABEL;
+  return seen.size > 0 ? Array.from(seen) : [fallback];
 }
 
 function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] {
@@ -276,7 +292,7 @@ const emptyForm = {
   crn: "",
   utr: "",
   partner_legal_type: "self_employed" as PartnerLegalType,
-  trades: [TRADES[0]] as string[],
+  trades: [] as string[],
   uk_coverage_regions: defaultUkCoverage(),
   partner_address: "",
   /** New directory partners start in Onboarding until compliance + activation. */
@@ -325,6 +341,21 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const isAdmin = profile?.role === "admin";
   const router = useRouter();
+
+  const [tradePickOptions, setTradePickOptions] = useState<readonly string[]>([]);
+  const [partnerCatalogServices, setPartnerCatalogServices] = useState<CatalogService[]>([]);
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then((c) => {
+        setPartnerCatalogServices(c);
+        const labels = typeOfWorkLabelsFromCatalog(c);
+        setTradePickOptions(labels);
+        syncPartnersTradePickLabels(labels);
+      })
+      .catch(() => {
+        syncPartnersTradePickLabels([]);
+      });
+  }, []);
 
   const handleBulkOutreach = useCallback(() => {
     if (selectedIds.size === 0) return;
@@ -390,8 +421,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   }, [createOpen]);
 
   const partnerTradesForCreate = useMemo(
-    () => (form.trades?.length ? form.trades : [TRADES[0]]),
-    [form.trades],
+    () =>
+      form.trades?.length
+        ? form.trades
+        : tradePickOptions[0]
+          ? [tradePickOptions[0]]
+          : [GENERAL_MAINTENANCE_LABEL],
+    [form.trades, tradePickOptions],
   );
   const syntheticPartnerForCreateDocs = useMemo(
     (): Partner =>
@@ -399,10 +435,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         id: "__create__",
         partner_legal_type: form.partner_legal_type,
         trades: form.trades,
-        trade: form.trades[0] ?? TRADES[0],
+        trade: form.trades[0] ?? tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL,
         crn: form.crn?.trim() || null,
       } as Partner),
-    [form.partner_legal_type, form.trades, form.crn],
+    [form.partner_legal_type, form.trades, form.crn, tradePickOptions],
   );
   const mandatoryDocsCreate = useMemo(
     () => buildMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs),
@@ -449,6 +485,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         return;
       }
     }
+    if (!form.trades?.length) {
+      toast.error("Select at least one trade (services are managed under Admin → Services).");
+      return;
+    }
     const dupP = await findDuplicatePartners({
       email: form.email.trim(),
       companyName: form.company_name.trim(),
@@ -457,7 +497,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
     setSubmitting(true);
     try {
-      const primaryTrade = form.trades[0] ?? TRADES[0];
+      const primaryTrade = form.trades[0] ?? tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL;
       const regions = normalizeUkCoverageRegions(form.uk_coverage_regions);
       const created = await createPartner({
         company_name: form.company_name.trim(),
@@ -481,6 +521,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         uk_coverage_regions: regions,
         partner_address: form.partner_address.trim() || null,
         verified: false,
+        catalog_service_ids: catalogServiceIdsForTradeLabels(form.trades, partnerCatalogServices),
       });
       let partnerToShow: Partner = created;
       if (createAvatarFile) {
@@ -909,7 +950,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               <div className="ml-auto flex items-center gap-2">
                 <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
                   <option value="all">All Trades</option>
-                  {TRADES.map((t) => (
+                  {tradePickOptions.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
@@ -959,6 +1000,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         partner={selectedPartner}
         teamMember={selectedTeamMember}
         initialTab={partnerDrawerInitialTab}
+        tradePickOptions={tradePickOptions}
+        partnerCatalogForIds={partnerCatalogServices}
         onClose={() => {
           setSelectedPartner(null);
           setSelectedTeamMember(null);
@@ -1197,7 +1240,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
               <div className="flex flex-wrap gap-1.5">
-                {TRADES.map((t) => {
+                {tradePickOptions.map((t) => {
                   const active = form.trades.includes(t);
                   return (
                     <button
@@ -1620,7 +1663,7 @@ function partnerOverviewFormFromPartner(partner: Partner) {
     contact_name: partner.contact_name ?? "",
     email: partner.email ?? "",
     phone: partner.phone ?? "",
-    trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+    trades: partner.trades?.length ? partner.trades : [partner.trade ?? GENERAL_MAINTENANCE_LABEL],
     uk_coverage_regions: partnerCoverageToForm(partner),
     partner_address: partner.partner_address ?? "",
     rating: String(partner.rating ?? 0),
@@ -2209,11 +2252,16 @@ function PartnerDetailDrawer({
   onVerify,
   onPartnerUpdate,
   onTeamChanged,
+  tradePickOptions = [GENERAL_MAINTENANCE_LABEL],
+  partnerCatalogForIds = [],
 }: {
   partner: Partner | null;
   teamMember: TeamMember | null;
   /** When opening the drawer (e.g. after create), start on this tab. */
   initialTab?: string;
+  tradePickOptions?: readonly string[];
+  /** Services catalogue — used to sync `catalog_service_ids` when trades change. */
+  partnerCatalogForIds?: CatalogService[];
   onClose: () => void;
   onPartnerPatch: (patch: Partial<Partner>) => Promise<void>;
   onVerify: (partner: Partner) => void;
@@ -2249,6 +2297,8 @@ function PartnerDetailDrawer({
   const [bankName, setBankName] = useState("");
   const [bankSaving, setBankSaving] = useState(false);
   const [partnerPaymentTerms, setPartnerPaymentTerms] = useState("");
+  const [partnerDefaultCancelFee, setPartnerDefaultCancelFee] = useState("");
+  const [defaultFeeSaving, setDefaultFeeSaving] = useState(false);
   const [paymentTermsSaving, setPaymentTermsSaving] = useState(false);
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
@@ -2284,7 +2334,7 @@ function PartnerDetailDrawer({
     contact_name: "",
     email: "",
     phone: "",
-    trades: [TRADES[0]] as string[],
+    trades: [tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL] as string[],
     uk_coverage_regions: defaultUkCoverage(),
     partner_address: "",
     rating: "",
@@ -2408,6 +2458,11 @@ function PartnerDetailDrawer({
     setBankAccountHolder(partner.bank_account_holder ?? "");
     setBankName(partner.bank_name ?? "");
     setPartnerPaymentTerms(partner.payment_terms ?? "");
+    setPartnerDefaultCancelFee(
+      partner.default_partner_cancel_fee_gbp != null && Number(partner.default_partner_cancel_fee_gbp) > 0
+        ? String(partner.default_partner_cancel_fee_gbp)
+        : "",
+    );
   }, [
     partner?.id,
     partner?.bank_sort_code,
@@ -2415,6 +2470,7 @@ function PartnerDetailDrawer({
     partner?.bank_account_holder,
     partner?.bank_name,
     partner?.payment_terms,
+    partner?.default_partner_cancel_fee_gbp,
   ]);
 
   const bankDirty = useMemo(() => {
@@ -2474,6 +2530,29 @@ function PartnerDetailDrawer({
       setPaymentTermsSaving(false);
     }
   }, [partner, partnerPaymentTerms, onPartnerPatch]);
+
+  const partnerDefaultFeeDirty =
+    !!partner &&
+    partnerDefaultCancelFee.trim() !==
+      (partner.default_partner_cancel_fee_gbp != null && Number(partner.default_partner_cancel_fee_gbp) > 0
+        ? String(partner.default_partner_cancel_fee_gbp)
+        : "");
+
+  const handleSaveDefaultPartnerCancelFee = useCallback(async () => {
+    if (!partner) return;
+    const n = Number(partnerDefaultCancelFee);
+    const value =
+      partnerDefaultCancelFee.trim() !== "" && Number.isFinite(n) && n > 0
+        ? Math.round(n * 100) / 100
+        : null;
+    setDefaultFeeSaving(true);
+    try {
+      await onPartnerPatch({ default_partner_cancel_fee_gbp: value });
+      toast.success(value != null ? "Default cancellation fee saved." : "Default cancellation fee cleared.");
+    } finally {
+      setDefaultFeeSaving(false);
+    }
+  }, [partner, partnerDefaultCancelFee, onPartnerPatch]);
 
   const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
     const res = await fetch("/api/admin/partner/sync-app-user", {
@@ -2587,7 +2666,7 @@ function PartnerDetailDrawer({
       }
     }
     try {
-      const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
+      const primaryTrade = overviewForm.trades[0] ?? (tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL);
       const regions = normalizeUkCoverageRegions(overviewForm.uk_coverage_regions);
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
@@ -2613,6 +2692,7 @@ function PartnerDetailDrawer({
         phone: overviewForm.phone.trim() || undefined,
         trade: primaryTrade,
         trades: overviewForm.trades,
+        catalog_service_ids: catalogServiceIdsForTradeLabels(overviewForm.trades, partnerCatalogForIds),
         location: formatUkCoverageLabel(regions, null),
         uk_coverage_regions: regions,
         partner_address: overviewForm.partner_address.trim() || null,
@@ -2624,7 +2704,7 @@ function PartnerDetailDrawer({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update");
     }
-  }, [partner, overviewForm, onPartnerUpdate]);
+  }, [partner, overviewForm, onPartnerUpdate, partnerCatalogForIds, tradePickOptions]);
 
   const handleAddDocument = async (
     docType: string,
@@ -3283,7 +3363,7 @@ function PartnerDetailDrawer({
                     <div>
                       <p className="text-[10px] font-medium text-text-tertiary mb-1.5">Trades (select all that apply)</p>
                       <div className="flex flex-wrap gap-1.5">
-                        {TRADES.map((t) => {
+                        {tradePickOptions.map((t) => {
                           const active = overviewForm.trades.includes(t);
                           return (
                             <button
@@ -4203,6 +4283,50 @@ function PartnerDetailDrawer({
                   <option value="Monthly cutoff 26 pay Friday">Monthly — cutoff 26th, pay Friday</option>
                   <option value="Monthly cutoff 15 pay Friday">Monthly — cutoff 15th, pay Friday</option>
                 </select>
+              </div>
+              <div>
+                <label htmlFor="partner-default-cancel-fee" className="block text-xs font-medium text-text-secondary mb-1">
+                  Default cancellation fee (£) — partner owes
+                </label>
+                <Input
+                  id="partner-default-cancel-fee"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={partnerDefaultCancelFee}
+                  onChange={(e) => setPartnerDefaultCancelFee(e.target.value)}
+                  placeholder="Optional — suggested in dashboard Cancel job"
+                />
+                <p className="text-[10px] text-text-tertiary mt-1">
+                  Falls back to company partner cancellation fee in Settings if empty.
+                </p>
+                <div className="flex justify-end gap-2 mt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
+                    onClick={() =>
+                      setPartnerDefaultCancelFee(
+                        partner?.default_partner_cancel_fee_gbp != null &&
+                          Number(partner.default_partner_cancel_fee_gbp) > 0
+                          ? String(partner.default_partner_cancel_fee_gbp)
+                          : "",
+                      )
+                    }
+                  >
+                    Reset
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
+                    loading={defaultFeeSaving}
+                    onClick={() => void handleSaveDefaultPartnerCancelFee()}
+                  >
+                    Save fee default
+                  </Button>
+                </div>
               </div>
               <div className="flex justify-end gap-2">
                 <Button

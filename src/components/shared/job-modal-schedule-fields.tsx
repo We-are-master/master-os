@@ -19,7 +19,6 @@ export type JobModalScheduleFieldKey =
   | "scheduled_date"
   | "arrival_from"
   | "arrival_window_mins"
-  | "expected_finish_date"
   | "end_date"
   | "end_time"
   | "job_kind";
@@ -30,7 +29,6 @@ type Props = {
   scheduledDate: string;
   arrivalFrom: string;
   arrivalWindowMins: string;
-  expectedFinishDate: string;
   /** Multi-day extras (mig 158). */
   endDate?: string;
   endTime?: string;
@@ -41,8 +39,6 @@ type Props = {
   /** e.g. quote pre-fill hint under start date */
   startDateFooter?: ReactNode;
   startDateRequired?: boolean;
-  /** When start date is set, expected finish is required — parent should pass true when `scheduledDate` is non-empty. */
-  expectedFinishRequired?: boolean;
   requiredFieldClassName?: string;
 };
 
@@ -66,7 +62,6 @@ export function JobModalScheduleFields({
   scheduledDate,
   arrivalFrom,
   arrivalWindowMins,
-  expectedFinishDate,
   endDate = "",
   endTime = "17:00",
   recurrence,
@@ -74,7 +69,6 @@ export function JobModalScheduleFields({
   onChange,
   startDateFooter,
   startDateRequired,
-  expectedFinishRequired,
   requiredFieldClassName,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
@@ -152,21 +146,10 @@ export function JobModalScheduleFields({
               onChange={(e) => onChange("arrival_window_mins", e.target.value)}
               options={[...ARRIVAL_WINDOW_OPTIONS]}
             />
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Expected finish (date only){expectedFinishRequired ? " *" : ""}
-              </label>
-              <Input
-                type="date"
-                value={expectedFinishDate}
-                onChange={(e) => onChange("expected_finish_date", e.target.value)}
-                className={cn("h-10 max-w-[200px]", expectedFinishRequired && requiredFieldClassName)}
-              />
-            </div>
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
           <p className="text-[10px] text-text-tertiary -mt-1">
-            Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.
+            Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time; late is still based on window end.
           </p>
         </>
       ) : isMultiDay ? (

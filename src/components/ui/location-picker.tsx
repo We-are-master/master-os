@@ -5,6 +5,13 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MapPin, Search, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  MAPBOX_GB_FORWARD_TYPES,
+  MAPBOX_GB_REVERSE_GEO_APPEND,
+  MAPBOX_UK_CENTER_LON_LAT,
+  MAPBOX_UK_MAX_BOUNDS,
+  mapboxGbForwardBiasAppend,
+} from "@/lib/mapbox-uk-geography";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -25,6 +32,11 @@ interface LocationPickerProps {
   readOnly?: boolean;
   /** Initial center [lng, lat] */
   center?: [number, number];
+  /**
+   * Restrict forward/reverse Places API to GB and clip panning to the British Isles.
+   * Use for UK-only office flows (quotes intake, request property preview).
+   */
+  restrictToUk?: boolean;
 }
 
 export function LocationPicker({
@@ -35,6 +47,7 @@ export function LocationPicker({
   mapHeight = "220px",
   readOnly = false,
   center,
+  restrictToUk = false,
 }: LocationPickerProps) {
   const fillHeight = readOnly && mapHeight === "100%";
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -47,10 +60,14 @@ export function LocationPicker({
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  useEffect(() => {
     if (!mapContainer.current || !MAPBOX_TOKEN) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
-    const defaultCenter = center ?? [-73.9857, 40.7484]; // NYC default
+    const defaultCenter = center ?? (restrictToUk ? MAPBOX_UK_CENTER_LON_LAT : ([-73.9857, 40.7484] as [number, number]));
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
@@ -58,6 +75,7 @@ export function LocationPicker({
       center: defaultCenter,
       zoom: center ? 14 : 11,
       interactive: !readOnly,
+      ...(restrictToUk ? { maxBounds: MAPBOX_UK_MAX_BOUNDS } : {}),
     });
 
     if (!readOnly) {
@@ -101,7 +119,7 @@ export function LocationPicker({
       map.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readOnly]);
+  }, [readOnly, restrictToUk]);
 
   const placeMarker = (map: mapboxgl.Map, lngLat: [number, number]) => {
     if (markerRef.current) markerRef.current.remove();
@@ -114,7 +132,11 @@ export function LocationPicker({
   const reverseGeocode = async (lng: number, lat: number) => {
     if (!MAPBOX_TOKEN) return;
     try {
-      const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&limit=1`);
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&limit=1${
+          restrictToUk ? MAPBOX_GB_REVERSE_GEO_APPEND : ""
+        }`,
+      );
       const data = await res.json();
       const place = data.features?.[0];
       if (place) {
@@ -126,11 +148,16 @@ export function LocationPicker({
   };
 
   const handleSearch = useCallback(async (q: string) => {
-    if (!q.trim() || !MAPBOX_TOKEN) { setResults([]); return; }
+    if (!q.trim() || !MAPBOX_TOKEN) {
+      setResults([]);
+      return;
+    }
     setSearching(true);
     try {
+      const types = restrictToUk ? MAPBOX_GB_FORWARD_TYPES : "address,place,neighborhood,locality";
+      const gb = restrictToUk ? mapboxGbForwardBiasAppend(q.trim()) : "";
       const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&limit=5&types=address,place,neighborhood,locality`
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&limit=8&types=${types}${gb}`,
       );
       const data = await res.json();
       setResults(data.features?.map((f: { place_name: string; center: [number, number] }) => ({
@@ -140,7 +167,7 @@ export function LocationPicker({
       setShowResults(true);
     } catch { setResults([]); }
     finally { setSearching(false); }
-  }, []);
+  }, [restrictToUk]);
 
   const handleInputChange = (val: string) => {
     setQuery(val);
@@ -193,6 +220,34 @@ export function LocationPicker({
               value={query}
               onChange={(e) => handleInputChange(e.target.value)}
               onFocus={() => { if (results.length) setShowResults(true); }}
+              onKeyDown={(e) => {
+                if (readOnly) return;
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (debounceRef.current) clearTimeout(debounceRef.current);
+                if (results.length > 0) {
+                  handleSelectResult(results[0]);
+                  return;
+                }
+                const q = query.trim();
+                if (!q || !MAPBOX_TOKEN) return;
+                void (async () => {
+                  try {
+                    const types = restrictToUk ? MAPBOX_GB_FORWARD_TYPES : "address,place,neighborhood,locality";
+                    const gb = restrictToUk ? mapboxGbForwardBiasAppend(q) : "";
+                    const res = await fetch(
+                      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&limit=8&types=${types}${gb}`,
+                    );
+                    const data = await res.json();
+                    const f = data.features?.[0] as { place_name?: string; center?: [number, number] } | undefined;
+                    if (f?.place_name && Array.isArray(f.center) && f.center.length >= 2) {
+                      handleSelectResult({ place_name: f.place_name, center: [f.center[0], f.center[1]] });
+                    }
+                  } catch {
+                    /* silent */
+                  }
+                })();
+              }}
               placeholder={placeholder}
               className="w-full h-10 bg-card border border-border rounded-xl px-4 pl-10 pr-10 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all"
             />
@@ -281,10 +336,12 @@ function LocationMiniMapInner({
   address,
   mapHeight = "160px",
   showAddressBelowMap = true,
+  restrictToUk = false,
 }: {
   address: string;
   mapHeight?: string;
   showAddressBelowMap?: boolean;
+  restrictToUk?: boolean;
 }) {
   const [coords, setCoords] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -295,7 +352,11 @@ function LocationMiniMapInner({
       queueMicrotask(() => setLoading(false));
       return;
     }
-    fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&limit=1`)
+    const types = restrictToUk ? MAPBOX_GB_FORWARD_TYPES : "address,place,neighborhood,locality";
+    const gb = restrictToUk ? mapboxGbForwardBiasAppend(address) : "";
+    fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&limit=1&types=${types}${gb}`,
+    )
       .then((r) => r.json())
       .then((data) => {
         const feat = data.features?.[0];
@@ -303,7 +364,7 @@ function LocationMiniMapInner({
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [address]);
+  }, [address, restrictToUk]);
 
   if (loading) {
     return (
@@ -325,6 +386,7 @@ function LocationMiniMapInner({
       >
         <LocationPicker
           readOnly
+          restrictToUk={restrictToUk}
           center={coords}
           value={address}
           onChange={() => {}}
@@ -349,6 +411,7 @@ export function LocationMiniMap({
   lazy = false,
   mapHeight = "160px",
   showAddressBelowMap = true,
+  restrictToUk = false,
 }: {
   address: string;
   className?: string;
@@ -358,6 +421,8 @@ export function LocationMiniMap({
   mapHeight?: string;
   /** When false, hides the caption under the map (parent already shows the address). */
   showAddressBelowMap?: boolean;
+  /** Geocode / static map centred with GB bias (Quotes/Requests flows). */
+  restrictToUk?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(!lazy);
@@ -395,6 +460,7 @@ export function LocationMiniMap({
           address={address}
           mapHeight={mapHeight}
           showAddressBelowMap={showAddressBelowMap}
+          restrictToUk={restrictToUk}
         />
       )}
     </div>

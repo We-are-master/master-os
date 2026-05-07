@@ -26,18 +26,15 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
       { label: "Quotes", href: "/quotes", icon: "file-text" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
-      { label: "Compliance", href: "/compliance", icon: "file-check" },
-      { label: "PPM Plans", href: "/ppm", icon: "calendar-clock" },
     ],
   },
   {
     label: "Network",
     items: [
       { label: "Accounts", href: "/accounts", icon: "building" },
-      { label: "Clients", href: "/clients", icon: "user-circle" },
       { label: "Partners", href: "/partners", icon: "users" },
     ],
   },
@@ -80,3 +77,6 @@ export const STATUS_COLORS = {
   overdue: "red",
   processing: "blue",
 } as const;
+
+/** Extra visits tab + ⋮ “Add visit” on job detail — off until multi-visit / recurrence UX is shipped. */
+export const JOB_DETAIL_MULTI_VISITS_UI_ENABLED = false;

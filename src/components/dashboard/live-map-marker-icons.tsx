@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { GENERAL_MAINTENANCE_LABEL, TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** Partner marker canvas — needs extra room for the top-right trade badge. */
@@ -91,8 +91,12 @@ export function renderLiveMapTradeIconSvg(iconKey: string, opts?: { size?: numbe
   );
 }
 
-export function liveMapTradeFilterOptions(): { value: string; label: string }[] {
-  return [{ value: "all", label: "All trades" }, ...TYPE_OF_WORK_OPTIONS.map((t) => ({ value: t, label: t }))];
+/** Trade filter from Services catalog names (Admin → Services). Empty catalog → only “All trades”. */
+export function liveMapTradeFilterOptions(catalogNames: string[]): { value: string; label: string }[] {
+  const uniq = [...new Set(catalogNames.map((t) => t.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  return [{ value: "all", label: "All trades" }, ...uniq.map((t) => ({ value: t, label: t }))];
 }
 
 function staticIcon(Icon: LucideIcon) {

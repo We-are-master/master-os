@@ -1,5 +1,6 @@
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
+import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
 import type { Account, Client, Invoice, Job } from "@/types/database";
 
 const ACCOUNT_OWNER_MIGRATION_HINT =
@@ -90,6 +91,11 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   }
   if (next.email_include_report_on_final !== undefined) {
     next.email_include_report_on_final = Boolean(next.email_include_report_on_final);
+  }
+  if (next.default_client_cancel_fee_gbp !== undefined) {
+    const v = Number(next.default_client_cancel_fee_gbp);
+    next.default_client_cancel_fee_gbp =
+      Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null;
   }
   return next;
 }
@@ -383,41 +389,56 @@ export async function countClientsLinkedToAccount(accountId: string): Promise<nu
 }
 
 /** Paginated client list for an account drawer.
- *  Tries FK (`source_account_id`) first; falls back to `full_name ILIKE %name%`. */
+ *  Tries FK (`source_account_id`) first; falls back to `full_name ILIKE %name%`.
+ *  Optional `search` filters by name, email, phone, or address (server-side). */
 export async function listClientsLinkedToAccountPaged(
   accountId: string,
   companyName: string,
   page: number,
   pageSize: number,
+  search?: string,
 ): Promise<{ rows: Client[]; total: number; usedFallback: boolean }> {
   const supabase = getSupabase();
   const from = page * pageSize;
   const to = from + pageSize - 1;
 
+  const fragRaw = search?.trim() ?? "";
+  const safe = fragRaw ? sanitizePostgrestValue(fragRaw, 120) : "";
+  const searchPattern = safe ? `%${safe}%` : null;
+
   // Primary: FK-based with exact count
-  const { data: fkData, count: fkCount, error: fkErr } = await supabase
+  let fkQuery = supabase
     .from("clients")
     .select("*", { count: "exact" })
     .eq("source_account_id", accountId)
-    .is("deleted_at", null)
-    .order("full_name")
-    .range(from, to);
+    .is("deleted_at", null);
+  if (searchPattern) {
+    fkQuery = fkQuery.or(
+      `full_name.ilike.${searchPattern},email.ilike.${searchPattern},phone.ilike.${searchPattern},address.ilike.${searchPattern}`,
+    );
+  }
+  const { data: fkData, count: fkCount, error: fkErr } = await fkQuery.order("full_name").range(from, to);
   if (fkErr) throw new Error(fkErr.message);
 
   if ((fkCount ?? 0) > 0 || page > 0) {
     return { rows: (fkData ?? []) as Client[], total: fkCount ?? 0, usedFallback: false };
   }
 
-  // Fallback: name-based
+  /** When searching, trust the FK result even if empty — do not fall back to fuzzy name matching. */
+  if (searchPattern) {
+    return { rows: (fkData ?? []) as Client[], total: fkCount ?? 0, usedFallback: false };
+  }
+
+  // Fallback: name-based (only when account has zero FK-linked clients and no search)
   if (!companyName) return { rows: [], total: 0, usedFallback: false };
 
-  const { data: nameData, count: nameCount, error: nameErr } = await supabase
+  const nameQuery = supabase
     .from("clients")
     .select("*", { count: "exact" })
     .ilike("full_name", `%${companyName}%`)
-    .is("deleted_at", null)
-    .order("full_name")
-    .range(from, to);
+    .is("deleted_at", null);
+
+  const { data: nameData, count: nameCount, error: nameErr } = await nameQuery.order("full_name").range(from, to);
   if (nameErr) throw new Error(nameErr.message);
 
   return { rows: (nameData ?? []) as Client[], total: nameCount ?? 0, usedFallback: true };

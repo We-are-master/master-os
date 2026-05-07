@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import type { Partner } from "@/types/database";
 
@@ -22,13 +23,12 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  * Expected JSON body:
  *   {
  *     ticket_id:        string (required — idempotency key)
- *     title:            string (required)
  *     client_name:      string (required)
  *     client_email:     string (required)
  *     property_address: string
- *     service_type:     string (required)
- *     description:      string
- *     scope:            string
+ *     service_type:     string (required) — canonical trade; becomes quote.title (+ matching)
+ *     description:      string (optional; used as scope only if scope is empty)
+ *     scope:            string (optional — free-text brief; omit if none)
  *     total_value:      number
  *     deposit_percent:  number (0-100)
  *     quote_mode:       "bid" | "manual"
@@ -53,13 +53,19 @@ export async function POST(req: NextRequest) {
   }
 
   const ticketId        = str(body.ticket_id);
-  const title           = str(body.title);
   const clientName      = str(body.client_name);
   const clientEmail     = str(body.client_email).toLowerCase();
   const propertyAddress = str(body.property_address);
   const serviceType     = str(body.service_type);
   const description     = str(body.description);
-  const scope           = str(body.scope);
+  const scopePrimary    = str(body.scope);
+
+  const normalizedServiceType = normalizeTypeOfWork(serviceType).trim() || serviceType.trim();
+
+  /** Desk may still send legacy `title` (ticket subject — ignored for storage). */
+  const canonicalTitle = normalizedServiceType || "(No type)";
+  const scopeCombinedTrim = scopePrimary || description;
+  const scopeOut = scopeCombinedTrim.trim() ? scopeCombinedTrim : null;
   const totalValue      = num(body.total_value);
   const depositPercent  = Math.min(100, Math.max(0, num(body.deposit_percent)));
   const quoteMode       = str(body.quote_mode).toLowerCase() || "manual";
@@ -67,14 +73,11 @@ export async function POST(req: NextRequest) {
   if (!ticketId) {
     return NextResponse.json({ error: "ticket_id is required." }, { status: 400 });
   }
-  if (!title || !clientName || !clientEmail || !serviceType) {
+  if (!clientName || !clientEmail || !serviceType) {
     return NextResponse.json(
-      { error: "title, client_name, client_email and service_type are required." },
+      { error: "client_name, client_email and service_type are required." },
       { status: 400 },
     );
-  }
-  if (!scope) {
-    return NextResponse.json({ error: "scope is required." }, { status: 400 });
   }
 
   const supabase = createServiceClient();
@@ -122,7 +125,7 @@ export async function POST(req: NextRequest) {
 
     if (activePartners) {
       const matched = (activePartners as unknown as Partner[]).filter((p) =>
-        partnerMatchesTypeOfWork(p, serviceType)
+        partnerMatchesTypeOfWork(p, normalizedServiceType)
       );
       matchedPartnerIds = matched.map((p) => p.id);
     }
@@ -140,12 +143,12 @@ export async function POST(req: NextRequest) {
 
   const quoteRow: Record<string, unknown> = {
     reference: String(refData),
-    title,
+    title: canonicalTitle,
     client_id: clientId,
     client_name: clientName,
     client_email: clientEmail,
     property_address: propertyAddress || null,
-    service_type: serviceType,
+    service_type: normalizedServiceType,
     status,
     total_value: totalValue,
     cost: 0,
@@ -156,7 +159,7 @@ export async function POST(req: NextRequest) {
     quote_type: quoteMode === "bid" ? "partner" : "internal",
     deposit_percent: depositPercent,
     deposit_required: depositRequired,
-    scope,
+    scope: scopeOut ?? "",
     customer_accepted: false,
     customer_deposit_paid: false,
     external_source: "zendesk",
@@ -183,7 +186,7 @@ export async function POST(req: NextRequest) {
   if (quoteMode === "bid" && matchedPartnerIds.length > 0) {
     pushSent = await sendPushToPartners(supabase, matchedPartnerIds, {
       title: "New quote — bid invitation",
-      body: `${quoteRef} · ${title} · ${propertyAddress || serviceType}`,
+      body: `${quoteRef} · ${canonicalTitle} · ${propertyAddress || normalizedServiceType}`,
       data: { type: "quote_bid_invite", quoteId },
     });
   }

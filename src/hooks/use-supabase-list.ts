@@ -78,6 +78,9 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const scheduleRangeKey = listParams?.scheduleRange
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
     : "";
+  const jobsClosedBucketKey = listParams?.jobsClosedBucket ?? "";
+  /** Refetch list when jobs window filter knobs change — not only the date range title. */
+  const jobsListWindowKey = `${scheduleRangeKey}::${jobsClosedBucketKey}`;
   const dateRangeKey = listParams?.invoicePeriodBounds
     ? `inv|${listParams.invoicePeriodBounds.from}|${listParams.invoicePeriodBounds.to}|${listParams.invoicePeriodBounds.startIso}|${listParams.invoicePeriodBounds.endIso}`
     : listParams?.dateColumn
@@ -86,13 +89,13 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const prevRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevRangeKeyRef.current === null) {
-      prevRangeKeyRef.current = scheduleRangeKey;
+      prevRangeKeyRef.current = jobsListWindowKey;
       return;
     }
-    if (prevRangeKeyRef.current === scheduleRangeKey) return;
-    prevRangeKeyRef.current = scheduleRangeKey;
+    if (prevRangeKeyRef.current === jobsListWindowKey) return;
+    prevRangeKeyRef.current = jobsListWindowKey;
     queueMicrotask(() => setPage(1));
-  }, [scheduleRangeKey]);
+  }, [jobsListWindowKey]);
   const prevDateRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevDateRangeKeyRef.current === null) {
@@ -170,7 +173,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, search, status, tick, scheduleRangeKey, dateRangeKey]);
+  }, [page, pageSize, search, status, tick, jobsListWindowKey, dateRangeKey]);
 
   const refreshSilentRef = useRef(refreshSilent);
   useLayoutEffect(() => {

@@ -9,7 +9,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
-import { DataTable, type Column } from "@/components/ui/data-table";
+import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -19,7 +19,8 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
+  AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
+  Timer,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
@@ -31,17 +32,26 @@ import {
   updateJob,
   getJob,
   fetchAllJobsFinancialKpiRows,
+  fetchFirstEnteredFinalChecksAtByJobIds,
+  computeAvgScheduleToFinalChecksPipelineSeconds,
   JOB_LIST_ALL_TAB_STATUSES,
   jobRowMatchesJobsManagementTab,
+  jobsManagementClosedBucket,
+  jobsManagementClosedBucketLabel,
+  type JobsManagementClosedBucket,
 } from "@/services/jobs";
+import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { computeOfficeTimerElapsedSeconds, formatOfficeTimer, statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
+import { getAccountIdsForBu } from "@/services/business-units";
 import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
+import { patchOfficeCancelZeroJobEconomics } from "@/lib/job-cancel-economics";
+import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
@@ -52,6 +62,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
 import {
   effectiveJobStatusForDisplay,
@@ -71,7 +82,11 @@ import {
   jobScheduleYmd,
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
-import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
+import {
+  catalogServiceIdForTypeOfWorkLabel,
+  typeOfWorkLabelsFromCatalog,
+  normalizeTypeOfWork,
+} from "@/lib/type-of-work";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
@@ -87,6 +102,7 @@ import {
   jobProfit,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -94,6 +110,12 @@ import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
 } from "@/lib/job-hourly-billing";
+import {
+  defaultPricingPresetId,
+  mergeCatalogWithPricingPreset,
+  parsePricingPresets,
+  sortPricingPresetsDisplay,
+} from "@/lib/catalog-pricing-presets";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
@@ -117,7 +139,22 @@ import {
 } from "@/lib/uk-schedule-range";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
-const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
+
+type JobsClosedJobsListFilterMode = JobsManagementClosedBucket | "all";
+
+/** Map removed tab IDs (bookmarks / deep links) to the new Jobs Management UX. */
+const LEGACY_JOBS_MANAGEMENT_TAB: Partial<
+  Record<string, { tab: string; closedFilter?: JobsClosedJobsListFilterMode }>
+> = {
+  unassigned: { tab: "action_required" },
+  on_hold: { tab: "action_required" },
+  awaiting_payment: { tab: "closed", closedFilter: "awaiting_payment" },
+  completed: { tab: "closed", closedFilter: "paid" },
+  cancelled: { tab: "closed", closedFilter: "lost" },
+  deleted: { tab: "closed", closedFilter: "archived" },
+};
+
+const JOBS_PAGE_SIZE_OPTIONS = [30, 10, 100] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
 
@@ -131,6 +168,24 @@ const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 const BULK_MARK_PAID_NOTE_TAG = "PAID_MARKED_BY::";
 
 type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
+
+/** BU filter matches client-linked jobs and jobs on account properties (same rule as Quotes). */
+function jobPassesJobsPageBuFilter(
+  j: Pick<Job, "client_id" | "property_id">,
+  selectedBuId: string | null,
+  clientIdsInBu: Set<string> | null | undefined,
+  buAccountIds: Set<string>,
+  propertyIdToAccountId: Record<string, string>,
+): boolean {
+  if (!selectedBuId) return true;
+  if (clientIdsInBu == null) return true;
+  if (clientIdsInBu.size === 0 && buAccountIds.size === 0) return true;
+  const clientInBu = Boolean(j.client_id && clientIdsInBu.has(j.client_id));
+  const pid = j.property_id?.trim();
+  const accFromProperty = pid ? propertyIdToAccountId[pid] : undefined;
+  const propertyInBu = Boolean(accFromProperty && buAccountIds.has(accFromProperty));
+  return clientInBu || propertyInBu;
+}
 
 function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
   if (job.scheduled_start_at) {
@@ -168,11 +223,7 @@ function jobManagementScheduleSecondaryLine(job: Job): string | null {
     return null;
   }
   if (s === "on_hold") {
-    const raw = job.on_hold_at?.trim();
-    if (!raw) return "On hold";
-    const t = new Date(raw);
-    if (Number.isNaN(t.getTime())) return "On hold";
-    return `On hold ${formatRelativeTime(t)}`;
+    return null;
   }
   if (s === "final_check" || s === "need_attention") {
     const finishedIso = job.partner_timer_ended_at?.trim();
@@ -233,7 +284,7 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
   );
 }
 
-const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
+const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v2";
 const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
@@ -311,6 +362,39 @@ function JobCardFinanceRow({ job }: { job: Job }) {
   );
 }
 
+function ukYmdFromJobInstant(rawIso: string): string | null {
+  const d = new Date(rawIso.trim());
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/** Calendar days between two UK calendar dates (`YYYY-MM-DD`), end − start (inclusive sense: same day → 0). */
+function ukCalendarDaysBetweenUkYmd(startYmd: string, endYmd: string): number {
+  const [ys, ms, ds] = startYmd.split("-").map(Number);
+  const [ye, me, de] = endYmd.split("-").map(Number);
+  const s = Date.UTC(ys, ms - 1, ds);
+  const e = Date.UTC(ye, me - 1, de);
+  return Math.round((e - s) / 86400000);
+}
+
+/** Subtitle under Status for on-hold jobs: `On Hold · 21 days` (minimal SLA line). */
+function jobOnHoldDurationSubtitle(job: Pick<Job, "on_hold_at">): string {
+  const raw = job.on_hold_at?.trim();
+  if (!raw) return "On Hold · —";
+  const startUk = ukYmdFromJobInstant(raw);
+  if (!startUk) return "On Hold · —";
+  const todayUk = ukTodayYmd(new Date());
+  const n = ukCalendarDaysBetweenUkYmd(startUk, todayUk);
+  if (n <= 0) return "On Hold · today";
+  if (n === 1) return "On Hold · 1 day";
+  return `On Hold · ${n} days`;
+}
+
 const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
@@ -344,6 +428,71 @@ function firstJobAccountLabel(jobs: Job[], clientAccountMap: Record<string, stri
   return j ? clientAccountMap[j.client_id!]! : "No account";
 }
 
+const JOB_SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
+
+const JOB_SORT_CREATED: ColumnSortOption[] = [
+  { label: "Newest booking first", sortKey: "__created_at", direction: "desc" },
+  { label: "Oldest booking first", sortKey: "__created_at", direction: "asc" },
+  JOB_SORT_CLEAR,
+];
+
+function jobColumnSortPack(columnKey: string, title: string): ColumnSortOption[] {
+  return [
+    { label: `${title} A → Z`, sortKey: columnKey, direction: "asc" },
+    { label: `${title} Z → A`, sortKey: columnKey, direction: "desc" },
+    ...JOB_SORT_CREATED,
+  ];
+}
+
+const JOB_SORT_SCHEDULE: ColumnSortOption[] = [
+  { label: "Soonest scheduled first", sortKey: "schedule", direction: "asc" },
+  { label: "Latest scheduled first", sortKey: "schedule", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
+const JOB_SORT_AMOUNT: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "margin_percent", direction: "asc" },
+  { label: "High to low", sortKey: "margin_percent", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
+const JOB_SORT_AMOUNT_DUE: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "amount_due", direction: "asc" },
+  { label: "High to low", sortKey: "amount_due", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
+const JOB_SORT_FINANCE: ColumnSortOption[] = [
+  { label: "Unpaid → paid", sortKey: "finance_status", direction: "asc" },
+  { label: "Paid → unpaid", sortKey: "finance_status", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
+const JOB_SORT_STATUS: ColumnSortOption[] = [
+  { label: "Status A → Z", sortKey: "status", direction: "asc" },
+  { label: "Status Z → A", sortKey: "status", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
+const JOB_CLOSED_BUCKET_SORT_RANK: Record<JobsManagementClosedBucket, number> = {
+  paid: 0,
+  awaiting_payment: 1,
+  archived: 2,
+  lost: 3,
+};
+
+/** Schedule → first Final Checks audit → KPI label (jobs strip). */
+function formatKpiAvgWorkSeconds(avgSeconds: number): string {
+  const s = Math.round(avgSeconds);
+  if (!Number.isFinite(s) || s <= 0) return "—";
+  const m = Math.round(s / 60);
+  if (m < 1) return "<1 min";
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  if (h === 0) return `${m} min`;
+  return min > 0 ? `${h}h ${min}m` : `${h}h`;
+}
+
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -373,20 +522,34 @@ function JobsPageContent() {
     [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey],
   );
 
+  const [closedJobsFilter, setClosedJobsFilter] = useState<JobsClosedJobsListFilterMode>("all");
+
+  const closedJobsFilterRef = useRef(closedJobsFilter);
+  closedJobsFilterRef.current = closedJobsFilter;
+
   const listParams = useMemo<Partial<ListParams>>(() => {
     if (!scheduleRange) return NO_SCHEDULE_LIST_PARAMS;
     return { scheduleRange };
   }, [scheduleRange]);
 
-  const [jobsPageSize, setJobsPageSize] = useState<number>(10);
+  const fetchJobsManagementList = useCallback((params: ListParams) => {
+    const merged: ListParams = { ...params };
+    if (merged.status === "closed" && closedJobsFilterRef.current !== "all") {
+      merged.jobsClosedBucket = closedJobsFilterRef.current as JobsManagementClosedBucket;
+    }
+    return listJobs(merged);
+  }, []);
+
+  const [jobsPageSize, setJobsPageSize] = useState<number>(30);
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
-    fetcher: listJobs,
+    fetcher: fetchJobsManagementList,
     pageSize: jobsPageSize,
     realtimeTable: "jobs",
     listParams,
-    initialStatus: "unassigned",
+    initialStatus: "all",
   });
   const { profile } = useProfile();
+  const { officeCancellationPresets } = useFrontendSetup();
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -394,7 +557,12 @@ function JobsPageContent() {
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const buFilter = useBuFilter();
+  const [buAccountIds, setBuAccountIds] = useState<Set<string>>(new Set());
+  /** `account_properties.id` → `account_id` — jobs with `property_id` but same BU as Quotes. */
+  const [propertyIdToAccountId, setPropertyIdToAccountId] = useState<Record<string, string>>({});
   const [filterSort, setFilterSort] = useState<JobsSortMode>("schedule_nearest");
+  const [jobsListSortKey, setJobsListSortKey] = useState<string | null>(null);
+  const [jobsListSortDir, setJobsListSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -403,7 +571,7 @@ function JobsPageContent() {
   const [bulkMarkPaidConfirm, setBulkMarkPaidConfirm] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
-  const [totalRevenue, setTotalRevenue] = useState(0);
+  const [kpiAvgWorkTimeLabel, setKpiAvgWorkTimeLabel] = useState("—");
   const [avgTicket, setAvgTicket] = useState(0);
   const [avgMarginPct, setAvgMarginPct] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
@@ -412,20 +580,82 @@ function JobsPageContent() {
   const [expandedAwaitingPaymentAccountGroups, setExpandedAwaitingPaymentAccountGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    if (status === "deleted" && viewMode !== "list") setViewMode("list");
-  }, [status, viewMode]);
+    if (!buFilter.selectedBuId) {
+      setBuAccountIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    getAccountIdsForBu(buFilter.selectedBuId).then((ids) => {
+      if (!cancelled) setBuAccountIds(ids);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [buFilter.selectedBuId]);
 
   useEffect(() => {
-    if (status === "deleted") setSelectedIds(new Set());
-  }, [status]);
+    const ids = [...new Set(data.map((j) => j.property_id).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setPropertyIdToAccountId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = getSupabase();
+        const { data: rows, error } = await supabase
+          .from("account_properties")
+          .select("id, account_id")
+          .in("id", ids)
+          .is("deleted_at", null);
+        if (error || cancelled) return;
+        const next: Record<string, string> = {};
+        for (const row of rows ?? []) {
+          const r = row as { id: string; account_id: string };
+          if (r.id && r.account_id) next[r.id] = r.account_id;
+        }
+        if (!cancelled) setPropertyIdToAccountId(next);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  useEffect(() => {
+    const legacy = LEGACY_JOBS_MANAGEMENT_TAB[status];
+    if (!legacy) return;
+    if (legacy.tab === "closed") {
+      setClosedJobsFilter(legacy.closedFilter ?? "all");
+    } else {
+      setClosedJobsFilter("all");
+    }
+    setStatus(legacy.tab);
+  }, [status, setStatus]);
+
+  useEffect(() => {
+    if (status !== "closed" || closedJobsFilter !== "archived") return;
+    if (viewMode !== "list") setViewMode("list");
+  }, [closedJobsFilter, status, viewMode]);
+
+  useEffect(() => {
+    if (status === "closed" && closedJobsFilter === "archived") setSelectedIds(new Set());
+  }, [closedJobsFilter, status]);
+
+  useEffect(() => {
+    if (status !== "closed") return;
+    refreshSilent();
+  }, [closedJobsFilter, refreshSilent, status]);
 
   useEffect(() => {
     if (!bulkActionModal) {
-      setBulkCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
+      setBulkCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
       setBulkCancelDetail("");
       setBulkMarkPaidConfirm(false);
     }
-  }, [bulkActionModal]);
+  }, [bulkActionModal, officeCancellationPresets]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -437,6 +667,16 @@ function JobsPageContent() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [filterOpen, dateFilterOpen]);
 
+  useEffect(() => {
+    setJobsListSortKey(null);
+    setJobsListSortDir("asc");
+  }, [status, closedJobsFilter]);
+
+  const handleJobsListSortChange = useCallback((key: string | null, direction: "asc" | "desc") => {
+    setJobsListSortKey(key);
+    setJobsListSortDir(direction);
+  }, []);
+
   const filteredData = useMemo(() => {
     return data.filter((j) => {
       if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
@@ -444,16 +684,25 @@ function JobsPageContent() {
       const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
       if (filterScheduled === "scheduled" && !hasDate) return false;
       if (filterScheduled === "unscheduled" && hasDate) return false;
-      if (buFilter.selectedBuId) {
-        if (!buFilter.clientIdsInBu) return true; // still loading
-        if (!j.client_id || !buFilter.clientIdsInBu.has(j.client_id)) return false;
+      if (
+        !jobPassesJobsPageBuFilter(j, buFilter.selectedBuId, buFilter.clientIdsInBu, buAccountIds, propertyIdToAccountId)
+      ) {
+        return false;
       }
       return true;
     });
-  }, [data, filterPartner, filterScheduled, buFilter.selectedBuId, buFilter.clientIdsInBu]);
+  }, [
+    data,
+    filterPartner,
+    filterScheduled,
+    buFilter.selectedBuId,
+    buFilter.clientIdsInBu,
+    buAccountIds,
+    propertyIdToAccountId,
+  ]);
 
-  /** Default sorting for Jobs Management: nearest schedule first (today -> tomorrow -> future). */
-  const sortedData = useMemo(() => {
+  /** Default sorting for Jobs Management (kanban / filter bar): nearest schedule first. */
+  const scheduleSortedData = useMemo(() => {
     const today = ukTodayYmd(new Date());
     const clone = [...filteredData];
     const scheduleMeta = (j: Job) => {
@@ -464,7 +713,8 @@ function JobsPageContent() {
       return { bucket: 2 as const, day };
     };
     const createdAt = (j: Job) => new Date(j.created_at ?? 0).getTime();
-    clone.sort((a, b) => {
+
+    const compareSchedule = (a: Job, b: Job): number => {
       if (filterSort === "booking_recent") return createdAt(b) - createdAt(a);
       if (filterSort === "booking_oldest") return createdAt(a) - createdAt(b);
       const sa = scheduleMeta(a);
@@ -474,9 +724,23 @@ function JobsPageContent() {
       const dayCmp = sa.day.localeCompare(sb.day);
       if (dayCmp !== 0) return dayCmp;
       return createdAt(b) - createdAt(a);
-    });
+    };
+
+    if (status === "action_required") {
+      const onHold = clone.filter((j) => j.status === "on_hold");
+      const rest = clone.filter((j) => j.status !== "on_hold");
+      onHold.sort((a, b) => {
+        const ta = new Date(a.on_hold_at ?? a.updated_at ?? 0).getTime();
+        const tb = new Date(b.on_hold_at ?? b.updated_at ?? 0).getTime();
+        return ta - tb;
+      });
+      rest.sort(compareSchedule);
+      return [...onHold, ...rest];
+    }
+
+    clone.sort(compareSchedule);
     return clone;
-  }, [filteredData, filterSort]);
+  }, [filteredData, filterSort, status]);
 
   const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
   const [customerPaidSumsReady, setCustomerPaidSumsReady] = useState(true);
@@ -510,71 +774,119 @@ function JobsPageContent() {
     };
   }, [data]);
 
-  const kanbanColumns = useMemo(() => {
-    const ids = [
-      "unassigned",
-      "scheduled",
-      "in_progress",
-      "on_hold",
-      "final_check",
-      "awaiting_payment",
-      "completed",
-      "cancelled",
-    ] as const;
-    return ids.map((id) => {
-      if (id === "on_hold") {
-        return {
-          id,
-          title: "On hold",
-          color: "bg-amber-500",
-          items: sortedData.filter((j) => j.status === "on_hold"),
-        };
+  const sortedDataForTable = useMemo(() => {
+    if (!jobsListSortKey) return scheduleSortedData;
+    const mul = jobsListSortDir === "asc" ? 1 : -1;
+    const clone = [...scheduleSortedData];
+    const jobAmount = (j: Job) => j.client_price + Number(j.extras_amount ?? 0);
+    const amountDue = (j: Job) => {
+      if (!customerPaidSumsReady) return 0;
+      const billable = jobCustomerBillableRevenueForCollections(j);
+      const paid = customerPaidByJobId[j.id] ?? 0;
+      return Math.max(0, billable - paid);
+    };
+    const accountLabel = (j: Job) => (j.client_id ? clientAccountMap[j.client_id] ?? "" : "");
+    clone.sort((a, b) => {
+      let cmp = 0;
+      switch (jobsListSortKey) {
+        case "reference":
+          cmp = (a.reference ?? "").localeCompare(b.reference ?? "", undefined, { sensitivity: "base" });
+          break;
+        case "client_name":
+          cmp = (a.client_name ?? "").localeCompare(b.client_name ?? "", undefined, { sensitivity: "base" });
+          break;
+        case "partner_name": {
+          const pa = (a.partner_name ?? "").trim();
+          const pb = (b.partner_name ?? "").trim();
+          cmp = pa.localeCompare(pb, undefined, { sensitivity: "base" });
+          break;
+        }
+        case "schedule": {
+          const da = jobScheduleStartYmdUk(a) ?? "9999-99-99";
+          const db = jobScheduleStartYmdUk(b) ?? "9999-99-99";
+          cmp = da.localeCompare(db);
+          break;
+        }
+        case "status":
+          if (status === "closed") {
+            cmp =
+              JOB_CLOSED_BUCKET_SORT_RANK[jobsManagementClosedBucket(a)] -
+              JOB_CLOSED_BUCKET_SORT_RANK[jobsManagementClosedBucket(b)];
+          } else if (status === "action_required") {
+            const ra = a.status === "on_hold" ? 1 : 0;
+            const rb = b.status === "on_hold" ? 1 : 0;
+            cmp = ra - rb || (effectiveJobStatusForDisplay(a) ?? "").localeCompare(effectiveJobStatusForDisplay(b) ?? "");
+          } else {
+            cmp = (effectiveJobStatusForDisplay(a) ?? "").localeCompare(effectiveJobStatusForDisplay(b) ?? "");
+          }
+          break;
+        case "account":
+          cmp = accountLabel(a).localeCompare(accountLabel(b), undefined, { sensitivity: "base" });
+          break;
+        case "margin_percent":
+          cmp = jobAmount(a) - jobAmount(b);
+          break;
+        case "amount_due":
+          cmp = amountDue(a) - amountDue(b);
+          break;
+        case "finance_status":
+          cmp = String(a.finance_status ?? "").localeCompare(String(b.finance_status ?? ""));
+          break;
+        case "__created_at":
+          cmp = new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+          break;
+        default:
+          cmp = 0;
       }
-      if (id === "in_progress") {
-        return {
-          id,
-          title: "In progress",
-          color: "bg-blue-500",
-          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
-        };
-      }
-      if (id === "scheduled") {
-        return {
-          id,
-          title: "Scheduled",
-          color: "bg-emerald-500",
-          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
-        };
-      }
-      if (id === "final_check") {
-        return {
-          id,
-          title: "Final checks",
-          color: "bg-violet-500",
-          items: sortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
-        };
-      }
-      return {
-        id,
-        title: statusConfig[id]?.label ?? id,
-        color:
-          id === "completed"
-            ? "bg-emerald-500"
-            : id === "cancelled"
-              ? "bg-red-500"
-                : id === "awaiting_payment"
-                  ? "bg-amber-500"
-                    : id === "unassigned"
-                      ? "bg-red-500"
-                      : "bg-blue-500",
-        items: sortedData.filter((j) =>
-          id === "unassigned"
-            ? jobRowMatchesJobsManagementTab(j, "unassigned")
-            : j.status === id,
-        ),
-      };
+      if (cmp !== 0) return mul * cmp;
+      return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
     });
-  }, [sortedData]);
+    return clone;
+  }, [
+    scheduleSortedData,
+    jobsListSortKey,
+    jobsListSortDir,
+    status,
+    customerPaidByJobId,
+    customerPaidSumsReady,
+    clientAccountMap,
+  ]);
+
+  const kanbanColumns = useMemo(() => {
+    const defs = [
+      {
+        id: "action_required",
+        title: "Action required",
+        color: "bg-red-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "action_required")),
+      },
+      {
+        id: "scheduled",
+        title: "Scheduled",
+        color: "bg-emerald-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
+      },
+      {
+        id: "in_progress",
+        title: "In progress",
+        color: "bg-blue-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
+      },
+      {
+        id: "final_check",
+        title: "Final checks",
+        color: "bg-violet-500",
+        items: scheduleSortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
+      },
+      {
+        id: "closed",
+        title: "Closed",
+        color: "bg-slate-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "closed")),
+      },
+    ] as const;
+    return defs.map((c) => ({ ...c }));
+  }, [scheduleSortedData]);
 
   const jobIdFromUrl = searchParams.get("jobId");
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
@@ -594,8 +906,17 @@ function JobsPageContent() {
             .not("deleted_at", "is", null),
         ]);
         const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
+        const archivedOverlap =
+          countOpts?.scheduleRange != null
+            ? await getArchivedDeletedJobsOverlappingScheduleCount(countOpts.scheduleRange)
+            : 0;
         const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
-        setTabCounts({ ...counts, all: allTabCount, deleted: deletedCount });
+        setTabCounts({
+          ...counts,
+          all: allTabCount,
+          deleted: deletedCount,
+          archived_overlap_window: archivedOverlap,
+        });
       } catch {
         /* tab badges — keep prior counts */
       }
@@ -614,8 +935,14 @@ function JobsPageContent() {
         );
         const revenueBasis = allWindowRows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
         const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
-        setTotalRevenue(ticketSum);
         setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
+
+        const kpiRowIds = allWindowRows.map((r) => r.id).filter(Boolean);
+        const enteredFinalChecksMap = await fetchFirstEnteredFinalChecksAtByJobIds(kpiRowIds);
+        const avgPipeSec = computeAvgScheduleToFinalChecksPipelineSeconds(allWindowRows, enteredFinalChecksMap);
+        setKpiAvgWorkTimeLabel(
+          avgPipeSec != null && avgPipeSec > 0 ? formatKpiAvgWorkSeconds(avgPipeSec) : "—",
+        );
 
         const marginRows = allWindowRows.filter(
           (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
@@ -663,19 +990,28 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  /** First KPI: same count as the “All Jobs” tab badge (entire window), not the selected tab. */
+  const actionRequiredTabCount = unassignedTabCount + onHoldTabCount;
+
+  const closedTabCount =
+    (tabCounts.awaiting_payment ?? 0) +
+    (tabCounts.completed ?? 0) +
+    (tabCounts.cancelled ?? 0) +
+    (scheduleRange ? (tabCounts.archived_overlap_window ?? 0) : (tabCounts.deleted ?? 0));
+
+  /** Jobs in Action Required → Final Checks (same scope as tab badges below). */
+  const kpiActiveJobsCount =
+    actionRequiredTabCount + scheduledTabCount + inProgressTabCount + finalChecksTabCount;
+
+  /** First tab badge still = all jobs in the date window. */
   const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
-    { id: "all", label: "All Jobs", count: tabCounts.all ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
-    { id: "unassigned", label: "Unassigned", count: unassignedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.unassigned },
+    { id: "all", label: "All jobs", count: kpiAllJobsCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
+    { id: "action_required", label: "Action Required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
-    { id: "on_hold", label: "On Hold", count: onHoldTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.on_hold },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
-    { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.completed },
-    { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.cancelled },
+    { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
   useEffect(() => {
@@ -766,6 +1102,7 @@ function JobsPageContent() {
         const anchor = {
           title: formData.title ?? "",
           catalog_service_id: formData.catalog_service_id ?? null,
+          catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           client_name: formData.client_name ?? "",
@@ -830,6 +1167,7 @@ function JobsPageContent() {
       const result = await createJob({
         title: formData.title ?? "",
         catalog_service_id: formData.catalog_service_id ?? null,
+        catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
         client_id: formData.client_id,
         client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
@@ -1100,7 +1438,7 @@ function JobsPageContent() {
       toast.error("Please add cancellation details for 'Other'.");
       return false;
     }
-    const reason = buildOfficeCancellationReasonText(bulkCancelPresetId, bulkCancelDetail);
+    const reason = buildOfficeCancellationReasonText(bulkCancelPresetId, bulkCancelDetail, officeCancellationPresets);
     try {
       const { data: jobRows, error: jobErr } = await supabase.from("jobs").select("*").in("id", ids).is("deleted_at", null);
       if (jobErr) throw jobErr;
@@ -1118,6 +1456,7 @@ function JobsPageContent() {
           return false;
         }
         const patch: Record<string, unknown> = {
+          ...patchOfficeCancelZeroJobEconomics(),
           status: "cancelled",
           cancellation_reason: reason,
           cancelled_at: now,
@@ -1132,6 +1471,10 @@ function JobsPageContent() {
         }
         if (upErr) throw upErr;
         updatedCount += 1;
+        const mergedForBump = { ...j, ...patch } as Job;
+        void bumpLinkedInvoiceAmountsToJobSchedule(mergedForBump).catch((e) =>
+          console.error("bumpLinkedInvoiceAmountsToJobSchedule", j.reference, e),
+        );
         cancelledForInvoices.push(j);
         if (j.partner_id?.trim()) {
           const fresh = { ...j, ...patch } as Job;
@@ -1173,6 +1516,7 @@ function JobsPageContent() {
     bulkCancelDetail,
     profile?.id,
     profile?.full_name,
+    officeCancellationPresets,
     refresh,
     loadDashboardStats,
   ]);
@@ -1286,10 +1630,12 @@ function JobsPageContent() {
       label: "Job",
       minWidth: "132px",
       cellClassName: "min-w-[8rem]",
+      sortable: true,
+      sortOptions: jobColumnSortPack("reference", "Job"),
       render: (item) => (
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
+        <div className="min-w-0 leading-tight">
+          <p className="text-[13px] font-semibold text-text-primary truncate">{item.reference}</p>
+          <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
         </div>
       ),
     },
@@ -1298,6 +1644,8 @@ function JobsPageContent() {
       label: "Client / Property",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
+      sortable: true,
+      sortOptions: jobColumnSortPack("client_name", "Client"),
       render: (item) => {
         const logo =
           item.client_id && clientAccountLogoByClientId[item.client_id] != null
@@ -1306,9 +1654,9 @@ function JobsPageContent() {
         return (
           <div className="flex items-start gap-2 min-w-0">
             <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
-              <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
+              <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
             </div>
           </div>
         );
@@ -1319,6 +1667,8 @@ function JobsPageContent() {
       label: "Schedule",
       minWidth: "200px",
       cellClassName: "min-w-[12.5rem] max-w-[16rem]",
+      sortable: true,
+      sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
@@ -1338,7 +1688,7 @@ function JobsPageContent() {
               isTomorrow || isToday || isInTwoDays ? (
                 <span
                   className={cn(
-                    "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                    "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold",
                     isToday
                       ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
                       : isTomorrow
@@ -1351,19 +1701,19 @@ function JobsPageContent() {
                 </span>
               ) : (
                 <span
-                  className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
+                  className="text-[11px] text-text-secondary leading-snug block whitespace-normal break-words"
                   title={detail ?? undefined}
                 >
                   {line}
                 </span>
               )
             ) : (
-              <span className="text-xs text-text-tertiary">—</span>
+              <span className="text-[11px] text-text-tertiary">—</span>
             )}
             {isOnsiteInProgress ? (
               <ScheduleInProgressLiveSecondary job={item} />
             ) : secondaryLine ? (
-              <p className="mt-0.5 text-[11px] text-text-tertiary">{secondaryLine}</p>
+              <p className="mt-0.5 text-[10px] text-text-tertiary leading-tight">{secondaryLine}</p>
             ) : null}
           </div>
         );
@@ -1375,6 +1725,8 @@ function JobsPageContent() {
       minWidth: "132px",
       cellClassName: "min-w-[7rem] max-w-[12rem]",
       headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: jobColumnSortPack("partner_name", "Partner"),
       render: (item) => {
         const partner = item.partner_name?.trim();
         return (
@@ -1382,7 +1734,7 @@ function JobsPageContent() {
             {partner ? (
               <div className="flex items-center gap-1.5 min-w-0" title={partner}>
                 <Avatar name={partner} size="xs" className="shrink-0" />
-                <span className="text-sm text-text-secondary truncate">{partner}</span>
+                <span className="text-[12px] text-text-secondary truncate">{partner}</span>
               </div>
             ) : (
               <span className="text-[11px] text-text-tertiary italic block">
@@ -1399,13 +1751,54 @@ function JobsPageContent() {
       minWidth: "118px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: JOB_SORT_STATUS,
       render: (item) => {
+        if (status === "action_required") {
+          const label = item.status === "on_hold" ? "On Hold" : "Unassigned";
+          const variant = item.status === "on_hold" ? JOB_STATUS_BADGE_VARIANT.on_hold : JOB_STATUS_BADGE_VARIANT.unassigned;
+          return (
+            <div className="inline-flex flex-col items-start gap-0.5">
+              <div className="inline-flex flex-wrap items-center gap-1.5">
+                <Badge variant={variant} dot>{label}</Badge>
+                <JobOverdueBadge job={item} />
+              </div>
+              {item.status === "on_hold" ? (
+                <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
+              ) : null}
+            </div>
+          );
+        }
+        if (status === "closed") {
+          const bucket = jobsManagementClosedBucket(item);
+          const lbl = jobsManagementClosedBucketLabel(bucket);
+          const statusKey =
+            bucket === "paid"
+              ? "completed"
+              : bucket === "awaiting_payment"
+                ? "awaiting_payment"
+                : bucket === "archived"
+                  ? "deleted"
+                  : "cancelled";
+          const variantTag = JOB_STATUS_BADGE_VARIANT[statusKey];
+          return (
+            <div className="inline-flex flex-wrap items-center gap-1.5">
+              <Badge variant={variantTag} dot>{lbl}</Badge>
+              <JobOverdueBadge job={item} />
+            </div>
+          );
+        }
         const st = effectiveJobStatusForDisplay(item);
         const c = statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex flex-wrap items-center gap-1.5">
-            <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
-            <JobOverdueBadge job={item} />
+          <div className="inline-flex flex-col items-start gap-0.5">
+            <div className="inline-flex flex-wrap items-center gap-1.5">
+              <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
+              <JobOverdueBadge job={item} />
+            </div>
+            {st === "on_hold" ? (
+              <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
+            ) : null}
           </div>
         );
       },
@@ -1415,6 +1808,8 @@ function JobsPageContent() {
       label: "Account",
       minWidth: "100px",
       cellClassName: "min-w-[6.25rem] max-w-[8rem]",
+      sortable: true,
+      sortOptions: jobColumnSortPack("account", "Account"),
       render: (item) =>
         item.client_id && clientAccountMap[item.client_id] ? (
           <span className="text-sm text-text-primary block truncate" title={clientAccountMap[item.client_id]}>
@@ -1430,6 +1825,8 @@ function JobsPageContent() {
       minWidth: "112px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: JOB_SORT_AMOUNT,
       render: (item) => (
         <div>
           <p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p>
@@ -1443,6 +1840,8 @@ function JobsPageContent() {
       minWidth: "96px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: JOB_SORT_AMOUNT_DUE,
       render: (item) => {
         if (!customerPaidSumsReady) {
           return <span className="text-sm text-text-tertiary">…</span>;
@@ -1459,6 +1858,8 @@ function JobsPageContent() {
       minWidth: "88px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: JOB_SORT_FINANCE,
       render: (item) => {
         const fs = item.finance_status ?? "unpaid";
         return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
@@ -1475,10 +1876,17 @@ function JobsPageContent() {
     },
   ];
 
+  const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
+  const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
+
   const awaitingPaymentAccountGroups = useMemo(() => {
-    if (status !== "awaiting_payment" || sortedData.length === 0) return [] as { key: string; jobs: Job[] }[];
+    const useAwaitingPaymentGrouping =
+      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
+    if (!useAwaitingPaymentGrouping || sortedDataForTable.length === 0) return [] as { key: string; jobs: Job[] }[];
+    const awaitingRows = sortedDataForTable.filter((j) => j.status === "awaiting_payment");
+    if (awaitingRows.length === 0) return [] as { key: string; jobs: Job[] }[];
     const m = new Map<string, Job[]>();
-    for (const job of sortedData) {
+    for (const job of awaitingRows) {
       const aid = job.client_id ? clientIdToSourceAccountId[job.client_id] ?? null : null;
       const key = aid ? `acc:${aid}` : "acc:unlinked";
       const list = m.get(key);
@@ -1494,7 +1902,7 @@ function JobsPageContent() {
       );
     });
     return list;
-  }, [status, sortedData, clientIdToSourceAccountId, clientAccountMap]);
+  }, [status, closedJobsFilter, sortedDataForTable, clientIdToSourceAccountId, clientAccountMap]);
 
   const awaitingPaymentGroupKeysSig = useMemo(
     () => awaitingPaymentAccountGroups.map((g) => g.key).join("|"),
@@ -1503,7 +1911,9 @@ function JobsPageContent() {
   const prevAwaitingPaymentGroupKeysSig = useRef<string | null>(null);
 
   useEffect(() => {
-    if (status !== "awaiting_payment" || awaitingPaymentAccountGroups.length === 0) return;
+    const useGrouping =
+      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
+    if (!useGrouping || awaitingPaymentAccountGroups.length === 0) return;
     if (prevAwaitingPaymentGroupKeysSig.current === awaitingPaymentGroupKeysSig) return;
     prevAwaitingPaymentGroupKeysSig.current = awaitingPaymentGroupKeysSig;
     setExpandedAwaitingPaymentAccountGroups(() => {
@@ -1513,10 +1923,12 @@ function JobsPageContent() {
       });
       return next;
     });
-  }, [status, awaitingPaymentGroupKeysSig, awaitingPaymentAccountGroups]);
+  }, [status, closedJobsFilter, awaitingPaymentGroupKeysSig, awaitingPaymentAccountGroups]);
 
   const awaitingPaymentGroupedSections = useMemo(() => {
-    if (status !== "awaiting_payment" || sortedData.length === 0 || awaitingPaymentAccountGroups.length === 0) {
+    const useGrouping =
+      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
+    if (!useGrouping || sortedDataForTable.length === 0 || awaitingPaymentAccountGroups.length === 0) {
       return undefined;
     }
     return awaitingPaymentAccountGroups.map((g) => {
@@ -1597,7 +2009,8 @@ function JobsPageContent() {
     });
   }, [
     status,
-    sortedData.length,
+    closedJobsFilter,
+    sortedDataForTable.length,
     awaitingPaymentAccountGroups,
     expandedAwaitingPaymentAccountGroups,
     clientAccountMap,
@@ -1619,7 +2032,7 @@ function JobsPageContent() {
       let p = 1;
       const pageSize = 500;
       while (true) {
-        const res = await listJobs({
+        const res = await fetchJobsManagementList({
           page: p,
           pageSize,
           search: search.trim() ? search : undefined,
@@ -1636,11 +2049,7 @@ function JobsPageContent() {
         const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
         if (filterScheduled === "scheduled" && !hasDate) return false;
         if (filterScheduled === "unscheduled" && hasDate) return false;
-        if (buFilter.selectedBuId) {
-          if (!buFilter.clientIdsInBu) return true;
-          if (!j.client_id || !buFilter.clientIdsInBu.has(j.client_id)) return false;
-        }
-        return true;
+        return jobPassesJobsPageBuFilter(j, buFilter.selectedBuId, buFilter.clientIdsInBu, buAccountIds, propertyIdToAccountId);
       });
       if (filtered.length === 0) {
         toast.info("No jobs to export");
@@ -1658,17 +2067,21 @@ function JobsPageContent() {
     search,
     status,
     listParams,
+    fetchJobsManagementList,
     filterPartner,
     filterScheduled,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
+    buAccountIds,
+    propertyIdToAccountId,
   ]);
 
   const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
   const jobsPageInfoTooltip = useMemo(() => {
     const parts = [
-      "Track and manage all active jobs.",
-      "Revenue & averages = all jobs shown below; status tabs only filter the list.",
+      "Track and manage jobs.",
+      "First KPI = active pipeline (Action Required through Final Checks). Avg time = mean wall-clock duration from scheduled anchor (start of booking) to first transition into Final Checks (audit), in the same schedule window.",
+      "Avg ticket & margin use the same schedule window as the list when Dates is set.",
     ];
     if (scheduleWindowLine) parts.push(scheduleWindowLine);
     return parts.join("\n\n");
@@ -1766,18 +2179,18 @@ function JobsPageContent() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
           <KpiCard
             className="min-h-[128px] h-full"
-            title={scheduleRange ? "All jobs (window)" : "All jobs"}
-            value={kpiFinancialLoading ? "—" : kpiAllJobsCount}
+            title={scheduleRange ? "Active jobs (window)" : "Active jobs"}
+            value={kpiFinancialLoading ? "—" : kpiActiveJobsCount}
             format="number"
             icon={Briefcase}
             accent="blue"
           />
           <KpiCard
             className="min-h-[128px] h-full"
-            title="Revenue"
-            value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(totalRevenue)}
+            title="Avg. time per job"
+            value={kpiFinancialLoading ? "—" : kpiAvgWorkTimeLabel}
             format="none"
-            icon={PoundSterling}
+            icon={Timer}
             accent="emerald"
           />
           <KpiCard
@@ -1801,7 +2214,14 @@ function JobsPageContent() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
             <div className="min-w-0 flex-1 pb-1 -mb-1">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
+            <Tabs
+              tabs={tabs}
+              activeTab={status}
+              onChange={(id) => {
+                if (id !== "closed") setClosedJobsFilter("all");
+                setStatus(id);
+              }}
+            />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
@@ -1809,9 +2229,6 @@ function JobsPageContent() {
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
-              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
-                Export
-              </Button>
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
@@ -1858,13 +2275,38 @@ function JobsPageContent() {
               </div>
             </div>
           </div>
+          {status === "closed" ? (
+            <div className="flex flex-wrap items-center gap-2 mb-4 pb-1 border-b border-border-light">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Closed</span>
+              {(
+                [
+                  ["all", "All"],
+                  ["paid", "Paid"],
+                  ["awaiting_payment", "Awaiting Payment"],
+                  ["archived", "Archived"],
+                  ["lost", "Lost"],
+                ] as const
+              ).map(([id, lbl]) => (
+                <Button
+                  key={id}
+                  type="button"
+                  size="sm"
+                  variant={closedJobsFilter === id ? "primary" : "outline"}
+                  className="h-7 text-[11px] px-2.5"
+                  onClick={() => setClosedJobsFilter(id)}
+                >
+                  {lbl}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           {viewMode === "list" && (
             <DataTable
               columns={columns}
-              data={sortedData}
+              data={sortedDataForTable}
               groupedSections={awaitingPaymentGroupedSections}
               columnConfigKey="jobs-columns"
-              columnConfigScope={status}
+              columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={(job) => router.push(`/jobs/${job.id}`)}
@@ -1881,16 +2323,23 @@ function JobsPageContent() {
               selectable
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
+              sortColumnKey={jobsListSortKey}
+              sortDirection={jobsListSortDir}
+              onSortChange={handleJobsListSortChange}
               bulkActions={
-                status === "deleted" ? (
+                status === "closed" ? (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <BulkBtn label="Recover" onClick={() => setBulkActionModal("recover")} variant="success" />
+                    {hasArchivedSelected ? (
+                      <BulkBtn label="Recover" onClick={() => setBulkActionModal("recover")} variant="success" />
+                    ) : null}
+                    {closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment" ? (
+                      <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
+                    ) : null}
+                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {status === "awaiting_payment" ? (
-                      <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
-                    ) : null}
                     <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
@@ -1909,7 +2358,14 @@ function JobsPageContent() {
                   onCardClick={(j) => router.push(`/jobs/${j.id}`)}
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
-                    const sc = statusConfig[disp] ?? { label: disp };
+                    const statusCaption =
+                      status === "action_required"
+                        ? j.status === "on_hold"
+                          ? "On Hold"
+                          : "Unassigned"
+                        : status === "closed"
+                          ? jobsManagementClosedBucketLabel(jobsManagementClosedBucket(j))
+                          : ((statusConfig[disp]?.label ?? disp) as string);
                     const sched = formatJobScheduleListLabel(j);
                     const schedDetail = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);
@@ -1927,9 +2383,14 @@ function JobsPageContent() {
                             <ZendeskTicketBadge source={j.external_source} ref={j.external_ref} size="xs" />
                           </div>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
-                          <div className="mt-1 flex flex-wrap items-center gap-1 min-w-0">
-                            <p className="text-[10px] text-text-tertiary truncate">{sc.label}</p>
-                            <JobOverdueBadge job={j} />
+                          <div className="mt-1 flex flex-col items-start gap-0.5 min-w-0">
+                            <div className="flex flex-wrap items-center gap-1 min-w-0">
+                              <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
+                              <JobOverdueBadge job={j} />
+                            </div>
+                            {status === "action_required" && j.status === "on_hold" ? (
+                              <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
+                            ) : null}
                           </div>
                           {sched ? (
                             <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
@@ -1997,7 +2458,7 @@ function JobsPageContent() {
               : bulkActionModal === "mark_paid"
                 ? "Mark selected jobs as paid?"
                 : bulkActionModal === "archive"
-                  ? "Move to Deleted?"
+                  ? "Archive jobs?"
                   : bulkActionModal === "recover"
                     ? "Recover selected jobs?"
                     : ""
@@ -2031,9 +2492,9 @@ function JobsPageContent() {
             {bulkActionModal === "archive" && (
               <>
                 Move <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to{" "}
-                <strong className="text-text-primary">Deleted</strong> (removed from KPIs and active tabs). Status will show{" "}
-                <strong className="text-text-primary">Deleted</strong>; you can recover from the Deleted tab. Linked invoices are cancelled
-                and hidden from Finance—recovering a job does not restore invoices.
+                <strong className="text-text-primary">Archived</strong> under Closed (removed from KPIs / active pipelines). They appear with
+                the <strong className="text-text-primary">Archived</strong> label; recover via Jobs → Closed → Archived. Linked invoices are
+                cancelled and hidden from Finance—recovering a job does not restore invoices.
               </>
             )}
             {bulkActionModal === "recover" && (
@@ -2048,7 +2509,7 @@ function JobsPageContent() {
               <Select
                 value={bulkCancelPresetId}
                 onChange={(e) => setBulkCancelPresetId(e.target.value)}
-                options={OFFICE_JOB_CANCELLATION_REASONS.map((row) => ({ value: row.id, label: row.label }))}
+                options={officeCancellationPresets.map((row) => ({ value: row.id, label: row.label }))}
               />
               <Input
                 value={bulkCancelDetail}
@@ -2115,7 +2576,7 @@ function JobsPageContent() {
                   : bulkActionModal === "mark_paid"
                     ? "Yes, mark as paid"
                     : bulkActionModal === "archive"
-                      ? "Yes, move to Deleted"
+                      ? "Yes, archive"
                       : bulkActionModal === "recover"
                         ? "Yes, recover"
                         : "Confirm"}
@@ -2168,6 +2629,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [form, setForm] = useState({
     title: "",
     catalog_service_id: "",
+    catalog_pricing_preset_id: "",
     partner_id: "",
     partner_ids: [] as string[],
     client_price: "",
@@ -2177,7 +2639,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
     scheduled_date: "",
     arrival_from: "09:00",
     arrival_window_mins: "180",
-    expected_finish_date: "",
     end_date: "",
     end_time: "17:00",
     job_type: "fixed",
@@ -2210,7 +2671,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [effectiveAccountId, setEffectiveAccountId] = useState<string | null>(null);
   useEffect(() => {
     const cid = clientAddress.client_id?.trim();
-    if (!cid) { setEffectiveAccountId(null); return; }
+    if (!cid) {
+      queueMicrotask(() => setEffectiveAccountId(null));
+      return;
+    }
     let cancelled = false;
     getSupabase()
       .from("clients")
@@ -2230,6 +2694,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     accountId: effectiveAccountId,
     partnerId: form.partner_id,
     catalogServiceId: form.catalog_service_id,
+    pricingPresetId: form.catalog_pricing_preset_id,
   });
 
   // Auto-fill prices whenever the resolver returns a fresh `pricing` object.
@@ -2239,17 +2704,47 @@ function CreateJobModal({ open, onClose, onCreate }: {
   // to misfire when pricing lagged behind a triple change).
   useEffect(() => {
     if (!pricing) return;
-    setForm((prev) => ({
-      ...prev,
-      job_type: pricing.pricing_mode,
-      hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
-      hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
-      billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
-      client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
-      partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
-    }));
+    queueMicrotask(() =>
+      setForm((prev) => ({
+        ...prev,
+        job_type: pricing.pricing_mode,
+        hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
+        hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
+        billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
+        client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
+        partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
+      })),
+    );
   }, [pricing]);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const catalogPricingPresetOptions = useMemo(() => {
+    if (!selectedCatalogService) return [];
+    return sortPricingPresetsDisplay(parsePricingPresets(selectedCatalogService.pricing_presets));
+  }, [selectedCatalogService]);
+
+  useEffect(() => {
+    const svc = catalogServices.find((s) => s.id === form.catalog_service_id);
+    if (!svc) {
+      queueMicrotask(() =>
+        setForm((p) => (p.catalog_pricing_preset_id ? { ...p, catalog_pricing_preset_id: "" } : p)),
+      );
+      return;
+    }
+    const presets = sortPricingPresetsDisplay(parsePricingPresets(svc.pricing_presets));
+    if (presets.length === 0) {
+      queueMicrotask(() =>
+        setForm((p) => (p.catalog_pricing_preset_id ? { ...p, catalog_pricing_preset_id: "" } : p)),
+      );
+      return;
+    }
+    queueMicrotask(() =>
+      setForm((p) => {
+        const cur = p.catalog_pricing_preset_id?.trim();
+        if (cur && presets.some((x) => x.id === cur)) return p;
+        return { ...p, catalog_pricing_preset_id: presets[0]?.id ?? "" };
+      }),
+    );
+  }, [form.catalog_service_id, catalogServices]);
   const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
@@ -2270,16 +2765,18 @@ function CreateJobModal({ open, onClose, onCreate }: {
         );
       });
   const filteredPartners = [...filteredPartnersBase].sort((a, b) => {
-    const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
-    const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+    const cid = form.catalog_service_id?.trim() || "";
+    const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType, cid || null) : false;
+    const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType, cid || null) : false;
     if (aMatch !== bMatch) return aMatch ? -1 : 1;
     return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
   });
   const filteredWorkTypes = useMemo(() => {
+    const labels = typeOfWorkLabelsFromCatalog(catalogServices, null);
     const q = workTypeSearch.trim().toLowerCase();
-    if (!q) return TYPE_OF_WORK_OPTIONS;
-    return TYPE_OF_WORK_OPTIONS.filter((name) => name.toLowerCase().includes(q));
-  }, [workTypeSearch]);
+    if (!q) return labels;
+    return labels.filter((name) => name.toLowerCase().includes(q));
+  }, [workTypeSearch, catalogServices]);
 
   useEffect(() => {
     if (!open) return;
@@ -2351,31 +2848,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const scheduled_date = schedV2.payload.scheduled_date;
     const scheduled_start_at = schedV2.payload.scheduled_start_at;
     const scheduled_end_at = schedV2.payload.scheduled_end_at;
-    let scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
+    const scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
     const expected_finish_at: string | null = schedV2.payload.expected_finish_at ?? null;
     const job_kind: JobKind = schedV2.payload.job_kind;
 
-    // For one-off, the legacy expected_finish_date input still feeds scheduled_finish_date.
-    if (job_kind === "one_off" && scheduled_date) {
-      const efRaw = form.expected_finish_date?.trim() ?? "";
-      const expected_finish = parseIsoDateOnly(efRaw);
-      if (efRaw && !expected_finish) {
-        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
-        return;
-      }
-      if (!expected_finish) {
-        toast.error("Expected finish date is required when a start date is set.");
-        return;
-      }
-      if (expected_finish < scheduled_date) {
-        toast.error("Expected finish date must be on or after the start date.");
-        return;
-      }
-      scheduled_finish_date = expected_finish;
-    } else if (job_kind === "one_off" && form.expected_finish_date?.trim()) {
-      toast.error("Clear expected finish or set a start date.");
-      return;
-    }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
     const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
@@ -2410,6 +2886,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
         ? (selectedCatalogService?.name ? (normalizeTypeOfWork(selectedCatalogService.name) || selectedCatalogService.name) : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()))
         : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()),
       catalog_service_id: form.catalog_service_id || null,
+      catalog_pricing_preset_id:
+        form.catalog_service_id?.trim() && form.catalog_pricing_preset_id?.trim()
+          ? form.catalog_pricing_preset_id.trim()
+          : null,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
@@ -2446,6 +2926,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     setForm({
       title: "",
       catalog_service_id: "",
+      catalog_pricing_preset_id: "",
       partner_id: "",
       partner_ids: [],
       client_price: "",
@@ -2455,7 +2936,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
       scheduled_date: "",
       arrival_from: "09:00",
       arrival_window_mins: "180",
-      expected_finish_date: "",
       end_date: "",
       end_time: "17:00",
       job_type: "fixed",
@@ -2546,7 +3026,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => update("job_type", "fixed")}
+                    onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
                     className={cn(
                       "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
                       form.job_type === "fixed"
@@ -2554,9 +3034,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Fixed</span>
+                    <span className="flex items-start gap-1.5 leading-snug">
+                      <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      {pricingModeLabel("fixed")}
+                    </span>
                     <span className={cn("mt-0.5 block text-[10px]", form.job_type === "fixed" ? "text-white/70" : "text-[#888]")}>
-                      Set price upfront
+                      Set prices on this job
                     </span>
                   </button>
                   <button
@@ -2569,9 +3052,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" /> Hourly</span>
+                    <span className="flex items-start gap-1.5 leading-snug">
+                      <Clock3 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      {pricingModeLabel("hourly")}
+                    </span>
                     <span className={cn("mt-0.5 block text-[10px]", form.job_type === "hourly" ? "text-white/70" : "text-[#888]")}>
-                      Charged per hour
+                      From Services, accounts &amp; partners
                     </span>
                   </button>
               </div>
@@ -2590,9 +3076,19 @@ function CreateJobModal({ open, onClose, onCreate }: {
                       value={form.catalog_service_id}
                       className={requiredFieldClass}
                       onChange={(id, service) => {
-                        const hrs = Math.max(1, Number(service?.default_hours) || 1);
-                        const clientRate = Number(service?.hourly_rate) || 0;
-                        const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+                        if (!service) {
+                          setForm((prev) => ({
+                            ...prev,
+                            catalog_service_id: id,
+                            catalog_pricing_preset_id: "",
+                          }));
+                          return;
+                        }
+                        const presetId = defaultPricingPresetId(service);
+                        const eff = mergeCatalogWithPricingPreset(service, presetId || null);
+                        const hrs = Math.max(1, Number(eff.default_hours) || 1);
+                        const clientRate = Number(eff.hourly_rate) || 0;
+                        const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
                         const totals = computeHourlyTotals({
                           elapsedSeconds: hrs * 3600,
                           clientHourlyRate: clientRate,
@@ -2601,6 +3097,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         setForm((prev) => ({
                           ...prev,
                           catalog_service_id: id,
+                          catalog_pricing_preset_id: presetId,
                           title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
                           hourly_client_rate: String(clientRate || ""),
                           hourly_partner_rate: String(partnerRate || ""),
@@ -2646,7 +3143,18 @@ function CreateJobModal({ open, onClose, onCreate }: {
                                   key={name}
                                   type="button"
                                   onClick={() => {
-                                    update("title", name);
+                                    const catId = catalogServiceIdForTypeOfWorkLabel(name, catalogServices) ?? "";
+                                    const service = catId ? catalogServices.find((s) => s.id === catId) : undefined;
+                                    const hasPresets =
+                                      !!service &&
+                                      sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets)).length > 0;
+                                    const presetId = hasPresets && service ? defaultPricingPresetId(service) : "";
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      title: name,
+                                      catalog_service_id: catId,
+                                      catalog_pricing_preset_id: presetId,
+                                    }));
                                     setWorkTypeOpen(false);
                                     setWorkTypeSearch("");
                                   }}
@@ -2670,6 +3178,28 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     </div>
                   </>
                 )}
+                {catalogPricingPresetOptions.length > 0 ? (
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-text-tertiary">Price band</label>
+                    <select
+                      value={form.catalog_pricing_preset_id}
+                      onChange={(e) => setForm((p) => ({ ...p, catalog_pricing_preset_id: e.target.value }))}
+                      className={cn(
+                        "w-full h-9 rounded-lg border bg-card px-2.5 text-sm text-text-primary",
+                        requiredFieldClass,
+                      )}
+                    >
+                      {catalogPricingPresetOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-text-tertiary">
+                      Overrides base catalogue prices before account or partner overrides.
+                    </p>
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
@@ -2684,14 +3214,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
               scheduledDate={form.scheduled_date}
               arrivalFrom={form.arrival_from}
               arrivalWindowMins={form.arrival_window_mins}
-              expectedFinishDate={form.expected_finish_date}
               endDate={form.end_date}
               endTime={form.end_time}
               recurrence={recurrence}
               onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
               onChange={(field, value) => update(field, value)}
               startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
-              expectedFinishRequired={form.job_kind === "one_off" && !!form.scheduled_date?.trim()}
               requiredFieldClassName={requiredFieldClass}
             />
           </section>
@@ -2982,7 +3510,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   {filteredPartners.map((p) => {
                     const pid = p.id;
                     const selected = form.partner_id === pid;
-                    const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                    const match = targetWorkType
+                      ? safePartnerMatchesTypeOfWork(p, targetWorkType, form.catalog_service_id || null)
+                      : false;
                     return (
                       <label
                         key={pid}
