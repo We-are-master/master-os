@@ -8,10 +8,12 @@
 -- application-level glue at the call site.
 --
 -- Configuration (one-time per environment, NOT in this migration):
---   ALTER DATABASE postgres SET app.zendesk_sync_url    = 'https://<host>/api/internal/zendesk/sync-status';
---   ALTER DATABASE postgres SET app.zendesk_sync_secret = '<matches ZENDESK_SYNC_INTERNAL_SECRET>';
--- After setting, reconnect the session/role for the GUCs to take effect.
--- Until both are set, the trigger is a no-op (logs a NOTICE).
+-- Supabase managed Postgres doesn't allow ALTER DATABASE for custom GUCs by
+-- non-superusers, so we read the URL + secret from Supabase Vault instead.
+-- After this migration is applied, run via the SQL editor:
+--   SELECT vault.create_secret('https://<host>/api/internal/zendesk/sync-status', 'zendesk_sync_url');
+--   SELECT vault.create_secret('<matches ZENDESK_SYNC_INTERNAL_SECRET>',          'zendesk_sync_secret');
+-- Until both secrets exist, the trigger is a no-op (logs a NOTICE).
 
 -- ─── Enable pg_net (idempotent) ──────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
@@ -29,12 +31,15 @@ DECLARE
   v_url    text;
   v_secret text;
 BEGIN
-  v_url    := current_setting('app.zendesk_sync_url',    true);
-  v_secret := current_setting('app.zendesk_sync_secret', true);
+  -- Read from Supabase Vault (created with vault.create_secret(value, name)).
+  SELECT decrypted_secret INTO v_url
+    FROM vault.decrypted_secrets WHERE name = 'zendesk_sync_url'    LIMIT 1;
+  SELECT decrypted_secret INTO v_secret
+    FROM vault.decrypted_secrets WHERE name = 'zendesk_sync_secret' LIMIT 1;
 
   -- No-op if not configured for this environment yet.
   IF v_url IS NULL OR v_url = '' OR v_secret IS NULL OR v_secret = '' THEN
-    RAISE NOTICE 'zendesk_sync_dispatch skipped: app.zendesk_sync_url / app.zendesk_sync_secret not set';
+    RAISE NOTICE 'zendesk_sync_dispatch skipped: vault secrets zendesk_sync_url / zendesk_sync_secret not set';
     RETURN;
   END IF;
 
@@ -122,7 +127,7 @@ CREATE TRIGGER trg_quotes_zendesk_sync
   EXECUTE FUNCTION public.tg_quotes_zendesk_sync();
 
 COMMENT ON FUNCTION public.zendesk_sync_dispatch(text, uuid) IS
-  'Posts {entity, id} to the internal /api/internal/zendesk/sync-status endpoint via pg_net. No-op if app.zendesk_sync_url / app.zendesk_sync_secret are unset.';
+  'Posts {entity, id} to the internal /api/internal/zendesk/sync-status endpoint via pg_net. Reads URL + secret from vault (zendesk_sync_url, zendesk_sync_secret). No-op if either secret is missing.';
 
 COMMENT ON FUNCTION public.tg_jobs_zendesk_sync() IS
   'AFTER UPDATE OF status ON jobs — fires the Zendesk status sync for zendesk-linked jobs whose status actually changed (excludes deleted).';
