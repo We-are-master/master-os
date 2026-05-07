@@ -166,6 +166,7 @@ import {
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { normalizeTypeOfWork, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -1379,9 +1380,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   useEffect(() => {
     if (job?.scheduled_start_at) {
-      const d = new Date(job.scheduled_start_at);
-      setScheduleDate(d.toISOString().slice(0, 10));
-      setScheduleTime(d.toTimeString().slice(0, 5));
+      const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
+      setScheduleDate(ymd);
+      setScheduleTime(hm);
       if (job.scheduled_end_at) {
         const startMs = new Date(job.scheduled_start_at).getTime();
         const endMs = new Date(job.scheduled_end_at).getTime();
@@ -2807,17 +2808,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         return;
       }
 
-      const scheduled_start_at = `${d}T${tFrom}:00`;
+      // Treat the form's date+time as UK wall-clock and persist as proper UTC.
+      const scheduled_start_at = ukWallClockToUtcIso(d, tFrom);
+      if (!scheduled_start_at) {
+        toast.error("Invalid arrival date or time.");
+        return;
+      }
       let scheduled_end_at: string | null = null;
       if (hasWindow) {
-        const endIso = scheduledEndFromWindow(d, tFrom, windowMins);
         const startMs = new Date(scheduled_start_at).getTime();
-        const endMs = new Date(endIso).getTime();
+        const endMs = startMs + windowMins * 60_000;
         if (!(endMs > startMs)) {
           toast.error("Arrival window must end after the start time.");
           return;
         }
-        scheduled_end_at = endIso;
+        scheduled_end_at = new Date(endMs).toISOString();
       }
 
       dispatchRecurrenceAware(
@@ -2848,11 +2853,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!d || !t) return null;
     const windowMins = wm ? Number(wm) : NaN;
     const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
-    const startIso = `${d}T${t}:00`;
+    const startIso = ukWallClockToUtcIso(d, t);
+    if (!startIso) return null;
     if (!hasWindow) {
       return `Client & partner will see: Arrival time ${formatHourMinuteAmPm(new Date(startIso))} — add a window length (2–3h typical) for a clear range.`;
     }
-    const endIso = scheduledEndFromWindow(d, t, windowMins);
+    const endIso = new Date(new Date(startIso).getTime() + windowMins * 60_000).toISOString();
     const range = formatArrivalTimeRange(startIso, endIso);
     return range ? `Client & partner will see: Arrival time (${range})` : null;
   }, [scheduleDate, scheduleTime, scheduleWindowMins]);
@@ -4835,10 +4841,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       job.scheduled_date?.slice(0, 10) ||
                       job.scheduled_start_at?.slice(0, 10) ||
                       "";
-                    const startIso =
+                    // Form state is in UK wall-clock; convert to UTC ISO so the
+                    // UK-timezone formatters render the same hours back.
+                    const uiStartUtcIso =
                       displayDate && scheduleTime.trim()
-                        ? `${displayDate}T${scheduleTime.trim()}:00`
-                        : job.scheduled_start_at?.trim() || "";
+                        ? ukWallClockToUtcIso(displayDate, scheduleTime.trim())
+                        : "";
+                    const startIso = uiStartUtcIso || job.scheduled_start_at?.trim() || "";
                     const windowValue = Number(scheduleWindowMins);
                     const hasWindow = Number.isFinite(windowValue) && windowValue > 0;
                     const windowLabel =
@@ -4849,10 +4858,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ? formatArrivalTimeRange(job.scheduled_start_at, job.scheduled_end_at)
                         : null;
                     const rangeFromUi =
-                      hasWindow && displayDate && scheduleTime.trim()
+                      hasWindow && uiStartUtcIso
                         ? formatArrivalTimeRange(
-                            `${displayDate}T${scheduleTime.trim()}:00`,
-                            scheduledEndFromWindow(displayDate, scheduleTime.trim(), windowValue),
+                            uiStartUtcIso,
+                            new Date(new Date(uiStartUtcIso).getTime() + windowValue * 60_000).toISOString(),
                           )
                         : null;
                     const agreedArrivalRange = rangeFromStored || rangeFromUi;

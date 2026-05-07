@@ -1,5 +1,5 @@
-import { scheduledEndFromWindow } from "@/lib/job-arrival-window";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
+import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import type { JobKind, JobRecurrenceByday, JobRecurrencePattern } from "@/types/database";
 import { validateRule } from "@/lib/job-recurrence";
 
@@ -15,11 +15,14 @@ export function jobModalClientArrivalPreview(
   if (!d || !t) return null;
   const windowMins = wmRaw ? Number(wmRaw) : NaN;
   const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
-  const startIso = `${d}T${t}:00`;
+  // Form inputs are UK wall-clock — convert to a proper UTC ISO so the
+  // UK-timezone formatters render the same hours back.
+  const startIso = ukWallClockToUtcIso(d, t);
+  if (!startIso) return null;
   if (!hasWindow) {
     return `Client & partner will see: Arrival time ${formatHourMinuteAmPm(new Date(startIso))} — choose window length for a range (2–3h typical).`;
   }
-  const endIso = scheduledEndFromWindow(d, t, windowMins);
+  const endIso = new Date(new Date(startIso).getTime() + windowMins * 60_000).toISOString();
   const range = formatArrivalTimeRange(startIso, endIso);
   return range ? `Client & partner will see: Arrival time (${range})` : null;
 }
@@ -52,22 +55,21 @@ export function resolveJobModalSchedule(input: {
       return { ok: false, error: "Set arrival from and window length when assigning a partner." };
     }
   }
-  if (hasFrom && hasWindow && scheduled_date) {
-    const endIso = scheduledEndFromWindow(scheduled_date, input.arrival_from, windowMins);
-    const startMs = new Date(`${scheduled_date}T${input.arrival_from}:00`).getTime();
-    const endMs = new Date(endIso).getTime();
-    if (!(endMs > startMs)) {
-      return { ok: false, error: "Arrival window end must be after start." };
-    }
-  }
-
   let scheduled_start_at: string | undefined;
   let scheduled_end_at: string | undefined;
-  if (scheduled_date && hasFrom && hasWindow) {
-    scheduled_start_at = `${scheduled_date}T${input.arrival_from}:00`;
-    scheduled_end_at = scheduledEndFromWindow(scheduled_date, input.arrival_from, windowMins);
-  } else if (scheduled_date && hasFrom) {
-    scheduled_start_at = `${scheduled_date}T${input.arrival_from}:00`;
+  if (scheduled_date && hasFrom) {
+    const startIso = ukWallClockToUtcIso(scheduled_date, input.arrival_from);
+    if (!startIso) {
+      return { ok: false, error: "Invalid date or arrival time." };
+    }
+    scheduled_start_at = startIso;
+    if (hasWindow) {
+      const endIso = new Date(new Date(startIso).getTime() + windowMins * 60_000).toISOString();
+      if (!(new Date(endIso).getTime() > new Date(startIso).getTime())) {
+        return { ok: false, error: "Arrival window end must be after start." };
+      }
+      scheduled_end_at = endIso;
+    }
   }
   return { ok: true, scheduled_date, scheduled_start_at, scheduled_end_at };
 }
@@ -208,8 +210,11 @@ export function resolveJobModalScheduleV2(input: {
     }
 
     // First occurrence (anchor job): single-day window using start/end times.
-    const occStartIso = `${start_date}T${r.start_time}:00`;
-    const occEndIso = `${start_date}T${r.end_time}:00`;
+    const occStartIso = ukWallClockToUtcIso(start_date, r.start_time);
+    const occEndIso = ukWallClockToUtcIso(start_date, r.end_time);
+    if (!occStartIso || !occEndIso) {
+      return { ok: false, error: "Invalid recurring start/end time." };
+    }
 
     return {
       ok: true,
@@ -241,11 +246,13 @@ export function resolveJobModalScheduleV2(input: {
     if (!start_date || !start_time || !end_date || !end_time) {
       return { ok: false, error: "Multi-day jobs need a start date+time and an end date+time." };
     }
-    const startMs = new Date(`${start_date}T${start_time}:00`).getTime();
-    const endMs = new Date(`${end_date}T${end_time}:00`).getTime();
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    const startIso = ukWallClockToUtcIso(start_date, start_time);
+    const endIso = ukWallClockToUtcIso(end_date, end_time);
+    if (!startIso || !endIso) {
       return { ok: false, error: "Invalid date/time format." };
     }
+    const startMs = new Date(startIso).getTime();
+    const endMs = new Date(endIso).getTime();
     if (endMs <= startMs) {
       return { ok: false, error: "Multi-day end date/time must be after the start." };
     }
@@ -255,10 +262,10 @@ export function resolveJobModalScheduleV2(input: {
       payload: {
         job_kind: "multi_day",
         scheduled_date: start_date,
-        scheduled_start_at: `${start_date}T${start_time}:00`,
-        scheduled_end_at: `${end_date}T${end_time}:00`,
+        scheduled_start_at: startIso,
+        scheduled_end_at: endIso,
         scheduled_finish_date: end_date,
-        expected_finish_at: `${end_date}T${end_time}:00`,
+        expected_finish_at: endIso,
       },
     };
   }
