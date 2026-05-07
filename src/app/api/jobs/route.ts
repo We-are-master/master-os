@@ -5,16 +5,13 @@ import { isValidUUID } from "@/lib/auth-api";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import type { Partner } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isZendeskConfigured, updateTicket as zdUpdate } from "@/lib/zendesk";
-import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
+import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
+import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-
-/** Custom Zendesk status set on the main ticket once the job is created. */
-const ZENDESK_STATUS_JOB_CREATED = 5688453749919;
 
 /**
  * POST /api/jobs
@@ -308,29 +305,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Zendesk main-ticket confirmation (fire-and-forget) ─────────────
-  // When the job came from a Zendesk-linked request, post a public booking
-  // confirmation comment back on the MAIN ticket and flip its custom status.
-  // The side-conversation creation happens elsewhere (Zendesk macro / agent
-  // workflow) — this is the customer-facing reply on the parent ticket.
-  if (ticketId && isZendeskConfigured()) {
-    const html = buildJobConfirmationHtml({
-      customerName:    clientName,
-      reference:       String(inserted.reference),
-      title,
-      propertyAddress,
-      scope:           description,
-      scheduledDate:   isoDate,
-      scheduledHour:   hour,
-      totalGbp:        clientPrice,
-    });
-    void zdUpdate({
-      ticketId,
-      customStatusId: ZENDESK_STATUS_JOB_CREATED,
-      htmlBody:       html,
-      publicComment:  true,
-    }).catch((err) => {
-      console.error("[api/jobs] Zendesk confirmation failed:", err);
+  // ─── Zendesk dispatch (fire-and-forget; idempotent) ─────────────────
+  // Sync ticket custom_status_id and post the customer-facing booking
+  // confirmation + open the partner side conversation. The DB trigger
+  // (mig 166/167) is the backup path — both call the same idempotent
+  // helpers, so duplicate execution is safe.
+  if (ticketId) {
+    void Promise.all([
+      syncJobZendeskStatus(inserted.id, supabase),
+      dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
+    ]).catch((err) => {
+      console.error("[api/jobs] Zendesk dispatch failed:", err);
     });
   }
 
