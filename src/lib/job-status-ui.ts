@@ -44,6 +44,7 @@ export type JobsManagementTabAccent =
 
 export const JOBS_MANAGEMENT_TAB_ACCENTS: Record<string, JobsManagementTabAccent> = {
   all: "neutral",
+  action_required: "red",
   unassigned: "red",
   scheduled: "green",
   in_progress: "blue",
@@ -53,4 +54,5 @@ export const JOBS_MANAGEMENT_TAB_ACCENTS: Record<string, JobsManagementTabAccent
   completed: "emerald",
   cancelled: "red",
   deleted: "slate",
+  closed: "neutral",
 };

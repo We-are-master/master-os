@@ -1,5 +1,5 @@
 import type { JobStatus } from "@/types/database";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { GENERAL_MAINTENANCE_LABEL, normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** Two-letter codes for calendar chips (type of work from job title). */
 export const SCHEDULE_TYPE_ABBR: Record<string, string> = {
@@ -52,21 +52,27 @@ export function scheduleJobStatusColorClasses(status: JobStatus): string {
 }
 
 /**
- * Best matching catalogue type from job title (e.g. "Plumber — leak" → Plumber).
+ * Best matching **Services catalog** name from job title (e.g. "Plumber — leak" → Plumber).
+ * Pass active `service_catalog` names when available (Live View / schedule); otherwise aliases + General Maintenance.
  */
-export function resolveScheduleJobTypeKey(title: string): string {
+export function resolveScheduleJobTypeKey(title: string, catalogNames: string[] = []): string {
   const t = title.trim();
-  if (!t) return "General Maintenance";
+  if (!t) return GENERAL_MAINTENANCE_LABEL;
   const lower = t.toLowerCase();
-  const exact = TYPE_OF_WORK_OPTIONS.find((opt) => lower === opt.toLowerCase());
+  const exact = catalogNames.find((opt) => lower === opt.toLowerCase());
   if (exact) return exact;
-  const contains = TYPE_OF_WORK_OPTIONS.find((opt) => lower.includes(opt.toLowerCase()));
+  const contains = catalogNames.find((opt) => lower.includes(opt.toLowerCase()));
   if (contains) return contains;
   const firstWord = lower.split(/[\s—–-]+/)[0] ?? "";
-  const fuzzy = TYPE_OF_WORK_OPTIONS.find(
-    (opt) => opt.toLowerCase().startsWith(firstWord) || firstWord.startsWith(opt.toLowerCase().slice(0, 4)),
+  const fuzzy = catalogNames.find(
+    (opt) =>
+      opt.toLowerCase().startsWith(firstWord) ||
+      (firstWord.length >= 2 && firstWord.startsWith(opt.toLowerCase().slice(0, Math.min(4, opt.length)))),
   );
-  return fuzzy ?? "General Maintenance";
+  if (fuzzy) return fuzzy;
+  const norm = normalizeTypeOfWork(t);
+  if (norm) return norm;
+  return GENERAL_MAINTENANCE_LABEL;
 }
 
 export function scheduleJobAbbrevFromTitle(title: string): string {

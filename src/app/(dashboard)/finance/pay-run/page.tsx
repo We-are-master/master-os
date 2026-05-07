@@ -674,7 +674,7 @@ export default function PayRunPage() {
                                       key={row.id}
                                       className={cn(
                                         "flex flex-col gap-1.5 border-t border-border-light px-3 py-2 sm:flex-row sm:items-center sm:gap-3",
-                                        isZebra && "bg-[#F5F5F7]",
+                                        isZebra && "bg-[#F5F5F7] dark:bg-white/[0.04]",
                                         !isPending && "opacity-70",
                                       )}
                                     >

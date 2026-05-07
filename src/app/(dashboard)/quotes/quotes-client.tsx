@@ -30,13 +30,14 @@ import {
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { toast } from "sonner";
-import type { Quote, Partner, Job, Account, QuoteDurationUnit } from "@/types/database";
+import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
-import { getClient } from "@/services/clients";
+import { resolveCorporateAccountIdForClient } from "@/services/clients";
 import { getAccount, listAccounts } from "@/services/accounts";
 import { createAccountProperty, getAccountProperty, listAccountProperties } from "@/services/account-properties";
 import { getAccountIdsForBu } from "@/services/business-units";
@@ -48,6 +49,7 @@ import {
 } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { createJob, getJobByQuoteId } from "@/services/jobs";
+import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { createJobPayment } from "@/services/job-payments";
 import { listPartners } from "@/services/partners";
 import { useBuFilter } from "@/hooks/use-bu-filter";
@@ -65,15 +67,31 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
+import {
+  quoteBiddingSlaDeadlineMsFromQuote,
+  formatSlaRemainCountdownMinutes,
+  formatSlaOverdueMinutes,
+  computeBiddingSlaRollup,
+  formatMinutesAsAge,
+  biddingQuoteSlaUsesStoredAnchor,
+  type BiddingSlaRollup,
+  type BiddingSlaAnchorQuote,
+} from "@/lib/quote-bidding-sla";
+import { formatBiddingSlaHoursLabel } from "@/lib/frontend-setup";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
-import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
-import { getScheduleRangeYmd, ukTodayYmd, type ScheduleDatePreset } from "@/lib/uk-schedule-range";
 import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
-import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
+import { resolveNominalBillingParty, getQuoteProposalRecipientEmail } from "@/lib/account-billing-addressee";
+import {
+  resolveJobModalScheduleV2,
+  DEFAULT_RECURRENCE_FORM,
+  type RecurrenceFormState,
+  type JobScheduleV2SeriesPayload,
+} from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { typeOfWorkLabelsFromCatalog, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
@@ -91,6 +109,8 @@ import {
   inferDepositPercentFromLegacy,
 } from "@/lib/quote-deposit";
 import { extractUkPostcode, normalizeUkPostcode } from "@/lib/uk-postcode";
+import { LocationPicker } from "@/components/ui/location-picker";
+import { MAPBOX_GB_FORWARD_TYPES, MAPBOX_UK_CENTER_LON_LAT, mapboxGbForwardBiasAppend } from "@/lib/mapbox-uk-geography";
 import {
   buildNotesWithPricing,
   defaultPartnerPricingForLineIndex,
@@ -392,11 +412,11 @@ function computeBidSpotlight(bids: QuoteBid[], selectedId: string | null): { bid
 }
 
 const statusLabels: Record<string, string> = {
-  draft: "Draft",
+  draft: "New",
   in_survey: "In Survey",
   bidding: "Bidding",
-  awaiting_customer: "Awaiting Customer",
-  awaiting_payment: "Awaiting Payment",
+  awaiting_customer: "Approval",
+  awaiting_payment: "Payment",
   rejected: "Rejected",
   converted_to_job: "Converted to Job",
 };
@@ -421,6 +441,13 @@ async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>>
       ...rest,
       status: undefined,
       statusIn: [...PIPELINE_STATUS_IN],
+    });
+  }
+  if (status === "closed") {
+    return listQuotes({
+      ...rest,
+      status: undefined,
+      statusIn: ["converted_to_job", "rejected"],
     });
   }
   return listQuotes({ ...params });
@@ -490,12 +517,18 @@ const QUOTE_SORT_AVG_BID: ColumnSortOption[] = [
   ...QUOTE_SORT_CREATED,
 ];
 
+const QUOTE_SORT_BIDDING_SLA: ColumnSortOption[] = [
+  { label: "Soonest SLA due first", sortKey: "bidding_sla", direction: "asc" },
+  { label: "Most time left first", sortKey: "bidding_sla", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
 const STAGE_META: { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
-  { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
+  { id: "draft", label: "New", short: "New", icon: ClipboardList },
   { id: "in_survey", label: "Survey", short: "Survey", icon: MapPin },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
-  { id: "awaiting_payment", label: "Awaiting payment", short: "Awaiting payment", icon: CheckCircle2 },
+  { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
+  { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
 
 function QuoteStageColumn({ status }: { status: string }) {
@@ -506,16 +539,16 @@ function QuoteStageColumn({ status }: { status: string }) {
   if (current === -1) {
     return (
       <div className="flex flex-col gap-0.5">
-        <Badge variant="danger" size="sm" className="w-fit">Rejected</Badge>
-        <span className="text-[10px] text-text-tertiary">Closed</span>
+        <Badge variant="danger" size="sm" className="w-fit">Lost</Badge>
+        <span className="text-[10px] text-text-tertiary">Rejected</span>
       </div>
     );
   }
   if (current === 5) {
     return (
       <div className="flex flex-col gap-0.5">
-        <Badge variant="success" size="sm" className="w-fit">Job</Badge>
-        <span className="text-[10px] text-text-tertiary">Converted</span>
+        <Badge variant="success" size="sm" className="w-fit">Win</Badge>
+        <span className="text-[10px] text-text-tertiary">Converted to job</span>
       </div>
     );
   }
@@ -533,6 +566,74 @@ function QuoteStageColumn({ status }: { status: string }) {
         <p className="text-[10px] font-semibold text-text-tertiary leading-none">Stage {current + 1}/5</p>
         <p className="text-xs font-semibold text-text-primary truncate">{meta.label}</p>
       </div>
+    </div>
+  );
+}
+
+function QuoteBiddingSlaCell({
+  quote,
+  slaMs,
+  slaHoursLabel,
+}: {
+  quote: BiddingSlaAnchorQuote;
+  slaMs: number;
+  slaHoursLabel: string;
+}) {
+  const usesStoredAnchor = biddingQuoteSlaUsesStoredAnchor(quote);
+  const deadline = useMemo(
+    () => quoteBiddingSlaDeadlineMsFromQuote(quote, slaMs),
+    [quote.status, quote.bidding_started_at, quote.updated_at, quote.created_at, slaMs],
+  );
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (deadline == null) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const id = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(id);
+  }, [deadline]);
+
+  if (deadline == null) {
+    return (
+      <span
+        className="text-[11px] text-text-tertiary"
+        title="No date fields available to anchor this SLA — re-save the quote or run DB backfill for bidding_started_at."
+      >
+        —
+      </span>
+    );
+  }
+
+  const approxHint = usesStoredAnchor
+    ? ""
+    : " Approximate: using last saved activity because bidding_started_at was not recorded for this row.";
+  const remaining = deadline - now;
+  if (remaining > 0) {
+    const amberUnder = 0.25 * slaMs;
+    const redUnder = 0.1 * slaMs;
+    let mainClass = "text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400";
+    if (remaining < redUnder) mainClass = "text-xs font-bold tabular-nums text-red-600 dark:text-red-400";
+    else if (remaining < amberUnder) mainClass = "text-xs font-semibold tabular-nums text-amber-700 dark:text-amber-400";
+    return (
+      <div
+        className="flex flex-col gap-0.5 tabular-nums leading-tight"
+        title={`${slaHoursLabel} target · due ${new Date(deadline).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })} local · updates every minute.${approxHint}`}
+      >
+        <span className={mainClass}>{formatSlaRemainCountdownMinutes(remaining)}</span>
+        <span className="text-[10px] text-text-tertiary">remaining{usesStoredAnchor ? "" : " · est."}</span>
+      </div>
+    );
+  }
+  const overdue = now - deadline;
+  return (
+    <div
+      className="flex flex-col gap-0.5 tabular-nums leading-tight"
+      title={`Past the ${slaHoursLabel} Bidding SLA — send to customer as soon as possible.${approxHint}`}
+    >
+      <Badge variant="danger" size="sm" className="w-fit px-1.5 py-0 text-[10px]">
+        Overdue
+      </Badge>
+      <span className="text-[10px] text-text-tertiary">{formatSlaOverdueMinutes(overdue)} late{usesStoredAnchor ? "" : " · est."}</span>
     </div>
   );
 }
@@ -571,7 +672,7 @@ function getStageGuidance(status: string): {
         detail: "Customer accepted the quote. Job will be created once the deposit is paid via Stripe, or convert manually if paid elsewhere.",
       };
     case "rejected":
-      return { headline: "Quote closed", detail: "You can reactivate from Draft or leave as lost." };
+      return { headline: "Quote closed", detail: "You can reactivate from New or leave as lost." };
     case "converted_to_job":
       return { headline: "Converted to job", detail: "This quote is linked to a job in Jobs." };
     default:
@@ -606,7 +707,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
     /** No realtime auto-refresh — avoids fetch loops; list reloads use `refreshSilent` / `refreshWithKpis` (no `refresh()`). */
-    initialStatus: "bidding",
+    initialStatus: "draft",
     initialData,
   });
 
@@ -618,34 +719,23 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
-  const kpiAnchorDayKey = ukTodayYmd(new Date());
-  const [kpiSchedulePreset, setKpiSchedulePreset] = useState<ScheduleDatePreset>("month");
-  const [kpiCustomFrom, setKpiCustomFrom] = useState(() => ukTodayYmd(new Date()));
-  const [kpiCustomTo, setKpiCustomTo] = useState(() => ukTodayYmd(new Date()));
-  const [kpiDateFilterOpen, setKpiDateFilterOpen] = useState(false);
-  const kpiDateFilterRef = useRef<HTMLDivElement>(null);
-  const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiSummary, setKpiSummary] = useState({
-    /** Total value of all quotes (any status) in the date window. */
-    totalQuotedValue: 0,
-    /** Value of quotes currently with the customer awaiting their response. */
+    /** Approval + Payment: soma `total_value` de todos quotes nesses statuses (ativo — alinha com badges das abas). */
+    totalSentToCustomerValue: 0,
     awaitingCustomerValue: 0,
-    /** Sum of deposit amounts still to be collected on quotes awaiting payment. */
-    awaitingDepositValue: 0,
-    /** Sum of post-deposit remainder on quotes awaiting payment (received later). */
-    awaitingRemainderValue: 0,
-    /** Value of quotes that have converted into jobs. */
-    convertedValue: 0,
     conversionPct: 0,
     convertedCount: 0,
     totalCount: 0,
   });
   const [viewMode, setViewMode] = useState("list");
+  const [biddingSlaRollup, setBiddingSlaRollup] = useState<BiddingSlaRollup | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
   const buFilter = useBuFilter();
+  const { biddingSlaMs, biddingSlaHours } = useFrontendSetup();
+  const biddingSlaHoursLabelPretty = formatBiddingSlaHoursLabel(biddingSlaHours);
   /** Accounts in the selected BU — used with `property_id` when a quote has no `client_id`. */
   const [buAccountIds, setBuAccountIds] = useState<Set<string>>(new Set());
   /** `account_properties.id` → `account_id` for quotes without a client (BU filter). */
@@ -654,8 +744,25 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   /** When true, the Create Job flow will record the deposit as a received client payment right after job creation. */
   const [convertMarkDepositPaid, setConvertMarkDepositPaid] = useState(false);
+  /** Deposit £ to record when creating the job — set after "Mark as paid" confirmation (overrides quote.deposit_required if set). */
+  const [convertRecordedDepositAmount, setConvertRecordedDepositAmount] = useState<number | null>(null);
+  /** Awaiting-payment: intermediary step — confirm/adjust deposit before opening Create Job modal. */
+  const [depositConfirmQuote, setDepositConfirmQuote] = useState<Quote | null>(null);
+  const [depositConfirmAmountStr, setDepositConfirmAmountStr] = useState("");
+  /** Approval → Approved: unpaid deposit intermediary choice before job or Payment. */
+  const [approveDepositGateQuote, setApproveDepositGateQuote] = useState<Quote | null>(null);
+  /** Opens Create Job with deposit waiver section pre-expanded (from approve gate). */
+  const [createJobInitialWithoutDeposit, setCreateJobInitialWithoutDeposit] = useState(false);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
   const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
+  const consumeDrawerPendingOpenInvite = useCallback(() => setDrawerPendingOpenInviteQuoteId(null), []);
+  const createQuoteIntentRef = useRef<"full" | "routing" | "routing_invite">("full");
+  const [createFormVariant, setCreateFormVariant] = useState<"full" | "routing_minimal">("full");
+  /** Routing modal: quote = essentials in modal, trade in drawer; bidding = trade in modal then auto-open Invite Partners. */
+  const [routingCreateEntry, setRoutingCreateEntry] = useState<"quote" | "bidding">("quote");
+  const [drawerPendingOpenInviteQuoteId, setDrawerPendingOpenInviteQuoteId] = useState<string | null>(null);
+  const [newQuoteMenuOpen, setNewQuoteMenuOpen] = useState(false);
+  const newQuoteMenuRef = useRef<HTMLDivElement>(null);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -731,14 +838,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       if (filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
-      if (kpiDateFilterOpen && kpiDateFilterRef.current && !kpiDateFilterRef.current.contains(t)) setKpiDateFilterOpen(false);
+      if (newQuoteMenuRef.current && !newQuoteMenuRef.current.contains(t)) setNewQuoteMenuOpen(false);
     }
-    if (filterOpen || kpiDateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen || newQuoteMenuOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen, kpiDateFilterOpen]);
+  }, [filterOpen, newQuoteMenuOpen]);
 
   const filteredQuotes = useMemo(() => {
     return data.filter((q) => {
+      if (status === "pipeline") {
+        if (!PIPELINE_STATUS_IN.includes(q.status as (typeof PIPELINE_STATUS_IN)[number])) return false;
+      } else if (status === "closed") {
+        if (q.status !== "converted_to_job" && q.status !== "rejected") return false;
+      } else if (q.status !== status) {
+        return false;
+      }
       if (filterQuoteType !== "all" && (q.quote_type ?? "internal") !== filterQuoteType) return false;
       if (buFilter.selectedBuId) {
         if (!buFilter.clientIdsInBu) return true;
@@ -752,6 +866,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     });
   }, [
     data,
+    status,
     filterQuoteType,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
@@ -787,7 +902,36 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
-    if (listSortKey === "avg_bid" && status !== "bidding") setListSortKey(null);
+    if (!listSortKey) return;
+    const allowedSets: Partial<Record<string, Set<string>>> = {
+      draft: new Set(["reference", "client_name", "service_type", "__created_at"]),
+      bidding: new Set(["reference", "client_name", "service_type", "avg_bid", "bidding_sla", "__created_at"]),
+      awaiting_customer: new Set([
+        "reference",
+        "client_name",
+        "service_type",
+        "quote_type",
+        "status",
+        "total_value",
+        "deposit_required",
+        "margin_percent",
+        "__created_at",
+      ]),
+      awaiting_payment: new Set([
+        "reference",
+        "client_name",
+        "service_type",
+        "quote_type",
+        "status",
+        "total_value",
+        "deposit_required",
+        "margin_percent",
+        "__created_at",
+      ]),
+      closed: new Set(["total_value", "__created_at"]),
+    };
+    const allowed = allowedSets[status];
+    if (allowed && !allowed.has(listSortKey)) setListSortKey(null);
   }, [status, listSortKey]);
 
   const quoteListSorted = useMemo(() => {
@@ -818,6 +962,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           const bn = typeof bv === "number" && Number.isFinite(bv) ? bv : Number.NEGATIVE_INFINITY;
           return mul * (an - bn);
         }
+        case "bidding_sla": {
+          const da = quoteBiddingSlaDeadlineMsFromQuote(a, biddingSlaMs) ?? Number.POSITIVE_INFINITY;
+          const db = quoteBiddingSlaDeadlineMsFromQuote(b, biddingSlaMs) ?? Number.POSITIVE_INFINITY;
+          return mul * (da - db);
+        }
         case "total_value":
           return mul * ((Number(a.total_value) || 0) - (Number(b.total_value) || 0));
         case "margin_percent":
@@ -829,7 +978,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       }
     });
     return rows;
-  }, [filteredQuotes, listSortKey, listSortDir, avgBidByQuoteId]);
+  }, [filteredQuotes, listSortKey, listSortDir, avgBidByQuoteId, biddingSlaMs]);
 
   const handleQuoteListSortChange = useCallback((key: string | null, direction: "asc" | "desc") => {
     setListSortKey(key);
@@ -837,6 +986,22 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, []);
 
   const quoteKanbanColumns = useMemo(() => {
+    if (status === "closed") {
+      return [
+        {
+          id: "converted_to_job",
+          title: "Win",
+          color: "bg-emerald-500",
+          items: filteredQuotes.filter((q) => q.status === "converted_to_job"),
+        },
+        {
+          id: "rejected",
+          title: "Lost",
+          color: "bg-slate-500",
+          items: filteredQuotes.filter((q) => q.status === "rejected"),
+        },
+      ];
+    }
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
@@ -844,7 +1009,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
       items: filteredQuotes.filter((q) => q.status === id),
     }));
-  }, [filteredQuotes]);
+  }, [filteredQuotes, status]);
+
+  const KPI_QUOTE_PAGE = 1000;
 
   const loadCounts = useCallback(async () => {
     try {
@@ -853,7 +1020,82 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     } catch { /* cosmetic */ }
   }, []);
 
-  useEffect(() => { loadCounts(); }, [loadCounts]);
+  /** Headline currency/conversion KPIs — same universe as tab badges (`getStatusCounts`): all non-deleted quotes, chunked to beat the default row cap. */
+  const reloadQuoteKpis = useCallback(async () => {
+    try {
+      const supabase = getSupabase();
+      const rows: Array<{ status: string; total_value?: number | null }> = [];
+      for (let offset = 0; ; offset += KPI_QUOTE_PAGE) {
+        const { data, error } = await supabase
+          .from("quotes")
+          .select("status,total_value")
+          .is("deleted_at", null)
+          .range(offset, offset + KPI_QUOTE_PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as typeof rows;
+        rows.push(...chunk);
+        if (chunk.length < KPI_QUOTE_PAGE) break;
+      }
+      const sumBy = (status: string) => rows
+        .filter((r) => r.status === status)
+        .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+      const totalSentToCustomerValue = rows
+        .filter((r) => r.status === "awaiting_customer" || r.status === "awaiting_payment")
+        .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+      const awaitingCustomerValue = sumBy("awaiting_customer");
+      const convertedCount = rows.filter((r) => r.status === "converted_to_job").length;
+      const totalCount = rows.length;
+      const conversionPct = totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0;
+      setKpiSummary({
+        totalSentToCustomerValue,
+        awaitingCustomerValue,
+        conversionPct,
+        convertedCount,
+        totalCount,
+      });
+    } catch {
+      setKpiSummary({
+        totalSentToCustomerValue: 0,
+        awaitingCustomerValue: 0,
+        conversionPct: 0,
+        convertedCount: 0,
+        totalCount: 0,
+      });
+    }
+  }, []);
+
+  /** Company-wide Bidding SLA rollup for the SLA overdue KPI (same logic as the Bidding tab snapshot). */
+  const loadBiddingSlaRollup = useCallback(async () => {
+    try {
+      const supabase = getSupabase();
+      const { data: biddingRows, error } = await supabase
+        .from("quotes")
+        .select("bidding_started_at, updated_at, created_at, status")
+        .eq("status", "bidding")
+        .is("deleted_at", null);
+      if (error) {
+        setBiddingSlaRollup(null);
+        return;
+      }
+      setBiddingSlaRollup(computeBiddingSlaRollup(biddingRows ?? [], Date.now(), biddingSlaMs));
+    } catch {
+      setBiddingSlaRollup(null);
+    }
+  }, [biddingSlaMs]);
+
+  useEffect(() => {
+    void loadBiddingSlaRollup();
+    const id = window.setInterval(() => {
+      void loadBiddingSlaRollup();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [loadBiddingSlaRollup, statusCounts.bidding]);
+
+  useEffect(() => {
+    void loadCounts();
+    void reloadQuoteKpis();
+  }, [loadCounts, reloadQuoteKpis]);
+
   useEffect(() => () => {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
   }, []);
@@ -864,119 +1106,35 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
     kpiRefreshTimerRef.current = setTimeout(() => {
       void loadCounts();
+      void reloadQuoteKpis();
+      void loadBiddingSlaRollup();
     }, delayMs);
-  }, [refreshSilent, loadCounts]);
+  }, [refreshSilent, loadCounts, reloadQuoteKpis, loadBiddingSlaRollup]);
 
-  const kpiScheduleRangeYmd = useMemo(
-    () => getScheduleRangeYmd(kpiSchedulePreset, kpiCustomFrom, kpiCustomTo),
-    [kpiSchedulePreset, kpiCustomFrom, kpiCustomTo, kpiAnchorDayKey],
-  );
-
-  const kpiDateBounds = useMemo(() => {
-    if (!kpiScheduleRangeYmd) return null;
-    return {
-      from: localYmdStartIso(kpiScheduleRangeYmd.from),
-      to: localYmdEndIso(kpiScheduleRangeYmd.to),
-    };
-  }, [kpiScheduleRangeYmd]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setKpiLoading(true);
-      try {
-        const supabase = getSupabase();
-        const base = supabase.from("quotes").select("status,total_value,deposit_required,created_at");
-        const { data, error } = kpiDateBounds
-          ? await base.gte("created_at", kpiDateBounds.from).lte("created_at", kpiDateBounds.to)
-          : await base;
-        if (error) throw error;
-        const rows = (data ?? []) as Array<{
-          status: string;
-          total_value?: number | null;
-          deposit_required?: number | null;
-        }>;
-        const sumBy = (status: string) => rows
-          .filter((r) => r.status === status)
-          .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
-        const totalQuotedValue = rows.reduce((s, r) => s + (Number(r.total_value) || 0), 0);
-        const awaitingCustomerValue = sumBy("awaiting_customer");
-        const awaitingPaymentRows = rows.filter((r) => r.status === "awaiting_payment");
-        const awaitingDepositValue = awaitingPaymentRows.reduce((s, r) => {
-          const total = Number(r.total_value) || 0;
-          const deposit = Math.min(Number(r.deposit_required) || 0, total);
-          return s + deposit;
-        }, 0);
-        const awaitingRemainderValue = awaitingPaymentRows.reduce((s, r) => {
-          const total = Number(r.total_value) || 0;
-          const deposit = Math.min(Number(r.deposit_required) || 0, total);
-          return s + Math.max(total - deposit, 0);
-        }, 0);
-        const convertedValue = sumBy("converted_to_job");
-        const convertedCount = rows.filter((r) => r.status === "converted_to_job").length;
-        const totalCount = rows.length;
-        const conversionPct = totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0;
-        if (!cancelled) {
-          setKpiSummary({
-            totalQuotedValue,
-            awaitingCustomerValue,
-            awaitingDepositValue,
-            awaitingRemainderValue,
-            convertedValue,
-            conversionPct,
-            convertedCount,
-            totalCount,
-          });
-        }
-      } catch {
-        if (!cancelled) {
-          setKpiSummary({
-            totalQuotedValue: 0,
-            awaitingCustomerValue: 0,
-            awaitingDepositValue: 0,
-            awaitingRemainderValue: 0,
-            convertedValue: 0,
-            conversionPct: 0,
-            convertedCount: 0,
-            totalCount: 0,
-          });
-        }
-      } finally {
-        if (!cancelled) setKpiLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [kpiDateBounds]);
-
-  const pipelineCount =
-    (statusCounts.bidding ?? 0) +
-    (statusCounts.awaiting_customer ?? 0) +
-    (statusCounts.awaiting_payment ?? 0);
-
-  /** Same tab strip pattern as Requests: underline + count badges. */
-  const quoteStageTabs = useMemo(
-    () => [
-      { id: "pipeline", label: "Active", count: pipelineCount },
-      { id: "draft", label: "Draft", count: statusCounts.draft ?? 0 },
+  /** Underline + count badges — funnel: New → Bidding → Approval → Payment → Closed (Win + Lost). */
+  const quoteStageTabs = useMemo(() => {
+    const closed =
+      (statusCounts.converted_to_job ?? 0) + (statusCounts.rejected ?? 0);
+    return [
+      { id: "draft", label: "New", count: statusCounts.draft ?? 0 },
       { id: "bidding", label: "Bidding", count: statusCounts.bidding ?? 0 },
-      { id: "awaiting_customer", label: "Awaiting customer", count: statusCounts.awaiting_customer ?? 0 },
-      { id: "awaiting_payment", label: "Awaiting payment", count: statusCounts.awaiting_payment ?? 0 },
-      { id: "converted_to_job", label: "Converted", count: statusCounts.converted_to_job ?? 0 },
-      { id: "rejected", label: "Rejected", count: statusCounts.rejected ?? 0 },
-    ],
-    [statusCounts, pipelineCount],
-  );
+      { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
+      { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
+      { id: "closed", label: "Closed", count: closed },
+    ];
+  }, [statusCounts]);
 
-  /** Share of quotes in selected KPI date window that became jobs (`converted_to_job`). */
+  /** Share of all non-deleted quotes that became jobs (`converted_to_job`). */
   const quoteToJobConversion = useMemo(
     () => ({ pct: kpiSummary.conversionPct, converted: kpiSummary.convertedCount, total: kpiSummary.totalCount }),
     [kpiSummary],
   );
 
   const handleCreate = useCallback(
-    async (formData: Partial<Quote>, options?: { manualLineItems?: ProposalLineRow[] }) => {
+    async (
+      formData: Partial<Quote>,
+      options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean },
+    ): Promise<boolean> => {
       const perfStart = performance.now();
       try {
         const dupQ = await findDuplicateQuotes({
@@ -984,7 +1142,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           title: formData.title ?? "",
           propertyAddress: formData.property_address,
         });
-        if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
+        if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return false;
 
         const pid =
           formData.property_id && isUuid(String(formData.property_id).trim())
@@ -1001,34 +1159,73 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           resolvedName = b.displayName;
           resolvedEmail = b.documentEmail ?? resolvedEmail;
         }
+        const intent = createQuoteIntentRef.current;
+        const oneShotPartnerIds = options?.oneShotBiddingPartnerIds?.filter(Boolean) ?? [];
+        const isOneShotBidding = oneShotPartnerIds.length > 0 && intent === "routing_invite";
+        const routingPhaseDraft = (intent === "routing" || intent === "routing_invite") && !isOneShotBidding;
+        const wantsSendCustomer =
+          Boolean(options?.sendToCustomer) &&
+          (formData.quote_type ?? "internal") === "internal" &&
+          !isOneShotBidding;
+
+        if (wantsSendCustomer && !(options?.manualLineItems?.length)) {
+          toast.error("Add at least one line item before sending.");
+          return false;
+        }
+
+        if (wantsSendCustomer) {
+          let emailCandidate = resolvedEmail.trim();
+          if (!emailCandidate) {
+            emailCandidate =
+              (
+                await getQuoteProposalRecipientEmail(getSupabase(), {
+                  clientId: formData.client_id?.trim() || null,
+                  propertyId: pid ?? null,
+                  accountId: formData.source_account_id?.trim() || null,
+                  fallbackName: resolvedName,
+                  fallbackEmail: resolvedEmail || formData.client_email,
+                })
+              ).trim();
+          }
+          if (!emailCandidate) {
+            toast.error(
+              'No customer inbox found — pick a contact with email, add a Billing email on the account, or set Billing on Accounts to route quotes to “This account” with a Finance email.',
+            );
+            return false;
+          }
+          resolvedEmail = emailCandidate;
+        }
+
         const result = await createQuote({
           title: formData.title ?? "",
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           client_name: resolvedName,
           client_email: resolvedEmail,
+          ...(formData.source_account_id?.trim() ? { source_account_id: formData.source_account_id.trim() } : {}),
           ...(pid ? { property_id: pid } : {}),
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
-          status: formData.status ?? "draft",
-          total_value: formData.total_value ?? 0,
-          partner_quotes_count: formData.partner_quotes_count ?? 0,
-          cost: formData.cost ?? 0,
-          sell_price: formData.sell_price ?? formData.total_value ?? 0,
-          margin_percent: formData.margin_percent ?? 0,
-          quote_type: formData.quote_type ?? "internal",
+          status: isOneShotBidding ? "bidding" : (formData.status ?? "draft"),
+          total_value: isOneShotBidding ? 0 : (formData.total_value ?? 0),
+          partner_quotes_count: isOneShotBidding ? oneShotPartnerIds.length : (formData.partner_quotes_count ?? 0),
+          cost: isOneShotBidding ? 0 : (formData.cost ?? 0),
+          sell_price: isOneShotBidding ? 0 : (formData.sell_price ?? formData.total_value ?? 0),
+          margin_percent: isOneShotBidding ? 0 : (formData.margin_percent ?? 0),
+          quote_type: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
           deposit_percent: formData.deposit_percent ?? 50,
           deposit_required: formData.deposit_required ?? 0,
           customer_accepted: false,
           customer_deposit_paid: false,
+          draft_route_completed: routingPhaseDraft ? false : true,
           partner_id: formData.partner_id,
           partner_name: formData.partner_name,
           property_address: formData.property_address,
           scope: formData.scope,
           start_date_option_1: formData.start_date_option_1,
           start_date_option_2: formData.start_date_option_2,
-          partner_cost: formData.partner_cost ?? formData.cost ?? 0,
+          partner_cost: isOneShotBidding ? 0 : (formData.partner_cost ?? formData.cost ?? 0),
           ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
           ...(formData.images?.length ? { images: formData.images } : {}),
           email_attach_request_photos: formData.email_attach_request_photos ?? false,
@@ -1036,10 +1233,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           owner_name: profile?.full_name,
           duration_value: formData.duration_value ?? null,
           duration_unit: (formData.duration_unit as QuoteDurationUnit | null | undefined) ?? null,
+          engagement_kind: (formData.engagement_kind as QuoteEngagementKind | undefined) ?? "one_off",
         });
 
         const manualLines = options?.manualLineItems;
-        if (formData.quote_type === "internal" && manualLines?.length) {
+        if (!isOneShotBidding && formData.quote_type === "internal" && manualLines?.length) {
           const supabase = getSupabase();
           const rows = manualLines.map((li, i) => ({
             quote_id: result.id,
@@ -1061,35 +1259,168 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           userId: profile?.id,
           userName: profile?.full_name,
         });
+
+        // Close create modal immediately so it never stacks over the drawer; drawer stays hidden while createOpen.
         setCreateOpen(false);
-        toast.success("Quote created successfully");
-        refreshWithKpis();
-        if ((formData.quote_type ?? "internal") === "internal") {
-          setSelectedQuote(result);
+        createQuoteIntentRef.current = "full";
+        setCreateFormVariant("full");
+        setRoutingCreateEntry("quote");
+
+        if (isOneShotBidding) {
+          const patched = result;
+          const inviteBody =
+            `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`.trim() || patched.reference;
+          try {
+            const res = await fetch("/api/push/notify-partner", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                partnerIds: oneShotPartnerIds,
+                title: "New quote invitation",
+                body: inviteBody,
+                data: {
+                  type: "quote_invite",
+                  quoteId: patched.id,
+                  photoUrls: patched.images ?? [],
+                },
+              }),
+            });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              throw new Error((body && typeof body.error === "string" && body.error) || "Failed to send push invite");
+            }
+            const pushBody = (await res.json().catch(() => ({}))) as {
+              sent?: number;
+              errors?: number;
+              tokensFound?: number;
+            };
+            const sent = Number(pushBody?.sent ?? 0);
+            const tokensFound = Number(pushBody?.tokensFound ?? 0);
+            if (sent <= 0) {
+              throw new Error(
+                tokensFound <= 0
+                  ? "No valid push token found for selected partner(s). Ask them to open the app and allow notifications."
+                  : "Push request was accepted but not delivered (0 sent).",
+              );
+            }
+            const trade = bidPayloadTrimmedString(patched.service_type as unknown);
+            if (trade) {
+              void fetch("/api/push/notify-partner", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  trades: [trade],
+                  title: "New Job Invitation",
+                  body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
+                  data: { type: "quote_invite", quoteId: patched.id },
+                }),
+              }).catch(() => {});
+            }
+            toast.success(`${patched.reference} — bid request sent to ${sent} partner(s)`);
+            setSelectedQuote(patched);
+            setDrawerPendingTab("bids");
+            setStatus("bidding");
+          } catch (inviteErr) {
+            console.error(inviteErr);
+            toast.error(
+              getErrorMessage(
+                inviteErr,
+                "Quote was created in bidding but notifications failed — open the quote and use Invite partners.",
+              ),
+            );
+            setSelectedQuote(patched);
+            setDrawerPendingTab("bids");
+            setStatus("bidding");
+          }
+        } else if (wantsSendCustomer && manualLines?.length) {
+          const items = manualLines.map((li, idx) => {
+            const qty = Number(li.quantity) || 1;
+            const unit = Number(li.unitPrice) || 0;
+            return {
+              description: lineItemDescriptionForCustomer(li, idx),
+              quantity: qty,
+              unitPrice: unit,
+              total: qty * unit,
+            };
+          });
+          try {
+            const resp = await fetch("/api/quotes/send-pdf", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                quoteId: result.id,
+                recipientEmail: resolvedEmail.trim(),
+                recipientName: resolvedName,
+                items,
+                scope: bidPayloadTrimmedString(formData.scope as unknown) || undefined,
+                attachRequestPhotos: formData.email_attach_request_photos ?? false,
+              }),
+            });
+            const data = (await resp.json()) as { emailSent?: boolean; reason?: string; error?: string };
+            if (!resp.ok) {
+              throw new Error(typeof data.error === "string" ? data.error : "Failed to send quote email");
+            }
+            if (!data.emailSent) {
+              toast.warning(data.reason ?? "Quote saved — email was not sent. Open the quote to resend.");
+            } else {
+              toast.success(
+                `Quote ${result.reference} — PDF sent to ${resolvedEmail.trim()} (routing follows the account Billing setting).`,
+              );
+            }
+          } catch (sendErr) {
+            toast.error(getErrorMessage(sendErr, "Quote created but sending to the customer failed — open it to retry."));
+          }
+          const updated = await getQuote(result.id);
+          setDrawerPendingTab(null);
+          setDrawerPendingOpenInviteQuoteId(null);
+          setSelectedQuote(updated ?? result);
+          if ((updated ?? result).status === "awaiting_customer") {
+            setStatus("awaiting_customer");
+          }
+        } else {
+          toast.success("Quote created successfully");
+          if ((formData.quote_type ?? "internal") === "internal") {
+            setDrawerPendingTab(null);
+            setDrawerPendingOpenInviteQuoteId(null);
+            void getQuote(result.id).then((fresh) => setSelectedQuote(fresh ?? result));
+            if (intent === "routing_invite") {
+              setDrawerPendingOpenInviteQuoteId(result.id);
+            }
+          }
         }
+
+        refreshWithKpis();
         trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
-          quoteType: formData.quote_type ?? "internal",
+          quoteType: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
           lineItems: manualLines?.length ?? 0,
+          sendToCustomer: wantsSendCustomer,
         });
+        return true;
       } catch (err) {
         console.error(err);
         toast.error(getErrorMessage(err, "Failed to create quote"));
+        return false;
       }
     },
-    [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates],
+    [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates, setStatus],
   );
 
-  const handleBulkStatusChange = async (newStatus: string) => {
+  const handleBulkReject = async () => {
     if (selectedIds.size === 0) return;
     const supabase = getSupabase();
     try {
-      const { error } = await supabase.from("quotes").update({ status: newStatus, updated_at: new Date().toISOString() }).in("id", Array.from(selectedIds));
+      const { error } = await supabase
+        .from("quotes")
+        .update({ status: "rejected", updated_at: new Date().toISOString() })
+        .in("id", Array.from(selectedIds));
       if (error) throw error;
-      await logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      await logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", "rejected", profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} quotes updated`);
       setSelectedIds(new Set());
       refreshWithKpis();
-    } catch { toast.error("Failed to update quotes"); }
+    } catch {
+      toast.error("Failed to update quotes");
+    }
   };
 
   const handleBulkArchive = useCallback(async () => {
@@ -1105,7 +1436,29 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [selectedIds, profile?.id, refreshWithKpis]);
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => {
+    async (formData: {
+      title: string;
+      client_id?: string;
+      client_address_id?: string;
+      client_name: string;
+      property_address: string;
+      partner_id?: string;
+      partner_name?: string;
+      client_price: number;
+      partner_cost: number;
+      materials_cost: number;
+      scheduled_date?: string;
+      scheduled_start_at?: string;
+      scheduled_end_at?: string;
+      scheduled_finish_date?: string | null;
+      expected_finish_at?: string | null;
+      job_kind?: JobKind;
+      series?: JobScheduleV2SeriesPayload;
+      createWithoutDeposit?: boolean;
+      depositOverrideReason?: string;
+      job_type?: "fixed" | "hourly";
+      scope?: string;
+    }) => {
       const perfStart = performance.now();
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
@@ -1123,6 +1476,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       const finishRaw = formData.scheduled_finish_date;
       const scheduled_finish_date =
         finishRaw == null || finishRaw === "" ? null : parseIsoDateOnly(String(finishRaw)) || null;
+      const expected_finish_at =
+        formData.expected_finish_at == null || formData.expected_finish_at === ""
+          ? null
+          : isValidIsoDateTime(formData.expected_finish_at)
+            ? formData.expected_finish_at
+            : null;
+      const job_kind: JobKind = formData.job_kind ?? "one_off";
       if (effectivePartnerId) {
         const block = getPartnerAssignmentBlockReason({
           property_address: formData.property_address,
@@ -1140,7 +1500,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
         const noDeposit = !!formData.createWithoutDeposit;
-        const scheduledDeposit = noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0);
+        const baseQuoteDeposit = quoteToConvert.deposit_required ?? 0;
+        const scheduledDeposit = noDeposit
+          ? 0
+          : (convertRecordedDepositAmount != null ? convertRecordedDepositAmount : baseQuoteDeposit);
         const scheduledFinal = Math.max(0, formData.client_price - scheduledDeposit);
         const shouldRecordDepositPaid = convertMarkDepositPaid && !noDeposit && scheduledDeposit > 0.02;
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
@@ -1156,7 +1519,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         ]);
         if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
-        const job = await createJob({
+        const baseJobRow = {
           title: formData.title,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
@@ -1177,6 +1540,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           scheduled_start_at,
           scheduled_end_at,
           scheduled_finish_date,
+          expected_finish_at,
+          job_kind,
           owner_id: profile?.id, owner_name: profile?.full_name,
           job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
@@ -1196,15 +1561,26 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           customer_final_paid: false,
           scope: jobScope || undefined,
           images: siteImages.length ? siteImages : undefined,
-          // Carry the Zendesk lineage from the originating quote so that
-          // partner notifications (assignment, reschedule, cancel, …) can
-          // reuse the same ticket / side conversation.
           external_source: quoteToConvert.external_source ?? undefined,
           external_ref: quoteToConvert.external_ref ?? undefined,
           ...(quoteToConvert.zendesk_side_conversation_id
             ? { zendesk_side_conversation_id: quoteToConvert.zendesk_side_conversation_id }
             : {}),
-        });
+        } as Parameters<typeof createJob>[0];
+
+        const job = formData.series
+          ? (await createJobOrSeries({
+              anchorJobRow: baseJobRow,
+              series: {
+                rule: formData.series.rule,
+                start_time: formData.series.start_time,
+                end_time: formData.series.end_time,
+                start_date: formData.series.start_date,
+                end_date: formData.series.end_date ?? null,
+                max_occurrences: formData.series.max_occurrences ?? null,
+              },
+            })).jobs[0]!
+          : await createJob(baseJobRow);
 
         /** Draft invoice is created inside `createJob` (unified for quote + modal paths). */
         const auditMetadata: Record<string, unknown> = { from_quote: quoteToConvert.reference };
@@ -1258,6 +1634,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         setQuoteToConvert(null);
         setConvertMarkDepositPaid(false);
+        setConvertRecordedDepositAmount(null);
         setSelectedQuote(null);
         toast.success(shouldRecordDepositPaid ? `Job ${job.reference} created & deposit recorded as paid` : `Job ${job.reference} created`);
         // Defer KPI refresh so the navigation isn't queued behind the SWR refetch.
@@ -1268,20 +1645,41 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         toast.error(getErrorMessage(err, "Failed to create job"));
       }
     },
-    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router, confirmDespiteDuplicates, convertMarkDepositPaid]
+    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router, confirmDespiteDuplicates, convertMarkDepositPaid, convertRecordedDepositAmount]
   );
 
   const handleStatusChange = useCallback(
     async (quote: Quote, newStatus: string, opts?: { successToast?: string }): Promise<boolean> => {
       if (newStatus === "create_job") {
+        setConvertRecordedDepositAmount(null);
         setConvertMarkDepositPaid(false);
+        setCreateJobInitialWithoutDeposit(false);
         setQuoteToConvert(quote);
         return true;
       }
       if (newStatus === "mark_as_paid") {
-        setConvertMarkDepositPaid(true);
-        setQuoteToConvert(quote);
+        setDepositConfirmQuote(quote);
+        const d = Math.max(0, Number(quote.deposit_required ?? 0));
+        setDepositConfirmAmountStr((Math.round(d * 100) / 100).toFixed(2));
         return true;
+      }
+      if (newStatus === "approve_quote") {
+        if (quote.status !== "awaiting_customer") return false;
+        if (!quoteRequiresCustomerDeposit(quote)) {
+          setConvertRecordedDepositAmount(null);
+          setConvertMarkDepositPaid(false);
+          setCreateJobInitialWithoutDeposit(false);
+          setQuoteToConvert(quote);
+          return true;
+        }
+        if (quote.customer_deposit_paid) {
+          setConvertRecordedDepositAmount(null);
+          setConvertMarkDepositPaid(true);
+          setCreateJobInitialWithoutDeposit(false);
+          setQuoteToConvert(quote);
+          return true;
+        }
+        return false;
       }
       const check = canAdvanceQuote(quote, newStatus);
       if (!check.ok) {
@@ -1324,6 +1722,76 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
+  /** Approval tab — **Approved**: job modal, deposit gate, or awaiting payment (from gate). */
+  const approveGateMoveToAwaitingPayment = useCallback(
+    async (q: Quote) => {
+      const check = canAdvanceQuote(q, "awaiting_payment");
+      if (!check.ok) {
+        toast.error(check.message ?? "Complete the current step before advancing.");
+        return;
+      }
+      try {
+        const perfStart = performance.now();
+        const updated = await updateQuote(q.id, { status: "awaiting_payment" });
+        await logAudit({
+          entityType: "quote",
+          entityId: q.id,
+          entityRef: q.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: q.status,
+          newValue: "awaiting_payment",
+          metadata: { operator_approved: true, awaiting_deposit: true },
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setSelectedQuote(updated);
+        toast.success("Approved — quote is Awaiting payment until the deposit is received.");
+        refreshWithKpis();
+        trackUiPerf("quotes.status_change_ms", performance.now() - perfStart, {
+          from: q.status,
+          to: "awaiting_payment",
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update quote";
+        toast.error(message);
+        console.error("Quote status update failed:", err);
+      }
+    },
+    [refreshWithKpis, profile?.id, profile?.full_name],
+  );
+
+  const handleApproveQuoteRequest = useCallback(
+    (quoteRow: Quote) => {
+      if (quoteRow.status !== "awaiting_customer") return;
+      if (!quoteRequiresCustomerDeposit(quoteRow) || quoteRow.customer_deposit_paid) {
+        void handleStatusChange(quoteRow, "approve_quote");
+        return;
+      }
+      setApproveDepositGateQuote(quoteRow);
+    },
+    [handleStatusChange],
+  );
+
+  const proceedDepositConfirmToJob = useCallback(() => {
+    const q = depositConfirmQuote;
+    if (!q) return;
+    const totalVal = Number(q.total_value ?? 0);
+    let amt = Number(depositConfirmAmountStr);
+    if (!Number.isFinite(amt)) {
+      toast.error("Enter a valid deposit amount.");
+      return;
+    }
+    amt = Math.round(Math.max(0, amt) * 100) / 100;
+    if (totalVal > 0 && amt > totalVal) {
+      amt = Math.round(totalVal * 100) / 100;
+    }
+    setConvertRecordedDepositAmount(amt);
+    setConvertMarkDepositPaid(true);
+    setQuoteToConvert(q);
+    setDepositConfirmQuote(null);
+  }, [depositConfirmQuote, depositConfirmAmountStr]);
+
   /**
    * Drawer saves: update the open quote only. Do not refetch the quotes list here — that was chaining
    * extra `get_quotes_list_bundle` / enrichment traffic and could interact badly with effects. The table
@@ -1346,12 +1814,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       let p = 1;
       const pageSize = 500;
       while (true) {
-        const res = await listQuotes({
-          page: p,
-          pageSize,
-          search: search.trim() ? search : undefined,
-          status: status !== "all" ? status : undefined,
-        });
+        const res =
+          status === "closed"
+            ? await listQuotes({
+                page: p,
+                pageSize,
+                search: search.trim() ? search : undefined,
+                status: undefined,
+                statusIn: ["converted_to_job", "rejected"],
+              })
+            : await listQuotes({
+                page: p,
+                pageSize,
+                search: search.trim() ? search : undefined,
+                status: status !== "all" ? status : undefined,
+              });
         allRows.push(...res.data);
         if (p >= res.totalPages) break;
         p += 1;
@@ -1370,10 +1847,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     }
   }, [search, status]);
 
-  const handleNewQuoteClick = () => setCreateOpen(true);
-
   const columns: Column<Quote>[] = useMemo(() => {
-    const lead: Column<Quote>[] = [
+    /** Quote · Accounts · Type of work — sem Type (Manual/Partner) nem Stage dinâmico. */
+    const leadCore: Column<Quote>[] = [
       {
         key: "reference",
         label: "Quote",
@@ -1383,16 +1859,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         render: (item) => (
           <div>
             <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
-            <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{quoteListSubtitlePostcode(item)}</p>
           </div>
         ),
       },
       {
         key: "client_name",
-        label: "Client",
+        label: "Accounts",
         minWidth: "8.5rem",
         sortable: true,
-        sortOptions: quoteSortTextCol("client_name", "Client"),
+        sortOptions: quoteSortTextCol("client_name", "Accounts"),
         render: (item) => {
           const accountLabel = item.source_account_name?.trim() || item.client_name?.trim() || "—";
           const postcode = quoteListSubtitlePostcode(item);
@@ -1419,31 +1894,70 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         sortable: true,
         sortOptions: quoteSortTextCol("service_type", "Type of work"),
         render: (item) => {
+          if (isDraftRoutingPhase(item)) {
+            return (
+              <span className="text-sm text-text-tertiary italic truncate block max-w-[180px]" title="Choose type of work in the quote drawer">
+                Add in drawer
+              </span>
+            );
+          }
           const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
           return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
         },
       },
-      {
-        key: "quote_type",
-        label: "Type",
-        minWidth: "5rem",
-        sortable: true,
-        sortOptions: quoteSortTextCol("quote_type", "Type"),
-        render: (item) => (
-          <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
-            {item.quote_type === "partner" ? "Partner" : "Manual"}
-          </Badge>
-        ),
-      },
-      {
-        key: "status",
-        label: "Stage",
-        minWidth: "8rem",
-        sortable: true,
-        sortOptions: QUOTE_SORT_STAGE,
-        render: (item) => <QuoteStageColumn status={item.status} />,
-      },
     ];
+
+    const quoteTypeColumn: Column<Quote> = {
+      key: "quote_type",
+      label: "Type",
+      minWidth: "5rem",
+      sortable: true,
+      sortOptions: quoteSortTextCol("quote_type", "Type"),
+      render: (item) => (
+        <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
+          {item.quote_type === "partner" ? "Partner" : "Manual"}
+        </Badge>
+      ),
+    };
+
+    const stageColumn: Column<Quote> = {
+      key: "status",
+      label: "Stage",
+      minWidth: "8rem",
+      sortable: true,
+      sortOptions: QUOTE_SORT_STAGE,
+      render: (item) => <QuoteStageColumn status={item.status} />,
+    };
+
+    const leadApprovalPayment: Column<Quote>[] = [...leadCore, quoteTypeColumn, stageColumn];
+
+    /** Aba New: estado fixo com badge destacado — coluna só no tab draft. */
+    const newTabStageColumn: Column<Quote> = {
+      key: "new_stage_label",
+      label: "Status",
+      minWidth: "5rem",
+      headerClassName: "normal-case",
+      sortable: false,
+      render: () => (
+        <Badge variant="success" size="sm" dot className="rounded-full font-semibold shadow-none">
+          New
+        </Badge>
+      ),
+    };
+    const biddingSlaColumn: Column<Quote> = {
+      key: "bidding_sla",
+      label: "SLA",
+      minWidth: "6.75rem",
+      headerClassName: "normal-case",
+      sortable: true,
+      sortOptions: QUOTE_SORT_BIDDING_SLA,
+      render: (item) =>
+        item.status === "bidding" ? (
+          <QuoteBiddingSlaCell quote={item} slaMs={biddingSlaMs} slaHoursLabel={biddingSlaHoursLabelPretty} />
+        ) : (
+          <span className="text-[11px] text-text-tertiary">—</span>
+        ),
+    };
     const avgBidColumn: Column<Quote> = {
       key: "avg_bid",
       label: "AVG Bid",
@@ -1526,16 +2040,54 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         </span>
       ) : <span className="text-xs text-text-tertiary">—</span>,
     };
-    const actionsColumn: Column<Quote> = {
+    const actionsColumnTail: Column<Quote> = {
       key: "actions", label: "", width: "40px",
       render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
     };
-    if (status === "bidding") return [...lead, avgBidColumn, amountColumn, marginColumn, actionsColumn];
-    if (status === "awaiting_customer" || status === "awaiting_payment") {
-      return [...lead, amountColumn, depositColumn, finalBalanceColumn, marginColumn, actionsColumn];
+    if (status === "closed") {
+      const amountCol: Column<Quote> = {
+        key: "total_value",
+        label: "Amount",
+        minWidth: "6rem",
+        align: "right" as const,
+        sortable: true,
+        sortOptions: QUOTE_SORT_AMOUNT,
+        render: (item) => (
+          <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>
+        ),
+      };
+      const summaryCol: Column<Quote> = {
+        key: "closed_summary",
+        label: "Quote",
+        minWidth: "14rem",
+        sortable: false,
+        render: (item) => {
+          const won = item.status === "converted_to_job";
+          const accountLabel = item.source_account_name?.trim() || item.client_name?.trim() || "—";
+          return (
+            <div className="flex items-start justify-between gap-3 min-w-0">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
+                <p className="text-[11px] text-text-tertiary truncate">{accountLabel}</p>
+              </div>
+              <Badge variant={won ? "success" : "danger"} size="sm" className="shrink-0">
+                {won ? "Win" : "Lost"}
+              </Badge>
+            </div>
+          );
+        },
+      };
+      return [summaryCol, amountCol, actionsColumnTail];
     }
-    return [...lead, amountColumn, marginColumn, actionsColumn];
-  }, [status, avgBidByQuoteId]);
+    if (status === "bidding") return [...leadCore, biddingSlaColumn, avgBidColumn, actionsColumnTail];
+    if (status === "awaiting_customer" || status === "awaiting_payment") {
+      return [...leadApprovalPayment, amountColumn, depositColumn, finalBalanceColumn, marginColumn, actionsColumnTail];
+    }
+    if (status === "draft") {
+      return [...leadCore, newTabStageColumn, actionsColumnTail];
+    }
+    return [...leadApprovalPayment, amountColumn, marginColumn, actionsColumnTail];
+  }, [status, avgBidByQuoteId, biddingSlaMs, biddingSlaHoursLabelPretty]);
 
   return (
     <PageTransition>
@@ -1543,107 +2095,123 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         <PageHeader
           title="Quotes"
           infoTooltip={
-            "Headline KPIs use each quote’s creation date within the Dates window above.\n\n" +
-            "Status tabs filter the list below."
+            "Headline KPIs reflect all active (non-deleted) quotes — the same pool as the stage tab counts.\n\n" +
+            "Total Quoted sums quote value for Approval + Payment (with the customer). Bidding shows the same count as the Bidding tab.\n\n" +
+            "SLA overdue counts open Bidding quotes past the configured SLA window (Settings → Setup).\n\n" +
+            "Tabs: New → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row)."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative" ref={kpiDateFilterRef}>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Calendar className="h-3.5 w-3.5" />}
-                onClick={() => setKpiDateFilterOpen((o) => !o)}
-                className={cn(kpiScheduleRangeYmd && "border-primary/40 bg-primary/5")}
-              >
-                {kpiSchedulePreset === "all"
-                  ? "Dates"
-                  : kpiSchedulePreset === "today"
-                    ? "Today"
-                    : kpiSchedulePreset === "tomorrow"
-                      ? "Tomorrow"
-                      : kpiSchedulePreset === "week"
-                        ? "This week"
-                        : kpiSchedulePreset === "month"
-                          ? "This month"
-                          : "Custom range"}
-              </Button>
-              {kpiDateFilterOpen && (
-                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">KPI window (created date)</p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        ["all", "All dates"],
-                        ["today", "Today"],
-                        ["tomorrow", "Tomorrow"],
-                        ["week", "This week"],
-                        ["month", "This month"],
-                        ["custom", "Custom"],
-                      ] as const
-                    ).map(([id, label]) => (
-                      <Button
-                        key={id}
-                        type="button"
-                        variant={kpiSchedulePreset === id ? "primary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
-                          kpiSchedulePreset !== id && "text-[#020040]",
-                        )}
-                        onClick={() => {
-                          setKpiSchedulePreset(id);
-                          if (id === "custom") setKpiDateFilterOpen(true);
-                          else setKpiDateFilterOpen(false);
-                        }}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
-                  {kpiSchedulePreset === "custom" ? (
-                    <div className="space-y-2 pt-1 border-t border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
-                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
-                        <Input type="date" value={kpiCustomFrom} onChange={(e) => setKpiCustomFrom(e.target.value)} className="h-9 text-sm" />
-                        <Input type="date" value={kpiCustomTo} onChange={(e) => setKpiCustomTo(e.target.value)} className="h-9 text-sm" />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
             <Button
               variant="outline"
               size="sm"
               icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
               onClick={() => {
                 void loadCounts();
+                void reloadQuoteKpis();
+                void loadBiddingSlaRollup();
                 refreshSilent();
               }}
-              title="Reload quotes and tab counts from the server (no full-table loading flash)"
+              title="Reload quotes, KPI aggregates, Bidding SLA snapshot, and tab counts (no full-table loading flash)"
             >
               Refresh
             </Button>
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
               Export
             </Button>
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
+            <div className="relative shrink-0" ref={newQuoteMenuRef}>
+              <Button
+                size="sm"
+                icon={<Plus className="h-3.5 w-3.5" />}
+                onClick={() => setNewQuoteMenuOpen((o) => !o)}
+                title="Create a new quote"
+              >
+                <span className="inline-flex items-center gap-1">
+                  New quote
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-75" aria-hidden />
+                </span>
+              </Button>
+              {newQuoteMenuOpen ? (
+                <div
+                  className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-2rem),15.5rem)] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg"
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover"
+                    onClick={() => {
+                      createQuoteIntentRef.current = "routing";
+                      setRoutingCreateEntry("quote");
+                      setCreateFormVariant("routing_minimal");
+                      setCreateOpen(true);
+                      setNewQuoteMenuOpen(false);
+                    }}
+                  >
+                    <span className="font-semibold text-text-primary">New quote</span>
+                    <span className="text-[11px] text-text-tertiary">
+                      Account, site and scope only — type of work in the drawer before bid or manual.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover border-t border-border-light"
+                    onClick={() => {
+                      createQuoteIntentRef.current = "routing_invite";
+                      setRoutingCreateEntry("bidding");
+                      setCreateFormVariant("routing_minimal");
+                      setCreateOpen(true);
+                      setNewQuoteMenuOpen(false);
+                    }}
+                  >
+                    <span className="font-semibold text-text-primary">New bidding</span>
+                    <span className="text-[11px] text-text-tertiary">
+                      Choose type of work, account, site and scope — then opens partner selection to send bids.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover border-t border-border-light"
+                    onClick={() => {
+                      createQuoteIntentRef.current = "full";
+                      setRoutingCreateEntry("quote");
+                      setCreateFormVariant("full");
+                      setCreateOpen(true);
+                      setNewQuoteMenuOpen(false);
+                    }}
+                  >
+                    <span className="font-semibold text-text-primary">Quote manually</span>
+                    <span className="text-[11px] text-text-tertiary">Full line items, dates and deposit in one form.</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <KpiCard
             title="Total Quoted"
-            value={kpiSummary.totalQuotedValue}
+            value={kpiSummary.totalSentToCustomerValue}
             format="currency"
             icon={BarChart3}
             accent="primary"
-            description="Total value of all quotes in range"
+            description="Total value of quotes currently with the customer in Approval or Payment (sent for decision or deposit)."
             descriptionAsTooltip
           />
           <KpiCard
-            title="Awaiting Customer"
+            title="Bidding"
+            value={statusCounts.bidding ?? 0}
+            format="number"
+            icon={Gavel}
+            accent="amber"
+            description="Number of quotes in the Bidding stage (matches the Bidding tab badge)."
+            descriptionAsTooltip
+          />
+          <KpiCard
+            title="Approval"
             value={kpiSummary.awaitingCustomerValue}
             format="currency"
             icon={Mail}
@@ -1652,24 +2220,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            title="Awaiting Payment"
-            value={kpiSummary.awaitingDepositValue}
-            format="currency"
-            icon={FileText}
-            accent="blue"
-            description="Main number is the deposit still to be collected. 'To receive later' is the remainder due after the deposit."
-            descriptionAsTooltip
-            secondaryLabel="To receive later"
-            secondaryValue={kpiSummary.awaitingRemainderValue}
-            secondaryFormat="currency"
-          />
-          <KpiCard
-            title="Converted"
-            value={kpiSummary.convertedValue}
-            format="currency"
-            icon={Briefcase}
-            accent="emerald"
-            description="Value of quotes converted to jobs"
+            title="SLA overdue"
+            value={biddingSlaRollup?.breached ?? 0}
+            format="number"
+            icon={Clock}
+            accent="amber"
+            description={`Open quotes in Bidding past the ${biddingSlaHoursLabelPretty} SLA window (company-wide). Matches “Past SLA” in the Bidding tab snapshot.`}
             descriptionAsTooltip
           />
           <KpiCard
@@ -1700,9 +2256,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
-                Export
-              </Button>
               <SearchInput
                 placeholder="Search quotes..."
                 className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
@@ -1748,6 +2301,53 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             </div>
           </div>
 
+          {status === "bidding" && biddingSlaRollup != null ? (
+            <div className="mb-4 flex flex-col gap-2 rounded-xl border border-border-light bg-gradient-to-br from-card to-surface-hover/60 px-3 py-3 dark:from-card dark:to-surface-secondary/25">
+              <div className="flex flex-wrap items-center gap-2">
+                <Clock className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                <p className="text-xs font-semibold text-text-primary">Bidding SLA snapshot · {biddingSlaHoursLabelPretty} target</p>
+                <FixfyHintIcon text="Uses the SLA hours from Settings → Setup. Counts every open Bidding quote in the company (not limited by BU filter). Start time prefers the audit trail when available." />
+                {buFilter.selectedBuId ? (
+                  <span className="text-[10px] text-text-tertiary">BU filter applies to the table only.</span>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 gap-3 min-[520px]:grid-cols-4">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Open in bidding</p>
+                  <p className="text-lg font-bold tabular-nums text-text-primary">{biddingSlaRollup.total}</p>
+                </div>
+                <div title={`Longer than the ${biddingSlaHoursLabelPretty} Bidding SLA window (still in Bidding)`}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Past SLA</p>
+                  <p
+                    className={cn(
+                      "text-lg font-bold tabular-nums",
+                      biddingSlaRollup.breached > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400",
+                    )}
+                  >
+                    {biddingSlaRollup.breached}
+                  </p>
+                </div>
+                <div title="Mean wall time since bidding_started_at">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Avg time in bid</p>
+                  <p className="text-lg font-bold tabular-nums text-text-primary">
+                    {formatMinutesAsAge(biddingSlaRollup.avgMinutesInBidding)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Longest idle</p>
+                  <p className="text-lg font-bold tabular-nums text-text-primary">
+                    {formatMinutesAsAge(biddingSlaRollup.maxMinutesInBidding)}
+                  </p>
+                </div>
+              </div>
+              {biddingSlaRollup.missingAnchor > 0 ? (
+                <p className="text-[11px] text-text-tertiary">
+                  {biddingSlaRollup.missingAnchor} quote{biddingSlaRollup.missingAnchor === 1 ? "" : "s"} with no SLA start in DB (column shows — in the list).
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {viewMode === "list" && (
             <DataTable
               columns={columns}
@@ -1771,10 +2371,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               bulkActions={
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                  <BulkBtn label="Bidding" onClick={() => handleBulkStatusChange("bidding")} variant="default" />
-                  <BulkBtn label="Awaiting Customer" onClick={() => handleBulkStatusChange("awaiting_customer")} variant="warning" />
-                  <BulkBtn label="Awaiting payment" onClick={() => handleBulkStatusChange("awaiting_payment")} variant="success" />
-                  <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
+                  <BulkBtn label="Reject" onClick={handleBulkReject} variant="danger" />
                   <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
                 </div>
               }
@@ -1803,38 +2400,166 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         </motion.div>
       </div>
 
-      {selectedQuote ? (
+      {selectedQuote && !createOpen ? (
       <QuoteDetailDrawer
         key={selectedQuote.id}
         quote={selectedQuote}
         pendingInitialTab={drawerPendingTab}
         onConsumePendingInitialTab={consumeDrawerPendingTab}
+        pendingOpenInviteForQuoteId={drawerPendingOpenInviteQuoteId}
+        onConsumePendingOpenInvitePartners={consumeDrawerPendingOpenInvite}
         onClose={() => setSelectedQuote(null)}
         onStatusChange={handleStatusChange}
         onQuoteUpdate={handleQuoteDrawerUpdate}
+        onApproveQuote={handleApproveQuoteRequest}
       />
       ) : null}
+      <Modal
+        open={!!depositConfirmQuote}
+        onClose={() => setDepositConfirmQuote(null)}
+        title="Confirm deposit"
+        subtitle={
+          depositConfirmQuote
+            ? `${depositConfirmQuote.reference} — adjust if the amount received differs from the quoted deposit`
+            : ""
+        }
+        size="md"
+      >
+        {depositConfirmQuote ? (
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-text-secondary">
+              Confirm the deposit received below, then continue to <strong className="text-text-primary">Create job</strong>. The amount will be recorded
+              on the new job when you submit that form (£0 skips a payment entry).
+            </p>
+            <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
+              Quoted deposit {formatCurrency(Number(depositConfirmQuote.deposit_required) || 0)} · Quote total{" "}
+              {formatCurrency(Number(depositConfirmQuote.total_value) || 0)}
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-text-primary">Deposit received (£)</label>
+              <Input
+                type="number"
+                min={0}
+                step={0.01}
+                value={depositConfirmAmountStr}
+                onChange={(e) => setDepositConfirmAmountStr(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setDepositConfirmQuote(null)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="primary" onClick={() => proceedDepositConfirmToJob()}>
+                Continue to create job
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+      <Modal
+        open={!!approveDepositGateQuote}
+        onClose={() => setApproveDepositGateQuote(null)}
+        title="Customer deposit"
+        subtitle={
+          approveDepositGateQuote
+            ? `${approveDepositGateQuote.reference} — quoted deposit ${formatCurrency(Number(approveDepositGateQuote.deposit_required) || 0)}`
+            : ""
+        }
+        size="md"
+      >
+        {approveDepositGateQuote ? (
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-text-secondary">
+              Has the customer paid the deposit? Choose whether to wait for payment or create the job and waive the deposit requirement (you will confirm a reason in the next step).
+            </p>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setApproveDepositGateQuote(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const q = approveDepositGateQuote;
+                  setApproveDepositGateQuote(null);
+                  void approveGateMoveToAwaitingPayment(q);
+                }}
+              >
+                Keep waiting for payment
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  const q = approveDepositGateQuote;
+                  setApproveDepositGateQuote(null);
+                  setConvertRecordedDepositAmount(null);
+                  setConvertMarkDepositPaid(false);
+                  setCreateJobInitialWithoutDeposit(true);
+                  setQuoteToConvert(q);
+                }}
+              >
+                Create job without deposit
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
       {quoteToConvert ? (
         <CreateJobFromQuoteModal
           key={quoteToConvert.id}
           quote={quoteToConvert}
           markDepositAsPaid={convertMarkDepositPaid}
+          recordedDepositAmount={convertRecordedDepositAmount ?? undefined}
+          initialCreateWithoutDeposit={createJobInitialWithoutDeposit}
           onClose={() => {
             setQuoteToConvert(null);
             setConvertMarkDepositPaid(false);
+            setConvertRecordedDepositAmount(null);
+            setCreateJobInitialWithoutDeposit(false);
           }}
           onSubmit={handleConfirmCreateJob}
         />
       ) : null}
       <Modal
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="Create Quote"
-        subtitle="Manual quote uses the same layout as Review & Send — line items, scope, dates, deposit"
+        onClose={() => {
+          setCreateOpen(false);
+          createQuoteIntentRef.current = "full";
+          setCreateFormVariant("full");
+          setRoutingCreateEntry("quote");
+          setDrawerPendingOpenInviteQuoteId(null);
+        }}
+        title={
+          createFormVariant === "routing_minimal"
+            ? routingCreateEntry === "bidding"
+              ? "New bidding"
+              : "New quote"
+            : "Create quote"
+        }
+        subtitle={
+          createFormVariant === "routing_minimal"
+            ? routingCreateEntry === "bidding"
+              ? "Account, site, scope, type of work and partners — one step: we create the bid request and notify them."
+              : "Account, site, type of work and scope — partners match on type of work when you send to bidding."
+            : "Manual quote — we create the proposal and send the PDF to the inbox from Accounts (End client vs This account billing)."
+        }
         size="lg"
         scrollBody
       >
-        <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
+        <CreateQuoteForm
+          key={`${createFormVariant}-${routingCreateEntry}`}
+          variant={createFormVariant}
+          routingCollectTrade={routingCreateEntry === "bidding"}
+          onSubmit={handleCreate}
+          onCancel={() => {
+            setCreateOpen(false);
+            createQuoteIntentRef.current = "full";
+            setCreateFormVariant("full");
+            setRoutingCreateEntry("quote");
+            setDrawerPendingOpenInviteQuoteId(null);
+          }}
+        />
       </Modal>
       <ExportCsvModal
         open={exportOpen}
@@ -1900,12 +2625,12 @@ function PartnerBidMiniDash({
   );
 }
 
-/** Quote pipeline without Survey — Draft → Bids → Awaiting customer → Awaiting payment (in_survey maps to Draft). */
+/** Quote pipeline without Survey — New → Bids → Approval → Payment (in_survey maps here). */
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
-  { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
+  { id: "draft", label: "New", short: "New", icon: ClipboardList },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
-  { id: "awaiting_payment", label: "Awaiting payment", short: "Awaiting payment", icon: CheckCircle2 },
+  { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
+  { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
 
 const QUOTE_NAVY = "#020040";
@@ -1932,8 +2657,8 @@ function QuotePipelineStepper({ status }: { status: string }) {
             <XCircle className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">Rejected</p>
-            <p className="text-[10px] text-text-tertiary">Quote closed</p>
+            <p className="text-sm font-semibold text-text-primary">Lost</p>
+            <p className="text-[10px] text-text-tertiary">Marked as rejected</p>
           </div>
         </div>
       </section>
@@ -1948,8 +2673,8 @@ function QuotePipelineStepper({ status }: { status: string }) {
             <Briefcase className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">Converted to job</p>
-            <p className="text-[10px] text-text-tertiary">Continue in Jobs</p>
+            <p className="text-sm font-semibold text-text-primary">Win</p>
+            <p className="text-[10px] text-text-tertiary">Converted to job · continue in Jobs</p>
           </div>
         </div>
       </section>
@@ -2032,21 +2757,34 @@ function QuotePipelineStepper({ status }: { status: string }) {
   );
 }
 
+/** Draft drawer: routing intake until user opens Partner bids or Manual build modal. */
+function isDraftRoutingPhase(q: Quote): boolean {
+  return q.status === "draft" && q.draft_route_completed !== true;
+}
+
 /* ========== QUOTE DETAIL DRAWER ========== */
 function QuoteDetailDrawer({
   quote,
   pendingInitialTab,
   onConsumePendingInitialTab,
+  pendingOpenInviteForQuoteId,
+  onConsumePendingOpenInvitePartners,
   onClose,
   onStatusChange,
   onQuoteUpdate,
+  onApproveQuote,
 }: {
   quote: Quote;
   pendingInitialTab?: "overview" | "bids" | null;
   onConsumePendingInitialTab?: () => void;
+  /** After “New bidding”, open Invite Partners once this drawer shows the newly created routing draft (`quote.id` matches). */
+  pendingOpenInviteForQuoteId?: string | null;
+  onConsumePendingOpenInvitePartners?: () => void;
   onClose: () => void;
   onStatusChange: (quote: Quote, status: string, opts?: { successToast?: string }) => void | Promise<boolean>;
   onQuoteUpdate?: (updated: Quote) => void;
+  /** Approval (`awaiting_customer`) — **Approved** button: deposit gate or create job (parent). */
+  onApproveQuote: (quoteRow: Quote) => void;
 }) {
   const { profile } = useProfile();
   const [tab, setTab] = useState("overview");
@@ -2059,8 +2797,27 @@ function QuoteDetailDrawer({
   const [scopeText, setScopeText] = useState("");
   const [convertedJob, setConvertedJob] = useState<Job | null>(null);
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
+  const [manualContinueOpen, setManualContinueOpen] = useState(false);
+  const [manualContinueSending, setManualContinueSending] = useState(false);
+  /** Editable scope in Invite Partners modal — persisted when invites send. */
+  const [invitePartnerScopeDraft, setInvitePartnerScopeDraft] = useState("");
+  const [invitePartnerScopeEditing, setInvitePartnerScopeEditing] = useState(false);
+  const invitePartnerScopeTextareaRef = useRef<HTMLTextAreaElement>(null);
+  /** Local type-of-work / title edits before route is chosen (persisted with Save details or on Send to bid). */
+  const [routingTitleDraft, setRoutingTitleDraft] = useState("");
+  /** Work site address for routing draft (Mapbox); persisted with job details / Send to bid. */
+  const [routingPropertyAddress, setRoutingPropertyAddress] = useState("");
+  const [routingMapCenter, setRoutingMapCenter] = useState<[number, number] | undefined>(undefined);
+  const [routingMapGeocoding, setRoutingMapGeocoding] = useState(false);
+  const [routingPhotoFiles, setRoutingPhotoFiles] = useState<File[]>([]);
+  const [routingPhotoPreviews, setRoutingPhotoPreviews] = useState<string[]>([]);
+  const [routingDetailsSaving, setRoutingDetailsSaving] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
+  const [routingTypeOfWorkCatalog, setRoutingTypeOfWorkCatalog] = useState<CatalogService[]>([]);
+  useEffect(() => {
+    void listCatalogServicesForPicker().then(setRoutingTypeOfWorkCatalog).catch(() => setRoutingTypeOfWorkCatalog([]));
+  }, []);
   const [sendingInvitePush, setSendingInvitePush] = useState(false);
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
@@ -2086,6 +2843,8 @@ function QuoteDetailDrawer({
   const [drawerAccountRows, setDrawerAccountRows] = useState<Account[]>([]);
   /** Draft selection in the account picker (persisted on Save). Empty string = no account. */
   const [drawerAccountDraftId, setDrawerAccountDraftId] = useState("");
+  const lastQuoteIdForAccountInferRef = useRef<string>("");
+  const prevSyncedSourceAccountIdRef = useRef<string | null | undefined>(undefined);
   /** Yes = ClientAddressPicker (client becomes the primary contact). No = free-text site address, no contact client. */
   const [drawerAddClient, setDrawerAddClient] = useState(true);
   /** Free-text address used when "Add contact client" is off. */
@@ -2115,17 +2874,49 @@ function QuoteDetailDrawer({
       quote.status === "awaiting_payment" ||
       quote.status === "converted_to_job" ||
       quote.status === "rejected";
+    const routingDraft = isDraftRoutingPhase(quote);
     if (pendingInitialTab === "bids" || pendingInitialTab === "overview") {
-      setTab(pendingInitialTab === "bids" && lateStage ? "overview" : pendingInitialTab);
+      const init =
+        pendingInitialTab === "bids" && (lateStage || routingDraft)
+          ? "overview"
+          : pendingInitialTab;
+      setTab(init);
       lastTabInitQuoteIdRef.current = quote.id;
       onConsumePendingInitialTab?.();
       return;
     }
     if (lastTabInitQuoteIdRef.current !== quote.id) {
       lastTabInitQuoteIdRef.current = quote.id;
-      setTab(quote.quote_type === "partner" && !lateStage ? "bids" : "overview");
+      setTab("overview");
     }
-  }, [quote.id, quote.quote_type, quote.status, pendingInitialTab, onConsumePendingInitialTab]);
+  }, [
+    quote.id,
+    quote.quote_type,
+    quote.status,
+    quote.draft_route_completed,
+    pendingInitialTab,
+    onConsumePendingInitialTab,
+  ]);
+
+  useEffect(() => {
+    if (!pendingOpenInviteForQuoteId) return;
+    if (quote.id !== pendingOpenInviteForQuoteId) return;
+    if (!isDraftRoutingPhase(quote)) {
+      onConsumePendingOpenInvitePartners?.();
+      return;
+    }
+    const id = window.requestAnimationFrame(() => {
+      setInvitePartnerOpen(true);
+      onConsumePendingOpenInvitePartners?.();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [
+    pendingOpenInviteForQuoteId,
+    quote.id,
+    quote.status,
+    quote.draft_route_completed,
+    onConsumePendingOpenInvitePartners,
+  ]);
 
   // Only when switching to another quote — not when the same quote is refreshed after send (keeps "Resend email" label).
   useEffect(() => {
@@ -2149,7 +2940,6 @@ function QuoteDetailDrawer({
   }, [quote.id]);
 
   useEffect(() => {
-    setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
     setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
     setDepositPercent(
       quote.deposit_percent != null && Number.isFinite(Number(quote.deposit_percent))
@@ -2167,14 +2957,54 @@ function QuoteDetailDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when server row version changes; omitting `quote` avoids wiping the editor on every silent list refresh (new object, same row)
   }, [quote.id, quote.updated_at]);
 
+  /** Customer email — follows account `billing_type` + client vs account-only property (not raw `quote.client_email` alone). */
+  useEffect(() => {
+    let cancelled = false;
+    const effectiveClientId = (quoteClientPick.client_id ?? quote.client_id)?.trim() || null;
+    const propertyIdOnly = effectiveClientId ? null : quote.property_id?.trim() || null;
+    void (async () => {
+      try {
+        const computed = await getQuoteProposalRecipientEmail(getSupabase(), {
+          clientId: effectiveClientId,
+          propertyId: propertyIdOnly,
+          accountId:
+            effectiveClientId || propertyIdOnly
+              ? null
+              : drawerAccountDraftId.trim() || quote.source_account_id?.trim() || null,
+          fallbackName: quoteClientPick.client_name ?? quote.client_name ?? null,
+          fallbackEmail: quoteClientPick.client_email ?? quote.client_email ?? null,
+        });
+        if (cancelled) return;
+        const trimmed = bidPayloadTrimmedString(computed as unknown);
+        setSendEmail(trimmed || bidPayloadTrimmedString(quote.client_email as unknown));
+      } catch {
+        if (!cancelled) setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    quote.id,
+    quote.updated_at,
+    quote.client_id,
+    quote.property_id,
+    quote.client_email,
+    quote.client_name,
+    quoteClientPick.client_id,
+    quoteClientPick.client_email,
+    quoteClientPick.client_name,
+    drawerAccountDraftId,
+    quote.source_account_id,
+  ]);
+
   useEffect(() => {
     let cancelled = false;
     const clientId = quoteClientPick.client_id ?? quote.client_id;
     if (clientId) {
       void (async () => {
         try {
-          const client = await getClient(clientId);
-          const sid = client?.source_account_id?.trim();
+          const sid = await resolveCorporateAccountIdForClient(clientId);
           if (!sid) {
             if (!cancelled) setLinkedAccountPreview(null);
             return;
@@ -2197,10 +3027,6 @@ function QuoteDetailDrawer({
               email: mainEmail || "—",
               financeEmail: feRaw.length > 0 ? feRaw : null,
             });
-            /** Default the Customer email field to the account primary email when the quote has none yet. */
-            if (mainEmail && !bidPayloadTrimmedString(quote.client_email as unknown)) {
-              setSendEmail((prev) => (prev?.trim() ? prev : mainEmail));
-            }
           }
         } catch {
           if (!cancelled) setLinkedAccountPreview(null);
@@ -2238,10 +3064,37 @@ function QuoteDetailDrawer({
               email: mainEmail || "—",
               financeEmail: feRaw.length > 0 ? feRaw : null,
             });
-            /** Property-linked flow: same default for the Customer email when the quote has none yet. */
-            if (mainEmail && !bidPayloadTrimmedString(quote.client_email as unknown)) {
-              setSendEmail((prev) => (prev?.trim() ? prev : mainEmail));
-            }
+          }
+        } catch {
+          if (!cancelled) setLinkedAccountPreview(null);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    const draftPickId = drawerAccountDraftId.trim() || quote.source_account_id?.trim() || "";
+    if (!clientId && !propId && draftPickId) {
+      void (async () => {
+        try {
+          const acc = await getAccount(draftPickId);
+          if (cancelled) return;
+          if (!acc) {
+            setLinkedAccountPreview(null);
+            return;
+          }
+          const mainEmail = bidPayloadTrimmedString(acc.email as unknown);
+          const feRaw = bidPayloadTrimmedString(acc.finance_email as unknown);
+          const companyName =
+            bidPayloadTrimmedString(acc.company_name as unknown) ||
+            bidPayloadTrimmedString(acc.contact_name as unknown) ||
+            "";
+          if (!cancelled) {
+            setLinkedAccountPreview({
+              companyName: companyName || "—",
+              email: mainEmail || "—",
+              financeEmail: feRaw.length > 0 ? feRaw : null,
+            });
           }
         } catch {
           if (!cancelled) setLinkedAccountPreview(null);
@@ -2255,7 +3108,14 @@ function QuoteDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [quote.client_id, quote.property_id, quoteClientPick.client_id, quote.updated_at]);
+  }, [
+    quote.client_id,
+    quote.property_id,
+    quote.source_account_id,
+    quoteClientPick.client_id,
+    quote.updated_at,
+    drawerAccountDraftId,
+  ]);
 
   /** Lazily load the accounts list the first time the Account panel is opened. */
   useEffect(() => {
@@ -2267,16 +3127,18 @@ function QuoteDetailDrawer({
     return () => { cancelled = true; };
   }, [clientOnQuoteOpen, drawerAccountRows.length]);
 
-  /** Infer the account id currently linked to this quote (via client OR property). */
+  /** Infer account id for the drawer: client → corporate account, property site → account, else persisted `source_account_id`. */
   useEffect(() => {
+    const idChanged = lastQuoteIdForAccountInferRef.current !== quote.id;
+    if (idChanged) lastQuoteIdForAccountInferRef.current = quote.id;
+
     let cancelled = false;
     const clientId = quote.client_id?.trim();
     const propId = quote.property_id?.trim();
     void (async () => {
       try {
         if (clientId) {
-          const client = await getClient(clientId);
-          const sid = client?.source_account_id?.trim();
+          const sid = await resolveCorporateAccountIdForClient(clientId);
           if (!cancelled) setDrawerAccountDraftId(sid || "");
           return;
         }
@@ -2285,13 +3147,16 @@ function QuoteDetailDrawer({
           if (!cancelled) setDrawerAccountDraftId(prop?.account_id?.trim() || "");
           return;
         }
-        if (!cancelled) setDrawerAccountDraftId("");
+        const srcRaw = quote.source_account_id;
+        if (!idChanged && prevSyncedSourceAccountIdRef.current === srcRaw) return;
+        prevSyncedSourceAccountIdRef.current = srcRaw;
+        if (!cancelled) setDrawerAccountDraftId(srcRaw?.trim() || "");
       } catch {
-        if (!cancelled) setDrawerAccountDraftId("");
+        /* Leave drawer pick unchanged on lookup errors — user may still send via account picker. */
       }
     })();
     return () => { cancelled = true; };
-  }, [quote.id, quote.client_id, quote.property_id, quote.updated_at]);
+  }, [quote.id, quote.client_id, quote.property_id, quote.source_account_id, quote.updated_at]);
 
   /** Keep manual-address draft aligned with what's currently stored when toggling to "No client". */
   useEffect(() => {
@@ -2349,13 +3214,69 @@ function QuoteDetailDrawer({
   };
 
   const loadPartners = useCallback(async () => {
-    const res = await listPartners({ pageSize: 200, status: "all" });
+    const res = await listPartners({ pageSize: 200, status: "active" });
     setPartners(res.data ?? []);
   }, []);
 
   useEffect(() => {
     if (invitePartnerOpen) { loadPartners(); setSelectedPartnerIds(new Set()); }
   }, [invitePartnerOpen, loadPartners]);
+
+  useEffect(() => {
+    if (!invitePartnerOpen) return;
+    setInvitePartnerScopeDraft(bidPayloadTrimmedString(quote.scope as unknown));
+    setInvitePartnerScopeEditing(false);
+  }, [invitePartnerOpen, quote.id, quote.scope]);
+
+  useEffect(() => {
+    const svc = bidPayloadTrimmedString(quote.service_type as unknown);
+    const ttl = bidPayloadTrimmedString(quote.title as unknown);
+    const st = normalizeTypeOfWork(svc) || normalizeTypeOfWork(ttl);
+    setRoutingTitleDraft(st || "");
+  }, [quote.id, quote.service_type, quote.title]);
+
+  /** Keep routing-draft site address aligned with the quote row (also set from Account / client panel above). */
+  useEffect(() => {
+    setRoutingPropertyAddress(bidPayloadTrimmedString(quote.property_address as unknown));
+  }, [quote.id, quote.property_address, quote.updated_at]);
+
+  /** Centre the Mapbox picker when we already have a saved address string. */
+  useEffect(() => {
+    const addr = bidPayloadTrimmedString(routingPropertyAddress).trim();
+    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+    if (!token || !addr) {
+      setRoutingMapCenter(undefined);
+      setRoutingMapGeocoding(false);
+      return;
+    }
+    setRoutingMapGeocoding(true);
+    let cancelled = false;
+    fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(addr)}.json?access_token=${token}&limit=1&types=${MAPBOX_GB_FORWARD_TYPES}${mapboxGbForwardBiasAppend(addr)}`,
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        const c = data.features?.[0]?.center as [number, number] | undefined;
+        if (!cancelled) setRoutingMapCenter(c);
+      })
+      .catch(() => {
+        if (!cancelled) setRoutingMapCenter(undefined);
+      })
+      .finally(() => {
+        if (!cancelled) setRoutingMapGeocoding(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routingPropertyAddress]);
+
+  useEffect(() => {
+    setRoutingPhotoFiles([]);
+    setRoutingPhotoPreviews((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u));
+      return [];
+    });
+  }, [quote.id]);
 
   /** Type of work used for “Match” / deselect-matched in Invite Partners modal. */
   const invitePartnerTypeOfWork = useMemo(() => {
@@ -2371,6 +3292,25 @@ function QuoteDetailDrawer({
       ),
     [partners],
   );
+
+  /** Invite modal: trade-matching partners first, then name. */
+  const partnersEligibleForInviteSorted = useMemo(() => {
+    const t = invitePartnerTypeOfWork.trim();
+    const rows = [...partnersEligibleForInvite];
+    rows.sort((a, b) => {
+      const ma = Boolean(t && safePartnerMatchesTypeOfWork(a, t, quote.catalog_service_id));
+      const mb = Boolean(t && safePartnerMatchesTypeOfWork(b, t, quote.catalog_service_id));
+      if (ma !== mb) return ma ? -1 : 1;
+      return (a.company_name || "").localeCompare(b.company_name || "", undefined, { sensitivity: "base" });
+    });
+    return rows;
+  }, [partnersEligibleForInvite, invitePartnerTypeOfWork, quote.catalog_service_id]);
+
+  const inviteModalTradeMatchedPartners = useMemo(() => {
+    const t = invitePartnerTypeOfWork.trim();
+    if (!t) return [];
+    return partnersEligibleForInvite.filter((p) => safePartnerMatchesTypeOfWork(p, t, quote.catalog_service_id));
+  }, [partnersEligibleForInvite, invitePartnerTypeOfWork, quote.catalog_service_id]);
 
   const loadBids = useCallback(
     async (quoteId: string) => {
@@ -2462,9 +3402,37 @@ function QuoteDetailDrawer({
     }
   }, [selectedReviewBidId, bidsCollapsedVisible]);
 
-  const actions = getQuoteActions(quote);
-  /** Start Bidding lives on the Bids tab, not under Review & Send. */
-  const overviewActions = actions.filter((a) => a.status !== "bidding");
+  const actions = isDraftRoutingPhase(quote) ? [] : getQuoteActions(quote);
+  /** Start Bidding lives on the Bids tab, not under Review & Send. Hide Reject until the customer has received the proposal. */
+  const overviewActions = actions.filter((a) => {
+    if (a.status === "bidding") return false;
+    if (a.status === "rejected") return quoteCustomerHasReceivedProposal(quote, quoteEmailedInSession);
+    return true;
+  });
+
+  /** When `linkedAccountPreview` is still null (e.g. account-only quote without `property_id`), show denormalised quote fields. */
+  const accountOnQuoteHeader = useMemo(() => {
+    if (linkedAccountPreview) {
+      return { mode: "resolved" as const, ...linkedAccountPreview };
+    }
+    const srcAcct = bidPayloadTrimmedString(quote.source_account_name as unknown);
+    const noContactClient = !bidPayloadTrimmedString(quote.client_id as unknown);
+    const accountOnlyName = noContactClient ? bidPayloadTrimmedString(quote.client_name as unknown) : "";
+    const title = srcAcct || accountOnlyName;
+    if (!title) return { mode: "none" as const };
+    return {
+      mode: "denorm" as const,
+      title,
+      email: bidPayloadTrimmedString(quote.client_email as unknown),
+    };
+  }, [
+    linkedAccountPreview,
+    quote.source_account_name,
+    quote.client_id,
+    quote.client_name,
+    quote.client_email,
+  ]);
+
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const proposalLine0Sell = (Number(lineItems[0]?.quantity) || 0) * (Number(lineItems[0]?.unitPrice) || 0);
   const proposalLine1Sell = (Number(lineItems[1]?.quantity) || 0) * (Number(lineItems[1]?.unitPrice) || 0);
@@ -2556,17 +3524,281 @@ function QuoteDetailDrawer({
     quote.status === "awaiting_payment" ||
     quote.status === "converted_to_job" ||
     quote.status === "rejected";
+  const routingDraft = isDraftRoutingPhase(quote);
   const drawerTabs = isLateStageQuote
     ? [
         { id: "overview", label: "Review & Send" },
         { id: "details", label: "Details" },
         { id: "history", label: "History" },
       ]
-    : [
-        { id: "overview", label: "Review & Send" },
-        { id: "bids", label: "Bids" },
-        { id: "history", label: "History" },
-      ];
+    : routingDraft
+      ? [
+          { id: "overview", label: "New" },
+          { id: "history", label: "History" },
+        ]
+      : [
+          { id: "overview", label: "Review & Send" },
+          { id: "bids", label: "Bids" },
+          { id: "history", label: "History" },
+        ];
+
+  const saveRoutingJobDetails = useCallback(async (): Promise<boolean> => {
+    const title = normalizeTypeOfWork(routingTitleDraft).trim();
+    if (!title) {
+      toast.error("Add a type of work");
+      return false;
+    }
+    setRoutingDetailsSaving(true);
+    try {
+      const existing = [...(quote.images ?? [])].filter((u): u is string => typeof u === "string" && !!u.trim());
+      let nextImages = existing;
+      if (routingPhotoFiles.length > 0) {
+        const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+        const folder =
+          typeof crypto !== "undefined" && "randomUUID" in crypto ? `draft-route-${quote.id}-${crypto.randomUUID()}` : `draft-route-${quote.id}-${Date.now()}`;
+        const urls = await uploadQuoteInviteImages(routingPhotoFiles, folder);
+        if (urls?.length) nextImages = [...nextImages, ...urls];
+      }
+      const scopeTrim = bidPayloadTrimmedString(scopeText as unknown).trim();
+      const typeNorm = normalizeTypeOfWork(routingTitleDraft).trim();
+      const addrTrim = bidPayloadTrimmedString(routingPropertyAddress).trim();
+      const postcodeFromAddr = addrTrim ? extractUkPostcode(addrTrim) : null;
+      const updated = await updateQuote(quote.id, {
+        title: typeNorm,
+        ...(typeNorm ? { service_type: typeNorm } : {}),
+        ...(scopeTrim ? { scope: scopeTrim } : { scope: undefined }),
+        ...(addrTrim
+          ? {
+              property_address: addrTrim,
+              ...(postcodeFromAddr ? { postcode: postcodeFromAddr } : {}),
+            }
+          : {}),
+        ...(nextImages.length ? { images: nextImages } : {}),
+      });
+      onQuoteUpdate?.(updated);
+      setRoutingPhotoFiles([]);
+      setRoutingPhotoPreviews((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+      toast.success("Job details saved");
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save job details");
+      return false;
+    } finally {
+      setRoutingDetailsSaving(false);
+    }
+  }, [
+    quote.id,
+    quote.images,
+    routingTitleDraft,
+    routingPropertyAddress,
+    scopeText,
+    routingPhotoFiles,
+    onQuoteUpdate,
+  ]);
+
+  const prepareSendToBid = useCallback(async () => {
+    const nm = bidPayloadTrimmedString(quote.client_name as unknown);
+    if (!nm || /^pending$/i.test(nm)) {
+      toast.error("Link an account (Account on this quote)");
+      return;
+    }
+    const siteAddr =
+      bidPayloadTrimmedString(routingPropertyAddress).trim() ||
+      bidPayloadTrimmedString(quote.property_address as unknown);
+    if (!siteAddr) {
+      toast.error("Pin or enter the work address below");
+      return;
+    }
+    if (!normalizeTypeOfWork(routingTitleDraft).trim()) {
+      toast.error("Add type of work");
+      return;
+    }
+    if (!bidPayloadTrimmedString(scopeText as unknown).trim()) {
+      toast.error("Add scope — partners need to know what to bid on.");
+      return;
+    }
+    const ok = await saveRoutingJobDetails();
+    if (ok) setInvitePartnerOpen(true);
+  }, [
+    quote.client_name,
+    quote.property_address,
+    routingTitleDraft,
+    routingPropertyAddress,
+    scopeText,
+    saveRoutingJobDetails,
+  ]);
+
+  const handleDrawerContinueManual = useCallback(
+    async (
+      _quoteId: string,
+      patch: Partial<Quote>,
+      options?: {
+        manualLineItems?: ProposalLineRow[];
+        sendToCustomer?: boolean;
+        markAsSentExternally?: boolean;
+      },
+    ) => {
+      const sendToCustomer = options?.sendToCustomer === true;
+      const markAsSentExternally = options?.markAsSentExternally === true;
+      setManualContinueSending(true);
+      try {
+        const supabase = getSupabase();
+        const lines = options?.manualLineItems;
+        if (lines?.length) {
+          await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
+          const rows = lines.map((li, i) => ({
+            quote_id: quote.id,
+            description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
+            quantity: Number(li.quantity) || 1,
+            unit_price: Number(li.unitPrice) || 0,
+            partner_unit_cost: Number(li.partnerUnitCost) || 0,
+            sort_order: i,
+            notes: bidPayloadTrimmedString(li.notes as unknown) || null,
+          }));
+          await insertQuoteLineItemsResilient(supabase, rows);
+        }
+        const updated = await updateQuote(quote.id, {
+          ...patch,
+          draft_route_completed: true,
+          quote_type: "internal",
+        });
+        onQuoteUpdate?.(updated);
+        setManualContinueOpen(false);
+
+        if (!sendToCustomer && !markAsSentExternally) {
+          toast.success("Manual quote saved — complete Review & Send to email the customer.");
+          return;
+        }
+
+        const scopeSend =
+          bidPayloadTrimmedString(patch.scope as unknown)?.trim() ||
+          (lines ?? [])
+            .map((li) => bidPayloadTrimmedString(li.description as unknown).trim())
+            .filter(Boolean)
+            .join("\n") ||
+          "";
+        if (!scopeSend) {
+          toast.error("Add scope or line descriptions before sending.");
+          throw new Error("incomplete_scope");
+        }
+        const rawD1 = bidPayloadTrimmedString(patch.start_date_option_1 as unknown);
+        const rawD2 = bidPayloadTrimmedString(patch.start_date_option_2 as unknown);
+        if (!normalizeCalendarDateToYmd(rawD1) && !normalizeCalendarDateToYmd(rawD2)) {
+          toast.error("Choose at least one proposed start date before sending.");
+          throw new Error("incomplete_dates");
+        }
+        const depPctTry = patch.deposit_percent != null ? Number(patch.deposit_percent) : NaN;
+        if (!Number.isFinite(depPctTry) || depPctTry < 0 || depPctTry > 100) {
+          toast.error("Set a valid deposit before sending.");
+          throw new Error("incomplete_deposit");
+        }
+
+        /** Matches Review & Send / `billing_type`; modal omits `client_email` so DB may lack it until resolved. */
+        let rowForSend = updated;
+        const computedEmail = bidPayloadTrimmedString(
+          (
+            await getQuoteProposalRecipientEmail(supabase, {
+              clientId: rowForSend.client_id?.trim() || null,
+              propertyId: rowForSend.client_id?.trim() ? null : rowForSend.property_id?.trim() || null,
+              accountId:
+                rowForSend.client_id?.trim() || rowForSend.property_id?.trim()
+                  ? null
+                  : drawerAccountDraftId.trim() || rowForSend.source_account_id?.trim() || null,
+              fallbackName: rowForSend.client_name ?? null,
+              fallbackEmail: rowForSend.client_email ?? null,
+            })
+          ) as unknown,
+        );
+        const recipient =
+          computedEmail || bidPayloadTrimmedString(rowForSend.client_email as unknown);
+        if (!recipient.includes("@")) {
+          const accountInboxUnresolved =
+            !computedEmail &&
+            (Boolean(drawerAccountDraftId.trim()) ||
+              Boolean(rowForSend.property_id?.trim()) ||
+              Boolean(rowForSend.source_account_id?.trim()));
+          toast.error(
+            accountInboxUnresolved
+              ? "This account has no main or finance email on file — add one under Accounts (Directory), or enter a recipient in Review & Send before sending."
+              : "Add a valid customer email on this quote before sending.",
+          );
+          throw new Error("incomplete_email");
+        }
+
+        if (
+          computedEmail &&
+          computedEmail !== bidPayloadTrimmedString(rowForSend.client_email as unknown)
+        ) {
+          rowForSend = await updateQuote(rowForSend.id, { client_email: computedEmail });
+          onQuoteUpdate?.(rowForSend);
+        }
+
+        if (markAsSentExternally) {
+          const ok = await Promise.resolve(
+            onStatusChange(rowForSend, "awaiting_customer", {
+              successToast: "Awaiting Customer — no email sent from the app (you marked it sent already).",
+            }),
+          );
+          if (ok === false) return;
+          const stamped = await updateQuote(rowForSend.id, { customer_pdf_sent_at: new Date().toISOString() });
+          onQuoteUpdate?.(stamped);
+          setQuoteEmailedInSession(true);
+          const refreshed = await getQuote(quote.id);
+          if (refreshed) onQuoteUpdate?.(refreshed);
+          onClose();
+          return;
+        }
+
+        const items = (lines ?? []).map((li, idx) => {
+          const qty = Number(li.quantity) || 1;
+          const unit = Number(li.unitPrice) || 0;
+          return {
+            description: lineItemDescriptionForCustomer(li, idx),
+            quantity: qty,
+            unitPrice: unit,
+            total: qty * unit,
+          };
+        });
+
+        const res = await fetch("/api/quotes/send-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quoteId: rowForSend.id,
+            recipientEmail: recipient,
+            recipientName: bidPayloadTrimmedString(rowForSend.client_name as unknown),
+            customMessage: bidPayloadTrimmedString(rowForSend.email_custom_message as unknown) || undefined,
+            items: items.length ? items : undefined,
+            scope: scopeSend || undefined,
+            attachRequestPhotos: Boolean(rowForSend.email_attach_request_photos),
+          }),
+        });
+        const data = (await res.json()) as { error?: string; emailSent?: boolean; reason?: string; sentTo?: string };
+        if (!res.ok) {
+          throw new Error(data.error ?? "Failed to send email");
+        }
+        if (!data.emailSent) {
+          toast.warning(data.reason ?? "Quote updated but email was not sent.");
+        } else {
+          toast.success(
+            `Proposal saved — PDF sent to ${recipient}. Customer can Accept or Reject via the email link.`,
+          );
+          setQuoteEmailedInSession(true);
+        }
+        const refreshed = await getQuote(quote.id);
+        if (refreshed) onQuoteUpdate?.(refreshed);
+      } catch (e) {
+        if (e instanceof Error && /^incomplete_/.test(e.message)) return;
+        toast.error(e instanceof Error ? e.message : "Something went wrong");
+      } finally {
+        setManualContinueSending(false);
+      }
+    },
+    [quote.id, onQuoteUpdate, onStatusChange, onClose, drawerAccountDraftId],
+  );
 
   const guidance = getStageGuidance(quote.status);
 
@@ -2872,6 +4104,7 @@ function QuoteDetailDrawer({
       const stamped = await updateQuote(persisted.id, { customer_pdf_sent_at: new Date().toISOString() });
       onQuoteUpdate?.(stamped);
       setQuoteEmailedInSession(true);
+      onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to record sent time");
     } finally {
@@ -2889,6 +4122,212 @@ function QuoteDetailDrawer({
             ` Lines 1–2: partner unit costs come from the approved bid (locked); customer unit sell defaults to ${Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell. Use the scale below to adjust sell; edit rows directly if needed.`,
           );
 
+  /** Pinned below scroll — avoids flex “dead space” above actions. */
+  const quoteDrawerFooter =
+    routingDraft && tab === "overview" ? (
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Choose how to continue</p>
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+            <Button
+              type="button"
+              size="sm"
+              className="border-0 bg-[#ED4B00] text-white hover:bg-[#d84300]"
+              icon={<Users className="h-3.5 w-3.5" />}
+              onClick={() => void prepareSendToBid()}
+            >
+              Send to bid
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              icon={<Pencil className="h-3.5 w-3.5" />}
+              onClick={() =>
+                void (async () => {
+                  const siteAddr =
+                    bidPayloadTrimmedString(routingPropertyAddress).trim() ||
+                    bidPayloadTrimmedString(quote.property_address as unknown);
+                  if (!siteAddr) {
+                    toast.error("Pin or enter the work address");
+                    return;
+                  }
+                  if (!normalizeTypeOfWork(routingTitleDraft).trim()) {
+                    toast.error("Add type of work");
+                    return;
+                  }
+                  const ok = await saveRoutingJobDetails();
+                  if (ok) setManualContinueOpen(true);
+                })()
+              }
+            >
+              Create manually
+            </Button>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 text-[11px] text-text-tertiary hover:text-red-600"
+            icon={<XCircle className="h-3.5 w-3.5" />}
+            onClick={() => void onStatusChange(quote, "rejected")}
+          >
+            Reject quote
+          </Button>
+        </div>
+      </div>
+    ) : (tab === "overview" || tab === "bids") && !routingDraft ? (
+      <div className="space-y-3">
+        {quote.request_id &&
+        !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5 dark:bg-card/40">
+            <input
+              type="checkbox"
+              checked={emailAttachRequestPhotos}
+              onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
+              className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
+            />
+            <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
+            <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
+          </label>
+        ) : null}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border-light bg-card dark:bg-card/80">
+              <FileText className="h-4 w-4 text-text-tertiary" aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1">
+                <p className="text-sm font-semibold text-text-primary">Customer PDF</p>
+                <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
+              </div>
+              <p className="text-[11px] text-text-tertiary">Uses saved figures</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-text-primary"
+              onClick={() => {
+                window.open(
+                  `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                );
+              }}
+            >
+              Preview
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-text-primary"
+              icon={<Download className="h-3.5 w-3.5" />}
+              onClick={() => {
+                const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+                const a = document.createElement("a");
+                a.href = url;
+                a.rel = "noopener";
+                a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }}
+            >
+              Download
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-2 pb-0.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Move this quote</p>
+          <div
+            className={cn(
+              "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",
+              "[scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
+              "[&_button]:shrink-0",
+            )}
+          >
+            {(quote.status === "awaiting_customer" || quote.status === "awaiting_payment") && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={sendState === "sending" || !sendStep3Ready}
+                icon={
+                  sendState === "sending" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )
+                }
+                onClick={() => void handleSendToCustomer()}
+                title={
+                  quote.status === "awaiting_payment"
+                    ? "Saves the latest figures and emails the updated PDF to the customer"
+                    : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
+                }
+              >
+                {sendState === "sending" ? "Saving…" : "Resend Quote"}
+              </Button>
+            )}
+            {overviewActions.map((action) => {
+              const sendToCustomerClick = async () => {
+                if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+                  toast.error(
+                    "Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).",
+                  );
+                  return;
+                }
+                await handleSendToCustomer();
+              };
+              const showMarkAsSent =
+                action.status === "awaiting_customer" && ["draft", "in_survey", "bidding"].includes(quote.status);
+              return (
+                <Fragment key={action.status}>
+                  <Button
+                    variant={action.primary ? "primary" : "outline"}
+                    size="sm"
+                    disabled={proposalSaving}
+                    icon={<action.icon className="h-3.5 w-3.5" />}
+                    onClick={async () => {
+                      if (action.status === "approve_quote") {
+                        onApproveQuote(quote);
+                        return;
+                      }
+                      if (action.status !== "awaiting_customer") {
+                        const result = await Promise.resolve(onStatusChange(quote, action.status));
+                        if (result === false) return;
+                        return;
+                      }
+                      await sendToCustomerClick();
+                    }}
+                  >
+                    {action.label}
+                  </Button>
+                  {showMarkAsSent ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={proposalSaving}
+                      icon={<MailCheck className="h-3.5 w-3.5" />}
+                      title="Save proposal, move to Awaiting Customer, and record that the PDF was already delivered (no email from this app)"
+                      onClick={() => void handleMarkAsSentExternally()}
+                    >
+                      Mark as sent
+                    </Button>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    ) : undefined;
+
   return (
     <Drawer
       open={!!quote}
@@ -2896,8 +4335,10 @@ function QuoteDetailDrawer({
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
       width="w-full max-w-[440px]"
+      footer={quoteDrawerFooter}
+      footerClassName="bg-card px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-surface-secondary/40"
     >
-      <div className="flex flex-col h-full">
+      <div className="min-w-0">
         <Tabs
           tabs={drawerTabs}
           activeTab={tab}
@@ -2950,12 +4391,10 @@ function QuoteDetailDrawer({
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto">
-
-          {/* OVERVIEW TAB: Status + Details together */}
-          {tab === "overview" && (
+        {/* OVERVIEW TAB: Status + Details together */}
+        {tab === "overview" && (
             <div className="space-y-3 p-3 sm:p-4">
-              <QuotePipelineStepper status={quote.status} />
+              {!routingDraft ? <QuotePipelineStepper status={quote.status} /> : null}
               {quote.status === "rejected" && quote.rejection_reason?.trim() ? (
                 <div className="rounded-lg border border-red-200/80 bg-red-50/70 px-3 py-2 text-xs leading-snug text-text-secondary dark:border-red-900/40 dark:bg-red-950/25">
                   {quote.rejection_reason}
@@ -3010,17 +4449,24 @@ function QuoteDetailDrawer({
                         <Building2 className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        {linkedAccountPreview ? (
+                        {accountOnQuoteHeader.mode === "resolved" ? (
                           <>
                             <p className="truncate text-sm font-semibold leading-tight text-text-primary">
-                              {linkedAccountPreview.companyName}
+                              {accountOnQuoteHeader.companyName}
                             </p>
-                            <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{linkedAccountPreview.email}</p>
-                            {linkedAccountPreview.financeEmail &&
-                            linkedAccountPreview.financeEmail.toLowerCase() !== linkedAccountPreview.email.toLowerCase() ? (
+                            <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{accountOnQuoteHeader.email}</p>
+                            {accountOnQuoteHeader.financeEmail &&
+                            accountOnQuoteHeader.financeEmail.toLowerCase() !== accountOnQuoteHeader.email.toLowerCase() ? (
                               <p className="mt-1 text-[10px] leading-snug text-text-tertiary">
-                                Finance · <span className="text-text-secondary break-all">{linkedAccountPreview.financeEmail}</span>
+                                Finance · <span className="text-text-secondary break-all">{accountOnQuoteHeader.financeEmail}</span>
                               </p>
+                            ) : null}
+                          </>
+                        ) : accountOnQuoteHeader.mode === "denorm" ? (
+                          <>
+                            <p className="truncate text-sm font-semibold leading-tight text-text-primary">{accountOnQuoteHeader.title}</p>
+                            {accountOnQuoteHeader.email ? (
+                              <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{accountOnQuoteHeader.email}</p>
                             ) : null}
                           </>
                         ) : (
@@ -3147,6 +4593,7 @@ function QuoteDetailDrawer({
                               client_name: quoteClientPick.client_name,
                               client_email: quoteClientPick.client_email ?? "",
                               property_address: quoteClientPick.property_address,
+                              source_account_id: null,
                             };
                             if (quoteClientPick.client_id?.trim()) {
                               const b = await resolveNominalBillingParty(getSupabase(), {
@@ -3202,6 +4649,7 @@ function QuoteDetailDrawer({
                               client_name: accountDisplayName || quote.client_name || "Account",
                               client_email: "",
                               property_address: addr,
+                              source_account_id: accountId.trim() ? accountId.trim() : null,
                               ...(resolvedPropertyId ? { property_id: resolvedPropertyId } : {}),
                             };
                           }
@@ -3220,8 +4668,9 @@ function QuoteDetailDrawer({
                               email: mainEmail || "—",
                               financeEmail: feRaw.length > 0 ? feRaw : null,
                             });
-                            /** No contact client: push the account primary email into the Customer email field. */
-                            if (mainEmail) setSendEmail(mainEmail);
+                            /** No contact client: prefer finance inbox, matching account-mode billing resolver. */
+                            const accountDefaultEmail = feRaw || mainEmail;
+                            if (accountDefaultEmail) setSendEmail(accountDefaultEmail);
                           }
                           toast.success(drawerAddClient ? "Client updated on this quote" : "Account updated on this quote");
                           setClientOnQuoteOpen(false);
@@ -3238,8 +4687,134 @@ function QuoteDetailDrawer({
                 ) : null}
               </div>
 
+              {routingDraft ? (
+                <div className="rounded-xl border border-border-light bg-card/90 p-3 space-y-3 dark:bg-surface-secondary/25">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Job on this draft</p>
+                    <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                      Type of work
+                    </label>
+                    <Select
+                      label=""
+                      aria-label="Type of work"
+                      value={routingTitleDraft}
+                      onChange={(e) => setRoutingTitleDraft(e.target.value)}
+                      className="h-10 min-h-10 w-full rounded-xl text-sm"
+                      options={[
+                        { value: "", label: "Select type of work…" },
+                        ...typeOfWorkLabelsFromCatalog(routingTypeOfWorkCatalog, routingTitleDraft || quote.service_type)
+                          .map((name) => ({ value: name, label: name })),
+                      ]}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                      Work site address
+                    </label>
+                    <p className="text-[11px] text-text-tertiary mb-2">
+                      Search or tap the map — pin updates the quote site address for partners.
+                    </p>
+                    {routingPropertyAddress.trim() !== "" && routingMapGeocoding ? (
+                      <div
+                        className="rounded-xl border border-border bg-card/70 animate-pulse"
+                        style={{ height: "200px" }}
+                        aria-busy="true"
+                        aria-label="Loading map"
+                      />
+                    ) : (
+                      <LocationPicker
+                        key={`routing-site-${quote.id}-${routingMapCenter ? `${routingMapCenter[0].toFixed(2)}_${routingMapCenter[1].toFixed(2)}` : "no-center"}`}
+                        value={routingPropertyAddress}
+                        onChange={(r) => setRoutingPropertyAddress((r.address ?? "").trim())}
+                        placeholder="Search address or postcode…"
+                        mapHeight="200px"
+                        center={routingMapCenter ?? MAPBOX_UK_CENTER_LON_LAT}
+                        restrictToUk
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Scope</label>
+                    <textarea
+                      value={scopeText}
+                      onChange={(e) => setScopeText(e.target.value)}
+                      placeholder="What needs doing, access, materials, exclusions…"
+                      rows={5}
+                      className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Site photos (optional)</p>
+                    <p className="text-[11px] text-text-tertiary">
+                      Up to 8 images (5 MB each). Partners see these on the bid invite.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(quote.images ?? [])
+                        .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+                        .map((url) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border-light bg-surface-hover"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt="" className="h-full w-full object-cover" />
+                          </a>
+                        ))}
+                      {routingPhotoPreviews.map((src) => (
+                        <div
+                          key={src}
+                          className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border-light bg-surface-hover"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={src} alt="" className="h-full w-full object-cover" />
+                        </div>
+                      ))}
+                    </div>
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30">
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      Add photos
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        multiple
+                        className="sr-only"
+                        disabled={(quote.images?.length ?? 0) + routingPhotoFiles.length >= 8 || routingDetailsSaving}
+                        onChange={(e) => {
+                          const list = e.target.files;
+                          if (!list?.length) return;
+                          const cap = 8 - (quote.images?.length ?? 0) - routingPhotoFiles.length;
+                          const nextFiles = [...routingPhotoFiles, ...Array.from(list)].slice(0, Math.max(0, cap));
+                          setRoutingPhotoFiles(nextFiles);
+                          setRoutingPhotoPreviews((prev) => {
+                            prev.forEach((u) => URL.revokeObjectURL(u));
+                            return nextFiles.map((f) => URL.createObjectURL(f));
+                          });
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    loading={routingDetailsSaving}
+                    disabled={routingDetailsSaving}
+                    onClick={() => void saveRoutingJobDetails()}
+                  >
+                    Save job details
+                  </Button>
+                </div>
+              ) : null}
+
               {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal. Hidden for manual quotes with no invited partners. */}
-              {quote.quote_type === "partner" ? (
+              {quote.quote_type === "partner" && !routingDraft ? (
               <details
                 key={`bid-summary-${quote.id}`}
                 className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
@@ -3356,7 +4931,7 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && (
+              {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
                 <div className="space-y-3 rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-2.5">
                   {quote.status === "awaiting_customer" && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
@@ -3828,168 +5403,9 @@ function QuoteDetailDrawer({
                   </div>
                     </>
                   ) : null}
-
-                  {quote.request_id ? (
-                    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
-                      <input
-                        type="checkbox"
-                        checked={emailAttachRequestPhotos}
-                        onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
-                        className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
-                      />
-                      <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
-                      <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
-                    </label>
-                  ) : null}
                 </div>
               )}
 
-              {quote.request_id &&
-              !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
-                <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
-                  <input
-                    type="checkbox"
-                    checked={emailAttachRequestPhotos}
-                    onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
-                    className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
-                  />
-                  <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
-                  <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
-                </label>
-              ) : null}
-
-              <div className="border-t border-border-light pt-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border-light bg-card">
-                      <FileText className="h-4 w-4 text-text-tertiary" aria-hidden />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1">
-                        <p className="text-sm font-semibold text-text-primary">Customer PDF</p>
-                        <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
-                      </div>
-                      <p className="text-[11px] text-text-tertiary">Uses saved figures</p>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-text-primary"
-                      onClick={() => {
-                        window.open(
-                          `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }}
-                    >
-                      Preview
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-text-primary"
-                      icon={<Download className="h-3.5 w-3.5" />}
-                      onClick={() => {
-                        const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.rel = "noopener";
-                        a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
-                        document.body.appendChild(a);
-                        a.click();
-                        a.remove();
-                      }}
-                    >
-                      Download
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-4 border-t border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
-                <div
-                  className={cn(
-                    "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",
-                    "[scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
-                    "[&_button]:shrink-0",
-                  )}
-                >
-                  {(quote.status === "awaiting_customer" || quote.status === "awaiting_payment") && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={sendState === "sending" || !sendStep3Ready}
-                      icon={sendState === "sending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                      onClick={() => void handleSendToCustomer()}
-                      title={
-                        quote.status === "awaiting_payment"
-                          ? "Saves the latest figures and emails the updated PDF to the customer"
-                          : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
-                      }
-                    >
-                      {sendState === "sending" ? "Saving…" : "Resend Quote"}
-                    </Button>
-                  )}
-                  {overviewActions.map((action) => {
-                    /**
-                     * Send-to-customer click: route through handleSendToCustomer so the
-                     * full pipeline runs (save proposal → POST /api/quotes/send-pdf →
-                     * Resend email → Zendesk main-ticket sync → status flip to
-                     * awaiting_customer). Previously this only flipped status without
-                     * generating a PDF or notifying Zendesk.
-                     */
-                    const sendToCustomerClick = async () => {
-                      if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
-                        toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
-                        return;
-                      }
-                      await handleSendToCustomer();
-                    };
-                    const showMarkAsSent =
-                      action.status === "awaiting_customer" && ["draft", "in_survey", "bidding"].includes(quote.status);
-                    return (
-                      <Fragment key={action.status}>
-                        <Button
-                          variant={action.primary ? "primary" : "outline"}
-                          size="sm"
-                          disabled={proposalSaving}
-                          icon={<action.icon className="h-3.5 w-3.5" />}
-                          onClick={async () => {
-                            if (action.status !== "awaiting_customer") {
-                              const result = await Promise.resolve(onStatusChange(quote, action.status));
-                              if (result === false) return;
-                              return;
-                            }
-                            await sendToCustomerClick();
-                          }}
-                        >
-                          {action.label}
-                        </Button>
-                        {showMarkAsSent ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={proposalSaving}
-                            icon={<MailCheck className="h-3.5 w-3.5" />}
-                            title="Save proposal, move to Awaiting Customer, and record that the PDF was already delivered (no email from this app)"
-                            onClick={() => void handleMarkAsSentExternally()}
-                          >
-                            Mark as sent
-                          </Button>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
           )}
 
@@ -4526,106 +5942,276 @@ function QuoteDetailDrawer({
             </div>
           )}
 
-          {/* HISTORY TAB */}
-          {tab === "history" && (
-            <div className="p-6"><AuditTimeline entityType="quote" entityId={quote.id} /></div>
-          )}
-        </div>
+        {/* HISTORY TAB */}
+        {tab === "history" && (
+          <div className="p-6"><AuditTimeline entityType="quote" entityId={quote.id} /></div>
+        )}
       </div>
 
+      <Modal
+        open={manualContinueOpen}
+        onClose={() => setManualContinueOpen(false)}
+        title="Manual quote · review & send"
+        subtitle={`${bidPayloadTrimmedString(quote.reference as unknown) || "Quote"} — review figures, then send the PDF to the customer (Approval)`}
+        size="lg"
+        scrollBody
+      >
+        <CreateQuoteForm
+          continuationQuote={quote}
+          continuationSubmitting={manualContinueSending}
+          onContinueManualDraft={handleDrawerContinueManual}
+          onCancel={() => setManualContinueOpen(false)}
+        />
+      </Modal>
+
       {/* Invite Partner Modal */}
-      <Modal open={invitePartnerOpen} onClose={() => setInvitePartnerOpen(false)} title="Invite Partners" subtitle="Select partners to send this quote request" size="lg">
-        <div className="p-6 flex flex-col max-h-[70vh]">
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <button
-                type="button"
-                onClick={() =>
-                  setSelectedPartnerIds(partnersEligibleForInvite.length ? new Set(partnersEligibleForInvite.map((p) => p.id)) : new Set())
-                }
-                className="text-xs font-medium text-primary hover:underline"
-              >
-                Select all
-              </button>
-              <button type="button" onClick={() => setSelectedPartnerIds(new Set())} className="text-xs font-medium text-text-tertiary hover:underline">
-                Clear selection
-              </button>
-              <button
-                type="button"
-                disabled={!invitePartnerTypeOfWork.trim()}
-                onClick={() =>
-                  setSelectedPartnerIds((prev) => {
-                    const next = new Set(prev);
-                    for (const p of partnersEligibleForInvite) {
-                      if (p.id && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork)) next.delete(p.id);
-                    }
-                    return next;
-                  })
-                }
-                className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
-              >
-                Deselect matched
-              </button>
+      <Modal
+        open={invitePartnerOpen}
+        onClose={() => {
+          setInvitePartnerOpen(false);
+          setInvitePartnerScopeEditing(false);
+        }}
+        title="Invite Partners"
+        subtitle="Select partners to send this quote request"
+        size="lg"
+        scrollBody={false}
+      >
+        <div className="flex min-h-0 flex-1 flex-col gap-3 sm:gap-4 min-w-0 p-4 sm:p-5">
+          {/* Double-check: what partners receive context from */}
+          <section
+            aria-label="Account and site on this invitation"
+            className="shrink-0 rounded-lg border border-border-light bg-card/90 dark:bg-card/60 px-3 py-2.5 sm:px-3.5 sm:py-3 space-y-2"
+          >
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+              Double-check — sent to partners
+            </p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 sm:gap-3">
+              <div className="flex gap-2.5 min-w-0">
+                {bidPayloadTrimmedString(quote.source_account_logo_url as unknown) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={bidPayloadTrimmedString(quote.source_account_logo_url as unknown)}
+                    alt=""
+                    className="h-9 w-9 shrink-0 rounded-md border border-border-light object-cover bg-surface-hover"
+                  />
+                ) : (
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-light bg-surface-hover text-text-tertiary">
+                    <Building2 className="h-4 w-4" aria-hidden />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Account</p>
+                  <p className="text-sm font-semibold text-text-primary leading-snug break-words">
+                    {bidPayloadTrimmedString(quote.source_account_name as unknown) ||
+                      bidPayloadTrimmedString(quote.client_name as unknown) ||
+                      "—"}
+                  </p>
+                </div>
+              </div>
+              <div className="min-w-0 flex gap-2 border-t border-border-light pt-2 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-3">
+                <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0 mt-0.5" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Work site</p>
+                  <p className="text-sm font-medium text-text-primary leading-snug break-words whitespace-pre-wrap">
+                    {bidPayloadTrimmedString(quote.property_address as unknown) || "—"}
+                  </p>
+                  {bidPayloadTrimmedString(quote.postcode as unknown) ? (
+                    <p className="text-[11px] text-text-secondary mt-0.5 tabular-nums">{bidPayloadTrimmedString(quote.postcode as unknown)}</p>
+                  ) : null}
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
-            {partnersEligibleForInvite.length === 0 && (
-              <p className="text-sm text-text-tertiary text-center py-8">No active partners found</p>
-            )}
-            {partnersEligibleForInvite.map((p) => {
-              const isSelected = selectedPartnerIds.has(p.id);
-              const isTradeMatch =
-                !!invitePartnerTypeOfWork.trim() && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork);
-              return (
+            <div className="border-t border-border-light pt-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Type of work</p>
+              <p className="mt-0.5 text-sm font-semibold text-text-primary leading-snug break-words">
+                {invitePartnerTypeOfWork.trim() || "—"}
+              </p>
+            </div>
+            <div className="border-t border-border-light pt-2 space-y-1.5">
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Scope</p>
                 <button
                   type="button"
-                  key={p.id}
                   onClick={() => {
-                    setSelectedPartnerIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(p.id)) next.delete(p.id);
-                      else next.add(p.id);
-                      return next;
+                    setInvitePartnerScopeEditing((prev) => {
+                      if (prev) return false;
+                      queueMicrotask(() => invitePartnerScopeTextareaRef.current?.focus());
+                      return true;
                     });
                   }}
-                  aria-pressed={isSelected}
-                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                    isSelected
-                      ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
-                      : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
-                  }`}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-border-light bg-card px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors touch-manipulation"
+                  aria-expanded={invitePartnerScopeEditing}
                 >
-                  <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
-                    <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                      {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "—")}
-                      {p.location?.trim() ? <> · {p.location}</> : null}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isTradeMatch ? (
-                      <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                        Match
-                      </span>
-                    ) : null}
-                    <span
-                      aria-hidden
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                        isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
-                      }`}
-                    >
-                      {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
-                    </span>
-                  </div>
+                  {invitePartnerScopeEditing ? (
+                    <>
+                      <Check className="h-3.5 w-3.5" aria-hidden />
+                      Done
+                    </>
+                  ) : (
+                    <>
+                      <Pencil className="h-3.5 w-3.5" aria-hidden />
+                      Edit
+                    </>
+                  )}
                 </button>
-              );
-            })}
+              </div>
+              {invitePartnerScopeEditing ? (
+                <textarea
+                  ref={invitePartnerScopeTextareaRef}
+                  value={invitePartnerScopeDraft}
+                  onChange={(e) => setInvitePartnerScopeDraft(e.target.value)}
+                  placeholder="What should partners price? (saved on this quote when you send)"
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-card px-2.5 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/15 min-h-[4.5rem]"
+                />
+              ) : (
+                <p className="text-sm font-medium text-text-primary leading-snug whitespace-pre-wrap break-words rounded-md bg-surface-hover/40 border border-transparent px-2 py-1 min-h-[2.25rem]">
+                  {invitePartnerScopeDraft.trim() ? invitePartnerScopeDraft : "— Tap Edit to describe the scope for partners."}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Site photos</p>
+              {((quote.images ?? []) as unknown[]).filter((u): u is string => typeof u === "string" && u.trim().length > 0).length > 0 ? (
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
+                  {(quote.images ?? [])
+                    .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+                    .map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="relative block h-14 w-14 shrink-0 overflow-hidden rounded-md border border-border-light bg-surface-hover"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="" className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-text-secondary leading-snug rounded-md border border-dashed border-border-light bg-surface-hover/50 px-2 py-1.5">
+                  No site photos — add images on the quote if you want partners to see them.
+                </p>
+              )}
+            </div>
+          </section>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border-light pb-2">
+            <button
+              type="button"
+              onClick={() =>
+                setSelectedPartnerIds(partnersEligibleForInvite.length ? new Set(partnersEligibleForInvite.map((p) => p.id)) : new Set())
+              }
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              disabled={inviteModalTradeMatchedPartners.length === 0}
+              onClick={() =>
+                setSelectedPartnerIds(new Set(inviteModalTradeMatchedPartners.map((p) => p.id).filter(Boolean)))
+              }
+              className="text-xs font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+            >
+              Select matched
+            </button>
+            <button
+              type="button"
+              disabled={!invitePartnerTypeOfWork.trim()}
+              onClick={() =>
+                setSelectedPartnerIds((prev) => {
+                  const next = new Set(prev);
+                  for (const p of partnersEligibleForInvite) {
+                    if (p.id && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork, quote.catalog_service_id)) next.delete(p.id);
+                  }
+                  return next;
+                })
+              }
+              className="text-xs font-medium text-amber-800 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+            >
+              Deselect matched
+            </button>
+            <button type="button" onClick={() => setSelectedPartnerIds(new Set())} className="text-xs font-medium text-text-tertiary hover:underline">
+              Clear selection
+            </button>
           </div>
-          <div className="flex items-center justify-between gap-4 pt-4 mt-4 border-t border-border-light">
-            <p className="text-sm text-text-tertiary">{selectedPartnerIds.size === 0 ? "Select at least one" : `${selectedPartnerIds.size} selected`}</p>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5 min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary shrink-0">Partners</p>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-border-light bg-card p-1.5 space-y-1.5 pb-2">
+              {partnersEligibleForInviteSorted.length === 0 ? (
+                <p className="text-sm text-text-tertiary text-center py-10 px-4">No active partners found</p>
+              ) : (
+                partnersEligibleForInviteSorted.map((p) => {
+                  const isSelected = selectedPartnerIds.has(p.id);
+                  const isTradeMatch =
+                    !!invitePartnerTypeOfWork.trim() &&
+                    safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork, quote.catalog_service_id);
+                  return (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedPartnerIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.id)) next.delete(p.id);
+                          else next.add(p.id);
+                          return next;
+                        });
+                      }}
+                      aria-pressed={isSelected}
+                      aria-label={`${isSelected ? "Deselect" : "Select"} ${p.company_name}`}
+                      className={cn(
+                        "group flex min-h-[4rem] w-full min-w-0 touch-manipulation items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none transition-colors sm:gap-3 sm:px-3.5 sm:py-3",
+                        isSelected
+                          ? "border-primary bg-[#020040]/[0.04] ring-2 ring-[#020040]/20 dark:bg-primary/[0.08] dark:border-primary dark:ring-primary/35"
+                          : "border-border-light bg-transparent hover:bg-surface-hover hover:border-[#020040]/30 dark:hover:bg-surface-secondary/40",
+                      )}
+                    >
+                      <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
+                      <div className="min-w-0 flex-1 py-0.5">
+                        <p className="text-sm font-semibold leading-tight text-text-primary line-clamp-2 sm:line-clamp-1">{p.company_name}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs text-text-tertiary sm:line-clamp-1">
+                          {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "Trade not set")}
+                          {p.location?.trim() ? <> · {p.location}</> : null}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-row items-center gap-2.5">
+                        <div className="flex min-h-[24px] w-[4.25rem] items-center justify-center sm:justify-end">
+                          {isTradeMatch ? (
+                            <span className="inline-flex rounded-full border border-[#020040]/25 bg-[#020040]/6 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-[#020040] dark:border-primary/40 dark:bg-primary/15 dark:text-primary">
+                              Match
+                            </span>
+                          ) : null}
+                        </div>
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                            isSelected
+                              ? "border-[#020040] bg-[#020040] text-white dark:border-primary dark:bg-primary"
+                              : "border-border bg-card group-hover:border-[#020040]/35 dark:bg-surface-secondary",
+                          )}
+                        >
+                          {isSelected ? <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden /> : null}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-border-light bg-card pt-3 mt-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs sm:text-sm text-text-tertiary text-center sm:text-left tabular-nums">
+              {selectedPartnerIds.size === 0 ? "Select at least one partner" : `${selectedPartnerIds.size} selected`}
+            </p>
             <Button
               size="sm"
+              className="w-full sm:w-auto shrink-0"
               icon={<Send className="h-3.5 w-3.5" />}
               loading={sendingInvitePush}
               disabled={selectedPartnerIds.size === 0 || sendingInvitePush}
@@ -4634,8 +6220,27 @@ function QuoteDetailDrawer({
                 setSendingInvitePush(true);
                 try {
                   const partnerIds = Array.from(selectedPartnerIds);
+                  const scopeMerged = bidPayloadTrimmedString(invitePartnerScopeDraft).trim();
+                  if (!scopeMerged) {
+                    throw new Error("Describe the work partners should bid on (scope).");
+                  }
+                  const titleNorm =
+                    normalizeTypeOfWork(routingTitleDraft).trim() ||
+                    normalizeTypeOfWork(bidPayloadTrimmedString(quote.service_type as unknown));
+                  const svc = titleNorm;
+                  const patched = await updateQuote(quote.id, {
+                    scope: scopeMerged,
+                    quote_type: "partner",
+                    status: "bidding",
+                    partner_quotes_count: partnerIds.length,
+                    draft_route_completed: true,
+                    ...(titleNorm ? { title: titleNorm } : {}),
+                    ...(svc ? { service_type: svc } : {}),
+                  });
+                  onQuoteUpdate?.(patched);
                   const inviteBody =
-                    `${quote.title} — ${quote.property_address ?? quote.client_name ?? ""}`.trim() || quote.reference;
+                    `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`.trim() ||
+                    patched.reference;
                   const res = await fetch("/api/push/notify-partner", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -4643,26 +6248,43 @@ function QuoteDetailDrawer({
                       partnerIds,
                       title: "New quote invitation",
                       body: inviteBody,
-                      data: { type: "quote_invite", quoteId: quote.id, photoUrls: quote.images ?? [] },
+                      data: {
+                        type: "quote_invite",
+                        quoteId: quote.id,
+                        photoUrls: patched.images ?? quote.images ?? [],
+                      },
                     }),
                   });
                   if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
                     throw new Error((body && typeof body.error === "string" && body.error) || "Failed to send push invite");
                   }
-                  const body = (await res.json().catch(() => ({}))) as {
+                  const pushBody = (await res.json().catch(() => ({}))) as {
                     sent?: number;
                     errors?: number;
                     tokensFound?: number;
                   };
-                  const sent = Number(body?.sent ?? 0);
-                  const tokensFound = Number(body?.tokensFound ?? 0);
+                  const sent = Number(pushBody?.sent ?? 0);
+                  const tokensFound = Number(pushBody?.tokensFound ?? 0);
                   if (sent <= 0) {
                     throw new Error(
                       tokensFound <= 0
                         ? "No valid push token found for selected partner(s). Ask them to open the app and allow notifications."
-                        : "Push request was accepted but not delivered (0 sent)."
+                        : "Push request was accepted but not delivered (0 sent).",
                     );
+                  }
+                  const trade = bidPayloadTrimmedString(patched.service_type as unknown);
+                  if (trade) {
+                    void fetch("/api/push/notify-partner", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        trades: [trade],
+                        title: "New Job Invitation",
+                        body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
+                        data: { type: "quote_invite", quoteId: quote.id },
+                      }),
+                    }).catch(() => {});
                   }
                   toast.success(`Quote request sent to ${sent} partner(s)`);
                   setInvitePartnerOpen(false);
@@ -4683,11 +6305,18 @@ function QuoteDetailDrawer({
   );
 }
 
-/** Required fields before leaving draft/survey; bidding is optional — you can go straight to awaiting_customer with your own figures. */
-function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string } {
+/** Required fields before leaving draft/survey; partner bidding allows zero totals once scope is set. */
+function quoteBasicsForPipeline(quote: Quote, nextStatus?: string): { ok: boolean; message?: string } {
   if (!bidPayloadTrimmedString(quote.client_name as unknown)) return { ok: false, message: "Fill client or account name (Step 1: Job details)." };
   if (!bidPayloadTrimmedString(quote.property_address as unknown)) return { ok: false, message: "Fill property address (Step 1: Job details)." };
   if (!bidPayloadTrimmedString(quote.title as unknown)) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
+  const isPartner = (quote.quote_type ?? "internal") === "partner";
+  if (isPartner && nextStatus === "bidding") {
+    if (!bidPayloadTrimmedString(quote.scope as unknown)) {
+      return { ok: false, message: "Add scope before starting bidding." };
+    }
+    return { ok: true };
+  }
   if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) {
     return { ok: false, message: "Set price or add line items before advancing." };
   }
@@ -4719,12 +6348,17 @@ function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: str
   return { ok: true };
 }
 
+/** Monetary deposit expected on the quote (Stripe / customer pay before job). */
+function quoteRequiresCustomerDeposit(quote: Quote): boolean {
+  return Number(quote.deposit_required ?? 0) > 0.02;
+}
+
 function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; message?: string } {
   if (quote.status === "draft" && (nextStatus === "in_survey" || nextStatus === "bidding")) {
-    return quoteBasicsForPipeline(quote);
+    return quoteBasicsForPipeline(quote, nextStatus);
   }
   if ((quote.status === "draft" || quote.status === "in_survey") && nextStatus === "awaiting_customer") {
-    const basics = quoteBasicsForPipeline(quote);
+    const basics = quoteBasicsForPipeline(quote, nextStatus);
     if (!basics.ok) return basics;
     if (Number(quote.total_value) <= 0) {
       return { ok: false, message: "Set total value (sell price) before sending to customer — use Review & Send pricing or line items." };
@@ -4738,10 +6372,21 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
   return { ok: true };
 }
 
+/** Customer has the proposal PDF / links (persisted timestamp, session send, or already in customer-facing statuses). */
+function quoteCustomerHasReceivedProposal(quote: Quote, emailedInSession: boolean): boolean {
+  if (emailedInSession) return true;
+  if (bidPayloadTrimmedString(quote.customer_pdf_sent_at as unknown)) return true;
+  if (quote.status === "awaiting_customer" || quote.status === "awaiting_payment") return true;
+  return false;
+}
+
 function getQuoteActions(quote: Quote) {
   const isManual = (quote.quote_type ?? "internal") === "internal";
   switch (quote.status) {
     case "draft":
+      if (quote.draft_route_completed !== true) {
+        return [];
+      }
       if (isManual) {
         return [
           { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
@@ -4758,31 +6403,30 @@ function getQuoteActions(quote: Quote) {
       if (isManual) {
         return [
           { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-          { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+          { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
           { label: "Reject", status: "rejected", icon: XCircle, primary: false },
         ];
       }
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
-        { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "bidding":
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "awaiting_customer":
       return [
-        { label: "Mark Awaiting payment", status: "awaiting_payment", icon: CheckCircle2, primary: true },
+        { label: "Approved", status: "approve_quote", icon: CheckCircle2, primary: true },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "awaiting_payment":
       return [
-        { label: "Mark as paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
-        { label: "Create Job", status: "create_job", icon: Briefcase, primary: false },
+        { label: "Mark as Paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
         { label: "Reopen", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "rejected":
@@ -4826,18 +6470,72 @@ function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): s
   return (bidScope || quoteScope || plainBidNotes).trim();
 }
 
-function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid = false }: {
-  quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => void | Promise<void>;
+function CreateJobFromQuoteModal({
+  quote,
+  onClose,
+  onSubmit,
+  markDepositAsPaid = false,
+  recordedDepositAmount,
+  initialCreateWithoutDeposit = false,
+}: {
+  quote: Quote | null;
+  onClose: () => void;
+  onSubmit: (data: {
+    title: string;
+    client_id?: string;
+    client_address_id?: string;
+    client_name: string;
+    property_address: string;
+    partner_id?: string;
+    partner_name?: string;
+    client_price: number;
+    partner_cost: number;
+    materials_cost: number;
+    scheduled_date?: string;
+    scheduled_start_at?: string;
+    scheduled_end_at?: string;
+    scheduled_finish_date?: string | null;
+    expected_finish_at?: string | null;
+    job_kind?: JobKind;
+    series?: JobScheduleV2SeriesPayload;
+    createWithoutDeposit?: boolean;
+    depositOverrideReason?: string;
+    job_type?: "fixed" | "hourly";
+    scope?: string;
+  }) => void | Promise<void>;
   /** When true, the caller will record the deposit as a received client payment on the newly created job. */
   markDepositAsPaid?: boolean;
+  /** Explicit £ deposit (e.g. after operator adjusted amount in confirm step); falls back to quote.deposit_required. */
+  recordedDepositAmount?: number;
+  /** From Approval gate: pre-check “create without deposit” when waiver is required. */
+  initialCreateWithoutDeposit?: boolean;
 }) {
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
+  const [form, setForm] = useState({
+    title: "",
+    partner_id: "",
+    client_price: "",
+    partner_cost: "",
+    materials_cost: "",
+    scheduled_date: "",
+    arrival_from: "09:00",
+    arrival_window_mins: "180",
+    job_kind: "one_off" as JobKind,
+    end_date: "",
+    end_time: "17:00",
+    scope: "",
+    createWithoutDeposit: false,
+    job_type: "fixed",
+  });
+  const [recurrence, setRecurrence] = useState<RecurrenceFormState>(DEFAULT_RECURRENCE_FORM);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
   /** DB / approved-bid partner when not in `partners` list (label for Select + submit). */
   const [partnerFromQuote, setPartnerFromQuote] = useState<{ id: string; name: string } | null>(null);
+  const [towCatalog, setTowCatalog] = useState<CatalogService[]>([]);
+  useEffect(() => {
+    void listCatalogServicesForPicker().then(setTowCatalog).catch(() => setTowCatalog([]));
+  }, []);
   /** Account inherited from the quote (via client.source_account_id or property.account_id). */
   const [linkedAccount, setLinkedAccount] = useState<{
     id: string;
@@ -4856,6 +6554,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
   /* eslint-disable react-hooks/set-state-in-effect -- one-shot form bootstrap when modal opens (parent uses key=quote.id) */
   useEffect(() => {
     if (!quote) return;
+    const depositRequiredBootstrap = Math.max(0, Number(quote.deposit_required ?? 0));
+    const presetWaiver =
+      initialCreateWithoutDeposit === true && !markDepositAsPaid && depositRequiredBootstrap > 0.02;
     const typeOfWorkInitial =
       normalizeTypeOfWork(bidPayloadTrimmedString(quote.service_type as unknown)) || proposalFirstLineLabel(quote);
     const qScope = bidPayloadTrimmedString(quote.scope as unknown);
@@ -4868,11 +6569,14 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
       scheduled_date: preferredScheduleDateFromQuote(quote),
       arrival_from: "09:00",
       arrival_window_mins: "180",
-      expected_finish_date: "",
+      job_kind: "one_off",
+      end_date: "",
+      end_time: "17:00",
       scope: qScope,
-      createWithoutDeposit: false,
+      createWithoutDeposit: presetWaiver,
       job_type: "fixed",
     });
+    setRecurrence(DEFAULT_RECURRENCE_FORM);
     setClientAddress({
       client_id: quote.client_id ?? undefined,
       client_address_id: quote.client_address_id ?? undefined,
@@ -4880,8 +6584,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
       client_email: quote.client_email ?? undefined,
       property_address: quote.property_address ?? "",
     });
-    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
+    listPartners({ pageSize: 200, status: "active" }).then((r) => setPartners(r.data ?? []));
     let cancelled = false;
+    setLinkedAccount(null);
     (async () => {
       const [fresh, bids, lineRes] = await Promise.all([
         getQuote(quote.id),
@@ -4923,10 +6628,42 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
         job_type: bidJobType ?? prev.job_type,
       }));
       let resolvedAddr = q.property_address ?? "";
+      let accountId =
+        bidPayloadTrimmedString((q as { source_account_id?: unknown }).source_account_id)?.trim() || null;
       if (!resolvedAddr.trim() && q.property_id?.trim()) {
         const prop = await getAccountProperty(String(q.property_id).trim()).catch(() => null);
         if (prop?.full_address) resolvedAddr = prop.full_address;
+        if (!accountId && prop?.account_id?.trim()) accountId = prop.account_id.trim();
       }
+      try {
+        if (!accountId && q.client_id?.trim()) {
+          accountId = await resolveCorporateAccountIdForClient(q.client_id.trim());
+        }
+        if (!accountId && q.property_id?.trim()) {
+          const propAcct = await getAccountProperty(String(q.property_id).trim()).catch(() => null);
+          if (propAcct?.account_id?.trim()) accountId = propAcct.account_id.trim();
+        }
+        if (cancelled) return;
+        if (accountId) {
+          const acc = await getAccount(accountId);
+          if (!cancelled && acc) {
+            setLinkedAccount({
+              id: acc.id,
+              name: (acc.company_name || acc.contact_name || "—").trim(),
+              email: (acc.email ?? "").trim() || null,
+              logoUrl: (acc.logo_url ?? "").trim() || null,
+            });
+            setAddContactClient(true);
+          } else if (!cancelled) {
+            setLinkedAccount(null);
+          }
+        } else if (!cancelled) {
+          setLinkedAccount(null);
+        }
+      } catch {
+        if (!cancelled) setLinkedAccount(null);
+      }
+
       setClientAddress({
         client_id: q.client_id ?? undefined,
         client_address_id: q.client_address_id ?? undefined,
@@ -4944,44 +6681,14 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
         });
       });
     }
-    setAddContactClient(Boolean(quote.client_id));
+    setAddContactClient(true);
     setManualPropertyAddress(quote.property_address ?? "");
     setDepositOverrideReason("");
     setDepositOverrideAgreed(false);
-    (async () => {
-      let accountId: string | null = null;
-      try {
-        if (quote.client_id) {
-          const client = await getClient(quote.client_id);
-          accountId = client?.source_account_id?.trim() || null;
-        }
-        if (!accountId && quote.property_id?.trim()) {
-          const prop = await getAccountProperty(String(quote.property_id).trim());
-          accountId = prop?.account_id?.trim() || null;
-        }
-        if (!accountId) {
-          if (!cancelled) setLinkedAccount(null);
-          return;
-        }
-        const acc = await getAccount(accountId);
-        if (cancelled || !acc) {
-          if (!cancelled) setLinkedAccount(null);
-          return;
-        }
-        setLinkedAccount({
-          id: acc.id,
-          name: (acc.company_name || acc.contact_name || "—").trim(),
-          email: (acc.email ?? "").trim() || null,
-          logoUrl: (acc.logo_url ?? "").trim() || null,
-        });
-      } catch {
-        if (!cancelled) setLinkedAccount(null);
-      }
-    })();
     return () => {
       cancelled = true;
     };
-  }, [quote]);
+  }, [quote, initialCreateWithoutDeposit, markDepositAsPaid]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const partnerSelectOptions = useMemo(() => {
@@ -4995,8 +6702,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
   }, [partners, form.partner_id, partnerFromQuote]);
 
   const typeOfWorkOptions = useMemo(
-    () => withTypeOfWorkFallback(form.title).map((name) => ({ value: name, label: name })),
-    [form.title]
+    () => typeOfWorkLabelsFromCatalog(towCatalog, form.title).map((name) => ({ value: name, label: name })),
+    [towCatalog, form.title],
   );
 
   if (!quote) return null;
@@ -5009,8 +6716,22 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
     e.preventDefault();
     if (submitting) return;
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
-    if (addContactClient) {
-      if (!clientAddress.client_id) {
+
+    const useContactOnJob = Boolean(linkedAccount) || addContactClient;
+
+    if (linkedAccount) {
+      if (!clientAddress.client_id?.trim()) {
+        toast.error(
+          `Choose a contact from ${linkedAccount.name} (pick from the list — only contacts on this account are shown).`,
+        );
+        return;
+      }
+      if (!clientAddress.property_address?.trim()) {
+        toast.error("Choose a property address before creating the job.");
+        return;
+      }
+    } else if (addContactClient) {
+      if (!clientAddress.client_id?.trim()) {
         toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
         return;
       }
@@ -5019,10 +6740,6 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
         return;
       }
     } else {
-      if (!linkedAccount) {
-        toast.error("This quote has no linked account. Enable 'Add a contact client' to proceed.");
-        return;
-      }
       if (!manualPropertyAddress.trim()) {
         toast.error("Add the property / site address before creating the job.");
         return;
@@ -5046,51 +6763,38 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
       bidPayloadTrimmedString(quote.partner_name as unknown) ||
       undefined;
     const effectivePartnerId = form.partner_id || partnerFromQuote?.id || quote.partner_id;
-    const sched = resolveJobModalSchedule({
+    const schedV2 = resolveJobModalScheduleV2({
+      kind: form.job_kind,
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
       arrival_window_mins: form.arrival_window_mins,
+      end_date: form.end_date,
+      end_time: form.end_time,
+      recurrence,
       hasPartner: !!effectivePartnerId,
     });
-    if (!sched.ok) {
-      toast.error(sched.error);
-        return;
-      }
-    const scheduled_date = parseIsoDateOnly(sched.scheduled_date ?? "") || undefined;
-    if (form.scheduled_date?.trim() && !scheduled_date) {
-      toast.error("Scheduled date must be a complete day (YYYY-MM-DD). Fix the date or clear the field.");
-        return;
-      }
-    let scheduled_finish_date: string | null = null;
-    if (scheduled_date) {
-      const ef = parseIsoDateOnly(form.expected_finish_date ?? "");
-      if (form.expected_finish_date?.trim() && !ef) {
-        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
-        return;
-      }
-      if (!ef) {
-        toast.error("Expected finish date is required when a start date is set.");
-        return;
-      }
-      if (ef < scheduled_date) {
-        toast.error("Expected finish date must be on or after the scheduled date.");
-        return;
-      }
-      scheduled_finish_date = ef;
-    } else if (form.expected_finish_date?.trim()) {
-      toast.error("Clear expected finish or set a scheduled date.");
+    if (!schedV2.ok) {
+      toast.error(schedV2.error);
       return;
     }
-    let scheduled_start_at = sched.scheduled_start_at;
-    let scheduled_end_at = sched.scheduled_end_at;
+    const scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
+    const expected_finish_at: string | null = schedV2.payload.expected_finish_at ?? null;
+    const job_kind: JobKind = schedV2.payload.job_kind;
+
+    const scheduled_date = parseIsoDateOnly(schedV2.payload.scheduled_date ?? "") || undefined;
+    let scheduled_start_at: string | undefined = schedV2.payload.scheduled_start_at;
+    let scheduled_end_at: string | undefined = schedV2.payload.scheduled_end_at;
     if (!scheduled_date) {
       scheduled_start_at = undefined;
       scheduled_end_at = undefined;
+    } else {
+      if (!isValidIsoDateTime(scheduled_start_at)) scheduled_start_at = undefined;
+      if (!isValidIsoDateTime(scheduled_end_at)) scheduled_end_at = undefined;
     }
     const scopeTrimmed = (form.scope ?? "").trim();
     if (effectivePartnerId) {
       const block = getPartnerAssignmentBlockReason({
-        property_address: addContactClient ? clientAddress.property_address : manualPropertyAddress,
+        property_address: useContactOnJob ? clientAddress.property_address : manualPropertyAddress,
         scope: scopeTrimmed || (quote.scope ?? "").trim(),
         scheduled_date,
         scheduled_start_at,
@@ -5102,18 +6806,16 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
         return;
       }
     }
-    const effectiveClientName = addContactClient
+    const effectiveClientName = useContactOnJob
       ? clientAddress.client_name
       : (linkedAccount?.name || quote.client_name || "");
-    const effectivePropertyAddress = addContactClient
-      ? clientAddress.property_address
-      : manualPropertyAddress.trim();
+    const effectivePropertyAddress = useContactOnJob ? clientAddress.property_address : manualPropertyAddress.trim();
     setSubmitting(true);
     try {
       await onSubmit({
         title: form.title.trim(),
-        client_id: addContactClient ? clientAddress.client_id : undefined,
-        client_address_id: addContactClient ? clientAddress.client_address_id : undefined,
+        client_id: useContactOnJob ? clientAddress.client_id : undefined,
+        client_address_id: useContactOnJob ? clientAddress.client_address_id : undefined,
         client_name: effectiveClientName,
         property_address: effectivePropertyAddress,
         partner_id: form.partner_id || undefined,
@@ -5125,6 +6827,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
         scheduled_start_at,
         scheduled_end_at,
         scheduled_finish_date,
+        expected_finish_at,
+        job_kind,
+        series: schedV2.series,
         createWithoutDeposit: overrideActive,
         depositOverrideReason: overrideActive ? depositOverrideReason.trim() : undefined,
         job_type: form.job_type as "fixed" | "hourly",
@@ -5135,7 +6840,11 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
     }
   };
 
-  const depositForBanner = markDepositAsPaid ? Math.max(0, Number(quote.deposit_required ?? 0)) : 0;
+  const depositForBanner = markDepositAsPaid
+    ? (recordedDepositAmount != null && Number.isFinite(recordedDepositAmount)
+        ? Math.max(0, recordedDepositAmount)
+        : Math.max(0, Number(quote.deposit_required ?? 0)))
+    : 0;
 
   return (
     <Modal
@@ -5154,6 +6863,106 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
             </p>
           </div>
         ) : null}
+        <div className="rounded-xl border border-border bg-surface/60 p-3 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Account *</p>
+              {linkedAccount ? (
+                <div className="mt-1 flex items-center gap-2 min-w-0">
+                  {linkedAccount.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={linkedAccount.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-md border border-border object-contain bg-white" />
+                  ) : (
+                    <div className="h-7 w-7 shrink-0 rounded-md border border-border bg-surface flex items-center justify-center text-[10px] font-semibold uppercase text-text-tertiary">
+                      {linkedAccount.name.slice(0, 2)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-text-primary">{linkedAccount.name}</p>
+                    {linkedAccount.email ? (
+                      <p className="truncate text-[11px] text-text-secondary">{linkedAccount.email}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-text-secondary">
+                  No corporate account tied to this quote yet (missing source account on the quote, client link, or asset).
+                  Pick a contact below without account restriction, or cancel and resolve the quote first.
+                </p>
+              )}
+            </div>
+          </div>
+          {linkedAccount ? (
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-text-secondary mb-1">
+                  Contact client <span className="text-primary">*</span>
+                </label>
+                <p className="text-[10px] text-text-tertiary mb-1.5">
+                  Required — choose someone under <span className="font-medium text-text-secondary">{linkedAccount.name}</span>. Typing alone does not link.
+                </p>
+              </div>
+              {!quote.client_id ? (
+                <p className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
+                  This quote has no linked contact yet. Select or create a client from this account below before creating the job.
+                </p>
+              ) : null}
+              <ClientAddressPicker
+                value={clientAddress}
+                onChange={setClientAddress}
+                loadAllClientsOnOpen
+                restrictToSourceAccountId={linkedAccount.id}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg border border-border/70 bg-card/60 p-2.5">
+                <p className="text-[11px] font-medium text-text-secondary mb-1.5">Bill this job to:</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddContactClient(true)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
+                  >
+                    Contact client
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddContactClient(false)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${!addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
+                  >
+                    Site address only (no named contact)
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[10px] text-text-tertiary">
+                  {addContactClient
+                    ? "Search any client when no account is pinned on this quote."
+                    : "Enter the property address below — no personal contact will be attached to the job."}
+                </p>
+              </div>
+              {addContactClient ? (
+                <div>
+                  {!quote.client_id ? (
+                    <p className="mb-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
+                      Select or create a contact before creating the job.
+                    </p>
+                  ) : null}
+                  <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Property / site address *</label>
+                  <Input
+                    value={manualPropertyAddress}
+                    onChange={(e) => setManualPropertyAddress(e.target.value)}
+                    placeholder="Full site address for the job"
+                  />
+                  <p className="mt-1 text-[10px] text-text-tertiary">Pre-filled from the quote property address when available.</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
         <Select
           label="Type of work *"
           value={form.title}
@@ -5168,88 +6977,10 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
           options={[
-            { value: "fixed", label: "Fixed" },
-            { value: "hourly", label: "Hourly" },
+            { value: "fixed", label: pricingModeLabel("fixed") },
+            { value: "hourly", label: pricingModeLabel("hourly") },
           ]}
         />
-        <div className="rounded-xl border border-border bg-surface/60 p-3 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Account on this job</p>
-              {linkedAccount ? (
-                <div className="mt-1 flex items-center gap-2 min-w-0">
-                  {linkedAccount.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={linkedAccount.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-md border border-border object-contain bg-white" />
-                  ) : (
-                    <div className="h-7 w-7 shrink-0 rounded-md border border-border bg-surface flex items-center justify-center text-[10px] font-semibold uppercase text-text-tertiary">
-                      {linkedAccount.name.slice(0, 2)}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-text-primary">{linkedAccount.name}</p>
-                    {linkedAccount.email ? (
-                      <p className="truncate text-[11px] text-text-secondary">{linkedAccount.email}</p>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-1 text-xs text-text-secondary">No account linked to this quote — a contact client is required.</p>
-              )}
-            </div>
-          </div>
-          {linkedAccount ? (
-            <div className="rounded-lg border border-border/70 bg-card/60 p-2.5">
-              <p className="text-[11px] font-medium text-text-secondary mb-1.5">Add a contact client to this job?</p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAddContactClient(true)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
-                >
-                  Yes, add a contact
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAddContactClient(false)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${!addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
-                >
-                  No, keep account only
-                </button>
-              </div>
-              <p className="mt-1.5 text-[10px] text-text-tertiary">
-                {addContactClient
-                  ? "Attach a contact (person) from this account. The job will show the contact on the client card."
-                  : "The job will be billed to the account. No personal contact will be attached."}
-              </p>
-            </div>
-          ) : null}
-          {addContactClient || !linkedAccount ? (
-            <div>
-              {!quote.client_id ? (
-                <p className="mb-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
-                  This quote has no linked contact yet. Select or create a client below before creating the job.
-                </p>
-              ) : null}
-              <ClientAddressPicker
-                value={clientAddress}
-                onChange={setClientAddress}
-                loadAllClientsOnOpen
-                restrictToSourceAccountId={linkedAccount?.id}
-              />
-            </div>
-          ) : (
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Property / site address *</label>
-              <Input
-                value={manualPropertyAddress}
-                onChange={(e) => setManualPropertyAddress(e.target.value)}
-                placeholder="Full site address for the job"
-              />
-              <p className="mt-1 text-[10px] text-text-tertiary">Pre-filled from the quote property address when available.</p>
-            </div>
-          )}
-        </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
           <textarea
@@ -5264,12 +6995,16 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
           </p>
         </div>
         <JobModalScheduleFields
+          jobKind={form.job_kind}
           scheduledDate={form.scheduled_date}
           arrivalFrom={form.arrival_from}
           arrivalWindowMins={form.arrival_window_mins}
-          expectedFinishDate={form.expected_finish_date}
+          endDate={form.end_date}
+          endTime={form.end_time}
+          recurrence={recurrence}
+          onRecurrenceChange={(patch) => setRecurrence((r) => ({ ...r, ...patch }))}
           onChange={(field, v) => update(field, v)}
-          expectedFinishRequired={!!form.scheduled_date?.trim()}
+          startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
           startDateFooter={
             <p className="text-[10px] text-text-tertiary">
               Pre-filled from the client&apos;s preferred start on the quote (option 1, else option 2) when set.
@@ -5492,18 +7227,6 @@ function MarginCalculator({
   );
 }
 
-/** Partners whose primary trade or trades list matches the selected type of work. */
-function partnerMatchesTypeOfWork(partner: Partner, typeOfWork: string): boolean {
-  const t = typeOfWork.trim();
-  if (!t) return false;
-  const trades = partner.trades?.length ? partner.trades : [partner.trade].filter(Boolean);
-  const nt = normalizeTypeOfWork(t);
-  return trades.some((tr) => {
-    const r = String(tr).trim();
-    return r === t || normalizeTypeOfWork(r) === nt;
-  });
-}
-
 function seedManualProposalLines(typeOfWorkTitle: string): ProposalLineRow[] {
   const first = normalizeTypeOfWork(typeOfWorkTitle).trim() || "Type of work";
   return [
@@ -5516,9 +7239,32 @@ function seedManualProposalLines(typeOfWorkTitle: string): ProposalLineRow[] {
 function CreateQuoteForm({
   onSubmit,
   onCancel,
+  continuationQuote,
+  onContinueManualDraft,
+  variant = "full",
+  continuationSubmitting = false,
+  routingCollectTrade = false,
 }: {
-  onSubmit: (d: Partial<Quote>, options?: { manualLineItems?: ProposalLineRow[] }) => void;
+  onSubmit?: (
+    d: Partial<Quote>,
+    options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean },
+  ) => void | boolean | Promise<void | boolean>;
   onCancel: () => void;
+  continuationQuote?: Quote | null;
+  onContinueManualDraft?: (
+    quoteId: string,
+    patch: Partial<Quote>,
+    options?: {
+      manualLineItems?: ProposalLineRow[];
+      sendToCustomer?: boolean;
+      markAsSentExternally?: boolean;
+    },
+  ) => Promise<void>;
+  /** `routing_minimal` — account, site, scope, photos only (draft stays in New). */
+  variant?: "full" | "routing_minimal";
+  continuationSubmitting?: boolean;
+  /** When true with `routing_minimal`, collect type of work in this modal (New bidding → partner invite flow). */
+  routingCollectTrade?: boolean;
 }) {
   const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
   const [form, setForm] = useState({ title: "", total_value: "" });
@@ -5532,12 +7278,13 @@ function CreateQuoteForm({
   const [depositAmountInput, setDepositAmountInput] = useState("");
   /** When disabled, the quote will skip the Awaiting Payment stage and convert directly to a job on customer accept. */
   const [depositRequiredEnabled, setDepositRequiredEnabled] = useState(true);
-  const [durationValue, setDurationValue] = useState("1");
-  const [durationUnit, setDurationUnit] = useState<QuoteDurationUnit>("week");
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersLoading, setPartnersLoading] = useState(false);
+  const [towCatalog, setTowCatalog] = useState<CatalogService[]>([]);
+  useEffect(() => {
+    void listCatalogServicesForPicker().then(setTowCatalog).catch(() => setTowCatalog([]));
+  }, []);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
-  const [partnerDescription, setPartnerDescription] = useState("");
   const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
@@ -5575,35 +7322,36 @@ function CreateQuoteForm({
   }, [lineSellTotal, createDepositAmount]);
   const minCreateStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [marginPct, setMarginPct] = useState(0);
+  const [routingInviteBusy, setRoutingInviteBusy] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
 
   const updateCreateLineItem = (idx: number, field: keyof ProposalLineRow, value: string) => {
     setLineItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
   };
   const typeOfWorkOptions = useMemo(
     () =>
-      mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS])
-        .sort((a, b) => a.localeCompare(b))
+      typeOfWorkLabelsFromCatalog(towCatalog, form.title)
         .map((name) => ({ value: name, label: name })),
-    [],
+    [towCatalog, form.title],
   );
 
   const partnersForTrade = useMemo(() => {
     const t = form.title.trim();
     if (!t) return [];
-    return partners.filter((p) => isPartnerEligibleForWork(p) && partnerMatchesTypeOfWork(p, t));
+    return partners.filter((p) => isPartnerEligibleForWork(p) && safePartnerMatchesTypeOfWork(p, t));
   }, [partners, form.title]);
 
   useEffect(() => {
-    if (quoteType !== "partner") return;
+    if (quoteType !== "partner" && !(routingCollectTrade && variant === "routing_minimal")) return;
     setPartnersLoading(true);
-    listPartners({ pageSize: 200, status: "all" })
+    listPartners({ pageSize: 200, status: "active" })
       .then((r) => setPartners(r.data ?? []))
       .catch(() => setPartners([]))
       .finally(() => setPartnersLoading(false));
-  }, [quoteType]);
+  }, [quoteType, routingCollectTrade, variant]);
 
   useEffect(() => {
-    if (quoteType !== "partner") return;
+    if (quoteType !== "partner" && !(routingCollectTrade && variant === "routing_minimal")) return;
     if (!form.title.trim()) {
       setSelectedPartnerIds(new Set());
       return;
@@ -5612,14 +7360,13 @@ function CreateQuoteForm({
       const allowed = new Set(partnersForTrade.map((p) => p.id));
       return new Set([...prev].filter((id) => allowed.has(id)));
     });
-  }, [quoteType, form.title, partnersForTrade]);
+  }, [quoteType, routingCollectTrade, variant, form.title, partnersForTrade]);
 
   useEffect(() => {
     const prev = quoteTypePrevRef.current;
     quoteTypePrevRef.current = quoteType;
     if (quoteType !== "internal" || prev === "internal") return;
     setLineItems(seedManualProposalLines(form.title));
-    setScopeText("");
     setDepositPercent("50");
     setDepositInputMode("percent");
     setDepositAmountInput("");
@@ -5646,17 +7393,300 @@ function CreateQuoteForm({
       .finally(() => setAccountsLoading(false));
   }, []);
 
+  /** New quote / New bidding modals must never fall through to the full partner-invite branch (duplicate scope + partner pickers). */
+  useLayoutEffect(() => {
+    if (variant === "routing_minimal") setQuoteType("internal");
+  }, [variant]);
+
   useEffect(() => {
     setClientAddress({ client_name: "", property_address: "" });
     setManualSiteAddress("");
   }, [selectedAccountId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (!continuationQuote?.id) return;
+    let cancelled = false;
+    void (async () => {
+      const cq = continuationQuote;
+      const t = cq.title ?? "";
+      setQuoteType("internal");
+      setForm({ title: t, total_value: String(cq.total_value ?? "") });
+      setScopeText(bidPayloadTrimmedString(cq.scope as unknown));
+      setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_1 as unknown)) || "");
+      setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_2 as unknown)) || "");
+      const dPctRaw = cq.deposit_percent;
+      setDepositPercent(
+        dPctRaw != null && Number.isFinite(Number(dPctRaw))
+          ? String(Number(dPctRaw))
+          : String(inferDepositPercentFromLegacy(Number(cq.deposit_required ?? 0), Number(cq.total_value ?? 0))),
+      );
+      setDepositInputMode("percent");
+      setDepositAmountInput((Math.round((Number(cq.deposit_required ?? 0) || 0) * 100) / 100).toFixed(2));
+      const hasDeposit = Number(cq.deposit_required ?? 0) > 0.02 || Number(dPctRaw ?? 0) > 0;
+      setDepositRequiredEnabled(hasDeposit);
+      const supabase = getSupabase();
+      const { data } = await supabase.from("quote_line_items").select("*").eq("quote_id", cq.id).order("sort_order");
+      if (cancelled) return;
+      if (data && data.length > 0) {
+        setLineItems(
+          data.map(
+            (
+              li: {
+                description: string;
+                quantity: number;
+                unit_price: number;
+                partner_unit_cost?: number | null;
+                notes?: string | null;
+              },
+              i: number,
+            ) => ({
+              description:
+                i < 2
+                  ? stripPartnerLineIndexSuffix(bidPayloadTrimmedString(li.description as unknown))
+                  : bidPayloadTrimmedString(li.description as unknown),
+              quantity: String(li.quantity ?? 1),
+              unitPrice: String(li.unit_price ?? 0),
+              partnerUnitCost: String(li.partner_unit_cost ?? 0),
+              notes: bidPayloadTrimmedString(li.notes as unknown),
+            }),
+          ),
+        );
+      } else {
+        setLineItems(seedManualProposalLines(t));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [continuationQuote?.id]);
+
+  const submitManualContinuation = async (mode: "email_customer" | "mark_sent_external") => {
+    if (!continuationQuote || !onContinueManualDraft) return;
     if (!form.title?.trim()) {
       toast.error("Type of work is required");
       return;
     }
+    if (quoteType !== "internal") {
+      toast.error("Use manual (build lines yourself) on this modal");
+      return;
+    }
+    const durNumCo = Math.round(Number(continuationQuote.duration_value ?? 1) * 1000) / 1000;
+    if (!Number.isFinite(durNumCo) || durNumCo <= 0) {
+      toast.error("Enter a duration greater than zero.");
+      return;
+    }
+    const scopeFromLineItems = lineItems.map((li) => li.description.trim()).filter(Boolean).join("\n");
+    const scopeResolvedInternal =
+      bidPayloadTrimmedString(scopeText as unknown).trim() || scopeFromLineItems.trim() || undefined;
+    let depPctCo = 0;
+    let depAmtCo = 0;
+    if (depositRequiredEnabled) {
+      if (depositInputMode === "amount") {
+        const raw = Math.max(0, Number(depositAmountInput) || 0);
+        depAmtCo = lineSellTotal > 0 ? Math.min(lineSellTotal, Math.round(raw * 100) / 100) : 0;
+        depPctCo = inferDepositPercentFromLegacy(depAmtCo, lineSellTotal);
+      } else {
+        depPctCo = clampDepositPercent(Number(depositPercent));
+        depAmtCo = depositAmountFromPercent(lineSellTotal, depPctCo);
+      }
+    }
+    try {
+      await onContinueManualDraft(
+        continuationQuote.id,
+        {
+          title: normalizeTypeOfWork(form.title),
+          total_value: lineSellTotal > 0 ? lineSellTotal : linePartnerTotal,
+          cost: linePartnerTotal,
+          partner_cost: linePartnerTotal,
+          sell_price: lineSellTotal > 0 ? lineSellTotal : linePartnerTotal,
+          margin_percent: marginPct,
+          scope: scopeResolvedInternal,
+          start_date_option_1: startDate1 || undefined,
+          start_date_option_2: startDate2 || undefined,
+          deposit_percent: depPctCo,
+          deposit_required: depAmtCo,
+          ...(form.title.trim() ? { service_type: form.title.trim() } : {}),
+          duration_value: durNumCo,
+          duration_unit: (continuationQuote.duration_unit as QuoteDurationUnit) ?? "week",
+          engagement_kind:
+            continuationQuote.engagement_kind === "recurring"
+              ? "recurring"
+              : ("one_off" as QuoteEngagementKind),
+        },
+        {
+          manualLineItems: lineItems,
+          ...(mode === "email_customer"
+            ? { sendToCustomer: true }
+            : { markAsSentExternally: true }),
+        },
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save or send");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!form.title?.trim()) {
+      toast.error("Type of work is required");
+      return;
+    }
+    const scopeFromLineItems = lineItems
+      .map((li) => li.description.trim())
+      .filter(Boolean)
+      .join("\n");
+    const scopeResolvedInternal =
+      bidPayloadTrimmedString(scopeText as unknown).trim() || scopeFromLineItems.trim() || undefined;
+
+    if (continuationQuote && onContinueManualDraft) {
+      await submitManualContinuation("email_customer");
+      return;
+    }
+
+    if (variant === "routing_minimal") {
+      if (!onSubmit) {
+        toast.error("Form is missing a save handler");
+        return;
+      }
+      if (!selectedAccountId.trim()) {
+        toast.error("Select an account");
+        return;
+      }
+      if (addContactClient) {
+        if (!clientAddress.client_id) {
+          toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+          return;
+        }
+        if (!clientAddress.property_address?.trim()) {
+          toast.error("Choose a property address or add a new one under Property address.");
+          return;
+        }
+      } else {
+        const addr = manualSiteAddress.trim();
+        if (!addr) {
+          toast.error("Enter the property / work address.");
+          return;
+        }
+      }
+      const scopeRouting = bidPayloadTrimmedString(scopeText as unknown).trim();
+      if (!scopeRouting) {
+        toast.error("Describe the scope — you can refine it before inviting partners.");
+        return;
+      }
+
+      const routingTitleStored = normalizeTypeOfWork(form.title).trim();
+      if (!routingTitleStored) {
+        toast.error("Select type of work");
+        return;
+      }
+      if (routingCollectTrade) {
+        if (partnersForTrade.length === 0) {
+          toast.error("No partners match this type of work yet — add partners in Directory or choose another trade.");
+          return;
+        }
+        if (selectedPartnerIds.size === 0) {
+          toast.error("Select at least one partner");
+          return;
+        }
+      }
+
+      let imageUrls: string[] | undefined;
+      if (invitePhotos.length > 0) {
+        setUploadingPhotos(true);
+        try {
+          const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+          imageUrls = await uploadQuoteInviteImages(invitePhotos, inviteUploadFolderRef.current);
+        } catch (err) {
+          toast.error(
+            err instanceof Error
+              ? `${err.message} Continuing without photos.`
+              : "Failed to upload images. Continuing without photos.",
+          );
+          imageUrls = undefined;
+        }
+        setUploadingPhotos(false);
+      }
+
+      const accountDisplayName = selectedAccountLabel || "Account";
+      const noClientAddress = addContactClient ? clientAddress.property_address : manualSiteAddress.trim();
+      const addrTrim = bidPayloadTrimmedString(noClientAddress as unknown).trim();
+      const postcodeFromAddr = addrTrim ? extractUkPostcode(addrTrim) : null;
+      const payload: Partial<Quote> = {
+        title: routingTitleStored,
+        ...(addContactClient
+          ? {
+              client_id: clientAddress.client_id,
+              client_address_id: clientAddress.client_address_id,
+              client_name: clientAddress.client_name,
+              client_email: clientAddress.client_email ?? "",
+              property_address: addrTrim,
+              ...(postcodeFromAddr ? { postcode: postcodeFromAddr } : {}),
+            }
+          : {
+              client_name: accountDisplayName,
+              client_email: "",
+              property_address: addrTrim,
+              ...(postcodeFromAddr ? { postcode: postcodeFromAddr } : {}),
+              ...(selectedAccountId.trim()
+                ? { source_account_id: selectedAccountId.trim() }
+                : {}),
+            }),
+        catalog_service_id: null,
+        total_value: 0,
+        cost: 0,
+        sell_price: 0,
+        margin_percent: 0,
+        quote_type: "internal",
+        status: "draft",
+        scope: scopeRouting,
+        deposit_percent: 50,
+        deposit_required: 0,
+        service_type: routingTitleStored,
+        ...(imageUrls?.length ? { images: imageUrls } : {}),
+        duration_value: 1,
+        duration_unit: "week",
+        engagement_kind: "one_off",
+      };
+      setRoutingInviteBusy(true);
+      try {
+        const ok = await onSubmit(
+          payload,
+          routingCollectTrade ? { oneShotBiddingPartnerIds: Array.from(selectedPartnerIds) } : undefined,
+        );
+        if (ok === false) return;
+        inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+        setForm({ title: "", total_value: "" });
+        setSelectedAccountId("");
+        setAddContactClient(true);
+        setManualSiteAddress("");
+        setClientAddress({ client_name: "", property_address: "" });
+        setLineItems(seedManualProposalLines(""));
+        setScopeText("");
+        setDepositPercent("50");
+        setDepositInputMode("percent");
+        setDepositAmountInput("");
+        setStartDate1("");
+        setStartDate2("");
+        setQuoteType("internal");
+        setPartners([]);
+        setSelectedPartnerIds(new Set());
+        setInvitePhotos([]);
+        setInvitePhotoPreviews((prev) => {
+          prev.forEach((u) => URL.revokeObjectURL(u));
+          return [];
+        });
+      } finally {
+        setRoutingInviteBusy(false);
+      }
+      return;
+    }
+
+    if (!onSubmit) {
+      toast.error("Form is missing a save handler");
+      return;
+    }
+
     if (!selectedAccountId.trim()) {
       toast.error("Select an account");
       return;
@@ -5677,15 +7707,7 @@ function CreateQuoteForm({
         return;
       }
     }
-    const scopeFromLineItems = lineItems
-      .map((li) => li.description.trim())
-      .filter(Boolean)
-      .join("\n");
-    const scopeResolved =
-      quoteType === "internal"
-        ? (bidPayloadTrimmedString(scopeText as unknown).trim() || scopeFromLineItems.trim() || undefined)
-        : undefined;
-
+    const scopePartnerTrim = bidPayloadTrimmedString(scopeText as unknown).trim();
     if (quoteType === "partner") {
       if (partnersForTrade.length === 0) {
         toast.error("No partners match this type of work yet — add partners in Directory or choose another trade.");
@@ -5695,16 +7717,10 @@ function CreateQuoteForm({
         toast.error("Please select at least one partner");
         return;
       }
-      if (!partnerDescription.trim()) {
-        toast.error("Please enter a service description");
+      if (!scopePartnerTrim) {
+        toast.error("Enter the scope — partners see this on the invitation.");
         return;
       }
-    }
-
-    const durNum = Math.round(Number(durationValue) * 1000) / 1000;
-    if (!Number.isFinite(durNum) || durNum <= 0) {
-      toast.error("Enter a duration greater than zero.");
-      return;
     }
 
     let imageUrls: string[] | undefined;
@@ -5717,7 +7733,7 @@ function CreateQuoteForm({
         toast.error(
           err instanceof Error
             ? `${err.message} Continuing without invite photos.`
-            : "Failed to upload images. Continuing without photos."
+            : "Failed to upload images. Continuing without photos.",
         );
         imageUrls = undefined;
       }
@@ -5738,9 +7754,7 @@ function CreateQuoteForm({
     }
 
     const accountDisplayName = selectedAccountLabel || "Account";
-    const noClientAddress = addContactClient
-      ? clientAddress.property_address
-      : manualSiteAddress.trim();
+    const noClientAddress = addContactClient ? clientAddress.property_address : manualSiteAddress.trim();
 
     const payload: Partial<Quote> = {
       title: normalizeTypeOfWork(form.title),
@@ -5756,6 +7770,9 @@ function CreateQuoteForm({
             client_name: accountDisplayName,
             client_email: "",
             property_address: noClientAddress,
+            ...(selectedAccountId.trim()
+              ? { source_account_id: selectedAccountId.trim() }
+              : {}),
           }),
       catalog_service_id: null,
       total_value: quoteType === "internal" ? (lineSellTotal > 0 ? lineSellTotal : linePartnerTotal) : 0,
@@ -5768,48 +7785,64 @@ function CreateQuoteForm({
       partner_id: quoteType === "partner" ? undefined : undefined,
       partner_name: quoteType === "partner" ? undefined : undefined,
       partner_quotes_count: quoteType === "partner" ? selectedPartnerIds.size : undefined,
-      scope: quoteType === "partner" ? partnerDescription.trim() : scopeResolved,
-      start_date_option_1: quoteType === "internal" ? (startDate1 || undefined) : undefined,
-      start_date_option_2: quoteType === "internal" ? (startDate2 || undefined) : undefined,
+      scope: quoteType === "internal" ? scopeResolvedInternal : scopePartnerTrim || undefined,
+      start_date_option_1: quoteType === "internal" ? startDate1 || undefined : undefined,
+      start_date_option_2: quoteType === "internal" ? startDate2 || undefined : undefined,
       deposit_percent: quoteType === "internal" ? depPct : 50,
       deposit_required: quoteType === "internal" ? depAmt : 0,
       ...(form.title.trim() ? { service_type: form.title.trim() } : {}),
       ...(imageUrls?.length ? { images: imageUrls } : {}),
-      duration_value: durNum,
-      duration_unit: durationUnit,
+      duration_value: 1,
+      duration_unit: "week",
+      engagement_kind: "one_off",
     };
-    onSubmit(payload, quoteType === "internal" ? { manualLineItems: lineItems } : undefined);
-    inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-    setForm({ title: "", total_value: "" });
-    setSelectedAccountId("");
-    setAddContactClient(true);
-    setManualSiteAddress("");
-    setClientAddress({ client_name: "", property_address: "" });
-    setLineItems(seedManualProposalLines(""));
-    setScopeText("");
-    setDepositPercent("50");
-    setDepositInputMode("percent");
-    setDepositAmountInput("");
-    setStartDate1("");
-    setStartDate2("");
-    setDurationValue("1");
-    setDurationUnit("week");
-    setQuoteType("internal");
-    setPartners([]);
-    setSelectedPartnerIds(new Set());
-    setPartnerDescription("");
-    setInvitePhotos([]);
-    setInvitePhotoPreviews((prev) => {
-      prev.forEach((u) => URL.revokeObjectURL(u));
-      return [];
-    });
+    setSubmitBusy(true);
+    try {
+      const second =
+        quoteType === "internal"
+          ? { manualLineItems: lineItems, sendToCustomer: true }
+          : undefined;
+      const ok = await Promise.resolve(onSubmit(payload, second));
+      if (ok === false) return;
+      inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+      setForm({ title: "", total_value: "" });
+      setSelectedAccountId("");
+      setAddContactClient(true);
+      setManualSiteAddress("");
+      setClientAddress({ client_name: "", property_address: "" });
+      setLineItems(seedManualProposalLines(""));
+      setScopeText("");
+      setDepositPercent("50");
+      setDepositInputMode("percent");
+      setDepositAmountInput("");
+      setStartDate1("");
+      setStartDate2("");
+      setQuoteType("internal");
+      setPartners([]);
+      setSelectedPartnerIds(new Set());
+      setInvitePhotos([]);
+      setInvitePhotoPreviews((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+    } finally {
+      setSubmitBusy(false);
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
       <div className="max-h-[min(65dvh,520px)] overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[min(72dvh,580px)] sm:px-6 sm:py-5">
         <div className="space-y-4">
-      <div>
+      {continuationQuote ? (
+        <div className="rounded-xl border border-[#020040]/18 bg-[#020040]/[0.04] px-3 py-2.5 dark:bg-[#020040]/14">
+          <p className="text-sm font-semibold text-[#020040]">Review & send · {continuationQuote.reference}</p>
+          <p className="mt-1 text-[11px] leading-snug text-text-secondary">
+            Saves your line items and emails the PDF to the customer — quote moves to Approval when the send succeeds.
+          </p>
+        </div>
+      ) : variant === "routing_minimal" ? null : (
+        <div>
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
           Quote type <span className="text-[#ED4B00]">*</span>
         </p>
@@ -5875,7 +7908,19 @@ function CreateQuoteForm({
             ) : null}
           </button>
         </div>
-      </div>
+        </div>
+      )}
+      <Select
+        label="Type of work *"
+        value={form.title}
+        onChange={(e) => update("title", e.target.value)}
+        options={[
+          { value: "", label: "Select type of work..." },
+          ...typeOfWorkOptions,
+        ]}
+      />
+      {!continuationQuote ? (
+        <>
       <Select
         label="Account *"
         value={selectedAccountId}
@@ -5892,10 +7937,18 @@ function CreateQuoteForm({
           })),
         ]}
       />
-      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border-light bg-card px-3 py-2.5 text-sm text-text-primary">
+      <label
+        className={cn(
+          "flex cursor-pointer gap-2 rounded-lg border border-border-light bg-card text-sm text-text-primary",
+          addContactClient ? "items-start px-3 py-2.5" : "items-center px-2.5 py-1.5",
+        )}
+      >
         <input
           type="checkbox"
-          className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
+          className={cn(
+            "h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20",
+            addContactClient ? "mt-0.5" : "",
+          )}
           checked={addContactClient}
           onChange={(e) => {
             const on = e.target.checked;
@@ -5910,13 +7963,7 @@ function CreateQuoteForm({
             }
           }}
         />
-        <span>
-          <span className="font-medium">Add a contact client on this quote</span>
-          <span className="mt-0.5 block text-[11px] font-normal text-text-tertiary">
-            Turn off to quote for the account with a typed address only — it is saved on the quote, not as a saved site.
-            Link a contact when you convert to a job (or after the quote is accepted), if you need one.
-          </span>
-        </span>
+        <span className="font-medium leading-tight">Add a contact client on this quote</span>
       </label>
       {addContactClient ? (
         selectedAccountId.trim() ? (
@@ -5933,59 +7980,206 @@ function CreateQuoteForm({
           </p>
         )
       ) : (
-        <div className="space-y-3 rounded-xl border border-border-light bg-surface-hover/30 p-3 dark:bg-surface-secondary/20">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Work address</p>
-          <p className="text-[11px] leading-snug text-text-tertiary">
-            This address is stored only on the quote. It is not saved as an account property or client address until you add a contact later.
-          </p>
+        <div className="space-y-1.5 rounded-md border border-border-light bg-surface-hover/25 px-2 py-1.5 dark:bg-surface-secondary/20">
           <AddressAutocomplete
             label="Property address *"
             value={manualSiteAddress}
             onChange={(v) => setManualSiteAddress(v)}
             onSelect={(parts: AddressParts) => setManualSiteAddress(parts.full_address)}
             placeholder="Start typing the work address…"
-            multiline
-            fieldClassName="min-h-[72px]"
           />
         </div>
       )}
-      <Select
-        label="Type of work *"
-        value={form.title}
-        onChange={(e) => update("title", e.target.value)}
-        options={[
-          { value: "", label: "Select type of work..." },
-          ...typeOfWorkOptions,
-        ]}
-      />
-      <div className="space-y-1.5">
-        <p className="text-xs font-medium text-text-primary">
-          Duration <span className="text-[#ED4B00]">*</span>
-        </p>
-        <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-stretch">
-          <Input
-            type="number"
-            min={0.01}
-            step={0.5}
-            value={durationValue}
-            onChange={(e) => setDurationValue(e.target.value)}
-            className="min-w-0 min-[400px]:max-w-[7rem]"
-            placeholder="e.g. 2"
-            aria-label="Duration amount"
-          />
-          <Select
-            value={durationUnit}
-            onChange={(e) => setDurationUnit(e.target.value as QuoteDurationUnit)}
-            options={[
-              { value: "day", label: "Day(s)" },
-              { value: "week", label: "Week(s)" },
-              { value: "month", label: "Month(s)" },
-            ]}
-            aria-label="Duration unit"
-          />
-        </div>
-        <p className="text-[10px] text-text-tertiary">Expected time on site for this job.</p>
-      </div>
+        </>
+      ) : null}
+      {variant === "routing_minimal" && !continuationQuote ? (
+        <>
+          <div>
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+              Scope <span className="text-[#ED4B00]">*</span>
+            </label>
+            <textarea
+              value={scopeText}
+              onChange={(e) => setScopeText(e.target.value)}
+              placeholder="What needs doing, access, materials, exclusions…"
+              rows={5}
+              className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+            />
+          </div>
+          <div className="space-y-2 rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Photos (optional)</p>
+            <p className="text-[11px] text-text-tertiary">
+              {routingCollectTrade
+                ? "Up to 8 images — partners see these on the invitation."
+                : "Up to 8 images — shown when you send this draft to bidding."}
+            </p>
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30">
+              <ImagePlus className="h-3.5 w-3.5" />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={invitePhotos.length >= 8 || uploadingPhotos}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                  setInvitePhotos(next);
+                  setInvitePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {invitePhotoPreviews.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {invitePhotoPreviews.map((src, i) => (
+                  <div key={src} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border-light bg-surface-hover">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                      onClick={() => {
+                        const idx = i;
+                        setInvitePhotoPreviews((prev) => {
+                          const u = prev[idx];
+                          if (u) URL.revokeObjectURL(u);
+                          return prev.filter((_, j) => j !== idx);
+                        });
+                        setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                      }}
+                      aria-label="Remove photo"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {routingCollectTrade ? (
+            <div>
+              <div className="mb-2 space-y-2 flex flex-col items-center">
+                <div className="flex w-full max-w-lg flex-col items-center gap-2">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
+                    Partners <span className="text-[#ED4B00]">*</span>
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partnersForTrade.length === 0}
+                      onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
+                    >
+                      Select matched
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partnersForTrade.length === 0}
+                      onClick={() =>
+                        setSelectedPartnerIds((prev) => {
+                          const next = new Set(prev);
+                          partnersForTrade.forEach((p) => next.delete(p.id));
+                          return next;
+                        })
+                      }
+                    >
+                      Deselect matched
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-text-tertiary hover:underline"
+                      onClick={() => setSelectedPartnerIds(new Set())}
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                </div>
+                <div className="flex w-full max-w-lg flex-col items-center justify-center gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 text-center sm:flex-row sm:gap-2 sm:px-3 sm:py-2">
+                  <span
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
+                    aria-hidden
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 [text-wrap:pretty]">
+                    Pick who gets the invitation — we create the bid request and send the push when you submit.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2 max-h-[min(38dvh,280px)] overflow-y-auto overscroll-contain">
+                {partnersLoading && partners.length === 0 ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
+                ) : !partnersLoading && partners.length === 0 ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">No partners in Directory yet.</p>
+                ) : !form.title.trim() ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">Select a type of work to see matching partners.</p>
+                ) : partnersForTrade.length === 0 ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">
+                    No partners match this type of work yet — add partners in Directory or choose another trade.
+                  </p>
+                ) : (
+                  partnersForTrade.map((p) => {
+                    const isSelected = selectedPartnerIds.has(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
+                            : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedPartnerIds);
+                            if (e.target.checked) next.add(p.id);
+                            else next.delete(p.id);
+                            setSelectedPartnerIds(next);
+                          }}
+                          className="sr-only"
+                        />
+                        <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
+                          <p className="text-xs text-text-tertiary mt-0.5 truncate">
+                            {partnerMatchTypeLabel(p, form.title)}
+                            {p.location?.trim() ? <> · {p.location}</> : null}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                            Match
+                          </span>
+                          <span
+                            aria-hidden
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                              isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                            }`}
+                          >
+                            {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {(continuationQuote || variant !== "routing_minimal") ? (
+      <>
       <div
         className="rounded-xl border border-border-light bg-card px-2.5 py-2.5 shadow-sm"
         role="region"
@@ -6186,11 +8380,13 @@ function CreateQuoteForm({
           </div>
 
           <div>
-            <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scope of work (for email / PDF)</label>
+            <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">
+              Scope
+            </label>
             <textarea
               value={scopeText}
               onChange={(e) => setScopeText(e.target.value)}
-              placeholder="Describe scope, inclusions and exclusions..."
+              placeholder="What needs doing, access, materials, exclusions…"
               rows={4}
               className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
             />
@@ -6353,16 +8549,16 @@ function CreateQuoteForm({
             />
           )}
         </>
-      ) : (
+      ) : quoteType === "partner" && variant !== "routing_minimal" ? (
         <>
           <div>
-            <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              Service description <span className="text-[#ED4B00]">*</span>
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+              Scope <span className="text-[#ED4B00]">*</span>
             </label>
             <textarea
-              value={partnerDescription}
-              onChange={(e) => setPartnerDescription(e.target.value)}
-              placeholder="Describe scope, inclusions and exclusions... (used for partner bids)"
+              value={scopeText}
+              onChange={(e) => setScopeText(e.target.value)}
+              placeholder="What needs doing, access, materials, exclusions… — same text customers and partners see on documents and invitations."
               rows={5}
               className="w-full resize-none rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/15"
             />
@@ -6482,22 +8678,53 @@ function CreateQuoteForm({
             <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
           </div>
         </>
-      )}
+      ) : null}
+      </>
+      ) : null}
         </div>
       </div>
       <div className="shrink-0 border-t border-border-light bg-card px-4 py-3 sm:px-6">
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" size="sm" onClick={onCancel} type="button" disabled={uploadingPhotos} className="w-full sm:w-auto">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onCancel}
+            type="button"
+            disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+            className="w-full sm:w-auto"
+          >
             Cancel
           </Button>
+          {continuationQuote && onContinueManualDraft ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              icon={<MailCheck className="h-3.5 w-3.5" />}
+              onClick={() => void submitManualContinuation("mark_sent_external")}
+              disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+              className="w-full sm:w-auto"
+              title="Save the manual quote, move to Approval, and record that you already delivered the PDF (no email from this app)"
+            >
+              Mark as sent
+            </Button>
+          ) : null}
           <Button
             type="submit"
             size="sm"
-            loading={uploadingPhotos}
-            disabled={uploadingPhotos}
+            loading={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+            disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
             className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
           >
-            Create Quote
+            {continuationQuote
+              ? "Review & send to customer"
+              : variant === "routing_minimal"
+                ? routingCollectTrade
+                  ? "Create & notify partners"
+                  : "Create & open draft"
+                : quoteType === "internal"
+                  ? "Send quote to customer"
+                  : "Create quote"}
           </Button>
         </div>
       </div>

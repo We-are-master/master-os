@@ -70,8 +70,12 @@ import {
   Timer,
   X,
   Pencil,
+  MoreVertical,
+  XCircle,
 } from "lucide-react";
+import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { toast } from "sonner";
 import { getJob, getJobDetailBundle, updateJob } from "@/services/jobs";
 import { getClient } from "@/services/clients";
@@ -91,6 +95,9 @@ import {
   type AppJobReportRow,
 } from "@/services/job-reports";
 import { useProfile } from "@/hooks/use-profile";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { jobOnHoldPresetSelectOptions } from "@/lib/frontend-setup";
+import { JOB_DETAIL_MULTI_VISITS_UI_ENABLED } from "@/lib/constants";
 import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
@@ -99,7 +106,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { CatalogService, Invoice, Job, JobExtraEntry, JobPayment, JobPaymentMethod, Partner, QuoteLineItem, SelfBill } from "@/types/database";
-import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
+import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
@@ -166,7 +173,7 @@ import {
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
-import { normalizeTypeOfWork, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
@@ -175,6 +182,7 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
+import { patchOfficeCancelZeroJobEconomics, partnerCancellationClawbackOwedGbp } from "@/lib/job-cancel-economics";
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
@@ -186,7 +194,18 @@ import {
   type JobMoneySubmitPayload,
 } from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
-import { reverseCustomerExtraPatch, reversePartnerExtraPatch } from "@/lib/job-extra-charges";
+import {
+  applyCustomerExtraPatch,
+  applyPartnerExtraPatch,
+  reverseCustomerExtraPatch,
+  reversePartnerExtraPatch,
+} from "@/lib/job-extra-charges";
+import {
+  customerExtraLedgerAllocation,
+  isJobExtraDiscountExtraType,
+  partnerDiscountAllocationFromExtraType,
+  signedLedgerDisplayAmount,
+} from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry } from "@/services/job-extra-entries";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -214,20 +233,6 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
-
-const PUT_ON_HOLD_PRESET_REASONS = [
-  "Waiting for materials",
-  "Client rescheduled",
-  "Access issue",
-  "Partner unavailable",
-  "Awaiting confirmation",
-  "Other",
-] as const;
-
-const PUT_ON_HOLD_REASON_OPTIONS = [
-  { value: "", label: "Select a reason..." },
-  ...PUT_ON_HOLD_PRESET_REASONS.map((r) => ({ value: r, label: r })),
-];
 
 /** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
 const JOB_DETAIL_MULTILINE_FIELD_CLASS =
@@ -416,7 +421,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
               </p>
               <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
-              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+              <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
                 <div>
                   <p className="text-text-tertiary">Labour (this job)</p>
                   <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
@@ -537,7 +542,7 @@ type ExtraHistoryEntry = {
   clientConfirmed?: boolean;
   createdAt: string;
   userName?: string;
-  allocation: "extras" | "materials" | "partner_cost";
+  allocation: "labour" | "extras" | "materials" | "partner_cost";
   linkedGroupId?: string | null;
   idRaw: string;
 };
@@ -588,12 +593,22 @@ function extractExtraHistory(entries: JobExtraEntry[]): ExtraHistoryEntry[] {
         clientConfirmed: decoded.clientConfirmed,
         createdAt: String(row.created_at ?? ""),
         userName: String(row.created_by_name ?? "").trim() || undefined,
-        allocation: row.allocation,
+        allocation: (row.allocation ?? "extras") as ExtraHistoryEntry["allocation"],
         linkedGroupId: row.linked_group_id,
       } satisfies ExtraHistoryEntry;
     })
     .filter((v) => v.amount > 0.009)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+function extraHistorySignedAmount(entry: Pick<ExtraHistoryEntry, "extraType" | "amount">): number {
+  return signedLedgerDisplayAmount(entry.extraType, Number(entry.amount ?? 0));
+}
+
+function formatSignedCurrency(signed: number): string {
+  const abs = Math.abs(Math.round(signed * 100) / 100);
+  const core = formatCurrency(abs);
+  return signed < -0.009 ? `−${core}` : signed > 0.009 ? `+${core}` : core;
 }
 
 function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string): string {
@@ -608,7 +623,8 @@ function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string
       });
       const by = entry.userName ? ` · ${entry.userName}` : "";
       const reason = entry.reason?.trim() ? `\nReason: ${entry.reason.trim()}` : "";
-      return `${when} · ${entry.extraType} · +${formatCurrency(entry.amount)}${by}${reason}`;
+      const line = `${when} · ${entry.extraType} · ${formatSignedCurrency(extraHistorySignedAmount(entry))}${by}${reason}`;
+      return line;
     })
     .join("\n\n");
 }
@@ -618,6 +634,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const router = useRouter();
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
+  const { jobOnHoldPresets, officeCancellationPresets } = useFrontendSetup();
+  const putOnHoldReasonOptions = useMemo(
+    () => jobOnHoldPresetSelectOptions(jobOnHoldPresets),
+    [jobOnHoldPresets],
+  );
 
   // Hydrate from server bundle when present so the page is interactive on
   // first paint instead of after a useEffect waterfall.
@@ -717,6 +738,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [loadingPartners, setLoadingPartners] = useState(false);
   const [selectedPartnerId, setSelectedPartnerId] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
+  const [signingOffPartner, setSigningOffPartner] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
   const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
@@ -744,7 +766,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     partner_agreed_value: "",
     customer_deposit: "",
     customer_final_payment: "",
+    /** Mirrors `jobs.external_ref` (e.g. Zendesk ticket no.). */
+    ticket_id: "",
   });
+  const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
+  const jobMoreMenuRef = useRef<HTMLDivElement>(null);
+  /** Bumped from header ⋮ → opens Add visit on Visits tab. */
+  const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
+  /** ⋮ → “Reschedule & confirm” — one modal for date, partner, service, pricing. */
+  const [quickRescheduleOpen, setQuickRescheduleOpen] = useState(false);
+  const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
+  const [qrDate, setQrDate] = useState("");
+  const [qrTime, setQrTime] = useState("");
+  const [qrWindowMins, setQrWindowMins] = useState("");
+  const [qrExpectedFinish, setQrExpectedFinish] = useState("");
+  const [qrPartnerId, setQrPartnerId] = useState("");
+  const [qrCatalogServiceId, setQrCatalogServiceId] = useState("");
+  const [qrClientPrice, setQrClientPrice] = useState("");
+  const [qrPartnerCost, setQrPartnerCost] = useState("");
   const [savingFin, setSavingFin] = useState(false);
   const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
   const [jobTypeEditTarget, setJobTypeEditTarget] = useState<"fixed" | "hourly">("fixed");
@@ -806,6 +845,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
+
+  useEffect(() => {
+    if (!jobMoreMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = jobMoreMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setJobMoreMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [jobMoreMenuOpen]);
   useEffect(() => {
     if (!job?.id) return;
     setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
@@ -1498,6 +1547,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [partnerModalOpen]);
 
   useEffect(() => {
+    if (!quickRescheduleOpen) return;
+    setLoadingPartners(true);
+    listPartners({ pageSize: 200, status: "all" })
+      .then((r) => setPartners(r.data ?? []))
+      .catch(() => {
+        setPartners([]);
+        toast.error("Failed to load partners");
+      })
+      .finally(() => setLoadingPartners(false));
+    if (catalogServicesJobType.length === 0) {
+      setLoadingJobTypeCatalog(true);
+      listCatalogServicesForPicker()
+        .then(setCatalogServicesJobType)
+        .catch(() => {
+          setCatalogServicesJobType([]);
+          toast.error("Failed to load services catalog");
+        })
+        .finally(() => setLoadingJobTypeCatalog(false));
+    }
+  }, [quickRescheduleOpen]);
+
+  useEffect(() => {
     if (!jobTypeEditOpen) return;
     setLoadingJobTypeCatalog(true);
     listCatalogServicesForPicker()
@@ -1663,6 +1734,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       partner_agreed_value: r2(job.partner_agreed_value),
       customer_deposit: r2(job.customer_deposit),
       customer_final_payment: r2(job.customer_final_payment),
+      ticket_id: job.external_ref?.trim() ?? "",
     });
   }, [job?.id, job?.updated_at]);
 
@@ -1681,6 +1753,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setDetailTab(0);
     }
   }, [isAdmin, detailTab]);
+
+  useEffect(() => {
+    if (!JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6) {
+      setDetailTab(0);
+    }
+  }, [detailTab]);
 
   /** Jobs in Final checks default to the Reports tab (office usually opens the card to review reports). */
   useEffect(() => {
@@ -1824,6 +1902,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
+
+  const handleQuickUnassignPartner = useCallback(async () => {
+    if (!job?.partner_id?.trim()) return;
+    if (!JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status)) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Remove this partner? The job will return to Unassigned.")
+    ) {
+      return;
+    }
+    setSigningOffPartner(true);
+    try {
+      const updated = await handleJobUpdate(
+        job.id,
+        { partner_id: null, partner_name: null, partner_ids: [] },
+        { silent: true },
+      );
+      if (updated) {
+        toast.success("Partner removed — job is Unassigned");
+      }
+    } finally {
+      setSigningOffPartner(false);
+    }
+  }, [job?.id, job?.partner_id, job?.status, handleJobUpdate]);
 
   const handleSaveJobTypeEdit = useCallback(async () => {
     if (!job) return;
@@ -2200,6 +2302,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         partner_agreed_value,
         customer_deposit,
         customer_final_payment,
+        external_ref: finForm.ticket_id.trim() || null,
         ...(billed_hours != null ? { billed_hours } : {}),
       };
       const updated = await handleJobUpdate(job.id, newFields);
@@ -2296,17 +2399,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance]);
 
+  useEffect(() => {
+    if (!cancelJobOpen) return;
+    setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
+  }, [cancelJobOpen, officeCancellationPresets]);
+
+  useEffect(() => {
+    if (!resumeJobOpen || resumeAction !== "cancel") return;
+    setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
+    setCancelDetail("");
+  }, [resumeJobOpen, resumeAction, officeCancellationPresets]);
+
   const handleConfirmOfficeCancel = useCallback(async (): Promise<boolean> => {
     if (!job) return false;
     if (officeCancellationDetailRequired(cancelPresetId) && !cancelDetail.trim()) {
-      toast.error("Add details when the reason is “Other”.");
+      toast.error('Add details when the reason is "Other".');
       return false;
     }
-    const reasonText = buildOfficeCancellationReasonText(cancelPresetId, cancelDetail);
+    const reasonText = buildOfficeCancellationReasonText(cancelPresetId, cancelDetail, officeCancellationPresets);
+
     setCancellingJob(true);
     try {
       const now = new Date().toISOString();
       const statusPatch: Partial<Job> = {
+        ...patchOfficeCancelZeroJobEconomics(),
         status: "cancelled",
         cancellation_reason: reasonText,
         cancelled_at: now,
@@ -2315,6 +2431,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ...statusChangeOfficeTimerPatch(job, "cancelled"),
       };
       const updated = await updateJob(job.id, statusPatch);
+
       await logAudit({
         entityType: "job",
         entityId: job.id,
@@ -2332,11 +2449,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         entityRef: job.reference,
         action: "updated",
         fieldName: "financial_documents",
-        newValue: "Invoice and self-bill cancelled",
+        newValue: "Job cancelled — labour zeroed; use Finance Summary extras for any further charges or payouts.",
         userId: profile?.id,
         userName: profile?.full_name,
       });
       setJob(updated);
+      try {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      } catch {
+        /* non-blocking */
+      }
+      void refreshJobFinance();
       setCancelJobOpen(false);
       setCancelDetail("");
       toast.success("Job cancelled");
@@ -2358,12 +2481,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       }
       return true;
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to cancel job");
+      const detail = postgrestFullErrorText(err).trim().replace(/\s+/g, " ");
+      toast.error(
+        detail
+          ? `Failed to cancel job — ${detail.slice(0, 450)}${detail.length > 450 ? "…" : ""}`
+          : getErrorMessage(err, "Failed to cancel job"),
+      );
       return false;
     } finally {
       setCancellingJob(false);
     }
-  }, [job, cancelPresetId, cancelDetail, profile?.id, profile?.full_name]);
+  }, [job, cancelPresetId, cancelDetail, officeCancellationPresets, profile?.id, profile?.full_name, refreshJobFinance]);
 
   const handleStatusChange = useCallback(
     async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean; silent?: boolean; skipSelfBillSync?: boolean; extraPatch?: Partial<Job> }): Promise<Job | null> => {
@@ -2748,8 +2876,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [handleJobUpdate],
   );
 
-  const handleScheduleChange = useCallback(
-    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
+  /** Shared with Details schedule strip and the ⋮ “Reschedule & confirm” modal — no network. */
+  const buildSchedulePatchForInputs = useCallback(
+    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string): Partial<Job> | null => {
       const d = startDate.trim();
       const tFrom = startTime.trim();
       const expectedTrim = expectedFinishDate.trim();
@@ -2760,51 +2889,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       if (expectedTrim && arrivalDayForCompare && expectedTrim < arrivalDayForCompare) {
         toast.error("Expected finish date must be on or after the arrival date.");
-        return;
+        return null;
       }
 
       if (!d) {
-        dispatchRecurrenceAware(
-          j,
-          {
-            scheduled_date: null,
-            scheduled_start_at: null,
-            scheduled_end_at: null,
-            scheduled_finish_date: null,
-          } as unknown as Partial<Job>,
-          "schedule clear",
-        );
-        return;
+        return {
+          scheduled_date: null,
+          scheduled_start_at: null,
+          scheduled_end_at: null,
+          scheduled_finish_date: null,
+        } as unknown as Partial<Job>;
       }
 
       if (!expectedTrim) {
         toast.error("Expected finish date is required when a start date is set.");
-        return;
+        return null;
       }
 
       if (!tFrom) {
-        dispatchRecurrenceAware(
-          j,
-          {
-            scheduled_date: d,
-            scheduled_start_at: null,
-            scheduled_end_at: null,
-            scheduled_finish_date: expectedTrim,
-          } as unknown as Partial<Job>,
-          "schedule change",
-        );
-        return;
+        return {
+          scheduled_date: d,
+          scheduled_start_at: null,
+          scheduled_end_at: null,
+          scheduled_finish_date: expectedTrim,
+        } as unknown as Partial<Job>;
       }
 
       if (wm !== "" && !hasWindow) {
         toast.error("Choose a valid arrival window length.");
-        return;
+        return null;
       }
 
       const hasPartner = !!(j.partner_id?.trim());
       if (hasPartner && !hasWindow) {
         toast.error("Choose an arrival window length when a partner is assigned.");
-        return;
+        return null;
       }
 
       const scheduled_start_at = `${d}T${tFrom}:00`;
@@ -2815,24 +2934,167 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const endMs = new Date(endIso).getTime();
         if (!(endMs > startMs)) {
           toast.error("Arrival window must end after the start time.");
-          return;
+          return null;
         }
         scheduled_end_at = endIso;
       }
 
-      dispatchRecurrenceAware(
-        j,
-        {
-          scheduled_date: d,
-          scheduled_start_at,
-          scheduled_end_at,
-          scheduled_finish_date: expectedTrim,
-        } as unknown as Partial<Job>,
-        "schedule change",
-      );
+      return {
+        scheduled_date: d,
+        scheduled_start_at,
+        scheduled_end_at,
+        scheduled_finish_date: expectedTrim,
+      } as Partial<Job>;
     },
-    [dispatchRecurrenceAware],
+    [],
   );
+
+  const handleScheduleChange = useCallback(
+    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
+      const patch = buildSchedulePatchForInputs(j, startDate, startTime, windowMinsStr, expectedFinishDate);
+      if (!patch) return;
+      const isClear =
+        (patch as { scheduled_date?: unknown }).scheduled_date == null &&
+        (patch as { scheduled_start_at?: unknown }).scheduled_start_at == null;
+      dispatchRecurrenceAware(j, patch, isClear ? "schedule clear" : "schedule change");
+    },
+    [buildSchedulePatchForInputs, dispatchRecurrenceAware],
+  );
+
+  const openQuickReschedule = useCallback(() => {
+    if (!job) return;
+    setJobMoreMenuOpen(false);
+    if (job.scheduled_start_at) {
+      const d = new Date(job.scheduled_start_at);
+      setQrDate(d.toISOString().slice(0, 10));
+      setQrTime(d.toTimeString().slice(0, 5));
+      if (job.scheduled_end_at) {
+        const startMs = new Date(job.scheduled_start_at).getTime();
+        const endMs = new Date(job.scheduled_end_at).getTime();
+        setQrWindowMins(snapArrivalWindowMinutes(startMs, endMs));
+      } else {
+        setQrWindowMins("");
+      }
+    } else if (job.scheduled_date) {
+      setQrDate(job.scheduled_date);
+      setQrTime("");
+      setQrWindowMins("");
+    } else {
+      setQrDate("");
+      setQrTime("");
+      setQrWindowMins("");
+    }
+    setQrExpectedFinish(
+      job.scheduled_finish_date?.slice(0, 10) ?? job.scheduled_date?.slice(0, 10) ?? "",
+    );
+    setQrPartnerId(job.partner_id ?? "");
+    setQrCatalogServiceId(job.catalog_service_id ?? "");
+    setQrClientPrice(String(job.client_price ?? 0));
+    setQrPartnerCost(String(job.partner_cost ?? 0));
+    setQuickRescheduleOpen(true);
+  }, [job]);
+
+  const confirmQuickReschedule = useCallback(async () => {
+    if (!job) return;
+    const effective = { ...job, partner_id: qrPartnerId?.trim() ? qrPartnerId.trim() : null } as Job;
+    const schedulePatch = buildSchedulePatchForInputs(
+      effective,
+      qrDate,
+      qrTime,
+      qrWindowMins,
+      qrExpectedFinish,
+    );
+    if (!schedulePatch) return;
+
+    const clientVal = Math.max(0, Math.round((Number(qrClientPrice) || 0) * 100) / 100);
+    const partnerVal = Math.max(0, Math.round((Number(qrPartnerCost) || 0) * 100) / 100);
+
+    const svc = qrCatalogServiceId.trim()
+      ? catalogServicesJobType.find((c) => c.id === qrCatalogServiceId.trim())
+      : undefined;
+    const titlePatch: Partial<Job> = {};
+    if (qrCatalogServiceId.trim() && svc) {
+      titlePatch.catalog_service_id = qrCatalogServiceId.trim();
+      titlePatch.title = normalizeTypeOfWork(svc.name) || svc.name;
+    }
+
+    const pid = qrPartnerId.trim();
+    const partnerRow = pid ? partners.find((p) => p.id === pid) : undefined;
+
+    const merged: Partial<Job> = {
+      ...schedulePatch,
+      ...titlePatch,
+      partner_id: pid || null,
+      partner_name: partnerRow ? (partnerRow.company_name?.trim() || partnerRow.contact_name) : null,
+      client_price: clientVal,
+      partner_cost: partnerVal,
+    };
+
+    if (job.recurrence_series_id && !job.recurrence_detached_at) {
+      setRecurringScopePending({
+        jobId: job.id,
+        patch: merged,
+        sequenceIndex: job.recurrence_sequence_index ?? null,
+        actionLabel: "reschedule",
+      });
+      setQuickRescheduleOpen(false);
+      toast.success("Choose how to apply this change to the series.");
+      return;
+    }
+
+    setQuickRescheduleSaving(true);
+    try {
+      const prev = job;
+      const updated = await handleJobUpdate(job.id, merged, { silent: true });
+      if (!updated) return;
+      await logFieldChanges(
+        "job",
+        prev.id,
+        prev.reference,
+        prev as unknown as Record<string, unknown>,
+        merged as Record<string, unknown>,
+        profile?.id,
+        profile?.full_name,
+      );
+      try {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      } catch {
+        /* non-blocking */
+      }
+      await syncSelfBillAfterJobChange(updated);
+      try {
+        await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
+      } catch {
+        /* non-blocking */
+      }
+      await refreshJobFinance();
+      setScheduleDate(qrDate.trim());
+      setScheduleTime(qrTime.trim());
+      setScheduleWindowMins(qrWindowMins.trim());
+      setScheduleExpectedFinishDate(qrExpectedFinish.trim());
+      setQuickRescheduleOpen(false);
+      toast.success("Booking updated — partner notified when assigned.");
+    } finally {
+      setQuickRescheduleSaving(false);
+    }
+  }, [
+    job,
+    qrDate,
+    qrTime,
+    qrWindowMins,
+    qrExpectedFinish,
+    qrPartnerId,
+    qrCatalogServiceId,
+    qrClientPrice,
+    qrPartnerCost,
+    partners,
+    catalogServicesJobType,
+    buildSchedulePatchForInputs,
+    handleJobUpdate,
+    profile?.id,
+    profile?.full_name,
+    refreshJobFinance,
+  ]);
 
   const jobMoneyClientCashContext = useMemo((): JobMoneyDrawerClientCashContext | undefined => {
     if (!job) return undefined;
@@ -2956,37 +3218,50 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     : undefined,
                 createdAt: new Date().toISOString(),
                 userName: profile?.full_name ?? undefined,
-                allocation:
-                  actionPayload.flow === "client_extra"
-                    ? actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
-                      ? "materials"
-                      : "extras"
-                    : actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
-                      ? "materials"
-                      : "partner_cost",
+                allocation: (() => {
+                  const et = actionPayload.extraType?.trim() ?? "";
+                  if (actionPayload.flow === "client_extra") {
+                    const a = customerExtraLedgerAllocation(et);
+                    return a === "materials" ? "materials" : a === "labour" ? "labour" : "extras";
+                  }
+                  return actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
+                    ? "materials"
+                    : isJobExtraDiscountExtraType(et)
+                      ? partnerDiscountAllocationFromExtraType(et)
+                      : "partner_cost";
+                })(),
                 linkedGroupId: linkedGroupId ?? null,
               },
               ...prev,
             ]);
           }
           if (actionPayload.flow === "client_extra") {
-            setClientExtrasUiValue((v) => Math.round((v + actionPayload.amount) * 100) / 100);
+            const et = actionPayload.extraType?.trim() ?? "";
+            if (customerExtraLedgerAllocation(et) === "extras") {
+              const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
+              setClientExtrasUiValue((v) => Math.round((v + delta) * 100) / 100);
+            }
           } else if (actionPayload.flow === "partner_extra") {
-            const typeUpper = (actionPayload.extraType ?? "").trim().toUpperCase();
-            if (typeUpper !== "MATERIALS") {
-              setPartnerExtrasUiValue((v) => Math.round((v + actionPayload.amount) * 100) / 100);
+            const et = actionPayload.extraType?.trim() ?? "";
+            const typeUpper = et.toUpperCase();
+            const isMaterials =
+              typeUpper === "MATERIALS" || (isJobExtraDiscountExtraType(et) && typeUpper.includes("MATERIAL"));
+            if (!isMaterials) {
+              const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
+              setPartnerExtrasUiValue((v) => Math.round((v + delta) * 100) / 100);
             }
             /* Materials line reads from job.materials_cost after save — do not fold into extra/ccz/parking breakdown. */
-            if (typeUpper !== "MATERIALS") {
+            if (!isMaterials) {
               const type: "ccz" | "parking" | "extra" =
                 typeUpper === "CCZ"
                   ? "ccz"
                   : typeUpper === "PARKING"
                     ? "parking"
                     : "extra";
+              const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
               setPartnerExtraBreakdownUi((prev) => ({
                 ...prev,
-                [type]: Math.round(((prev[type] ?? 0) + actionPayload.amount) * 100) / 100,
+                [type]: Math.round(((prev[type] ?? 0) + delta) * 100) / 100,
               }));
             }
           }
@@ -3032,10 +3307,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             : payload.flow === "client_pay"
               ? "Payment recorded"
               : payload.flow === "client_extra"
-                ? "Extra charge added"
+                ? isJobExtraDiscountExtraType(payload.extraType)
+                  ? "Client discount saved"
+                  : "Extra charge added"
                 : payload.flow === "partner_pay"
                   ? "Payout recorded"
-                  : "Extra payout added";
+                  : isJobExtraDiscountExtraType(payload.extraType)
+                    ? "Partner discount saved"
+                    : "Extra payout added";
         toast.success(toastMsg);
         setMoneyDrawerOpen(false);
         setMoneyDrawerFlow(null);
@@ -3119,8 +3398,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let workingJob: Job = job;
       for (const entry of targets) {
         if (entry.side === "client") {
-          const allocation = entry.allocation === "materials" ? "materials" : "extras";
-          const patch = reverseCustomerExtraPatch(workingJob, entry.amount, allocation);
+          const rawAlloc = entry.allocation ?? "extras";
+          const allocation =
+            rawAlloc === "materials" ? "materials" : rawAlloc === "labour" ? "labour" : "extras";
+          const mag = Math.abs(Number(entry.amount));
+          const discount = isJobExtraDiscountExtraType(entry.extraType);
+          const patch = discount
+            ? applyCustomerExtraPatch(workingJob, mag, allocation)
+            : reverseCustomerExtraPatch(workingJob, mag, allocation);
           if (Object.keys(patch).length > 0) {
             const updated = await updateJob(workingJob.id, patch);
             await bumpLinkedInvoiceAmountsToJobSchedule(updated);
@@ -3131,7 +3416,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         } else {
           const allocation = entry.allocation === "materials" ? "materials" : "partner_cost";
-          const patch = reversePartnerExtraPatch(workingJob, entry.amount, allocation);
+          const mag = Math.abs(Number(entry.amount));
+          const discount = isJobExtraDiscountExtraType(entry.extraType);
+          const patch = discount
+            ? applyPartnerExtraPatch(workingJob, mag, allocation)
+            : reversePartnerExtraPatch(workingJob, mag, allocation);
           if (Object.keys(patch).length > 0) {
             const updated = await updateJob(workingJob.id, patch);
             await syncSelfBillAfterJobChange(updated);
@@ -3834,9 +4123,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const jobTypeEditFixedSelectOptions = useMemo(
     () => [
       { value: "", label: "Select type of work..." },
-      ...withTypeOfWorkFallback(job?.title).map((name) => ({ value: name, label: name })),
+      ...typeOfWorkLabelsFromCatalog(catalogServicesJobType, job?.title).map((name) => ({ value: name, label: name })),
     ],
-    [job?.title],
+    [job?.title, catalogServicesJobType],
   );
 
   const fixedSwitchPreview = useMemo(() => {
@@ -3962,6 +4251,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
   const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerPayRemaining = Math.max(0, partnerCashOutTotal - partnerPaidTotal);
+  const partnerClawbackOwed = partnerCancellationClawbackOwedGbp(job);
+  const partnerUsesClawbackUi = job.status === "cancelled" && partnerClawbackOwed > 0.02;
+  /** Partner owes office after cancel — ledger stays positive (`partner_cancellation_fee` / snapshot); payout column shows minus. */
+  const partnerCashOutSummaryAmount = partnerUsesClawbackUi ? -partnerClawbackOwed : partnerCashOutTotal;
   const partnerPayoutLedgerRows = partnerPayments.filter(
     (p) => p.type === "partner" && !isLegacyMisclassifiedPartnerPayment(p),
   );
@@ -3990,11 +4283,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const extrasNetOfAccess = Math.max(0, Math.round((effectiveExtrasAmountForDisplay - attributedAccessForExtrasLine) * 100) / 100);
   const clientExtraHistory = extraHistory.filter((row) => row.side === "client");
   const partnerExtraHistory = extraHistory.filter((row) => row.side === "partner");
-  const partnerExtraEntriesTotal = partnerExtraHistory.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const partnerExtraEntriesSignedTotal = partnerExtraHistory.reduce(
+    (sum, row) => sum + extraHistorySignedAmount(row),
+    0,
+  );
+  const clientItemizedExtras = clientExtraHistory.length > 0;
+  const partnerItemizedExtras = partnerExtraHistory.length > 0;
   const clientExtraTypeTotals = clientExtraHistory.reduce(
     (acc, row) => {
       const bucket = extraHistoryBucket(row.extraType);
-      acc[bucket] += Number(row.amount ?? 0);
+      acc[bucket] += extraHistorySignedAmount(row);
       return acc;
     },
     { extra: 0, ccz: 0, parking: 0, materials: 0 },
@@ -4002,7 +4300,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerExtraTypeTotals = partnerExtraHistory.reduce(
     (acc, row) => {
       const bucket = extraHistoryBucket(row.extraType);
-      acc[bucket] += Number(row.amount ?? 0);
+      acc[bucket] += extraHistorySignedAmount(row);
       return acc;
     },
     { extra: 0, ccz: 0, parking: 0, materials: 0 },
@@ -4015,27 +4313,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0,
     Math.round(clientExtraTypeTotals.parking * 100) / 100,
   );
-  const clientExtraMaterialsDisplay = Math.max(
-    0,
-    Math.round(clientExtraTypeTotals.materials * 100) / 100,
-  );
+  const clientExtraMaterialsDisplay = clientItemizedExtras
+    ? Math.round(clientExtraTypeTotals.materials * 100) / 100
+    : Math.max(0, Math.round(clientExtraTypeTotals.materials * 100) / 100);
   const extrasNetOfAccessAndMaterials = Math.max(
     0,
-    Math.round((extrasNetOfAccess - clientExtraMaterialsDisplay) * 100) / 100,
+    Math.round((extrasNetOfAccess - Math.max(0, clientExtraMaterialsDisplay)) * 100) / 100,
   );
-  const clientExtraPlainDisplay = Math.max(
-    extrasNetOfAccessAndMaterials,
-    Math.round(clientExtraTypeTotals.extra * 100) / 100,
-  );
-  const clientExtraTotalDisplay = Math.max(
-    0,
-    Math.round((clientExtraPlainDisplay + clientExtraCczDisplay + clientExtraParkingDisplay + clientExtraMaterialsDisplay) * 100) / 100,
-  );
-  const partnerExtraUnifiedAmount = Math.max(partnerExtraLine, Math.round(partnerExtraEntriesTotal * 100) / 100);
-  const partnerExtraPlainDisplay = Math.max(
-    partnerExtraLine,
-    Math.round(partnerExtraTypeTotals.extra * 100) / 100,
-  );
+  const clientExtraPlainDisplay = clientItemizedExtras
+    ? Math.round(clientExtraTypeTotals.extra * 100) / 100
+    : Math.max(
+        extrasNetOfAccessAndMaterials,
+        Math.round(clientExtraTypeTotals.extra * 100) / 100,
+      );
+  const clientExtraTotalDisplay = Math.round(
+    (clientExtraPlainDisplay + clientExtraCczDisplay + clientExtraParkingDisplay + clientExtraMaterialsDisplay) * 100,
+  ) / 100;
+  const partnerExtraUnifiedAmount = partnerItemizedExtras
+    ? Math.round(partnerExtraEntriesSignedTotal * 100) / 100
+    : Math.max(partnerExtraLine, Math.round(partnerExtraEntriesSignedTotal * 100) / 100);
+  const partnerExtraPlainDisplay = partnerItemizedExtras
+    ? Math.round(partnerExtraTypeTotals.extra * 100) / 100
+    : Math.max(partnerExtraLine, Math.round(partnerExtraTypeTotals.extra * 100) / 100);
   const partnerExtraCczDisplay = Math.max(
     Math.round(Number(partnerExtraBreakdownUi.ccz ?? 0) * 100) / 100,
     Math.round(partnerExtraTypeTotals.ccz * 100) / 100,
@@ -4063,7 +4362,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const alloc = row.allocation ?? null;
       return alloc === "partner_cost" || alloc === null;
     })
-    .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    .reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
   const partnerExtrasEffectiveAgainstCost = Math.max(
     Math.round(Number(job.partner_extras_amount ?? 0) * 100) / 100,
     Math.round(partnerPartnerCostLedgerTotal * 100) / 100,
@@ -4117,8 +4416,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const extraManagerTitle = extraManagerSide === "client" ? "Manage client extras" : "Manage partner extras";
   const extraManagerEmptyText =
     extraManagerSide === "client"
-      ? "No extra charges recorded yet."
-      : "No extra payouts recorded yet.";
+      ? "No client charges or discounts recorded yet."
+      : "No partner payouts or discounts recorded yet.";
   const extraManagerGroups: { key: ExtraHistoryBucket; label: string; entries: ExtraHistoryEntry[] }[] = [
     { key: "extra", label: "Labour", entries: [] },
     { key: "materials", label: "Materials", entries: [] },
@@ -4144,6 +4443,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const finalLabour = finalSplitRemain;
 
   const statusActions = getJobStatusActions(job);
+  /** Primary bar: keep cancel out of the strip — it lives under ⋮. */
+  const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled");
+  const showCancelInJobMoreMenu = statusActions.some((a) => a.status === "cancelled");
   const phaseCount = normalizeTotalPhases(job.total_phases);
   const reportsValidatedCount = reportPhaseIndices(phaseCount).filter(
     (n) => Boolean(job[`report_${n}_approved` as keyof Job]),
@@ -4316,9 +4618,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-700">Partner (money out)</p>
           <div className="space-y-1.5 text-xs">
             <div className="flex items-center justify-between">
-              <span className="text-text-secondary">Partner total (incl. materials)</span>
-              <span className="font-semibold tabular-nums text-rose-700">{formatCurrency(partnerCashOutTotal)}</span>
+              <span className="text-text-secondary">
+                {partnerUsesClawbackUi ? "Cancellation clawback (partner owes)" : "Partner total (incl. materials)"}
+              </span>
+              <span className="font-semibold tabular-nums text-rose-700">
+                {partnerUsesClawbackUi ? formatCurrencyPrecise(-partnerClawbackOwed) : formatCurrency(partnerCashOutTotal)}
+              </span>
             </div>
+            {!partnerUsesClawbackUi ? (
+              <>
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">Base labour</span>
               <span className="font-semibold tabular-nums">-{formatCurrency(partnerCashOutBase)}</span>
@@ -4333,14 +4641,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <span className="text-text-secondary">Materials</span>
               <span className="font-semibold tabular-nums">-{formatCurrency(Math.max(0, Number(job.materials_cost ?? 0)))}</span>
             </div>
+              </>
+            ) : null}
             <div className="border-t border-rose-200/70 pt-1.5 flex items-center justify-between">
               <span className="text-text-secondary">Paid out</span>
               <span className="font-semibold tabular-nums">{formatCurrency(partnerPaidTotal)}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-text-secondary">Still due</span>
-              <span className={cn("font-bold tabular-nums", partnerPayRemaining > 0.02 ? "text-amber-700" : "text-emerald-700")}>
-                {formatCurrency(partnerPayRemaining)}
+              <span className="text-text-secondary">{partnerUsesClawbackUi ? "Clawback (payout −)" : "Still due"}</span>
+              <span className={cn("font-bold tabular-nums", partnerUsesClawbackUi || partnerPayRemaining > 0.02 ? "text-amber-700" : "text-emerald-700")}>
+                {partnerUsesClawbackUi ? formatCurrencyPrecise(-partnerClawbackOwed) : formatCurrency(partnerPayRemaining)}
               </span>
             </div>
           </div>
@@ -4450,15 +4760,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ⚠ No scope
                   </span>
                 ) : null}
-            {statusActions.map((action, idx) => {
+            {inlineStatusActions.map((action, idx) => {
               const completeGreenClass =
                 "border-emerald-600/45 bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm dark:border-emerald-700/55 dark:bg-emerald-600 dark:hover:bg-emerald-500";
               const holdDarkRedClass =
                 "border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55";
-              const cancelJobClass =
-                action.status === "cancelled"
-                  ? "h-auto border-0 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-none hover:bg-red-700"
-                  : undefined;
               const variant =
                 action.destructive ? "danger" : action.primary && action.tone !== "success" ? "primary" : "outline";
               const toneClass = action.tone === "success" ? completeGreenClass : action.tone === "hold" ? holdDarkRedClass : undefined;
@@ -4466,18 +4772,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   key={`${action.special ?? action.status}-${idx}`}
                   variant={variant}
-                  className={cn(toneClass, "h-8 px-2.5 text-xs", cancelJobClass)}
+                  className={cn(toneClass, "h-8 px-2.5 text-xs")}
                   size="sm"
                   icon={<action.icon className="h-3.5 w-3.5" />}
                   disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
                   title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
                   onClick={() => {
-                    if (action.status === "cancelled") {
-                      setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
-                      setCancelDetail("");
-                      setCancelJobOpen(true);
-                      return;
-                    }
                     if (action.special === "put_on_hold") {
                       setPutOnHoldReason("");
                       setPutOnHoldPreset(null);
@@ -4513,6 +4813,68 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               );
             })}
+                <div className="relative" ref={jobMoreMenuRef}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 shrink-0 p-0"
+                    aria-label="More job actions"
+                    aria-expanded={jobMoreMenuOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setJobMoreMenuOpen((o) => !o)}
+                    icon={<MoreVertical className="h-3.5 w-3.5" />}
+                  />
+                  {jobMoreMenuOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-50 mt-1 min-w-[12.5rem] rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
+                    >
+                      {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                          onClick={() => {
+                            setJobMoreMenuOpen(false);
+                            setVisitOpenCreateSignal((k) => k + 1);
+                            setDetailTab(6);
+                          }}
+                        >
+                          <Plus className="h-3.5 w-3.5 shrink-0" />
+                          Add visit
+                        </button>
+                      ) : null}
+                      {job.status !== "cancelled" && job.status !== "deleted" ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                          onClick={() => void openQuickReschedule()}
+                        >
+                          <Calendar className="h-3.5 w-3.5 shrink-0" />
+                          Reschedule &amp; confirm…
+                        </button>
+                      ) : null}
+                      {showCancelInJobMoreMenu ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                          onClick={() => {
+                            setJobMoreMenuOpen(false);
+                            setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
+                            setCancelDetail("");
+                            setCancelJobOpen(true);
+                          }}
+                        >
+                          <XCircle className="h-3.5 w-3.5 shrink-0" />
+                          Cancel job
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -4888,14 +5250,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <div className="mt-2.5 flex flex-wrap items-center gap-2">
                         <span
                           className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-xs font-bold",
+                            "inline-flex items-start gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-[10px] sm:text-[11px] font-bold leading-snug max-w-[13rem]",
                             job.job_type === "hourly"
                               ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6]"
                               : "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
                           )}
                         >
-                          {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px]" /> : <Lock className="h-[11px] w-[11px]" />}
-                          {job.job_type === "hourly" ? "Hourly" : "Fixed"}
+                          {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px] shrink-0 mt-0.5" /> : <Lock className="h-[11px] w-[11px] shrink-0 mt-0.5" />}
+                          {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
                         </span>
                         <button
                           type="button"
@@ -4975,7 +5337,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ) : null}
                       {job.job_type === "fixed" && fixedRatesInlineOpen ? (
                         <div className="mt-2 rounded-lg border border-border bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <div>
                               <label className="mb-1 block text-[11px] font-medium text-text-secondary">Client rate £</label>
                               <Input
@@ -4999,7 +5361,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               />
                             </div>
                           </div>
-                          <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <Button
                               type="button"
                               size="sm"
@@ -5101,7 +5463,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className="p-[18px] space-y-[14px]"
                 style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
               >
-                <div className="grid grid-cols-2 gap-[14px]">
+                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
                   <div
                     className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
                     style={{ border: "0.5px solid #E4E4E8" }}
@@ -5211,7 +5573,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 </div>
                 {!isHousekeepJobDetail ? (
-                  <div className="grid grid-cols-2 gap-[14px]">
+                  <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
                     <div
                       className={cn(
                         "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
@@ -5388,7 +5750,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    { label: "Visits", index: 6 as const },
+                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 6 as const }] : []),
                     { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
@@ -5412,9 +5774,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
-              {detailTab === 6 ? (
+              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6 ? (
                 <VisitsTab
                   job={job}
+                  openCreateSignal={visitOpenCreateSignal}
                   onJobStatusBumpRequested={(suggestedStatus) => {
                     if (job.status !== suggestedStatus) {
                       void updateJob(job.id, { status: suggestedStatus });
@@ -6176,6 +6539,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Deposit + final ({formatCurrency(scheduledCustomerTotal)}) ≠ billable total ({formatCurrency(billableRevenue)}). Align below.
                   </div>
                 )}
+                <div className="rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2.5 space-y-1.5">
+                  <label className="block text-xs font-medium text-text-secondary">Ticket ID</label>
+                  <Input
+                    type="text"
+                    value={finForm.ticket_id}
+                    onChange={(e) => setFinForm((f) => ({ ...f, ticket_id: e.target.value }))}
+                    placeholder="e.g. Zendesk ticket number"
+                    className="h-9 text-sm"
+                  />
+                  <p className="text-[10px] text-text-tertiary leading-relaxed">
+                    Stored as <span className="font-mono text-[10px]">external_ref</span> on this job (support / billing reference). Saved with <span className="font-medium">Save pricing</span> below.
+                  </p>
+                </div>
                 {hourlyAutoBilling && (
                   <div className="rounded-xl border border-sky-500/35 bg-sky-500/10 p-3 text-xs text-sky-900 dark:text-sky-100 space-y-1">
                     <p className="font-semibold">Hourly auto-billing active</p>
@@ -6191,7 +6567,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <div className="space-y-2">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">1 · Client billing (what we invoice / collect)</p>
                   <p className="text-[10px] text-text-tertiary">Not paid to the partner directly — this is revenue from the customer.</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Core ticket — client_price</label>
                       <Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
@@ -6220,7 +6596,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <div className="space-y-2 pt-1 border-t border-border-light/80">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">2 · Internal cost (margin)</p>
                   <p className="text-[10px] text-text-tertiary">What the job costs you — subtracted from client billable for margin. Feeds self-bill lines (partner labour + materials).</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
                       <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
@@ -6264,7 +6640,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <div className="space-y-2 pt-1 border-t border-border-light/80">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">4 · Client payment schedule</p>
                   <p className="text-[10px] text-text-tertiary">How the customer pays over time (deposit vs final) — must line up with client billable above.</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Deposit — customer_deposit</label>
                       <Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
@@ -6322,14 +6698,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
-                  onClick={() => setPartnerModalOpen(true)}
-                >
-                  {job.partner_id ? "Swap" : "Assign"}
-                </Button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {job.partner_id?.trim() &&
+                  JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status) ? (
+                    <button
+                      type="button"
+                      aria-label="Unassign partner"
+                      title="Remove partner — job returns to Unassigned"
+                      disabled={signingOffPartner || savingPartner}
+                      onClick={() => void handleQuickUnassignPartner()}
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white shadow-sm transition-colors",
+                        "hover:bg-red-700 disabled:pointer-events-none disabled:opacity-45",
+                      )}
+                    >
+                      <X className="h-[15px] w-[15px]" strokeWidth={2.5} aria-hidden />
+                    </button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={signingOffPartner}
+                    className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                    onClick={() => setPartnerModalOpen(true)}
+                  >
+                    {job.partner_id ? "Swap" : "Assign"}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -6541,7 +6936,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <Button
                     size="sm"
                     variant="primary"
-                    className="h-10 w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
+                    className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerInitialExtraType(undefined);
@@ -6549,7 +6944,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Extra charge
+                    Charge or discount
                   </Button>
                 </div>
               </div>
@@ -6559,17 +6954,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
-                    <Badge variant={partnerPayRemaining > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
-                      {partnerPayRemaining > 0.02 ? "Pending" : "Settled"}
+                    <Badge
+                      variant={
+                        partnerUsesClawbackUi
+                          ? partnerClawbackOwed > 0.02
+                            ? "warning"
+                            : "success"
+                          : partnerPayRemaining > 0.02
+                            ? "warning"
+                            : "success"
+                      }
+                      size="sm"
+                      className="h-5 text-[10px]"
+                    >
+                      {partnerUsesClawbackUi
+                        ? partnerClawbackOwed > 0.02
+                          ? "Pending"
+                          : "Settled"
+                        : partnerPayRemaining > 0.02
+                          ? "Pending"
+                          : "Settled"}
                     </Badge>
                   </div>
                   <span
                     className="text-sm font-bold tabular-nums text-text-primary shrink-0"
-                    title="Partner cash out includes labour, extras, and materials cost."
+                    title="Labour + materials and cancellation clawback (−) when applicable."
                   >
-                    {formatCurrency(partnerCashOutTotal)}
+                    {formatCurrencyPrecise(partnerCashOutSummaryAmount)}
                   </span>
                 </div>
+                {partnerUsesClawbackUi ? (
+                  <p className="mb-1.5 text-[10px] text-text-tertiary leading-snug">
+                    Negative total = partner owes you (cancellation fee). Stored as a positive GBP snapshot for Finance /
+                    self-bill follow-up.
+                  </p>
+                ) : null}
                 <div className="space-y-2 text-xs">
                   <div
                     className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
@@ -6650,7 +7069,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   </div>
                   {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
-                  {partnerCashOutTotal > 0.02 && (
+                  {partnerCashOutTotal > 0.02 || partnerUsesClawbackUi ? (
                     <div className="mt-1 space-y-2">
                       <div className="space-y-1">
                         <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
@@ -6774,31 +7193,70 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </div>
                       ) : null}
                     </div>
-                  )}
-                  {partnerCashOutTotal > 0 && (
+                  ) : null}
+                  {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
                     <div className="flex items-center justify-between pt-1.5 border-t border-border-light dark:border-[#2f3642]">
-                      <span className={`text-xs font-semibold ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                        {partnerPayRemaining > 0 ? "Amount due" : "Fully paid out"}
+                      <span
+                        className={`text-xs font-semibold ${
+                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
+                        }`}
+                      >
+                        {partnerUsesClawbackUi
+                          ? partnerClawbackOwed > 0.02
+                            ? "Outstanding clawback"
+                            : "No clawback recorded"
+                          : partnerPayRemaining > 0
+                            ? "Amount due"
+                            : "Fully paid out"}
                       </span>
-                      <span className={`text-sm font-bold tabular-nums ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                        {partnerPayRemaining > 0 ? formatCurrency(partnerPayRemaining) : formatCurrency(0)}
+                      <span
+                        className={`text-sm font-bold tabular-nums ${
+                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
+                        }`}
+                      >
+                        {partnerUsesClawbackUi
+                          ? partnerClawbackOwed > 0.02
+                            ? formatCurrencyPrecise(-partnerClawbackOwed)
+                            : formatCurrencyPrecise(0)
+                          : partnerPayRemaining > 0
+                            ? formatCurrency(partnerPayRemaining)
+                            : formatCurrency(0)}
                       </span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
-                <div className="mt-2 grid w-full grid-cols-1">
+                {/* Always stack — right rail (~352px) is too narrow for two side-by-side action buttons */}
+                <div className="mt-2 flex w-full flex-col gap-2">
+                  {isAdmin ? (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm dark:bg-[#020040]"
+                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                      icon={<Plus className="h-4 w-4 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerFlow("partner_pay");
+                        setMoneyDrawerOpen(true);
+                      }}
+                      title='Records real money paid to partner (not an extra labour line). Choose "Deposit pass-through" or "Advance" if paying ahead of the labour cap.'
+                    >
+                      Record partner payment
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-10 w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45"
-                    disabled={!job.partner_id?.trim()}
+                    className={cn(
+                      "min-h-[2.75rem] w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45",
+                    )}
+                    disabled={!job.partner_id?.trim() || job.status === "cancelled"}
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerFlow("partner_extra");
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Extra payout
+                    Payout or discount
                   </Button>
                 </div>
               </div>
@@ -7218,12 +7676,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <Select
               label="Reason preset"
               value={putOnHoldPreset ?? ""}
-              options={PUT_ON_HOLD_REASON_OPTIONS}
+              options={putOnHoldReasonOptions}
               onChange={(e) => {
                 const preset = e.target.value;
                 setPutOnHoldPreset(preset || null);
                 if (!preset) return;
-                if (preset === "Other") {
+                if (preset.trim().toLowerCase() === "other") {
                   putOnHoldReasonRef.current?.focus();
                   return;
                 }
@@ -7302,10 +7760,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           <p className="text-sm text-text-secondary">
             Choose what you want to do with this on-hold job.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button
               variant={resumeAction === "reschedule" ? "primary" : "outline"}
               size="sm"
+              className="min-h-[2.25rem] w-full flex-1 basis-0 sm:min-h-8 sm:w-auto"
               disabled={resumeSaving}
               onClick={() => setResumeAction("reschedule")}
             >
@@ -7317,6 +7776,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               disabled={resumeSaving}
               onClick={() => setResumeAction("complete")}
               className={cn(
+                "min-h-[2.25rem] w-full flex-1 basis-0 sm:min-h-8 sm:w-auto",
                 resumeAction === "complete" &&
                   "border-emerald-600/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300",
               )}
@@ -7327,6 +7787,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               variant={resumeAction === "cancel" ? "danger" : "outline"}
               size="sm"
               disabled={resumeSaving}
+              className="min-h-[2.25rem] w-full flex-1 basis-0 sm:min-h-8 sm:w-auto"
               onClick={() => setResumeAction("cancel")}
             >
               Cancel
@@ -7337,7 +7798,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <p className="text-xs text-text-tertiary">
                 If the saved arrival date is no longer in the future, choose a valid date/time before resuming.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
                   <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
@@ -7346,7 +7807,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
                   <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
                 </div>
-                <div className="sm:col-span-2">
+                <div className="md:col-span-2">
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
                   <Input
                     type="date"
@@ -7371,7 +7832,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className="w-full h-10 rounded-lg border border-border bg-card text-sm text-text-primary px-3"
                   disabled={cancellingJob}
                 >
-                  {OFFICE_JOB_CANCELLATION_REASONS.map((r) => (
+                  {officeCancellationPresets.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.label}
                     </option>
@@ -7433,14 +7894,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           <p className="text-sm text-text-secondary">
             The assigned partner will be notified with the reason below. The same note stays on this job for your team.
           </p>
+          <p className="text-xs text-text-tertiary rounded-lg border border-border bg-muted/15 px-3 py-2">
+            Charges or partner payouts after a cancel belong in Finance Summary — use <strong className="text-text-secondary">Add extra charge</strong> or{" "}
+            <strong className="text-text-secondary">Add extra payout</strong> rather than cancelling with a dedicated fee flow.
+          </p>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
             <select
               value={cancelPresetId}
               onChange={(e) => setCancelPresetId(e.target.value)}
               className="w-full h-10 rounded-lg border border-border bg-card text-sm text-text-primary px-3"
+              disabled={cancellingJob}
             >
-              {OFFICE_JOB_CANCELLATION_REASONS.map((r) => (
+              {officeCancellationPresets.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
                 </option>
@@ -7457,10 +7923,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               rows={3}
               placeholder={officeCancellationDetailRequired(cancelPresetId) ? "Describe why this job is being cancelled…" : "Optional context for the partner or internal record…"}
               className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+              disabled={cancellingJob}
             />
           </div>
           <div className="flex flex-wrap gap-2 justify-end pt-1">
-            <Button variant="ghost" size="sm" disabled={cancellingJob} onClick={() => { setCancelJobOpen(false); setCancelDetail(""); }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={cancellingJob}
+              onClick={() => {
+                setCancelJobOpen(false);
+                setCancelDetail("");
+              }}
+            >
               Back
             </Button>
             <Button variant="danger" size="sm" loading={cancellingJob} onClick={() => void handleConfirmOfficeCancel()}>
@@ -7488,12 +7963,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJobTypeEditOpen(false);
         }}
         title="Billing type"
-        subtitle={job.reference ? `${job.reference} — switch fixed ↔ hourly` : "Switch fixed ↔ hourly"}
+        subtitle={job.reference ? `${job.reference} — custom vs smart pricing` : "Switch custom ↔ smart pricing"}
         size="md"
       >
         <div className="p-4 space-y-4">
           <p className="text-xs text-text-tertiary leading-snug">
-            Hourly uses a Call Out type from Services (same as new job). Amounts, linked invoice, and partner cost update from the catalog. Fixed keeps your current labour totals unless you edit them in Finance.
+            <strong className="text-text-secondary">{pricingModeLabel("hourly")}</strong> uses a Call Out from Services — amounts follow the catalogue with account/partner overrides.{" "}
+            <strong className="text-text-secondary">{pricingModeLabel("fixed")}</strong> keeps labour totals you set here unless you change them in Finance.
           </p>
           <Select
             label="Job type"
@@ -7509,8 +7985,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               }
             }}
             options={[
-              { value: "fixed", label: "Fixed" },
-              { value: "hourly", label: "Hourly" },
+              { value: "fixed", label: pricingModeLabel("fixed") },
+              { value: "hourly", label: pricingModeLabel("hourly") },
             ]}
           />
           {jobTypeEditTarget === "hourly" ? (
@@ -7533,7 +8009,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
                 options={jobTypeEditFixedSelectOptions}
               />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-text-secondary">Client rate £</label>
                   <Input
@@ -7560,7 +8036,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {fixedSwitchPreview ? (
                 <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
                       <p className="text-text-tertiary">Client value (sale)</p>
                       <p className="font-semibold tabular-nums text-text-primary">
@@ -7668,7 +8144,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 setMoneyDrawerOpen(true);
               }}
             >
-              {extraManagerSide === "client" ? "Add extra charge" : "Add extra payout"}
+              {extraManagerSide === "client" ? "Charge or discount" : "Payout or discount"}
             </Button>
           </div>
 
@@ -7680,7 +8156,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ? extraManagerGroups
                   .filter((group) => group.entries.length > 0)
                   .map((group) => {
-                    const groupTotal = group.entries.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+                    const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
                     const editable = isEditableExtraBucket(group.key);
                     return (
                       <div key={group.key} className="rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]">
@@ -7697,7 +8173,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               extraManagerSide === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
                             )}
                           >
-                            +{formatCurrency(groupTotal)}
+                            {formatSignedCurrency(groupTotal)}
                           </span>
                         </div>
                         <div className="space-y-1.5">
@@ -7706,7 +8182,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                                  {entry.side === "client" ? (
+                                  {entry.side === "client" && !isJobExtraDiscountExtraType(entry.extraType) ? (
                                     <Badge
                                       variant={
                                         entry.clientConfirmed == null
@@ -7740,7 +8216,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     entry.side === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
                                   )}
                                 >
-                                  +{formatCurrency(entry.amount)}
+                                  {formatSignedCurrency(extraHistorySignedAmount(entry))}
                                 </span>
                                 {editable && !isFallbackExtraEntry(entry) ? (
                                   <button
@@ -7995,12 +8471,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div ref={partnerCostSectionRef} className="space-y-3 border-t border-border-light pt-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate & cost</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setPartnerAssignRateType("fixed")}
                 className={cn(
-                  "inline-flex h-9 items-center justify-center rounded-full border-[1.5px] px-3 text-xs font-bold transition-colors",
+                  "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "fixed"
                     ? "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
                     : "border-border-light bg-card text-text-tertiary hover:border-[#333]/60 hover:text-text-primary",
@@ -8012,7 +8488,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 type="button"
                 onClick={() => setPartnerAssignRateType("hourly")}
                 className={cn(
-                  "inline-flex h-9 items-center justify-center rounded-full border-[1.5px] px-3 text-xs font-bold transition-colors",
+                  "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "hourly"
                     ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6] dark:border-[#8b5cf6] dark:bg-[#2a2148] dark:text-[#c4b5fd]"
                     : "border-border-light bg-card text-text-tertiary hover:border-[#7c3aed]/60 hover:text-text-primary",
@@ -8168,6 +8644,136 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               }}
             >
               Assign & confirm
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={quickRescheduleOpen}
+        onClose={() => {
+          if (!quickRescheduleSaving) setQuickRescheduleOpen(false);
+        }}
+        title="Reschedule &amp; confirm"
+        subtitle={job.reference}
+        size="md"
+      >
+        <div className="space-y-4 p-4">
+          <p className="text-xs text-text-tertiary leading-snug">
+            Confirm the visit date, assigned partner, service (type of work), and labour amounts. Saving updates the job, linked invoices, and self-bill where applicable; the partner is notified on the usual rules (assignment vs reschedule).
+          </p>
+          {job.job_type === "hourly" ? (
+            <p className="rounded-md border border-amber-500/25 bg-amber-500/8 px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200">
+              Hourly job: client and partner totals below should match your billed labour; adjust in Finance after if timers override these.
+            </p>
+          ) : null}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival date *</label>
+              <Input
+                type="date"
+                className="h-10"
+                value={qrDate}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <TimeSelect label="Arrival time" value={qrTime} disabled={quickRescheduleSaving} onChange={(v) => setQrTime(v)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Window</label>
+              <Select
+                className="h-10"
+                value={qrWindowMins}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrWindowMins(e.target.value)}
+                options={[...ARRIVAL_WINDOW_OPTIONS]}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-text-secondary">
+                Expected finish date{qrDate.trim() ? <span className="text-red-600"> *</span> : null}
+              </label>
+              <Input
+                type="date"
+                className="h-10"
+                value={qrExpectedFinish}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrExpectedFinish(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-secondary">Partner</label>
+            <select
+              className="h-10 w-full rounded-lg border border-border-light bg-surface px-3 text-sm"
+              value={qrPartnerId}
+              disabled={quickRescheduleSaving || loadingPartners}
+              onChange={(e) => setQrPartnerId(e.target.value)}
+            >
+              <option value="">— No partner —</option>
+              {partners.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={cn(loadingJobTypeCatalog && "pointer-events-none opacity-60")}>
+            <ServiceCatalogSelect
+              label="Type of work (Services)"
+              emptyOptionLabel="Keep current / not linked to catalog"
+              catalog={catalogServicesJobType}
+              value={qrCatalogServiceId}
+              disabled={quickRescheduleSaving}
+              compactOptionLabels
+              onChange={(id) => setQrCatalogServiceId(id)}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Client price (£)</label>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                className="h-10"
+                value={qrClientPrice}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrClientPrice(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Partner cost (£)</label>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                className="h-10"
+                value={qrPartnerCost}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrPartnerCost(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-border-light pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={quickRescheduleSaving}
+              onClick={() => setQuickRescheduleOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              loading={quickRescheduleSaving}
+              onClick={() => void confirmQuickReschedule()}
+            >
+              Confirm &amp; update
             </Button>
           </div>
         </div>

@@ -19,7 +19,11 @@ import {
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
+import {
+  isPostgresCheckViolationError,
+  isSupabaseMissingColumnError,
+  parsePostgrestUnknownColumnName,
+} from "@/lib/supabase-schema-compat";
 import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
@@ -28,10 +32,12 @@ import {
 import { resolveJobGeocode } from "@/lib/job-geocode-client";
 import { officePartnerTimerResetPatch } from "@/lib/partner-live-timer";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { ukYmdStartOfWallClockDayMs } from "@/lib/utils/date";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
   Job,
+  | "id"
   | "status"
   | "partner_id"
   | "partner_ids"
@@ -45,12 +51,15 @@ export type JobFinancialKpiRow = Pick<
   | "scheduled_start_at"
   | "scheduled_end_at"
   | "completed_date"
+  | "timer_elapsed_seconds"
+  | "billed_hours"
+  | "job_type"
 >;
 
 const KPI_CHUNK_COLS_FULL =
-  "status,partner_id,partner_ids,client_price,extras_amount,partner_cost,materials_cost,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date";
+  "id,status,partner_id,partner_ids,client_price,extras_amount,partner_cost,materials_cost,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date,timer_elapsed_seconds,billed_hours,job_type";
 const KPI_CHUNK_COLS_LEGACY =
-  "status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+  "id,status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date,timer_elapsed_seconds,billed_hours,job_type";
 
 export async function fetchAllJobsFinancialKpiRows(
   scheduleRange?: { from: string; to: string } | null
@@ -73,7 +82,7 @@ export async function fetchAllJobsFinancialKpiRows(
     }
     if (error && isPostgrestWriteRetryableError(error) && columns.includes("extras_amount")) {
       columns =
-        "status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+        "id,status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
       ({ data, error } = await run(columns));
     }
     if (error) throw error;
@@ -86,6 +95,80 @@ export async function fetchAllJobsFinancialKpiRows(
     if (rawBatch.length < chunk) break;
   }
   return all;
+}
+
+/** Same anchors as schedule overlap: scheduled_start_at → scheduled_date (UK midnight) → created_at. */
+export function jobPipelineScheduleStartMs(
+  row: Pick<JobFinancialKpiRow, "scheduled_start_at" | "scheduled_date" | "created_at">,
+): number | null {
+  const iso = row.scheduled_start_at?.trim();
+  if (iso) {
+    const t = new Date(iso).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  const raw = String(row.scheduled_date ?? "").trim();
+  const ymd = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    const day = ukYmdStartOfWallClockDayMs(ymd);
+    if (day != null) return day;
+  }
+  const c = row.created_at?.trim();
+  if (c) {
+    const t = new Date(c).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+
+const FINAL_CHECKS_AUDIT_STATUSES = ["final_check", "need_attention"] as const;
+
+/** Earliest audit transition into Final Checks (`final_check` / `need_attention`) per job. */
+export async function fetchFirstEnteredFinalChecksAtByJobIds(jobIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (jobIds.length === 0) return out;
+  const supabase = getSupabase();
+  const chunk = 120;
+  for (let i = 0; i < jobIds.length; i += chunk) {
+    const slice = jobIds.slice(i, i + chunk);
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("entity_id, created_at")
+      .eq("entity_type", "job")
+      .eq("action", "status_changed")
+      .eq("field_name", "status")
+      .in("new_value", [...FINAL_CHECKS_AUDIT_STATUSES])
+      .in("entity_id", slice)
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const r = row as { entity_id: string; created_at: string };
+      if (!r.entity_id || out.has(r.entity_id)) continue;
+      out.set(r.entity_id, r.created_at);
+    }
+  }
+  return out;
+}
+
+/**
+ * Mean wall-clock duration from pipeline schedule anchor to first audit entry into Final Checks.
+ * Jobs without audit history are excluded.
+ */
+export function computeAvgScheduleToFinalChecksPipelineSeconds(
+  rows: JobFinancialKpiRow[],
+  enteredFinalChecksAt: Map<string, string>,
+): number | null {
+  const samples: number[] = [];
+  for (const row of rows) {
+    const endIso = enteredFinalChecksAt.get(row.id);
+    if (!endIso) continue;
+    const startMs = jobPipelineScheduleStartMs(row);
+    const endMs = new Date(endIso).getTime();
+    if (startMs == null || Number.isNaN(endMs)) continue;
+    const sec = (endMs - startMs) / 1000;
+    if (Number.isFinite(sec) && sec >= 0) samples.push(sec);
+  }
+  if (samples.length === 0) return null;
+  return samples.reduce((a, b) => a + b, 0) / samples.length;
 }
 
 // Throttle: mark-late should not run on every jobs list request.
@@ -111,6 +194,17 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   if (tabId === "all") {
     return (JOB_LIST_ALL_TAB_STATUSES as readonly string[]).includes(jobStatus);
   }
+  if (tabId === "action_required") {
+    return jobMatchesJobsManagementTab(jobStatus, "unassigned") || jobStatus === "on_hold";
+  }
+  if (tabId === "closed") {
+    return (
+      jobStatus === "awaiting_payment" ||
+      jobStatus === "completed" ||
+      jobStatus === "cancelled" ||
+      jobStatus === "deleted"
+    );
+  }
   if (tabId === "unassigned") return jobStatus === "unassigned" || jobStatus === "auto_assigning";
   if (tabId === "scheduled") return jobStatus === "scheduled" || jobStatus === "late";
   if (tabId === "on_hold") return jobStatus === "on_hold";
@@ -121,6 +215,34 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   if (tabId === "cancelled") return jobStatus === "cancelled";
   if (tabId === "deleted") return false;
   return jobStatus === tabId;
+}
+
+export type JobsManagementClosedBucket = "paid" | "awaiting_payment" | "archived" | "lost";
+
+/** Closed-tab UI buckets — backend `status` is unchanged; this is presentation only. */
+export function jobsManagementClosedBucket(job: Pick<Job, "status">): JobsManagementClosedBucket {
+  switch (job.status) {
+    case "completed":
+      return "paid";
+    case "awaiting_payment":
+      return "awaiting_payment";
+    case "deleted":
+      return "archived";
+    case "cancelled":
+      return "lost";
+    default:
+      return "lost";
+  }
+}
+
+export function jobsManagementClosedBucketLabel(bucket: JobsManagementClosedBucket): string {
+  const labels: Record<JobsManagementClosedBucket, string> = {
+    paid: "Paid",
+    awaiting_payment: "Awaiting Payment",
+    archived: "Archived",
+    lost: "Lost",
+  };
+  return labels[bucket];
 }
 
 /**
@@ -135,9 +257,24 @@ export function jobRowMatchesJobsManagementTab(
     return jobMatchesJobsManagementTab(job.status, tabId);
   }
   if (jobIsBookedPipelineWithoutPartner(job)) {
-    return tabId === "unassigned";
+    return tabId === "unassigned" || tabId === "action_required";
+  }
+  if (tabId === "action_required") {
+    return jobRowMatchesJobsManagementTab(job, "unassigned") || job.status === "on_hold";
   }
   return jobMatchesJobsManagementTab(job.status, tabId);
+}
+
+/** Action Required through Final checks — excludes Closed (awaiting payment, completed, cancelled, …). */
+export function jobMatchesJobsActivePipeline(
+  job: Pick<Job, "status" | "partner_id" | "partner_ids">,
+): boolean {
+  return (
+    jobRowMatchesJobsManagementTab(job, "action_required") ||
+    jobRowMatchesJobsManagementTab(job, "scheduled") ||
+    jobRowMatchesJobsManagementTab(job, "in_progress") ||
+    jobRowMatchesJobsManagementTab(job, "final_check")
+  );
 }
 
 /** Schedule calendar: same pipeline as Jobs tabs Unassigned, Scheduled, In progress, Final checks (excludes awaiting payment, completed, cancelled, etc.). */
@@ -225,6 +362,11 @@ async function listJobsWithSchedulePeriodOverlap(params: ListParams): Promise<Li
   const range = params.scheduleRange!;
   let statusIn: string[];
   if (params.statusIn && params.statusIn.length > 0) statusIn = [...params.statusIn];
+  else if (params.jobsClosedBucket === "paid") statusIn = ["completed"];
+  else if (params.jobsClosedBucket === "awaiting_payment") statusIn = ["awaiting_payment"];
+  else if (params.jobsClosedBucket === "lost") statusIn = ["cancelled"];
+  else if (params.jobsClosedBucket === "archived") statusIn = ["deleted"];
+  else if (params.status === "closed") statusIn = ["awaiting_payment", "completed", "cancelled", "deleted"];
   else if (params.status === "in_progress") statusIn = [...JOB_ONSITE_PROGRESS_STATUSES];
   else if (params.status === "scheduled") statusIn = ["scheduled", "late"];
   else if (params.status === "unassigned") {
@@ -234,6 +376,15 @@ async function listJobsWithSchedulePeriodOverlap(params: ListParams): Promise<Li
       "scheduled",
       "late",
       ...JOB_ONSITE_PROGRESS_STATUSES,
+    ];
+  } else if (params.status === "action_required") {
+    statusIn = [
+      "unassigned",
+      "auto_assigning",
+      "scheduled",
+      "late",
+      ...JOB_ONSITE_PROGRESS_STATUSES,
+      "on_hold",
     ];
   } else if (!params.status || params.status === "all") statusIn = [...JOB_LIST_ALL_TAB_STATUSES];
   else statusIn = [params.status];
@@ -267,7 +418,10 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     !params.scheduleRange &&
     params.status !== "archived" &&
     params.status !== "deleted" &&
-    (params.status === "scheduled" || params.status === "all" || !params.status);
+    (params.status === "scheduled" ||
+      params.status === "all" ||
+      !params.status ||
+      params.status === "action_required");
   if (shouldRunMarkLate && Date.now() - lastMarkLateAt > MARK_LATE_INTERVAL_MS) {
     void markLateJobs(); // fire-and-forget: don't block the list query
   }
@@ -358,6 +512,85 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
       }
+    );
+  }
+  if (params.status === "action_required") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      {
+        ...rest,
+        jobsActionRequiredTab: true,
+      },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      }
+    );
+  }
+
+  if (params.status === "closed") {
+    if (params.jobsClosedBucket === "archived") {
+      const { status: _st, ...rest } = params;
+      return queryList<Job>(
+        "jobs",
+        {
+          ...rest,
+          archivedOnly: true,
+          status: "deleted",
+          sortBy: rest.sortBy ?? "deleted_at",
+          sortDir: rest.sortDir ?? "desc",
+        },
+        {
+          searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+          defaultSort: "deleted_at",
+        },
+      );
+    }
+    if (params.jobsClosedBucket === "paid") {
+      const { status: _omit, ...rest } = params;
+      return queryList<Job>(
+        "jobs",
+        { ...rest, statusIn: ["completed"] },
+        {
+          searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+          defaultSort: "created_at",
+        },
+      );
+    }
+    if (params.jobsClosedBucket === "lost") {
+      const { status: _omit, ...rest } = params;
+      return queryList<Job>(
+        "jobs",
+        { ...rest, status: "cancelled" },
+        {
+          searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+          defaultSort: "created_at",
+        },
+      );
+    }
+    if (params.jobsClosedBucket === "awaiting_payment") {
+      const { status: _omit, ...rest } = params;
+      return queryList<Job>(
+        "jobs",
+        { ...rest, status: "awaiting_payment" },
+        {
+          searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+          defaultSort: "created_at",
+        },
+      );
+    }
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      {
+        ...rest,
+        jobsClosedTab: true,
+      },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      },
     );
   }
 
@@ -741,6 +974,8 @@ async function fetchJobGatesForUpdate(id: string): Promise<Pick<
 export type UpdateJobOptions = {
   /** Skip weekly self-bill recompute (call `syncSelfBillAfterJobChange` once after a batch of updates). */
   skipSelfBillSync?: boolean;
+  /** When cancelling + creating a cancellation-fee invoice first, exclude those ids from void. */
+  preserveInvoiceIdsOnCancel?: string[];
 };
 
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
@@ -783,6 +1018,13 @@ export async function updateJob(
       /** Partner cleared → wipe on-site timer so the next assigned partner starts fresh from 0. */
       Object.assign(effectivePatch, officePartnerTimerResetPatch());
     }
+    if (jobHasPartnerSet(mergedPartner as Job)) {
+      const tentativeStatus =
+        effectivePatch.status !== undefined ? (effectivePatch.status as Job["status"]) : beforeGates.status;
+      if (tentativeStatus === "unassigned") {
+        effectivePatch.status = "scheduled";
+      }
+    }
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
 
@@ -822,6 +1064,10 @@ export async function updateJob(
       continue;
     }
     if (error && isPostgrestWriteRetryableError(error)) {
+      /** CHECK failures (e.g. `cancellation_fee_party` before migration 177) are not fixed by `applyJobDbCompat` — avoid hammering PostgREST. */
+      if (isPostgresCheckViolationError(error) && !parsePostgrestUnknownColumnName(error)) {
+        break;
+      }
       patchPayload = { ...applyJobDbCompat({ ...patchPayload }) };
       const retry = await runUpdateReturning(patchPayload);
       rows = retry.data;
@@ -852,6 +1098,7 @@ export async function updateJob(
             row.partner_cancellation_reason?.trim() ||
             "Job cancelled.",
           primaryInvoiceId: row.invoice_id,
+          excludeInvoiceIds: options?.preserveInvoiceIdsOnCancel,
         }),
         cancelOpenSelfBillsForJobCancellation({
           jobReference: row.reference,

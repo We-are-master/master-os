@@ -11,14 +11,23 @@ export const OFFICE_JOB_CANCELLATION_REASONS = [
 
 export type OfficeJobCancellationReasonId = (typeof OFFICE_JOB_CANCELLATION_REASONS)[number]["id"];
 
-export function officeCancellationReasonLabel(id: string): string {
+export function officeCancellationReasonLabel(
+  id: string,
+  presets?: readonly { id: string; label: string }[],
+): string {
+  const trimmed = presets?.find((r) => r.id === id)?.label?.trim();
+  if (trimmed) return trimmed;
   const row = OFFICE_JOB_CANCELLATION_REASONS.find((r) => r.id === id);
   return row?.label ?? id;
 }
 
 /** Single text stored on `jobs.cancellation_reason` (partner + internal visibility). */
-export function buildOfficeCancellationReasonText(presetId: string, detail?: string): string {
-  const label = officeCancellationReasonLabel(presetId);
+export function buildOfficeCancellationReasonText(
+  presetId: string,
+  detail?: string,
+  presets?: readonly { id: string; label: string }[],
+): string {
+  const label = officeCancellationReasonLabel(presetId, presets);
   const d = detail?.trim() ?? "";
   if (presetId === "other" && !d) return label;
   if (!d) return label;

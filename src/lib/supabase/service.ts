@@ -37,3 +37,8 @@ export function createServiceClient(): SupabaseClient {
 
   return createClient(url, key);
 }
+
+/** True when service role env is set — API routes can bypass RLS. Local dev often omits it; use the cookie session client as a fallback where RLS allows. */
+export function isServiceRoleConfigured(): boolean {
+  return !!(getSupabaseUrl() && getServiceRoleKey());
+}

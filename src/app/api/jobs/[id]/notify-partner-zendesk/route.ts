@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation, updateTicket as zdUpdateTicket } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
@@ -336,9 +336,8 @@ function humanStatusLabel(s: string): string {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function sendExpoPushToPartner(
-  supabase: any,
+  supabase: SupabaseClient,
   partner: { id: string; expo_push_token: string | null; auth_user_id: string | null },
   notification: { title: string; body: string; data: Record<string, unknown> },
 ): Promise<{ ok: boolean; tokens_sent: number; error: string | null }> {

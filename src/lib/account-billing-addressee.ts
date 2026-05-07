@@ -125,3 +125,64 @@ export async function resolveNominalBillingParty(
     mode: "account",
   };
 }
+
+export type QuoteProposalRecipientArgs = {
+  clientId?: string | null;
+  propertyId?: string | null;
+  /** Routing draft / Change panel — quote row may lack `property_id`; still resolve inbox from this account. */
+  accountId?: string | null;
+  fallbackName?: string | null;
+  fallbackEmail?: string | null;
+};
+
+/**
+ * Default “customer” email for the quote drawer / proposal send pipeline.
+ *
+ * - **With `clientId`**: same rules as [`resolveNominalBillingParty`] (`billing_type`: account vs end_client).
+ * - **Property-linked (`propertyId` only)**: use that site’s linked account **`finance_email` then `accounts.email`**.
+ * - **`accountId` only** (draft / picker before `property_id` exists): same finance/main email fallback as the property-only path.
+ *
+ * Returns a trimmed address or **`""`** when unresolved.
+ */
+export async function getQuoteProposalRecipientEmail(
+  supabase: SupabaseClient,
+  args: QuoteProposalRecipientArgs,
+): Promise<string> {
+  const cid = args.clientId?.trim() || "";
+  const pid = args.propertyId?.trim() || "";
+  const aidFallback = args.accountId?.trim() || "";
+
+  if (cid) {
+    const b = await resolveNominalBillingParty(supabase, {
+      clientId: cid,
+      fallbackName: args.fallbackName ?? undefined,
+      fallbackEmail: args.fallbackEmail,
+    });
+    return b.documentEmail?.trim() || "";
+  }
+
+  if (pid) {
+    const { data: propRow, error } = await supabase
+      .from("account_properties")
+      .select("account_id")
+      .eq("id", pid)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (error || !propRow?.account_id?.trim()) return "";
+    const a = await fetchAccountForBilling(supabase, propRow.account_id.trim());
+    if (!a) return "";
+    const fe = a.finance_email?.trim();
+    const main = a.email?.trim();
+    return fe || main || "";
+  }
+
+  if (aidFallback) {
+    const a = await fetchAccountForBilling(supabase, aidFallback);
+    if (!a) return "";
+    const fe = a.finance_email?.trim();
+    const main = a.email?.trim();
+    return fe || main || "";
+  }
+
+  return "";
+}

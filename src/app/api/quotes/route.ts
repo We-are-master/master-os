@@ -239,6 +239,7 @@ export async function POST(req: NextRequest) {
       quote_type:           quoteType,
       customer_accepted:    false,
       customer_deposit_paid: false,
+      draft_route_completed: true,
       ...(ticketId ? { external_source: "zendesk", external_ref: ticketId } : {}),
     })
     .select("id, reference, status")

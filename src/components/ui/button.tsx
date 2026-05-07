@@ -24,10 +24,11 @@ const variantStyles: Record<ButtonVariant, string> = {
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs font-medium gap-1.5 rounded-[6px]",
-  md: "h-8 px-3.5 text-xs font-medium gap-2 rounded-[6px]",
-  lg: "h-10 px-6 text-sm font-medium gap-2 rounded-[6px]",
-  icon: "h-8 w-8 rounded-[6px]",
+  /** min-h allows multi-line labels on narrow rails (labels wrap instead of overflowing). */
+  sm: "min-h-8 px-3 py-1.5 text-xs font-medium gap-x-1.5 gap-y-1 rounded-[6px]",
+  md: "min-h-8 px-3.5 py-1.5 text-xs font-medium gap-x-2 gap-y-1 rounded-[6px]",
+  lg: "min-h-10 px-6 py-2 text-sm font-medium gap-x-2 gap-y-1 rounded-[6px]",
+  icon: "h-8 w-8 shrink-0 rounded-[6px]",
 };
 
 interface ButtonProps {
@@ -74,7 +75,7 @@ export function Button({
       style={style}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
-        "inline-flex items-center justify-center transition-all duration-200 cursor-pointer select-none",
+        "inline-flex flex-wrap items-center justify-center transition-all duration-200 cursor-pointer select-none",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1",
         "disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none",
         variantStyles[variant],
@@ -85,13 +86,15 @@ export function Button({
       onClick={onClick}
     >
       {loading && (
-        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+        <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       )}
-      {!loading && icon}
-      {children}
+      {!loading && icon ? <span className="inline-flex shrink-0">{icon}</span> : null}
+      {children != null ? (
+        <span className={cn("min-w-0 text-center whitespace-normal leading-tight", icon || loading ? "text-balance" : "")}>{children}</span>
+      ) : null}
     </motion.button>
   );
 }

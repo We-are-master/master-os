@@ -20,7 +20,7 @@ export function FinanceCards({
   partnerOutstanding,
 }: Props) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-[22px]" style={{ padding: "0 24px 22px" }}>
+    <div className="grid grid-cols-1 gap-3 pb-[22px] md:grid-cols-2" style={{ padding: "0 24px 22px" }}>
       {/* Client card — navy tinted */}
       <div
         className="rounded-[12px] relative overflow-hidden"

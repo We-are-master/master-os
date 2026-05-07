@@ -16,6 +16,32 @@ export async function getClient(id: string): Promise<Client | null> {
   return data as Client | null;
 }
 
+/**
+ * Matches quote list / drawer “linked account” resolution (`batchResolveLinkedAccountLabels`):
+ * `clients.source_account_id`, else exact `accounts.email`, else ilike fallback.
+ */
+export async function resolveCorporateAccountIdForClient(clientId: string): Promise<string | null> {
+  const id = clientId.trim();
+  if (!id) return null;
+  const supabase = getSupabase();
+  const { data: row, error } = await supabase
+    .from("clients")
+    .select("source_account_id, email")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error || !row) return null;
+  const sid = (row as { source_account_id?: string | null }).source_account_id?.trim();
+  if (sid) return sid;
+  const email = (row as { email?: string | null }).email?.trim();
+  if (!email) return null;
+  const { data: exact } = await supabase.from("accounts").select("id").eq("email", email).is("deleted_at", null).maybeSingle();
+  const exactId = (exact as { id?: string } | null)?.id?.trim();
+  if (exactId) return exactId;
+  const { data: loose } = await supabase.from("accounts").select("id").ilike("email", email).is("deleted_at", null).maybeSingle();
+  return (loose as { id?: string } | null)?.id?.trim() || null;
+}
+
 export async function createClient(data: Omit<Client, "id" | "created_at" | "updated_at" | "total_spent" | "jobs_count" | "last_job_date">): Promise<Client> {
   const supabase = getSupabase();
   const rawSid = data.source_account_id;

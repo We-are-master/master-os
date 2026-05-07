@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
+import {
+  partnerCancellationClawbackOwedGbp,
+} from "@/lib/job-cancel-economics";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
 
@@ -91,6 +94,7 @@ type JobPayoutRow = {
   status?: string | null;
   deleted_at?: string | null;
   partner_cancelled_at?: string | null;
+  partner_cancellation_fee?: number | null;
 };
 
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
@@ -160,19 +164,21 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
 
-  /** One jobs query for both totals recompute and payout-void logic (saves 2 round-trips vs recompute + refetch + second select). */
-  const jobColsFull = "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at";
+  /** One jobs query — prefer partner clawback columns when present */
+  const jobColsWithPartnerClaw =
+    "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at, partner_cancellation_fee";
   const jobColsLegacy = "partner_cost, materials_cost, status, deleted_at";
-  const jobQuery1 = await supabase.from("jobs").select(jobColsFull).eq("self_bill_id", selfBillId);
-  let jErr = jobQuery1.error;
+
   let jobs: JobPayoutRow[];
-  if (jErr && isSupabaseMissingColumnError(jErr)) {
-    const retry = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
-    jErr = retry.error;
-    jobs = (retry.data ?? []) as JobPayoutRow[];
+  const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
+  if (!try1.error) {
+    jobs = (try1.data ?? []) as JobPayoutRow[];
+  } else if (isSupabaseMissingColumnError(try1.error)) {
+    const try3 = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
+    if (try3.error) throw try3.error;
+    jobs = (try3.data ?? []) as JobPayoutRow[];
   } else {
-    if (jErr) throw jErr;
-    jobs = (jobQuery1.data ?? []) as JobPayoutRow[];
+    throw try1.error;
   }
 
   const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
@@ -184,7 +190,12 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
     materials += Number(r.materials_cost) || 0;
   }
   const commission = 0;
-  const netPayout = jobValue + materials - commission;
+  let clawAdjustAll = 0;
+  for (const r of jobs) {
+    clawAdjustAll += partnerCancellationClawbackOwedGbp(r as Job);
+  }
+  const grossLabour = jobValue + materials - commission;
+  const netPayout = Math.round(Math.max(0, grossLabour - clawAdjustAll) * 100) / 100;
 
   const { error: uErr } = await supabase
     .from("self_bills")
@@ -253,6 +264,9 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
         ? prevNet
         : null;
 
+  /** Weekly bucket with zero payable labour — net from partner clawbacks on lost rows only (else 0). */
+  const voidNetFromCancelAdjust = Math.round(Math.max(0, -clawAdjustAll) * 100) / 100;
+
   /**
    * Progressively drop columns that the DB's schema cache doesn't know about (migration 100
    * adds `payout_void_reason` / `partner_status_label` / `original_net_payout`; older DBs
@@ -266,7 +280,7 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
     job_value: 0,
     materials: 0,
     commission: 0,
-    net_payout: 0,
+    net_payout: voidNetFromCancelAdjust,
     payout_void_reason: reason,
     partner_status_label: partnerLabel,
     ...(originalNetPayout != null ? { original_net_payout: originalNetPayout } : {}),
@@ -501,8 +515,9 @@ export async function refreshSelfBillPayoutStatesForJobIds(jobIds: string[]): Pr
 export async function listSelfBillsLinkedToJob(
   jobReference: string,
   primarySelfBillId?: string | null,
+  client?: SupabaseClient,
 ): Promise<SelfBill[]> {
-  const supabase = getSupabase();
+  const supabase = client ?? getSupabase();
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
     .select("self_bill_id")
@@ -529,11 +544,15 @@ export async function listSelfBillsLinkedToJob(
  * When a job is cancelled, mark linked self-bills as payout-cancelled (void-like state).
  * Skips paid / already voided rows and never sends anything.
  */
-export async function cancelOpenSelfBillsForJobCancellation(options: {
-  jobReference: string;
-  primarySelfBillId?: string | null;
-}): Promise<void> {
-  const linked = await listSelfBillsLinkedToJob(options.jobReference, options.primarySelfBillId);
+export async function cancelOpenSelfBillsForJobCancellation(
+  options: {
+    jobReference: string;
+    primarySelfBillId?: string | null;
+  },
+  client?: SupabaseClient,
+): Promise<void> {
+  const supabaseForList = client ?? getSupabase();
+  const linked = await listSelfBillsLinkedToJob(options.jobReference, options.primarySelfBillId, supabaseForList);
   const eligible = linked.filter((sb) => {
     if (sb.status === "paid") return false;
     if (SELF_BILL_TERMINAL_STATUSES.includes(sb.status)) return false;
@@ -541,7 +560,7 @@ export async function cancelOpenSelfBillsForJobCancellation(options: {
   });
   if (eligible.length === 0) return;
 
-  const supabase = getSupabase();
+  const supabase = client ?? getSupabase();
 
   // For weekly self-bills with multiple jobs, only void when no active jobs remain.
   await Promise.all(eligible.map(async (sb) => {

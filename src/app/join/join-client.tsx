@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 
 const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
@@ -206,8 +207,6 @@ const DOC_FIELDS: { key: DocKey; label: string; hint: string }[] = [
   { key: "proof_of_address", label: "Proof of Address",          hint: "Utility bill or bank statement" },
   { key: "right_to_work",    label: "Right to Work",             hint: "Visa or passport biometric page" },
 ];
-
-const TRADE_OPTIONS = [...TYPE_OF_WORK_OPTIONS] as string[];
 
 const STEPS = ["Account", "Business", "Documents"];
 
@@ -445,6 +444,13 @@ function RegistrationForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword,    setShowPassword]    = useState(false);
 
+  const [tradeOptions, setTradeOptions] = useState<string[]>([]);
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then((c) => setTradeOptions(typeOfWorkLabelsFromCatalog(c)))
+      .catch(() => {});
+  }, []);
+
   // Step 1 — Business
   const [companyName,    setCompanyName]    = useState("");
   const [address,        setAddress]        = useState("");
@@ -645,6 +651,7 @@ function RegistrationForm() {
             services={services}             setServices={setServices}
             utr={utr}                       setUtr={setUtr}
             website={website}               setWebsite={setWebsite}
+            tradeOptions={tradeOptions}
           />
         )}
         {step === 2 && (
@@ -836,6 +843,7 @@ function Step1({
   setUtr,
   website,
   setWebsite,
+  tradeOptions,
 }: {
   companyName: string;
   setCompanyName: (v: string) => void;
@@ -849,6 +857,7 @@ function Step1({
   setUtr: (v: string) => void;
   website: string;
   setWebsite: (v: string) => void;
+  tradeOptions: string[];
 }) {
   function toggleTrade(trade: string) {
     setSelectedTrades((prev: string[]) =>
@@ -883,7 +892,7 @@ function Step1({
       <Field label="Service type" required>
         <p className="text-xs text-slate-400 mb-2">Select all that apply</p>
         <div className="flex flex-wrap gap-2">
-          {TRADE_OPTIONS.map((trade) => {
+          {tradeOptions.map((trade) => {
             const active = selectedTrades.includes(trade);
             return (
               <button

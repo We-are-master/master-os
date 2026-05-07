@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { Drawer } from "@/components/ui/drawer";
 import { motion } from "framer-motion";
@@ -34,10 +35,16 @@ import {
   TrendingUp,
   Ban,
   Receipt,
+  Plus,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { SelfBill } from "@/types/database";
+import { useProfile } from "@/hooks/use-profile";
+import { getJob } from "@/services/jobs";
+import { listJobPayments } from "@/services/job-payments";
+import { executeJobMoneyAction } from "@/services/job-money-actions";
+import { partnerPayLedgerBypassesPartnerCap, PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
+import type { Job, JobPaymentMethod, SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
 import {
   weekPeriodHelpText,
@@ -61,7 +68,6 @@ import {
   listJobsLinkedToSelfBillIds,
   selfBillJobPayoutStateLabel,
 } from "@/services/self-bills";
-import type { Job } from "@/types/database";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 
 const JOB_PAYMENTS_IN_CHUNK = 80;
@@ -226,6 +232,23 @@ type JobLine = Pick<
   | "deleted_at"
   | "partner_cancelled_at"
 >;
+
+async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{
+  map: Record<string, JobLine[]>;
+  partnerPaidByJobId: Record<string, number>;
+}> {
+  if (ids.length === 0) return { map: {}, partnerPaidByJobId: {} };
+  const rows = await listJobsLinkedToSelfBillIds(ids);
+  const map: Record<string, JobLine[]> = {};
+  for (const j of rows) {
+    const sid = j.self_bill_id as string;
+    if (!map[sid]) map[sid] = [];
+    map[sid].push(j);
+  }
+  const jobIds = [...new Set(rows.map((r) => r.id))];
+  const partnerPaidByJobId = await fetchPartnerPaidTotalsByJobIds(jobIds);
+  return { map, partnerPaidByJobId };
+}
 
 // ── Page component ─────────────────────────────────────────────────────────────
 
@@ -538,30 +561,41 @@ function SelfBillPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpenSbId, selfBills]);
 
+  const reloadLinkedJobsAndPartnerPaid = useCallback(async () => {
+    const ids = selfBills.map((sb) => sb.id);
+    try {
+      const { map, partnerPaidByJobId: paid } = await computeLinkedJobsMapsForSelfBillIds(ids);
+      setJobsBySelfBillId(map);
+      setPartnerPaidByJobId(paid);
+    } catch (e) {
+      console.error("Self-bill linked jobs load failed", e);
+      setJobsBySelfBillId({});
+      setPartnerPaidByJobId({});
+      toast.error(e instanceof Error ? e.message : "Failed to load jobs");
+    }
+  }, [selfBills]);
+
   useEffect(() => {
     let cancelled = false;
-    const ids = selfBills.map((sb) => sb.id);
-    if (ids.length === 0) { setJobsBySelfBillId({}); setPartnerPaidByJobId({}); return; }
     (async () => {
+      const ids = selfBills.map((sb) => sb.id);
       try {
-        const rows = await listJobsLinkedToSelfBillIds(ids);
+        const { map, partnerPaidByJobId: paid } = await computeLinkedJobsMapsForSelfBillIds(ids);
         if (cancelled) return;
-        const map: Record<string, JobLine[]> = {};
-        for (const j of rows) {
-          const sid = j.self_bill_id as string;
-          if (!map[sid]) map[sid] = [];
-          map[sid].push(j);
-        }
         setJobsBySelfBillId(map);
-        const jobIds = [...new Set(rows.map((r) => r.id))];
-        const paidMap = await fetchPartnerPaidTotalsByJobIds(jobIds);
-        if (!cancelled) setPartnerPaidByJobId(paidMap);
+        setPartnerPaidByJobId(paid);
       } catch (e) {
         console.error("Self-bill linked jobs load failed", e);
-        if (!cancelled) { setJobsBySelfBillId({}); setPartnerPaidByJobId({}); toast.error(e instanceof Error ? e.message : "Failed to load jobs"); }
+        if (!cancelled) {
+          setJobsBySelfBillId({});
+          setPartnerPaidByJobId({});
+          toast.error(e instanceof Error ? e.message : "Failed to load jobs");
+        }
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [selfBills]);
 
   const handleExportCsv = useCallback(() => {
@@ -987,6 +1021,7 @@ function SelfBillPageInner() {
         onMarkAuditRequired={() => drawerSelfBill && void handleMarkAuditRequired(drawerSelfBill)}
         onReopen={() => drawerSelfBill && void handleReopenSelfBill(drawerSelfBill)}
         onEditTotals={() => drawerSelfBill && openEdit(drawerSelfBill)}
+        onPartnerPaymentsRecorded={reloadLinkedJobsAndPartnerPaid}
       />
 
       <Modal open={!!editSelfBill} onClose={() => setEditSelfBill(null)} title="Edit self-bill totals" subtitle="Adjust labour, materials, or commission if figures need correction." size="md">
@@ -1035,6 +1070,7 @@ function SelfBillDetailDrawer({
   onMarkAuditRequired,
   onReopen,
   onEditTotals,
+  onPartnerPaymentsRecorded,
 }: {
   sb: SelfBill | null;
   jobs: Awaited<ReturnType<typeof listJobsForSelfBill>>;
@@ -1047,7 +1083,10 @@ function SelfBillDetailDrawer({
   onMarkAuditRequired: () => void;
   onReopen: () => void;
   onEditTotals: () => void;
+  /** Refresh job↔partner paid rollup after inserting `job_payments` (partner). */
+  onPartnerPaymentsRecorded?: () => void | Promise<void>;
 }) {
+  const { profile } = useProfile();
   const [tab, setTab] = useState<"details" | "jobs" | "invoices" | "payment" | "activity">("details");
   const [dueDateModalOpen, setDueDateModalOpen] = useState(false);
   const [dueDateValue, setDueDateValue] = useState("");
@@ -1058,6 +1097,77 @@ function SelfBillDetailDrawer({
   const [cancelReason, setCancelReason] = useState("");
   const [cancelSaving, setCancelSaving] = useState(false);
   const [jobsExpanded, setJobsExpanded] = useState(false);
+  const [recordPartnerPayOpen, setRecordPartnerPayOpen] = useState(false);
+  const [recordPaySaving, setRecordPaySaving] = useState(false);
+  const [recordPayJobId, setRecordPayJobId] = useState("");
+  const [recordPayAmount, setRecordPayAmount] = useState("");
+  const [recordPayDate, setRecordPayDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [recordPayMethod, setRecordPayMethod] = useState<JobPaymentMethod>("bank_transfer");
+  const [recordPayLedger, setRecordPayLedger] = useState("");
+  const [recordPayNote, setRecordPayNote] = useState("");
+
+  const openRecordPartnerPayModal = () => {
+    const first =
+      jobs.find((j) => jobContributesToSelfBillPayout(j))?.id ??
+      jobs[0]?.id ??
+      "";
+    setRecordPayJobId(first);
+    setRecordPayAmount("");
+    setRecordPayDate(new Date().toISOString().slice(0, 10));
+    setRecordPayMethod("bank_transfer");
+    setRecordPayLedger("");
+    setRecordPayNote("");
+    setRecordPartnerPayOpen(true);
+  };
+
+  const handleSubmitRecordPartnerPayment = async () => {
+    if (!sb || sb.bill_origin === "internal") return;
+    const jobId = recordPayJobId.trim();
+    if (!jobId) {
+      toast.error("Select a job.");
+      return;
+    }
+    const amount = Number(recordPayAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a positive amount.");
+      return;
+    }
+    setRecordPaySaving(true);
+    try {
+      const job = await getJob(jobId);
+      if (!job) {
+        toast.error("Job not found — refresh and try again.");
+        return;
+      }
+      if (!job.partner_id?.trim()) {
+        toast.error("Assign a partner on the job before recording a payout.");
+        return;
+      }
+      const payments = await listJobPayments(jobId);
+      const customerPayments = payments.filter((p) => p.type === "customer_deposit" || p.type === "customer_final");
+      const partnerPayments = payments.filter((p) => p.type === "partner");
+      await executeJobMoneyAction({
+        job,
+        mode: "partner_pay",
+        amount: Math.round(amount * 100) / 100,
+        paymentDate: recordPayDate.trim() || new Date().toISOString().slice(0, 10),
+        method: recordPayMethod,
+        note: recordPayNote.trim() || "Recorded from weekly self-bill",
+        customerPayments,
+        partnerPayments,
+        ...(recordPayLedger.trim() ? { paymentLedgerLabel: recordPayLedger.trim() } : {}),
+        actorUserId: profile?.id,
+        actorUserName: profile?.full_name ?? undefined,
+      });
+      toast.success("Partner payment recorded — it appears on the job and in Paid to date.");
+      setRecordPartnerPayOpen(false);
+      await onPartnerPaymentsRecorded?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to record payment");
+    } finally {
+      setRecordPaySaving(false);
+    }
+  };
 
   // Reset when a new self-bill is opened
   const prevSbId = useRef<string | undefined>(undefined);
@@ -1068,6 +1178,7 @@ function SelfBillDetailDrawer({
       setCancelModalOpen(false);
       setDueDateModalOpen(false);
       setJobsExpanded(false);
+      setRecordPartnerPayOpen(false);
       prevSbId.current = sb.id;
     }
   }, [sb]);
@@ -1200,6 +1311,21 @@ function SelfBillDetailDrawer({
   const isAudit = sb.status === "audit_required";
   const canTransition = !isPaid && !isRejected && !voided;
 
+  /** Field partners only — excludes internal payroll rows, void, paid bundle, cancelled. */
+  const showRecordPartnerPayment = sb.bill_origin !== "internal" && !voided && !isPaid && sb.status !== "rejected";
+
+  const recordPaySelectedJobLine = jobs.find((j) => j.id === recordPayJobId);
+  const recordPayCapRemainder =
+    recordPaySelectedJobLine && jobContributesToSelfBillPayout(recordPaySelectedJobLine)
+      ? Math.round(
+          Math.max(
+            0,
+            jobLinePartnerGross(recordPaySelectedJobLine) -
+              (partnerPaidByJobId[recordPaySelectedJobLine.id] ?? 0),
+          ) * 100,
+        ) / 100
+      : null;
+
   // Status tone — same pattern as InvoiceDetailDrawer
   const statusTone = isPaid
     ? { bg: "#EFF7F3", border: "#9FE1CB", text: "#0F6E56", dot: "#0F6E56" }
@@ -1231,16 +1357,25 @@ function SelfBillDetailDrawer({
             </span>
           </Button>
         ) : isRejected ? null : isDraft || isAudit ? (
-          <Button variant="success" size="sm" className="flex-1" onClick={onMarkReadyToPay}>
-            <span className="inline-flex items-center gap-1.5">
-              <Check className="h-3.5 w-3.5 shrink-0" /> Mark Ready to Pay
-            </span>
-          </Button>
+          <div className="flex w-full flex-col gap-2">
+            <Button variant="success" size="sm" className="w-full flex-1" onClick={onMarkReadyToPay}>
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 shrink-0" /> Mark Ready to Pay
+              </span>
+            </Button>
+            {showRecordPartnerPayment && jobs.length > 0 ? (
+              <Button variant="outline" size="sm" className="w-full flex-1" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+                Partner payment — partial / advance
+              </Button>
+            ) : null}
+          </div>
         ) : isReady ? (
           <>
-            <Button variant="outline" size="sm" className="flex-1" onClick={() => toast.info("Record payout flow — coming soon.")}>
-              + Record payout
-            </Button>
+            {showRecordPartnerPayment && jobs.length > 0 ? (
+              <Button variant="outline" size="sm" className="flex-1 min-w-[7rem]" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+                Partner payment
+              </Button>
+            ) : null}
             {overdue && (
               <Button variant="danger" size="sm" onClick={() => toast.error("Escalate flow — coming soon.")}>
                 <span className="inline-flex items-center gap-1.5">
@@ -1526,6 +1661,11 @@ function SelfBillDetailDrawer({
                   </div>
                 </div>
               </div>
+              {showRecordPartnerPayment && jobs.length > 0 ? (
+                <Button variant="outline" size="sm" className="w-full" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+                  Record partner payment (shows on job)
+                </Button>
+              ) : null}
             </div>
 
             {/* Void info */}
@@ -1660,6 +1800,16 @@ function SelfBillDetailDrawer({
                 </p>
               ) : null}
             </div>
+            {showRecordPartnerPayment && jobs.length > 0 ? (
+              <div className="rounded-[10px] border border-border bg-card p-4 space-y-3">
+                <p className="text-[12px] text-text-secondary leading-snug">
+                  Log bank transfers against the underlying job — totals flow into <span className="font-medium text-text-primary">Paid to date</span> here and mirror on the job&apos;s Finance summary.
+                </p>
+                <Button variant="success" size="sm" className="w-full" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+                  Record partner payment
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -1683,6 +1833,95 @@ function SelfBillDetailDrawer({
           </div>
         ) : null}
       </div>
+
+      <Modal
+        open={recordPartnerPayOpen}
+        onClose={() => {
+          if (!recordPaySaving) setRecordPartnerPayOpen(false);
+        }}
+        title="Record partner payment"
+        subtitle="Logs cash sent to the partner on the chosen job — works in Draft, Ready to Pay, overdue, or audit."
+        size="sm"
+      >
+        <div className="p-5 space-y-4">
+          {jobs.length === 0 ? (
+            <p className="text-sm text-text-tertiary">Load jobs linked to this self-bill before recording payouts.</p>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Job</label>
+                <select
+                  value={recordPayJobId}
+                  onChange={(e) => setRecordPayJobId(e.target.value)}
+                  className="w-full h-10 rounded-lg border border-border bg-card px-3 text-sm text-text-primary"
+                >
+                  {jobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.reference}{j.property_address?.trim() ? ` — ${j.property_address.trim().slice(0, 52)}${j.property_address.trim().length > 52 ? "…" : ""}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {recordPayJobId ? (
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                    <Link href={`/jobs/${recordPayJobId}`} className="font-semibold text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                      Open job Finance summary ↗
+                    </Link>
+                    {recordPayCapRemainder != null ? (
+                      <span className="text-text-tertiary">
+                        Remaining vs labour cap:{" "}
+                        <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(recordPayCapRemainder)}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {recordPayLedger && partnerPayLedgerBypassesPartnerCap(recordPayLedger) ? (
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-2 leading-snug">
+                    With this classification you can pay above the usual cap remainder (e.g. forwarding a client deposit).
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
+                <Input type="number" min={0} step="0.01" value={recordPayAmount} onChange={(e) => setRecordPayAmount(e.target.value)} className="h-10" placeholder="0.00" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment date</label>
+                <Input type="date" value={recordPayDate} onChange={(e) => setRecordPayDate(e.target.value)} className="h-10" />
+              </div>
+              <Select
+                label="Method"
+                value={recordPayMethod}
+                onChange={(e) => setRecordPayMethod(e.target.value as JobPaymentMethod)}
+                className="h-10"
+                options={[
+                  { value: "bank_transfer", label: "Bank transfer" },
+                  { value: "cash", label: "Cash" },
+                  { value: "other", label: "Other" },
+                ]}
+              />
+              <Select
+                label="Classification (optional)"
+                value={recordPayLedger}
+                onChange={(e) => setRecordPayLedger(e.target.value)}
+                className="h-10"
+                options={PARTNER_PAY_LEDGER_LABEL_OPTIONS}
+              />
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Note</label>
+                <Input value={recordPayNote} onChange={(e) => setRecordPayNote(e.target.value)} placeholder="e.g. Client deposit forwarded" className="h-10" />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" size="sm" type="button" disabled={recordPaySaving} onClick={() => setRecordPartnerPayOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="success" size="sm" type="button" loading={recordPaySaving} onClick={() => void handleSubmitRecordPartnerPayment()}>
+                  Save
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
 
       {/* ── Edit due date modal ── */}
       <Modal

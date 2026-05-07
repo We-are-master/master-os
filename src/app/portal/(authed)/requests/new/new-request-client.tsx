@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ImagePlus, X } from "lucide-react";
 import { compressImage, sanitizeFileForUpload } from "@/lib/upload-helpers";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
 
 const MAX_IMAGES = 6;
 
@@ -24,7 +25,14 @@ export function NewRequestClient({ properties }: { properties: PortalPropertyOpt
   const [images, setImages] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serviceTypeOptions, setServiceTypeOptions] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then((c) => setServiceTypeOptions(typeOfWorkLabelsFromCatalog(c)))
+      .catch(() => {});
+  }, []);
 
   const selectedProperty = useMemo(
     () => properties.find((p) => p.id === propertyId) ?? null,
@@ -176,7 +184,7 @@ export function NewRequestClient({ properties }: { properties: PortalPropertyOpt
               disabled={submitting}
             >
               <option value="">Select a type of work...</option>
-              {TYPE_OF_WORK_OPTIONS.map((opt) => (
+              {serviceTypeOptions.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
                 </option>

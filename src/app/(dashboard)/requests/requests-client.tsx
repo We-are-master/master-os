@@ -60,8 +60,15 @@ import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { cn, formatCurrency, isUuid, parseIsoDateOnly } from "@/lib/utils";
-import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
+import { typeOfWorkLabelsFromCatalog, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
+import {
+  defaultPricingPresetId,
+  mergeCatalogWithPricingPreset,
+  parsePricingPresets,
+  sortPricingPresetsDisplay,
+} from "@/lib/catalog-pricing-presets";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState, type JobScheduleV2SeriesPayload } from "@/lib/job-modal-schedule";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
@@ -1191,6 +1198,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     <LocationMiniMap
                       address={drawerFields.property_address.trim() || selectedRequest.property_address || ""}
                       className="mt-2"
+                      restrictToUk
                     />
                   </div>
 
@@ -1222,14 +1230,13 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                         onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
                         options={[
                           { value: "", label: "Select type of work..." },
-                          ...mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])
-                            .sort((a, b) => a.localeCompare(b))
+                          ...typeOfWorkLabelsFromCatalog(catalogServices, drawerFields.service_type)
                             .map((name) => ({ value: name, label: name })),
                         ]}
                       />
                     )}
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>
                       <textarea
                         value={drawerFields.description}
                         onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
@@ -1555,6 +1562,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               deposit_required: 0,
               customer_accepted: false,
               customer_deposit_paid: false,
+              draft_route_completed: true,
               partner_cost: 0,
               property_address: resolvedAddr.property_address,
               scope: scopeFromRequest,
@@ -1702,6 +1710,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               deposit_required: 0,
               customer_accepted: false,
               customer_deposit_paid: false,
+              draft_route_completed: true,
               partner_cost: 0,
               property_address: resolvedAddr.property_address,
               scope: scopeFromRequest,
@@ -1780,6 +1789,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             const baseJobRow = {
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               catalog_service_id: data.catalog_service_id ?? null,
+              catalog_pricing_preset_id: data.catalog_pricing_preset_id ?? null,
               in_ccz: inCczEff,
               has_free_parking: data.has_free_parking ?? null,
               client_id: data.client_id,
@@ -2001,7 +2011,7 @@ function InvitePartnerToQuote({
           if (cancelled) return;
           setPartners(list);
           const matched = list.filter(
-            (p) => isPartnerEligibleForWork(p) && safePartnerMatchesTypeOfWork(p, serviceType),
+            (p) => isPartnerEligibleForWork(p) && safePartnerMatchesTypeOfWork(p, serviceType, request?.catalog_service_id),
           );
           setSelectedIds(new Set(matched.map((p) => p.id)));
         })
@@ -2019,7 +2029,7 @@ function InvitePartnerToQuote({
     return () => {
       cancelled = true;
     };
-  }, [request?.id, request?.service_type, loadPartners]);
+  }, [request?.id, request?.service_type, request?.catalog_service_id, loadPartners]);
 
   const summaryImageUrls = useMemo(
     () => mergeImageUrlLists(normalizeJsonImageArray(request?.images)),
@@ -2039,8 +2049,8 @@ function InvitePartnerToQuote({
       return name.includes(q) || trade.includes(q) || tradesFlat.includes(q) || loc.includes(q);
     });
     return [...base].sort((a, b) => {
-      const aMatch = safePartnerMatchesTypeOfWork(a, request.service_type);
-      const bMatch = safePartnerMatchesTypeOfWork(b, request.service_type);
+      const aMatch = safePartnerMatchesTypeOfWork(a, request.service_type, request.catalog_service_id);
+      const bMatch = safePartnerMatchesTypeOfWork(b, request.service_type, request.catalog_service_id);
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       return (a.company_name ?? "").localeCompare(b.company_name ?? "");
     });
@@ -2048,12 +2058,12 @@ function InvitePartnerToQuote({
 
   const serviceRelated = useMemo(() => {
     if (!request) return [];
-    return filtered.filter((p) => safePartnerMatchesTypeOfWork(p, request.service_type));
+    return filtered.filter((p) => safePartnerMatchesTypeOfWork(p, request.service_type, request.catalog_service_id));
   }, [request, filtered]);
 
   const others = useMemo(() => {
     if (!request) return [];
-    return filtered.filter((p) => !safePartnerMatchesTypeOfWork(p, request.service_type));
+    return filtered.filter((p) => !safePartnerMatchesTypeOfWork(p, request.service_type, request.catalog_service_id));
   }, [request, filtered]);
 
   if (!request) return null;
@@ -2135,7 +2145,7 @@ function InvitePartnerToQuote({
             <div className="space-y-3 border-t border-[#E4E4E8] bg-white px-2.5 py-2.5">
               <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-[#020040]">
                 <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">
-                  Service description
+                  Scope
                 </span>
                 {request.description?.trim() || "—"}
               </p>
@@ -2676,6 +2686,7 @@ function ConvertToJobModal({
     partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string;
     assignment_mode?: "manual" | "auto";
     catalog_service_id?: string | null;
+    catalog_pricing_preset_id?: string | null;
     in_ccz?: boolean | null;
     has_free_parking?: boolean | null;
     client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly";
@@ -2688,10 +2699,10 @@ function ConvertToJobModal({
 }) {
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
-    catalog_service_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
+    catalog_service_id: "", catalog_pricing_preset_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
     assignment_mode: "manual",
     in_ccz: false, has_free_parking: true,
-    scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
+    scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180",
     job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
     end_date: "", end_time: "17:00",
   });
@@ -2712,15 +2723,16 @@ function ConvertToJobModal({
         partner_id: "", scope: "", notes: "", internal_notes: "",
         client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
         catalog_service_id: request.catalog_service_id ?? "",
+        catalog_pricing_preset_id: "",
         hourly_client_rate: "",
         hourly_partner_rate: "",
         billed_hours: "1",
         assignment_mode: "manual",
         in_ccz: Boolean(request.in_ccz) && cczOk,
         has_free_parking: request.has_free_parking ?? true,
-        scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
-    job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
-    end_date: "", end_time: "17:00",
+        scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180",
+        job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
+        end_date: "", end_time: "17:00",
       });
       setClientAddress(addrVal);
     });
@@ -2735,6 +2747,35 @@ function ConvertToJobModal({
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const catalogPricingPresetOptions = useMemo(() => {
+    if (!selectedCatalogService) return [];
+    return sortPricingPresetsDisplay(parsePricingPresets(selectedCatalogService.pricing_presets));
+  }, [selectedCatalogService]);
+
+  useEffect(() => {
+    if (form.job_type !== "hourly") return;
+    const svc = catalogServices.find((s) => s.id === form.catalog_service_id);
+    if (!svc) {
+      queueMicrotask(() =>
+        setForm((p) => (p.catalog_pricing_preset_id ? { ...p, catalog_pricing_preset_id: "" } : p)),
+      );
+      return;
+    }
+    const presets = sortPricingPresetsDisplay(parsePricingPresets(svc.pricing_presets));
+    if (presets.length === 0) {
+      queueMicrotask(() =>
+        setForm((p) => (p.catalog_pricing_preset_id ? { ...p, catalog_pricing_preset_id: "" } : p)),
+      );
+      return;
+    }
+    queueMicrotask(() =>
+      setForm((p) => {
+        const cur = p.catalog_pricing_preset_id?.trim();
+        if (cur && presets.some((x) => x.id === cur)) return p;
+        return { ...p, catalog_pricing_preset_id: presets[0]?.id ?? "" };
+      }),
+    );
+  }, [form.job_type, form.catalog_service_id, catalogServices]);
   const targetWorkType = (selectedCatalogService?.name ?? request?.service_type ?? "").trim();
   const filteredPartners = useMemo(() => {
     const q = partnerSearch.trim().toLowerCase();
@@ -2748,12 +2789,13 @@ function ConvertToJobModal({
       return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
     });
     return [...base].sort((a, b) => {
-      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
-      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+      const cid = form.catalog_service_id || request?.catalog_service_id || null;
+      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType, cid) : false;
+      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType, cid) : false;
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
     });
-  }, [partnerSearch, partners, targetWorkType]);
+  }, [partnerSearch, partners, targetWorkType, form.catalog_service_id, request?.catalog_service_id]);
 
   useEffect(() => {
     const eligible = isLikelyCczAddress(clientAddress.property_address);
@@ -2772,6 +2814,7 @@ function ConvertToJobModal({
     accountId: request?.account_id ?? null,
     partnerId: form.partner_id,
     catalogServiceId: form.catalog_service_id,
+    pricingPresetId: form.job_type === "hourly" ? form.catalog_pricing_preset_id : null,
   });
 
   const hasPricingOverride =
@@ -2785,9 +2828,14 @@ function ConvertToJobModal({
     if (!request || form.job_type !== "hourly" || !selectedCatalogService) return;
     // When a custom override exists, the override effect below is the source of truth.
     if (hasPricingOverride) return;
-    const hrs = Math.max(1, Number(form.billed_hours) || Number(selectedCatalogService.default_hours) || 1);
-    const clientRate = Number(form.hourly_client_rate) || Number(selectedCatalogService.hourly_rate) || 0;
-    const partnerRate = Number(form.hourly_partner_rate) || partnerHourlyRateFromCatalogBundle(selectedCatalogService.partner_cost, selectedCatalogService.default_hours);
+    const cat = mergeCatalogWithPricingPreset(
+      selectedCatalogService,
+      form.catalog_pricing_preset_id?.trim() || null,
+    );
+    const hrs = Math.max(1, Number(form.billed_hours) || Number(cat.default_hours) || 1);
+    const clientRate = Number(form.hourly_client_rate) || Number(cat.hourly_rate) || 0;
+    const partnerRate =
+      Number(form.hourly_partner_rate) || partnerHourlyRateFromCatalogBundle(cat.partner_cost, cat.default_hours);
     const totals = computeHourlyTotals({
       elapsedSeconds: hrs * 3600,
       clientHourlyRate: clientRate,
@@ -2803,22 +2851,31 @@ function ConvertToJobModal({
         billed_hours: String(hrs),
       })),
     );
-  }, [request?.id, form.job_type, form.catalog_service_id, hasPricingOverride]);
+  }, [
+    request?.id,
+    form.job_type,
+    form.catalog_service_id,
+    form.catalog_pricing_preset_id,
+    hasPricingOverride,
+    selectedCatalogService,
+  ]);
 
   useEffect(() => {
     if (!pricing) return;
     // Apply override values whenever the resolver returns a fresh `pricing`
     // object (which only happens on triple change — useResolvedJobPricing
     // memoises). No ref guard needed; the dep array already short-circuits.
-    setForm((p) => ({
-      ...p,
-      job_type: pricing.pricing_mode,
-      hourly_client_rate: pricing.client.hourly_rate?.toString() ?? p.hourly_client_rate,
-      hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? p.hourly_partner_rate,
-      billed_hours: pricing.client.default_hours?.toString() ?? p.billed_hours,
-      client_price: pricing.client.fixed_price?.toString() ?? p.client_price,
-      partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? p.partner_cost,
-    }));
+    queueMicrotask(() =>
+      setForm((p) => ({
+        ...p,
+        job_type: pricing.pricing_mode,
+        hourly_client_rate: pricing.client.hourly_rate?.toString() ?? p.hourly_client_rate,
+        hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? p.hourly_partner_rate,
+        billed_hours: pricing.client.default_hours?.toString() ?? p.billed_hours,
+        client_price: pricing.client.fixed_price?.toString() ?? p.client_price,
+        partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? p.partner_cost,
+      })),
+    );
   }, [pricing]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -2848,29 +2905,8 @@ function ConvertToJobModal({
     const scheduled_end_at = schedV2.payload.scheduled_end_at;
     const expected_finish_at = schedV2.payload.expected_finish_at ?? null;
     const job_kind = schedV2.payload.job_kind;
-    let scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
+    const scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
 
-    // For one-off, the legacy expected_finish_date input still feeds scheduled_finish_date.
-    if (job_kind === "one_off" && scheduled_date) {
-      const efRaw = form.expected_finish_date?.trim() ?? "";
-      const expected_finish = parseIsoDateOnly(efRaw);
-      if (efRaw && !expected_finish) {
-        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
-        return;
-      }
-      if (!expected_finish) {
-        toast.error("Expected finish date is required when a start date is set.");
-        return;
-      }
-      if (expected_finish < scheduled_date) {
-        toast.error("Expected finish date must be on or after the scheduled date.");
-        return;
-      }
-      scheduled_finish_date = expected_finish;
-    } else if (job_kind === "one_off" && form.expected_finish_date?.trim()) {
-      toast.error("Clear expected finish or set a scheduled date.");
-      return;
-    }
     if (form.partner_id) {
       const block = getPartnerAssignmentBlockReason({
         property_address: clientAddress.property_address ?? "",
@@ -2901,6 +2937,10 @@ function ConvertToJobModal({
       notes: form.notes || undefined,
       internal_notes: form.internal_notes || undefined,
       catalog_service_id: form.catalog_service_id || null,
+      catalog_pricing_preset_id:
+        form.job_type === "hourly" && form.catalog_pricing_preset_id?.trim()
+          ? form.catalog_pricing_preset_id.trim()
+          : null,
       in_ccz: effectiveInCczForAddress(form.in_ccz, clientAddress.property_address),
       has_free_parking: form.has_free_parking,
       client_price: Number(form.client_price) || 0,
@@ -2946,11 +2986,18 @@ function ConvertToJobModal({
             <label className={labelNavy} style={labelStyle}>Job type</label>
             <Select
               value={form.job_type}
-              onChange={(e) => update("job_type", e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm((p) => ({
+                  ...p,
+                  job_type: v,
+                  catalog_pricing_preset_id: v === "fixed" ? "" : p.catalog_pricing_preset_id,
+                }));
+              }}
               className={cn("mt-[6px]", requiredFieldClass)}
               options={[
-                { value: "fixed", label: "Fixed" },
-                { value: "hourly", label: "Hourly" },
+                { value: "fixed", label: pricingModeLabel("fixed") },
+                { value: "hourly", label: pricingModeLabel("hourly") },
               ]}
             />
           </div>
@@ -2967,9 +3014,19 @@ function ConvertToJobModal({
                 value={form.catalog_service_id}
                 className={cn("mt-[6px]", requiredFieldClass)}
                 onChange={(id, service) => {
-                  const hrs = Math.max(1, Number(service?.default_hours) || 1);
-                  const clientRate = Number(service?.hourly_rate) || 0;
-                  const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+                  if (!service) {
+                    setForm((prev) => ({
+                      ...prev,
+                      catalog_service_id: id,
+                      catalog_pricing_preset_id: "",
+                    }));
+                    return;
+                  }
+                  const presetId = defaultPricingPresetId(service);
+                  const eff = mergeCatalogWithPricingPreset(service, presetId || null);
+                  const hrs = Math.max(1, Number(eff.default_hours) || 1);
+                  const clientRate = Number(eff.hourly_rate) || 0;
+                  const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
                   const totals = computeHourlyTotals({
                     elapsedSeconds: hrs * 3600,
                     clientHourlyRate: clientRate,
@@ -2978,6 +3035,7 @@ function ConvertToJobModal({
                   setForm((prev) => ({
                     ...prev,
                     catalog_service_id: id,
+                    catalog_pricing_preset_id: presetId,
                     scope: service?.default_description?.trim() || prev.scope,
                     hourly_client_rate: String(clientRate || ""),
                     hourly_partner_rate: String(partnerRate || ""),
@@ -2987,6 +3045,28 @@ function ConvertToJobModal({
                   }));
                 }}
               />
+              {catalogPricingPresetOptions.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  <label className={labelNavy} style={labelStyle}>
+                    Price band
+                  </label>
+                  <select
+                    value={form.catalog_pricing_preset_id}
+                    onChange={(e) => setForm((p) => ({ ...p, catalog_pricing_preset_id: e.target.value }))}
+                    className={cn(
+                      "mt-[6px] w-full h-10 rounded-[8px] border px-3 text-[13px] outline-none",
+                      requiredFieldClass,
+                    )}
+                    style={{ border: "0.5px solid #D8D8DD", background: "#FFFFFF", color: "#020040" }}
+                  >
+                    {catalogPricingPresetOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -3007,14 +3087,12 @@ function ConvertToJobModal({
             scheduledDate={form.scheduled_date}
             arrivalFrom={form.arrival_from}
             arrivalWindowMins={form.arrival_window_mins}
-            expectedFinishDate={form.expected_finish_date}
             endDate={form.end_date}
             endTime={form.end_time}
             recurrence={recurrence}
             onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
             onChange={(field, v) => update(field, v)}
             startDateRequired={form.job_kind !== "one_off" || (form.assignment_mode === "manual" && !!form.partner_id)}
-            expectedFinishRequired={form.job_kind === "one_off" && !!form.scheduled_date?.trim()}
             requiredFieldClassName={requiredFieldClass}
           />
 
@@ -3154,7 +3232,13 @@ function ConvertToJobModal({
                     const pid = p.id;
                     if (!pid) return null;
                     const selected = form.partner_id === pid;
-                    const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                    const match = targetWorkType
+                      ? safePartnerMatchesTypeOfWork(
+                          p,
+                          targetWorkType,
+                          form.catalog_service_id || request?.catalog_service_id || null,
+                        )
+                      : false;
                     const rowStyle = selected
                       ? { background: "#F4F5FB", border: "0.5px solid #020040" }
                       : match
@@ -3404,10 +3488,10 @@ function CreateRequestModal({
     });
   }, [open]);
 
-  const typeOfWorkOptions = useMemo(() => {
-    const fromCatalog = catalogServices.map((c) => c.name);
-    return mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...fromCatalog]).sort((a, b) => a.localeCompare(b));
-  }, [catalogServices]);
+  const typeOfWorkOptions = useMemo(
+    () => typeOfWorkLabelsFromCatalog(catalogServices, form.service_type),
+    [catalogServices, form.service_type],
+  );
 
   useEffect(() => {
     const ex = extractUkPostcode(clientAddress.property_address);
@@ -3704,11 +3788,11 @@ function CreateRequestModal({
             </div>
           </div>
 
-          {/* 5. Service description */}
+          {/* 5. Scope */}
           <div>
             <div className="flex items-baseline justify-between gap-2">
               <label className={labelNavy} style={labelStyle}>
-                Service description <span style={{ color: "#ED4B00" }}>*</span>
+                Scope <span style={{ color: "#ED4B00" }}>*</span>
               </label>
               <span className="text-[10px]" style={{ color: "#6B6B70" }}>Visible to partner</span>
             </div>

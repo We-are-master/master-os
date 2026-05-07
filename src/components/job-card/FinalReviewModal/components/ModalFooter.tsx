@@ -31,7 +31,7 @@ export function ModalFooter({
 }: Props) {
   return (
     <div
-      className="flex gap-[10px] items-center justify-end bg-white"
+      className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end bg-white"
       style={{
         padding: "14px 20px 14px 24px",
         borderTop: "0.5px solid var(--color-border-tertiary, #E4E4E7)",
@@ -41,7 +41,7 @@ export function ModalFooter({
         type="button"
         onClick={onCancel}
         disabled={submitting}
-        className="bg-transparent px-4 py-[9px] text-[13px] rounded-lg cursor-pointer"
+        className="order-2 w-full bg-transparent px-4 py-[9px] text-[13px] rounded-lg cursor-pointer sm:order-1 sm:w-auto"
         style={{ border: "0.5px solid #D4D4D8", color: "#020040" }}
         onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
         onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "transparent")}
@@ -54,7 +54,7 @@ export function ModalFooter({
           type="button"
           onClick={onForceApprove}
           disabled={!canForceApprove || submitting}
-          className="text-white border-none px-[18px] py-[9px] text-[13px] font-medium rounded-lg flex items-center gap-[6px] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="order-1 w-full whitespace-normal px-[18px] py-[9px] text-[13px] font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed sm:order-2 sm:flex-1 sm:min-w-0 md:flex-none text-white border-none flex flex-wrap items-center justify-center gap-[6px] text-center leading-tight sm:justify-end"
           style={{ background: "#ED4B00", cursor: !canForceApprove || submitting ? "not-allowed" : "pointer" }}
           onMouseEnter={(e) => {
             if (!(e.currentTarget as HTMLButtonElement).disabled)
@@ -70,7 +70,7 @@ export function ModalFooter({
           type="button"
           onClick={onApprove}
           disabled={!canApprove || submitting}
-          className="text-white border-none px-[18px] py-[9px] text-[13px] font-medium rounded-lg flex items-center gap-[6px] disabled:opacity-35 disabled:cursor-not-allowed"
+          className="order-1 w-full whitespace-normal px-[18px] py-[9px] text-[13px] font-medium rounded-lg flex flex-wrap items-center justify-center gap-[6px] text-center leading-tight disabled:opacity-35 disabled:cursor-not-allowed sm:order-2 sm:flex-1 sm:min-w-0 sm:justify-end md:flex-none text-white border-none"
           style={{ background: "#020040", cursor: !canApprove || submitting ? "not-allowed" : "pointer" }}
           onMouseEnter={(e) => {
             if (!(e.currentTarget as HTMLButtonElement).disabled)

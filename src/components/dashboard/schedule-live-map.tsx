@@ -736,21 +736,23 @@ export function ScheduleLiveMap({
 
       <div className="relative flex w-full min-h-0 flex-1 flex-col">
         {!fullscreen ? (
-          <div className="absolute left-3 top-3 z-[2] flex flex-wrap items-center gap-2">
-            {toolbarExtra}
-            <button
-              type="button"
-              className={LIVE_MAP_TOOLBAR_BTN_CLASS}
-              onClick={() => setFullscreen(true)}
-            >
-              <Maximize2 className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-              Full screen
-            </button>
-          </div>
-        ) : null}
-        {!fullscreen && filterOverlay ? (
-          <div className="absolute left-3 right-3 top-14 z-[2] sm:right-auto sm:max-w-[calc(100%-3rem)]">
-            {filterOverlay}
+          <div className="absolute left-3 right-3 top-3 z-[2] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:justify-between">
+            <div className="flex shrink-0 items-center gap-2">
+              {toolbarExtra}
+              <button
+                type="button"
+                className={LIVE_MAP_TOOLBAR_BTN_CLASS}
+                onClick={() => setFullscreen(true)}
+              >
+                <Maximize2 className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                Full screen
+              </button>
+            </div>
+            {filterOverlay ? (
+              <div className="flex min-w-0 w-full flex-1 flex-wrap items-center justify-end gap-1.5 md:min-w-[200px] md:max-w-none sm:gap-2">
+                {filterOverlay}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {!fullscreen && (bottomLeftOverlay || bottomRightOverlay) ? (

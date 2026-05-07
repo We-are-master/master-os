@@ -16,6 +16,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "client_address_id",
   "client_name",
   "client_email",
+  "source_account_id",
   "status",
   "total_value",
   "ai_confidence",
@@ -27,6 +28,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "sell_price",
   "margin_percent",
   "quote_type",
+  "draft_route_completed",
   "deposit_percent",
   "deposit_required",
   "start_date_option_1",
@@ -36,6 +38,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "scope",
   "email_custom_message",
   "customer_pdf_sent_at",
+  "bidding_started_at",
   "property_address",
   "partner_id",
   "partner_name",
@@ -53,6 +56,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "property_id",
   "duration_value",
   "duration_unit",
+  "engagement_kind",
 ]);
 
 function pickQuotePayload(input: Record<string, unknown>): Record<string, unknown> {
@@ -64,6 +68,9 @@ function pickQuotePayload(input: Record<string, unknown>): Record<string, unknow
 }
 
 const LEGACY_OPTIONAL_QUOTE_KEYS = ["deposit_percent", "deposit_required"] as const;
+
+/** Newer `quotes` columns: strip on PGRST204 when the error body omits the column name (e.g. Kong edge). */
+const OPTIONAL_NEW_QUOTE_WRITE_KEYS = ["source_account_id"] as const;
 
 /**
  * Returns a new payload with one unknown column removed, or strips legacy deposit fields when
@@ -89,6 +96,16 @@ function tryRelaxQuoteWritePayload(
     const next = { ...rest } as Record<string, unknown>;
     if (ref != null) next.reference = ref;
     return next;
+  }
+  if (isSupabaseMissingColumnError(error)) {
+    for (const k of OPTIONAL_NEW_QUOTE_WRITE_KEYS) {
+      if (k in payload) {
+        const { [k]: _, ...rest } = payload;
+        const next = { ...rest } as Record<string, unknown>;
+        if (ref != null) next.reference = ref;
+        return next;
+      }
+    }
   }
   const txt = postgrestFullErrorText(error);
   if (!txt.includes("quotes") && !txt.includes("'quotes'")) return null;
@@ -130,6 +147,16 @@ export async function listQuotes(params: ListParams): Promise<ListResult<Quote>>
   const supabase = getSupabase();
   const page     = params.page ?? 1;
   const pageSize = params.pageSize ?? 10;
+
+  /** `get_quotes_list_bundle` only accepts one status — use PostgREST for `statusIn`. */
+  if (params.statusIn && params.statusIn.length > 0) {
+    const result = await queryList<Quote>("quotes", params, {
+      searchColumns: ["reference", "title", "client_name", "client_email"],
+      defaultSort: "created_at",
+    });
+    const enriched = await enrichQuotesWithAccountNames(result.data);
+    return { ...result, data: enriched };
+  }
 
   const statusArg = params.status && params.status !== "all" ? params.status : null;
   const searchArg = params.search?.trim() || null;

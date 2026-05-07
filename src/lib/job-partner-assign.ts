@@ -71,6 +71,8 @@ export function jobIsBookedPipelineWithoutPartner(
 export function effectiveJobStatusForDisplay(
   job: Pick<Job, "status" | "partner_id" | "partner_ids">,
 ): JobStatus {
+  /** Stale rows: partner set but status never bumped from `unassigned` (e.g. swap/API path omitted status). */
+  if (jobHasPartnerSet(job) && job.status === "unassigned") return "scheduled";
   if (jobIsBookedPipelineWithoutPartner(job)) return "unassigned";
   return job.status;
 }

@@ -9,6 +9,8 @@ import type { Invoice, JobPaymentMethod } from "@/types/database";
 import { formatCurrency } from "@/lib/utils";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
+import { isJobExtraDiscountExtraType } from "@/lib/job-extra-discount";
 
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
@@ -79,14 +81,6 @@ const CLIENT_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
   { value: "Other", label: "Other" },
 ];
 
-const PARTNER_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "Optional — for history" },
-  { value: "Advance", label: "Advance" },
-  { value: "Partial payout", label: "Partial payout" },
-  { value: "Early payment", label: "Early payment" },
-  { value: "Other", label: "Other" },
-];
-
 /** Match Cash In — Finance Summary “CASH IN — CLIENT” extra rows. */
 const CLIENT_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "Labour", label: "Labour" },
@@ -94,6 +88,17 @@ const CLIENT_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "Parking", label: "Parking" },
   { value: "Materials", label: "Materials" },
   { value: "Other", label: "Other" },
+  { value: "Discount — labour", label: "Discount — labour" },
+  { value: "Discount — extras", label: "Discount — access / other charges" },
+  { value: "Discount — materials", label: "Discount — materials" },
+];
+
+const CLIENT_EXTRA_DISCOUNT_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Goodwill — partner damage / incident on site", label: "Goodwill — partner damage / incident on site" },
+  { value: "Service recovery — price adjustment agreed with client", label: "Service recovery — price adjustment" },
+  { value: "Rectification agreed without extra charge", label: "Rectification agreed without extra charge" },
+  { value: "__other__", label: "Other (type manually)" },
 ];
 
 const CLIENT_EXTRA_REASON_PRESETS: { value: string; label: string }[] = [
@@ -122,6 +127,15 @@ const PARTNER_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "Parking", label: "Parking" },
   { value: "Materials", label: "Materials" },
   { value: "Other", label: "Other" },
+  { value: "Discount — labour", label: "Discount — labour (less to pay partner)" },
+  { value: "Discount — materials", label: "Discount — materials (less materials cost)" },
+];
+
+const PARTNER_EXTRA_DISCOUNT_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Clawback — damage / rectify issue caused on site", label: "Clawback — damage / rectify issue on site" },
+  { value: "Agreed reduction after quality issue", label: "Agreed reduction after quality issue" },
+  { value: "__other__", label: "Other (type manually)" },
 ];
 
 const PARTNER_EXTRA_REASON_PRESETS: { value: string; label: string }[] = [
@@ -147,21 +161,21 @@ function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
   return flow === "client_pay" || flow === "client_extra";
 }
 
-function flowTitle(flow: JobMoneyDrawerFlow): string {
+function flowTitle(flow: JobMoneyDrawerFlow, extraType?: string): string {
   switch (flow) {
     case "client_pay":
     case "partner_pay":
       return "Record Payment";
     case "client_extra":
-      return "Add extra charge";
+      return isJobExtraDiscountExtraType(extraType) ? "Add client discount" : "Add extra charge";
     case "partner_extra":
-      return "Add extra payout";
+      return isJobExtraDiscountExtraType(extraType) ? "Add partner discount" : "Add extra payout";
   }
 }
 
-function flowSubmitLabel(flow: JobMoneyDrawerFlow): string {
+function flowSubmitLabel(flow: JobMoneyDrawerFlow, extraType?: string): string {
   if (flow === "client_pay" || flow === "partner_pay") return "Record Payment";
-  return flowTitle(flow);
+  return flowTitle(flow, extraType);
 }
 
 function readSavedMethod(flow: JobMoneyDrawerFlow): JobPaymentMethod {
@@ -260,20 +274,34 @@ export function JobMoneyDrawer({
   const amountOk = amount.trim() !== "" && !Number.isNaN(n) && n > 0;
   const isExtraFlow = !isPayFlow(flow);
   const extraTypeUpper = extraType.trim().toUpperCase();
-  const showLabourReasonPresets = isExtraFlow && extraTypeUpper === "LABOUR";
-  const showMaterialsReasonPresets = isExtraFlow && extraTypeUpper === "MATERIALS";
-  const showExtraPresetReasonSelect = showLabourReasonPresets || showMaterialsReasonPresets;
-  const activePresetOptions = showMaterialsReasonPresets
+  const discountMode = isExtraFlow && isJobExtraDiscountExtraType(extraType);
+  const showDiscountMaterialsPresets = discountMode && extraTypeUpper.includes("MATERIAL");
+  const showMaterialsReasonPresets = isExtraFlow && !discountMode && extraTypeUpper === "MATERIALS";
+  const showLabourReasonPresets = isExtraFlow && !discountMode && extraTypeUpper === "LABOUR";
+  const showDiscountGenericPresets = discountMode && !showDiscountMaterialsPresets;
+  const showExtraPresetReasonSelect =
+    showLabourReasonPresets ||
+    showMaterialsReasonPresets ||
+    showDiscountMaterialsPresets ||
+    showDiscountGenericPresets;
+  const activePresetOptions = showDiscountMaterialsPresets
     ? (flow === "partner_extra" ? PARTNER_MATERIALS_REASON_PRESETS : CLIENT_MATERIALS_REASON_PRESETS)
-    : (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS);
+    : showMaterialsReasonPresets
+      ? (flow === "partner_extra" ? PARTNER_MATERIALS_REASON_PRESETS : CLIENT_MATERIALS_REASON_PRESETS)
+      : showDiscountGenericPresets
+        ? (flow === "partner_extra" ? PARTNER_EXTRA_DISCOUNT_REASON_PRESETS : CLIENT_EXTRA_DISCOUNT_REASON_PRESETS)
+        : showLabourReasonPresets
+          ? (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS)
+          : (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS);
   const quickReasonOk = !showExtraPresetReasonSelect || extraReasonPreset.trim().length > 0;
   const requiresManualExtraReason =
     !showExtraPresetReasonSelect || extraReasonPreset === "__other__";
   const extraTypeOk = !isExtraFlow || extraType.trim().length > 0;
   const extraReasonOk = !isExtraFlow || (requiresManualExtraReason ? extraReason.trim().length > 0 : true);
-  const extraClientProofOk = flow !== "client_extra" || extraClientProofConfirmed;
+  const extraClientProofOk = flow !== "client_extra" || discountMode || extraClientProofConfirmed;
   const linkedPartnerAmountNum = Number(linkedPartnerAmount);
-  const linkedPartnerAmountOk = !addLinkedPartnerExtra || (!Number.isNaN(linkedPartnerAmountNum) && linkedPartnerAmountNum > 0);
+  const linkedPartnerAmountOk =
+    !addLinkedPartnerExtra || (!Number.isNaN(linkedPartnerAmountNum) && linkedPartnerAmountNum > 0);
   const linkedPartnerTypeOk = !addLinkedPartnerExtra || linkedPartnerType.trim().length > 0;
   const linkedPartnerReasonOk = !addLinkedPartnerExtra || linkedPartnerReason.trim().length > 0;
   const canSubmit =
@@ -317,10 +345,12 @@ export function JobMoneyDrawer({
         ? {
             extraType: extraType.trim(),
             extraReason: extraReason.trim(),
-            ...(flow === "client_extra" ? { clientProofConfirmed: extraClientProofConfirmed } : {}),
+            ...(flow === "client_extra"
+              ? { clientProofConfirmed: discountMode ? true : extraClientProofConfirmed }
+              : {}),
           }
         : {}),
-      ...(flow === "client_extra" && addLinkedPartnerExtra
+      ...(flow === "client_extra" && addLinkedPartnerExtra && !discountMode
         ? {
             linkedPartnerExtra: {
               amount: linkedPartnerAmountNum,
@@ -340,9 +370,13 @@ export function JobMoneyDrawer({
 
   const helpExtra = (
     <p className="text-[11px] text-text-tertiary leading-relaxed">
-      {flow === "client_extra"
-        ? "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."
-        : "Positive partner cost: increases Total to pay, self-bill gross for this job, and amount due. Not a cash-out row — use Record Payment when you send money to the partner."}
+      {discountMode
+        ? flow === "client_extra"
+          ? "Reduces what the client is charged (quote / extras / materials line you picked). Not a payment — no money received yet."
+          : "Reduces partner labour or materials on the job and on the linked self-bill. Use when they should earn less (e.g. damage, rework agreed)."
+        : flow === "client_extra"
+          ? "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."
+          : "Positive partner cost: increases Total to pay, self-bill gross for this job, and amount due. Not a cash-out row — use Record Payment when you send money to the partner."}
     </p>
   );
 
@@ -362,7 +396,7 @@ export function JobMoneyDrawer({
     <Drawer
       open={open && !!flow}
       onClose={onClose}
-      title={flowTitle(flow)}
+      title={flowTitle(flow, extraType)}
       width="w-[min(100vw,400px)]"
       className="bg-surface"
       footer={
@@ -381,7 +415,7 @@ export function JobMoneyDrawer({
               loading={submitting}
               disabled={!canSubmit}
             >
-              {flowSubmitLabel(flow)}
+              {flowSubmitLabel(flow, extraType)}
             </Button>
           </div>
         )
@@ -439,11 +473,12 @@ export function JobMoneyDrawer({
               label="Classification (optional)"
               value={paymentLedgerLabel}
               onChange={(e) => setPaymentLedgerLabel(e.target.value)}
-              options={PARTNER_LEDGER_LABEL_OPTIONS}
+              options={PARTNER_PAY_LEDGER_LABEL_OPTIONS}
               className="h-10"
             />
             <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
-              Advance / Partial payout / Early payment / Other — history label only. Does not change Total to pay or self-bill gross.
+              Partial payout follows the usual “still due vs partner cap”. Advance / early payment / deposit pass-through skips that cap —
+              use when you already collected from the client and are forwarding cash early.
             </p>
           </div>
         ) : null}
@@ -500,9 +535,13 @@ export function JobMoneyDrawer({
                   onChange={(e) => {
                     const next = e.target.value;
                     setExtraType(next);
+                    if (isJobExtraDiscountExtraType(next)) setAddLinkedPartnerExtra(false);
                     const normalized = next.trim().toUpperCase();
-                    const usePreset = normalized === "LABOUR" || normalized === "MATERIALS";
-                    if (!usePreset) setExtraReasonPreset("");
+                    const usePresetRow =
+                      normalized === "LABOUR" ||
+                      normalized === "MATERIALS" ||
+                      isJobExtraDiscountExtraType(next);
+                    if (!usePresetRow) setExtraReasonPreset("");
                   }}
                   options={flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS}
                   className="h-10"
@@ -572,7 +611,7 @@ export function JobMoneyDrawer({
                     Using selected quick reason.
                   </p>
                 )}
-                {flow === "client_extra" ? (
+                {flow === "client_extra" && !discountMode ? (
                   <label className="mt-2.5 inline-flex items-start gap-2 text-xs text-text-secondary">
                     <input
                       type="checkbox"
@@ -589,7 +628,7 @@ export function JobMoneyDrawer({
                 ) : null}
               </div>
             ) : null}
-            {flow === "client_extra" ? (
+            {flow === "client_extra" && !discountMode ? (
               <div className="rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
                 <label className="inline-flex items-center gap-2 text-xs font-medium text-text-secondary">
                   <input

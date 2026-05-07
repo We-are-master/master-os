@@ -137,6 +137,8 @@ export function DataTable<T>({
   const [openSortMenuColKey, setOpenSortMenuColKey] = useState<string | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const supportsColumnConfig = Boolean(configStorageKey) && columns.length > 1;
+  /** Zebra stripe on `<tr>` only so tint spans every column (gear picker + trailing cells). */
+  const zebraRowTint = "bg-[#F5F5F7] dark:bg-white/[0.04]";
 
   useEffect(() => {
     if (!configStorageKey) {
@@ -298,7 +300,7 @@ export function DataTable<T>({
           <thead>
             <tr className="border-b border-border-light">
               {selectable && (
-                <th className="w-12 px-3 sm:px-4 py-3">
+                <th className="w-12 px-2 sm:px-3 py-2">
                   <Checkbox
                     checked={allSelected}
                     indeterminate={someSelected && !allSelected}
@@ -322,7 +324,7 @@ export function DataTable<T>({
                       minWidth: col.minWidth ?? col.width,
                     }}
                     className={cn(
-                      "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary whitespace-nowrap",
+                      "px-2 sm:px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary whitespace-nowrap",
                       menuMode && "relative z-20",
                       col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
                       col.headerClassName
@@ -437,7 +439,7 @@ export function DataTable<T>({
                 );
               })}
               {supportsColumnConfig ? (
-                <th className="w-10 px-2 py-3 text-right relative">
+                <th className="w-10 px-2 py-2 text-right relative">
                   <div className="inline-block" ref={columnMenuRef}>
                     <button
                       type="button"
@@ -489,12 +491,12 @@ export function DataTable<T>({
                 {Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-border-light/50">
                     {selectable && (
-                      <td className="px-3 sm:px-4 py-4">
+                      <td className="px-2 sm:px-3 py-2">
                         <div className="h-4 w-4 bg-surface-tertiary rounded animate-shimmer" />
                       </td>
                     )}
                     {visibleColumns.map((col, j) => (
-                      <td key={col.key} className="px-3 sm:px-5 py-4">
+                      <td key={col.key} className="px-2 sm:px-3 py-2">
                         {/* Deterministic width: Math.random() breaks SSR/client hydration */}
                         <div
                           className="h-4 bg-surface-tertiary rounded animate-shimmer"
@@ -502,6 +504,7 @@ export function DataTable<T>({
                         />
                       </td>
                     ))}
+                    {supportsColumnConfig ? <td className="w-10 shrink-0 px-2 py-2" aria-hidden /> : null}
                   </tr>
                 ))}
               </tbody>
@@ -555,11 +558,11 @@ export function DataTable<T>({
                               : isRowSelected
                                 ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
                                 : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
-                            isZebra && "bg-[#F5F5F7]",
+                            isZebra && zebraRowTint,
                           )}
                         >
                           {selectable && (
-                            <td className={cn("w-12 px-3 sm:px-4 py-3.5", isZebra && "bg-[#F5F5F7]")}>
+                            <td className="w-12 px-2 sm:px-3 py-1.5">
                               <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                             </td>
                           )}
@@ -568,10 +571,9 @@ export function DataTable<T>({
                               key={col.key}
                               style={{ minWidth: col.minWidth ?? col.width }}
                               className={cn(
-                                "px-3 sm:px-5 py-3.5 text-sm align-top",
+                                "px-2 sm:px-3 py-1.5 text-sm align-middle",
                                 col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
                                 col.cellClassName,
-                                isZebra && "bg-[#F5F5F7]",
                               )}
                             >
                               {col.render
@@ -579,6 +581,9 @@ export function DataTable<T>({
                                 : String((item as Record<string, unknown>)[col.key] ?? "")}
                             </td>
                           ))}
+                          {supportsColumnConfig ? (
+                            <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
+                          ) : null}
                         </motion.tr>
                       );
                     });
@@ -611,11 +616,11 @@ export function DataTable<T>({
                           : isRowSelected
                             ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
                             : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
-                        isZebra && "bg-[#F5F5F7]"
+                        isZebra && zebraRowTint
                       )}
                     >
                       {selectable && (
-                        <td className={cn("w-12 px-3 sm:px-4 py-3.5", isZebra && "bg-[#F5F5F7]")}>
+                        <td className="w-12 px-2 sm:px-3 py-1.5">
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}
@@ -624,10 +629,9 @@ export function DataTable<T>({
                           key={col.key}
                           style={{ minWidth: col.minWidth ?? col.width }}
                           className={cn(
-                            "px-3 sm:px-5 py-3.5 text-sm align-top",
+                            "px-2 sm:px-3 py-1.5 text-sm align-middle",
                             col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
-                            col.cellClassName,
-                            isZebra && "bg-[#F5F5F7]"
+                            col.cellClassName
                           )}
                         >
                           {col.render
@@ -635,6 +639,9 @@ export function DataTable<T>({
                             : String((item as Record<string, unknown>)[col.key] ?? "")}
                         </td>
                       ))}
+                      {supportsColumnConfig ? (
+                        <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
+                      ) : null}
                     </motion.tr>
                   );
                 })}

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
@@ -158,9 +159,10 @@ export async function createInvoice(
 /** Invoices tied to a job (by reference on the invoice + optional primary invoice id on the job). */
 export async function listInvoicesLinkedToJob(
   jobReference: string,
-  primaryInvoiceId?: string | null
+  primaryInvoiceId?: string | null,
+  client?: SupabaseClient,
 ): Promise<Invoice[]> {
-  const supabase = getSupabase();
+  const supabase = client ?? getSupabase();
   const { data: byRef, error: e1 } = await supabase
     .from("invoices")
     .select("*")
@@ -259,12 +261,16 @@ const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["draft", "pending", "awaiting_pa
  * Skips paid / already cancelled / soft-deleted rows.
  * Skips `weekly_batch` (same row can aggregate multiple jobs in a week — do not void the whole batch).
  */
-export async function cancelOpenInvoicesForJobCancellation(options: {
-  jobReference: string;
-  cancellationReason: string;
-  primaryInvoiceId?: string | null;
-}): Promise<void> {
-  const supabase = getSupabase();
+export async function cancelOpenInvoicesForJobCancellation(
+  options: {
+    jobReference: string;
+    cancellationReason: string;
+    primaryInvoiceId?: string | null;
+    excludeInvoiceIds?: string[];
+  },
+  client?: SupabaseClient,
+): Promise<void> {
+  const supabase = client ?? getSupabase();
   const ref = options.jobReference?.trim();
   if (!ref) return;
   const reason = options.cancellationReason?.trim() || "Job cancelled.";
@@ -307,7 +313,10 @@ export async function cancelOpenInvoicesForJobCancellation(options: {
     return [...ids];
   };
 
-  const idList = await collectEligibleIds();
+  const exclude = new Set(
+    (options.excludeInvoiceIds ?? []).map((id) => id?.trim()).filter((id): id is string => Boolean(id)),
+  );
+  const idList = (await collectEligibleIds()).filter((id) => !exclude.has(id));
   if (idList.length === 0) return;
 
   const withReason = { status: "cancelled" as const, cancellation_reason: reason };
