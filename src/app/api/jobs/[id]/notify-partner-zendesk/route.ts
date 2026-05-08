@@ -222,9 +222,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         data: { type: pushTypeFor(kind), jobId: job.id, jobReference: job.reference, status: job.status },
       });
 
+  // ─── Partner email policy ─────────────────────────────────────────
+  // Partners only receive two side-conv emails: job confirmation
+  // (`assigned`) and job finished (`completed`). All other lifecycle
+  // events still get the in-app push above, but we don't email them —
+  // status updates were noisy and the office handles those manually.
+  const PARTNER_EMAIL_KINDS = new Set<NotifyKind>(["assigned", "completed"]);
+  const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
+
   // ─── Zendesk side conversation (only if we have the ticket) ──────
   let zendeskResult: { ok: boolean; side_conversation_id?: string | null; error?: string } = { ok: false, error: "skipped" };
-  if (zendeskTicketId) {
+  if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
     } else if (job.zendesk_side_conversation_id) {
@@ -253,21 +261,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           .eq("id", job.id);
       }
     }
+  } else if (zendeskTicketId && !partnerEmailEnabled) {
+    zendeskResult = { ok: false, error: `skipped_kind_${kind}` };
+  }
 
-    // ─── Sync custom_status_id on the main ticket for on_hold ──────────
-    // The side conversation goes to the partner; this flips the Zendesk
-    // ticket's own status so the support team sees the job is paused.
-    // Fire-and-forget: a status sync failure must not block the partner
-    // notification or the API response.
-    if (kind === "on_hold") {
-      void zdUpdateTicket({
-        ticketId:       zendeskTicketId,
-        customStatusId: ZD_STATUS_ON_HOLD,
-      }).then(
-        () => console.log("[notify-partner-zendesk] Zendesk ticket", zendeskTicketId, "status set to on-hold for job", job.reference),
-        (err) => console.error("[notify-partner-zendesk] Zendesk status update failed for ticket", zendeskTicketId, ":", err),
-      );
-    }
+  // ─── Sync custom_status_id on the main ticket for on_hold ──────────
+  // Independent of the partner-email policy above: the support team
+  // needs to see the job is paused even when we don't email the partner.
+  // Fire-and-forget so a status sync failure can't block the response.
+  if (zendeskTicketId && kind === "on_hold") {
+    void zdUpdateTicket({
+      ticketId:       zendeskTicketId,
+      customStatusId: ZD_STATUS_ON_HOLD,
+    }).then(
+      () => console.log("[notify-partner-zendesk] Zendesk ticket", zendeskTicketId, "status set to on-hold for job", job.reference),
+      (err) => console.error("[notify-partner-zendesk] Zendesk status update failed for ticket", zendeskTicketId, ":", err),
+    );
   }
 
   // ─── Log ──────────────────────────────────────────────────────────
