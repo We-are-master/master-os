@@ -173,8 +173,9 @@ import {
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
-import { normalizeTypeOfWork, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
