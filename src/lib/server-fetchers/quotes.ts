@@ -1,20 +1,22 @@
 /**
  * Server-side data loader for the Quotes page.
  *
- * The Quotes page defaults to the "pipeline" tab which expands to a
- * multi-status filter. The bundle RPC only supports a single status
- * argument, so for the pipeline tab we fall through to a direct
- * `.in("status", ...)` query (PostgREST).
+ * Multi-status filters use `.in("status", ...)` because `get_quotes_list_bundle`
+ * only accepts a single `p_status`.
  *
- * Single-status tabs (drafts, accepted, rejected, etc.) get the fast
- * RPC path.
+ * "pipeline" (legacy Active tab — still handled for older links) mirrors
+ * `PIPELINE_STATUS_IN` in `quotes-client.tsx`
+ * (bidding + awaiting_customer + awaiting_payment).
+ *
+ * `closed` (dashboard tab): `converted_to_job` + `rejected`.
+ * Legacy: `won` / `lost` still map to each DB status individually.
  */
 import { getServerSupabase } from "@/lib/supabase/server-cached";
 import type { Quote } from "@/types/database";
 import type { ListResult } from "@/services/base";
 
-/** Mirrors `PIPELINE_STATUS_IN` in /quotes/page.tsx — keep in sync. */
-const PIPELINE_STATUS = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
+/** Must match `PIPELINE_STATUS_IN` in `listQuotesForPage` (quotes-client). */
+const PIPELINE_STATUS = ["bidding", "awaiting_customer", "awaiting_payment"] as const;
 
 interface FetchQuotesOptions {
   status?: string;
@@ -25,12 +27,11 @@ export async function fetchInitialQuotes(
   opts: FetchQuotesOptions = {},
 ): Promise<ListResult<Quote> | null> {
   const pageSize = opts.pageSize ?? 10;
-  const status   = opts.status ?? "pipeline";
+  const status   = opts.status ?? "draft";
 
   try {
     const supabase = await getServerSupabase();
 
-    // Pipeline tab → multi-status .in() (RPC doesn't support arrays yet)
     if (status === "pipeline") {
       const { data, count, error } = await supabase
         .from("quotes")
@@ -51,7 +52,47 @@ export async function fetchInitialQuotes(
       };
     }
 
-    // Single-status tab → fast bundle RPC
+    if (status === "closed") {
+      const { data, count, error } = await supabase
+        .from("quotes")
+        .select("*", { count: "exact" })
+        .is("deleted_at", null)
+        .in("status", ["converted_to_job", "rejected"])
+        .order("created_at", { ascending: false })
+        .range(0, pageSize - 1);
+
+      if (error || !data) return null;
+      const total = count ?? 0;
+      return {
+        data:       data as Quote[],
+        count:      total,
+        page:       1,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
+
+    if (status === "won" || status === "lost") {
+      const dbStatus = status === "won" ? "converted_to_job" : "rejected";
+      const { data, count, error } = await supabase
+        .from("quotes")
+        .select("*", { count: "exact" })
+        .is("deleted_at", null)
+        .eq("status", dbStatus)
+        .order("created_at", { ascending: false })
+        .range(0, pageSize - 1);
+
+      if (error || !data) return null;
+      const total = count ?? 0;
+      return {
+        data:       data as Quote[],
+        count:      total,
+        page:       1,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
+
     const { data, error } = await supabase.rpc("get_quotes_list_bundle", {
       p_status: status === "all" ? null : status,
       p_search: null,
@@ -59,16 +100,19 @@ export async function fetchInitialQuotes(
       p_offset: 0,
     });
 
-    if (error || !data) return null;
-    const payload = data as { rows: Quote[]; total: number };
-    const total   = payload.total ?? 0;
-    return {
-      data:       payload.rows ?? [],
-      count:      total,
-      page:       1,
-      pageSize,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
-    };
+    if (!error && data) {
+      const payload = data as { rows: Quote[]; total: number };
+      const total   = payload.total ?? 0;
+      return {
+        data:       payload.rows ?? [],
+        count:      total,
+        page:       1,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }

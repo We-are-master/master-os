@@ -167,9 +167,13 @@ export async function POST(req: NextRequest) {
     const pdfClientName = String(
       (docParty ? docParty.displayName : (recipientName ?? qForBill.client_name)) ?? "",
     );
-    const pdfClientEmail = String(
-      (docParty ? (docParty.documentEmail ?? qForBill.client_email) : (recipientEmail ?? qForBill.client_email)) ?? "",
-    );
+    const recipientTrimmed =
+      typeof recipientEmail === "string" && recipientEmail.trim() ? recipientEmail.trim() : "";
+    const pdfClientEmail =
+      recipientTrimmed ||
+      String(
+        (docParty ? (docParty.documentEmail ?? qForBill.client_email) : qForBill.client_email) ?? "",
+      );
 
     const pdfData: QuotePDFData = {
       reference: quote.reference,

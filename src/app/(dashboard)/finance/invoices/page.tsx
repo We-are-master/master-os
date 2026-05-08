@@ -1488,7 +1488,7 @@ export default function InvoicesPage() {
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary text-center">Status</p>
                           <span />
                         </div>
-                        {group.invoices.map((inv) => {
+                        {group.invoices.map((inv, rowIndex) => {
                           const ref = inv.job_reference?.trim();
                           const job = ref ? jobsByRef[ref] : undefined;
                           const ymd = displayDateYmdForInvoiceRow(inv, job);
@@ -1570,7 +1570,10 @@ export default function InvoicesPage() {
                                   setSelectedInvoice(inv);
                                 }
                               }}
-                              className="w-full bg-white px-3 py-1.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4"
+                              className={cn(
+                                "w-full px-3 py-1.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4",
+                                rowIndex % 2 === 1 ? "bg-[#F5F5F7] dark:bg-white/[0.04]" : "bg-white dark:bg-transparent",
+                              )}
                             >
                               <>
                                 {/* Desktop grid — unified layout for all row types */}

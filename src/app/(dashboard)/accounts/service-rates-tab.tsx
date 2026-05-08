@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import {
   listAccountServicePrices,
@@ -29,7 +30,10 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setLoading(true);
+    });
     Promise.all([
       listCatalogServicesForPicker(),
       listAccountServicePrices(accountId),
@@ -211,8 +215,8 @@ function ServiceRateRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-semibold text-text-primary truncate">{service.name}</p>
-            <Badge variant={isHourly ? "info" : "default"} size="sm">
-              {isHourly ? "Hourly" : "Fixed"}
+            <Badge variant={isHourly ? "info" : "default"} size="sm" className="max-w-[13rem] whitespace-normal text-center leading-tight">
+              {pricingModeLabel(isHourly ? "hourly" : "fixed")}
             </Badge>
             {hasPersistedOverride
               ? <Badge variant="warning" size="sm">Custom</Badge>

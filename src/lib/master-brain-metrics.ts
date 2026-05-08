@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeBiddingSlaRollup, formatMinutesAsAge, type BiddingSlaAnchorQuote } from "@/lib/quote-bidding-sla";
+import { biddingSlaMsFromHours, resolveBiddingSlaHoursFromCompanyRow } from "@/lib/frontend-setup";
 
 export type OpsSnapshot = {
   generatedAt: string;
@@ -96,6 +98,26 @@ export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<s
   );
   const countLine = statuses.map((st, i) => `${st}: ${countResults[i].count ?? 0}`).join(" | ");
 
+  const { data: csRow } = await admin.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
+  const biddingSlaTargetH = resolveBiddingSlaHoursFromCompanyRow(csRow ?? null);
+  const biddingSlaMs = biddingSlaMsFromHours(biddingSlaTargetH);
+
+  const { data: biddingSlaRows } = await admin
+    .from("quotes")
+    .select("bidding_started_at, updated_at, created_at, status")
+    .eq("status", "bidding")
+    .is("deleted_at", null)
+    .limit(5000);
+  const biddingSla = computeBiddingSlaRollup(
+    (biddingSlaRows ?? []) as BiddingSlaAnchorQuote[],
+    Date.now(),
+    biddingSlaMs,
+  );
+  const biddingSlaLine =
+    biddingSla.total > 0
+      ? `Bidding SLA (${biddingSlaTargetH}h target): ${biddingSla.breached} of ${biddingSla.total} currently in bidding are past SLA; average time in bidding ${formatMinutesAsAge(biddingSla.avgMinutesInBidding)}; longest ${formatMinutesAsAge(biddingSla.maxMinutesInBidding)}.${biddingSla.missingAnchor > 0 ? ` ${biddingSla.missingAnchor} open bidding row(s) have no SLA anchor (no start time).` : ""}`
+      : "";
+
   const { data: hot } = await admin
     .from("quotes")
     .select("reference, title, client_name, total_value, status, margin_percent")
@@ -121,7 +143,9 @@ export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<s
           .join("\n")
       : "(no quotes in these statuses)";
 
-  return [`Quote pipeline counts: ${countLine}.`, "Sample quotes (newest first):", detail].join("\n");
+  return [biddingSlaLine, `Quote pipeline counts: ${countLine}.`, "Sample quotes (newest first):", detail]
+    .filter((s) => s.length > 0)
+    .join("\n");
 }
 
 /** Jobs owned by the user (typical operator / coordinator view). */

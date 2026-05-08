@@ -13,7 +13,7 @@ const STATUS_LABEL: Record<string, string> = {
   awaiting_payment:  "Awaiting payment",
   rejected:          "Declined",
   converted_to_job:  "Converted to job",
-  draft:             "Draft",
+  draft:             "New",
   in_survey:         "In survey",
   bidding:           "Bidding",
 };

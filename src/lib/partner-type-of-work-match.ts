@@ -24,7 +24,15 @@ function matchesSynonymGroup(serviceLower: string, tradeLower: string): boolean 
 }
 
 /** True if partner trade(s) align with request service type (type of work). */
-export function partnerMatchesTypeOfWork(partner: Partner, serviceType: string): boolean {
+export function partnerMatchesTypeOfWork(
+  partner: Partner,
+  serviceType: string,
+  catalogServiceId?: string | null,
+): boolean {
+  const cid = catalogServiceId?.trim();
+  const partnerIds = partner.catalog_service_ids;
+  if (cid && Array.isArray(partnerIds) && partnerIds.includes(cid)) return true;
+
   const raw = String(serviceType ?? "").trim();
   const stNorm = normalizeTypeOfWork(raw) || raw;
   const st = stNorm.toLowerCase();
@@ -53,9 +61,13 @@ export function partnerMatchesTypeOfWork(partner: Partner, serviceType: string):
 }
 
 /** Never throws — safe for filters and UI lists when data is partial. */
-export function safePartnerMatchesTypeOfWork(partner: Partner, serviceType: string | null | undefined): boolean {
+export function safePartnerMatchesTypeOfWork(
+  partner: Partner,
+  serviceType: string | null | undefined,
+  catalogServiceId?: string | null,
+): boolean {
   try {
-    return partnerMatchesTypeOfWork(partner, String(serviceType ?? ""));
+    return partnerMatchesTypeOfWork(partner, String(serviceType ?? ""), catalogServiceId);
   } catch {
     return false;
   }

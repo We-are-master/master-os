@@ -806,7 +806,7 @@ export default function BillsPage() {
         ) : (
           <div className="rounded-xl border border-border-light bg-card overflow-hidden">
             {visibleCompactRows.map((row, index) => (
-              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7]")}>
+              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7] dark:bg-white/[0.04]")}>
                 <div className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
                   <div className="min-w-0 flex items-start gap-2">
                     <button

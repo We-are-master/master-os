@@ -10,6 +10,7 @@ import { TimeSelect } from "@/components/ui/time-select";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
+import { mergeCatalogWithPricingPreset } from "@/lib/catalog-pricing-presets";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { listPartners } from "@/services/partners";
 import {
@@ -50,10 +51,13 @@ type EditTarget = { mode: "create" } | { mode: "edit"; visit: JobVisit } | null;
 export function VisitsTab({
   job,
   onJobStatusBumpRequested,
+  /** Increment (e.g. from job header ⋮ menu) to open the “Add visit” modal when this tab is shown. */
+  openCreateSignal = 0,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
   onJobStatusBumpRequested?: (suggestedStatus: Job["status"]) => void;
+  openCreateSignal?: number;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +67,10 @@ export function VisitsTab({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setLoading(true);
+    });
     listJobVisits(job.id)
       .then((rows) => { if (!cancelled) setVisits(rows); })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to load visits"))
@@ -72,8 +79,16 @@ export function VisitsTab({
   }, [job.id]);
 
   useEffect(() => {
+    if (!openCreateSignal) return;
+    queueMicrotask(() => setEditTarget({ mode: "create" }));
+  }, [openCreateSignal]);
+
+  useEffect(() => {
     const cid = job.client_id?.trim();
-    if (!cid) { setAccountId(null); return; }
+    if (!cid) {
+      queueMicrotask(() => setAccountId(null));
+      return;
+    }
     let cancelled = false;
     getSupabase()
       .from("clients")
@@ -225,6 +240,8 @@ export function VisitsTab({
           target={editTarget}
           jobId={job.id}
           accountId={accountId}
+          parentCatalogServiceId={job.catalog_service_id ?? null}
+          parentCatalogPricingPresetId={job.catalog_pricing_preset_id ?? null}
           onClose={() => setEditTarget(null)}
           onCreate={handleCreate}
           onUpdate={handleUpdate}
@@ -358,11 +375,16 @@ const EMPTY_FORM: FormState = {
 };
 
 function VisitEditModal({
-  target, jobId, accountId, onClose, onCreate, onUpdate,
+  target, jobId, accountId,
+  parentCatalogServiceId,
+  parentCatalogPricingPresetId,
+  onClose, onCreate, onUpdate,
 }: {
   target: NonNullable<EditTarget>;
   jobId: string;
   accountId: string | null;
+  parentCatalogServiceId?: string | null;
+  parentCatalogPricingPresetId?: string | null;
   onClose: () => void;
   onCreate: (input: CreateJobVisitInput) => void;
   onUpdate: (id: string, patch: Partial<JobVisit>) => void;
@@ -399,17 +421,25 @@ function VisitEditModal({
     });
   }, []);
 
+  const pricingPresetIdForResolver = useMemo(() => {
+    const sid = form.catalog_service_id?.trim();
+    const parent = parentCatalogServiceId?.trim();
+    if (!sid || !parent || sid !== parent) return null;
+    return parentCatalogPricingPresetId?.trim() || null;
+  }, [form.catalog_service_id, parentCatalogServiceId, parentCatalogPricingPresetId]);
+
   // Pricing resolver — auto-fill prices when partner+service+account triple is set.
   const { pricing } = useResolvedJobPricing({
     accountId,
     partnerId: form.partner_id,
     catalogServiceId: form.catalog_service_id,
+    pricingPresetId: pricingPresetIdForResolver,
   });
 
   // Track last-applied triple so we don't clobber operator edits.
   const lastAppliedTriple = useMemo(() => {
-    return `${accountId ?? ""}|${form.partner_id}|${form.catalog_service_id}`;
-  }, [accountId, form.partner_id, form.catalog_service_id]);
+    return `${accountId ?? ""}|${form.partner_id}|${form.catalog_service_id}|${pricingPresetIdForResolver ?? ""}`;
+  }, [accountId, form.partner_id, form.catalog_service_id, pricingPresetIdForResolver]);
   const [appliedTripleKey, setAppliedTripleKey] = useState<string | null>(null);
 
   useEffect(() => {

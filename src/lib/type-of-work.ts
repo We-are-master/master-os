@@ -1,7 +1,15 @@
+import type { CatalogService } from "@/types/database";
+
 /** Canonical label for general repairs / maintenance work (Partners, Requests, Quotes, Jobs). */
 export const GENERAL_MAINTENANCE_LABEL = "General Maintenance" as const;
 
-export const TYPE_OF_WORK_OPTIONS = [
+/**
+ * Canonical type-of-work names — **must match** rows seeded into `service_catalog`
+ * (see migration `174_service_catalog_complete_canonical_types.sql`). The Services
+ * admin table is the place to set prices per line; this array is for matching, map
+ * colours, and backfill only.
+ */
+export const CANONICAL_TYPE_OF_WORK_NAMES = [
   "Painter",
   GENERAL_MAINTENANCE_LABEL,
   "Plumber",
@@ -19,6 +27,9 @@ export const TYPE_OF_WORK_OPTIONS = [
   "Emergency Lighting Certificate",
   "Fire Extinguisher Service (FES)",
 ] as const;
+
+/** @deprecated Use {@link CANONICAL_TYPE_OF_WORK_NAMES}; alias kept for older imports. */
+export const TYPE_OF_WORK_OPTIONS = CANONICAL_TYPE_OF_WORK_NAMES;
 
 /** Exact legacy labels (UI + DB) → canonical TYPE_OF_WORK string. */
 const TYPE_OF_WORK_ALIASES: Record<string, string> = {
@@ -75,9 +86,38 @@ export function mergeTypeOfWorkOptions(values: Array<string | null | undefined>)
   return out;
 }
 
+/**
+ * Labels for “type of work” pickers: **active Services catalog only**, plus any
+ * `current` value so existing jobs/quotes with legacy titles still appear when editing.
+ * Add or edit services under Admin → Services — there is no built-in static list anymore.
+ */
+export function typeOfWorkLabelsFromCatalog(
+  catalog: Pick<CatalogService, "name">[],
+  current?: string | null,
+): string[] {
+  const names = catalog.map((c) => c.name?.trim()).filter(Boolean) as string[];
+  if (names.length > 0) {
+    return mergeTypeOfWorkOptions([...names, current]).sort((a, b) => a.localeCompare(b));
+  }
+  return mergeTypeOfWorkOptions([current]).sort((a, b) => a.localeCompare(b));
+}
+
+/** Resolve catalog row id from a picker label (exact name, then normalized type-of-work). */
+export function catalogServiceIdForTypeOfWorkLabel(
+  label: string,
+  catalog: Pick<CatalogService, "id" | "name">[],
+): string | null {
+  const t = label?.trim();
+  if (!t || catalog.length === 0) return null;
+  const exact = catalog.find((s) => (s.name ?? "").trim() === t);
+  if (exact) return exact.id;
+  const n = normalizeTypeOfWork(t);
+  if (!n) return null;
+  const byNorm = catalog.find((s) => normalizeTypeOfWork(s.name) === n);
+  return byNorm?.id ?? null;
+}
+
+/** @deprecated Prefer {@link typeOfWorkLabelsFromCatalog} with rows from `listCatalogServicesForPicker`. */
 export function withTypeOfWorkFallback(current?: string | null): string[] {
-  const base = [...TYPE_OF_WORK_OPTIONS];
-  const value = normalizeTypeOfWork(current);
-  if (!value) return base;
-  return mergeTypeOfWorkOptions([value, ...base]);
+  return typeOfWorkLabelsFromCatalog([], current);
 }

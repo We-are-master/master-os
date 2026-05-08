@@ -13,6 +13,14 @@ export function postgrestFullErrorText(err: unknown): string {
   return parts.join(" ").replace(/\u2018|\u2019/g, "'");
 }
 
+/** PostgreSQL `check_violation` / PostgREST proxy `error=23514` — stripping compat columns does not usually fix this. */
+export function isPostgresCheckViolationError(err: unknown): boolean {
+  const code = String((err as { code?: unknown })?.code ?? "");
+  if (code === "23514") return true;
+  const t = postgrestFullErrorText(err);
+  return /\b23514\b/.test(t) || /violates\s+check\s+constraint/i.test(t);
+}
+
 /**
  * PostgREST PGRST204 text, e.g. `Could not find the 'notes' column of 'quote_line_items' in the schema cache`.
  * Returns the column name so callers can retry without that key.

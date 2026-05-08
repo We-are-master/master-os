@@ -8,7 +8,7 @@ import { escapeHtmlAttr } from "@/lib/email-asset-url";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 /**
- * Called by the partner app after a successful `partner_cancel_job` RPC.
+ * Called by the partner app after a successful cancellation (e.g. POST `/api/app/partner-cancel-job`, which runs `partner_cancel_job` then voids invoices/self-bills).
  * Sends one email to INTERNAL_TEAM_EMAILS (comma-separated).
  */
 export async function POST(req: NextRequest) {

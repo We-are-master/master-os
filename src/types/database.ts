@@ -3,6 +3,17 @@ import type { UserPermissionOverride } from "@/types/admin-config";
 export type RequestSource = "whatsapp" | "checkatrade" | "meta" | "website" | "b2b" | "manual" | "portal" | "zoho_desk";
 export type CatalogPricingMode = "fixed" | "hourly";
 
+/** Band / sub-option within one catalog row (merged before account & partner overrides). */
+export interface ServicePricingPreset {
+  id: string;
+  label: string;
+  sort_order?: number;
+  fixed_price?: number;
+  hourly_rate?: number;
+  default_hours?: number;
+  partner_cost?: number;
+}
+
 /** Price book row: defaults for requests/quotes (always editable per record). */
 export interface CatalogService {
   id: string;
@@ -16,6 +27,8 @@ export interface CatalogService {
   default_description?: string | null;
   sort_order: number;
   is_active: boolean;
+  /** Optional price bands (property size, bundles, etc.). See parsePricingPresets. */
+  pricing_presets?: ServicePricingPreset[] | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -250,6 +263,9 @@ export interface ClientAddress {
 /** Expected job duration unit (set with `Quote.duration_value`). */
 export type QuoteDurationUnit = "day" | "week" | "month";
 
+/** Single engagement vs repeating work — sets context for quote duration (aligned with jobs one-off vs repeat). */
+export type QuoteEngagementKind = "one_off" | "recurring";
+
 export interface Quote {
   id: string;
   reference: string;
@@ -261,6 +277,8 @@ export interface Quote {
   client_address_id?: string;
   client_name: string;
   client_email: string;
+  /** Routing / B2B: account chosen before a client is linked (no `client_id`). */
+  source_account_id?: string | null;
   /** Set when listing via join: client linked corporate account (`accounts` label). */
   source_account_name?: string | null;
   /** List enrichment: `accounts.logo_url` for the client’s linked corporate account (HTTPS). */
@@ -276,6 +294,8 @@ export interface Quote {
   sell_price: number;
   margin_percent: number;
   quote_type: "internal" | "partner";
+  /** When false on draft, UI shows routing intake before full proposal (Partner bid vs Manual). */
+  draft_route_completed?: boolean | null;
   /** % of customer line total; `deposit_required` is the computed £ amount (kept in sync on save). */
   deposit_percent: number;
   deposit_required: number;
@@ -288,6 +308,8 @@ export interface Quote {
   email_custom_message?: string | null;
   /** First successful customer PDF email timestamp (resends update this). */
   customer_pdf_sent_at?: string | null;
+  /** UTC when this quote entered Bidding — SLA countdown anchor (cleared when status leaves bidding). */
+  bidding_started_at?: string | null;
   /** When true, emailing the customer includes site photos from the linked service request (if any). */
   email_attach_request_photos?: boolean | null;
   property_address?: string;
@@ -306,6 +328,7 @@ export interface Quote {
   duration_value?: number | null;
   /** Unit for `duration_value`: calendar day, week, or month. */
   duration_unit?: QuoteDurationUnit | null;
+  engagement_kind?: QuoteEngagementKind | null;
   /** External system that originated the quote (e.g. "zendesk"). */
   external_source?: string | null;
   /** Stable id from the external system (e.g. Zendesk ticket id). */
@@ -362,6 +385,8 @@ export interface Job {
   quote_id?: string;
   /** Optional link to Services catalog (call-out template) used at creation. */
   catalog_service_id?: string | null;
+  /** When set with catalog_service_id, preset id inside service_catalog.pricing_presets. */
+  catalog_pricing_preset_id?: string | null;
   /** Access / logistics flags used for automatic surcharge. */
   in_ccz?: boolean | null;
   has_free_parking?: boolean | null;
@@ -455,13 +480,22 @@ export interface Job {
   compliance_documents?: JobComplianceDocument[] | null;
   /** Set when partner cancels from the app (RPC `partner_cancel_job`). */
   partner_cancelled_at?: string | null;
-  /** Snapshot of cancellation fee (GBP) from company_settings at cancel time. */
+  /** Snapshot partner-app cancel clawback (£ owed to Fixfy — positive persisted). */
   partner_cancellation_fee?: number | null;
   partner_cancellation_reason?: string | null;
+  /** Office cancel: GBP compensation owed *to* partner (client cancelled scenario). Survives labour zero-out. */
+  partner_cancellation_compensation_gbp?: number | null;
   /** Office-initiated cancellation (dashboard); visible internally and to partner notifications. */
   cancellation_reason?: string | null;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
+  /** Snapshot when office cancels from dashboard: fee + who pays (separate from partner app cancel fields). */
+  cancellation_fee_gbp?: number | null;
+  cancellation_fee_party?: "none" | "client" | "partner" | "both";
+  /** When `cancellation_fee_party` is `both`; otherwise typically null (use `cancellation_fee_gbp` for single client/partner). */
+  cancellation_fee_client_gbp?: number | null;
+  cancellation_fee_partner_gbp?: number | null;
+  cancellation_fee_invoice_id?: string | null;
   /** 1–5 when client leaves feedback (partner app shows on completed job). */
   customer_review_rating?: number | null;
   customer_review_comment?: string | null;
@@ -599,6 +633,8 @@ export interface Partner {
   trade: string;
   /** Multi-category support. Kept in sync with `trade` (first element). */
   trades?: string[] | null;
+  /** Subset of `service_catalog` rows matching `trade` / `trades` (optional; empty = match on strings only). */
+  catalog_service_ids?: string[] | null;
   status: PartnerStatus;
   /** Compliance / ops reason codes (e.g. missing_documents, expired_docs). */
   partner_status_reasons?: string[] | null;
@@ -629,6 +665,8 @@ export interface Partner {
   bank_name?: string | null;
   /** Payout schedule — same format as accounts.payment_terms. Null = default Friday-after-week-end. */
   payment_terms?: string | null;
+  /** Default partner owes cancellation fee (£) — office may override; falls back to company_settings. */
+  default_partner_cancel_fee_gbp?: number | null;
 }
 
 /** Tokenized self-service link sent to partners so they can refresh docs + profile data without login. */
@@ -682,6 +720,8 @@ export interface Account {
   bu_id?: string | null;
   total_revenue: number;
   active_jobs: number;
+  /** Default client cancellation fee (£) for jobs under this account — office may override each cancel. */
+  default_client_cancel_fee_gbp?: number | null;
   created_at: string;
 }
 
@@ -1083,7 +1123,7 @@ export interface JobExtraEntry {
   extra_type: string;
   reason: string;
   amount: number;
-  allocation: "extras" | "materials" | "partner_cost";
+  allocation: "labour" | "extras" | "materials" | "partner_cost";
   linked_group_id?: string | null;
   created_by?: string | null;
   created_by_name?: string | null;

@@ -331,6 +331,12 @@ function stripPerInstanceFields(
   delete stripped.partner_cancellation_fee;
   delete stripped.partner_cancellation_reason;
   delete stripped.cancellation_reason;
+  delete stripped.cancellation_fee_gbp;
+  delete stripped.cancellation_fee_party;
+  delete stripped.cancellation_fee_client_gbp;
+  delete stripped.cancellation_fee_partner_gbp;
+  delete stripped.cancellation_fee_invoice_id;
+  delete stripped.partner_cancellation_compensation_gbp;
   delete stripped.cancelled_at;
   delete stripped.cancelled_by;
   delete stripped.customer_review_rating;

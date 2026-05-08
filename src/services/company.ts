@@ -1,5 +1,6 @@
 import { getSupabase } from "./base";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
+import type { FrontendSetup } from "@/lib/frontend-setup";
 
 export interface CompanySettings {
   id: string;
@@ -37,6 +38,8 @@ export interface CompanySettings {
   currency?: string | null;
   /** Fee applied when a partner cancels a job from the app (GBP). */
   partner_cancellation_fee_gbp?: number | null;
+  /** Fallback suggested client cancellation fee (£) when account default is unset (office cancel modal). */
+  default_client_cancel_fee_gbp?: number | null;
   /** Overview dashboard: monthly pipeline target (GBP), scaled to the selected period. */
   dashboard_sales_goal_monthly?: number | null;
   /**
@@ -44,6 +47,8 @@ export interface CompanySettings {
    * Configured in Settings → System (admin).
    */
   compliance_score_excluded_doc_ids?: string[] | null;
+  /** Settings → Setup (UI labels, SLA windows, future keys). */
+  frontend_setup?: FrontendSetup | null;
   updated_at: string;
 }
 

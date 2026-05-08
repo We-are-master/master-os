@@ -61,7 +61,7 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden my-auto",
+              "relative w-full min-h-0 h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden my-auto",
               sizeStyles[size],
               className
             )}
@@ -76,7 +76,7 @@ export function Modal({
                 <div className="min-w-0 flex-1">
                   <h2 className="text-base font-semibold text-text-primary leading-snug">{title}</h2>
                   {subtitle && (
-                    <p className="mt-0.5 truncate text-xs leading-snug text-text-tertiary" title={subtitle}>
+                    <p className="mt-0.5 text-xs leading-snug text-text-tertiary break-words line-clamp-3" title={subtitle}>
                       {subtitle}
                     </p>
                   )}
@@ -90,12 +90,12 @@ export function Modal({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {/* No flex-1 here: it stretches the scroll region and leaves empty space below short content. */}
+            {/* With scrollBody (default), this region scrolls. With scrollBody=false, flex-1 fills space under the header for pinned footers inside children. */}
             <div
               className={cn(
                 scrollBody
                   ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(85vh,calc(90dvh - 5rem),920px)]"
-                  : "min-h-0 overflow-hidden",
+                  : "min-h-0 flex flex-1 flex-col overflow-hidden",
               )}
             >
               {children}

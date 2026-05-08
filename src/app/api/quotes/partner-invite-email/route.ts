@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const supabase = createServiceClient();
     const { data: quote, error: qErr } = await supabase
       .from("quotes")
-      .select("id, reference, title, property_address, request_id")
+      .select("id, reference, title, property_address, request_id, scope")
       .eq("id", quoteId)
       .single();
     if (qErr || !quote) {
@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
     }
 
     let photoUrls: string[] = [];
-    let description = "";
+    let requestDescription = "";
+    const quoteScope = typeof quote.scope === "string" ? quote.scope.trim() : "";
     if (quote.request_id) {
       const { data: sr } = await supabase
         .from("service_requests")
@@ -58,8 +59,10 @@ export async function POST(req: NextRequest) {
       photoUrls = normalizeJsonImageArray(sr?.images)
         .map((u) => normalizeEmailAssetUrl(u))
         .filter((u): u is string => u != null);
-      description = typeof sr?.description === "string" ? sr.description : "";
+      requestDescription = typeof sr?.description === "string" ? sr.description : "";
     }
+
+    const invitationScope = quoteScope || requestDescription.trim();
 
     const { data: partners } = await supabase.from("partners").select("id, email, company_name").in("id", partnerIds);
 
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
         <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
         <p>You have been invited to bid on <strong>${escapeHtml(quote.reference)}</strong> — ${escapeHtml(quote.title ?? "")}</p>
         <p><strong>Property:</strong> ${escapeHtml(quote.property_address ?? "—")}</p>
-        ${description.trim() ? `<p><strong>Service description:</strong><br/>${escapeHtml(description).replace(/\n/g, "<br/>")}</p>` : ""}
+        ${invitationScope ? `<p><strong>Scope:</strong><br/>${escapeHtml(invitationScope).replace(/\n/g, "<br/>")}</p>` : ""}
         ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
         <p style="margin-top:20px"><strong>Submit your bid in the partner app</strong></p>
         ${storeBlock}

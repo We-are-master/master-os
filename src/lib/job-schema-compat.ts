@@ -19,6 +19,7 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "partner_ids",
   "client_address_id",
   "catalog_service_id",
+  "catalog_pricing_preset_id",
   "hourly_client_rate",
   "hourly_partner_rate",
   "billed_hours",

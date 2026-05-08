@@ -2,13 +2,19 @@ import type { Job, JobPayment, JobPaymentMethod } from "@/types/database";
 import { getSupabase } from "./base";
 import { getJob, updateJob } from "./jobs";
 import { createJobPayment } from "./job-payments";
-import { applyCustomerExtraPatch, applyPartnerExtraPatch } from "@/lib/job-extra-charges";
+import { applyCustomerExtraPatch, applyPartnerExtraPatch, reverseCustomerExtraPatch, reversePartnerExtraPatch } from "@/lib/job-extra-charges";
 import { sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { partnerPaymentCap } from "@/lib/job-financials";
 import { syncSelfBillAfterJobChange } from "@/services/self-bills";
 import { createJobExtraEntry, softDeleteJobExtraEntry } from "@/services/job-extra-entries";
+import { partnerPayLedgerBypassesPartnerCap } from "@/lib/partner-pay-record";
+import {
+  customerExtraLedgerAllocation,
+  isJobExtraDiscountExtraType,
+  partnerDiscountAllocationFromExtraType,
+} from "@/lib/job-extra-discount";
 
 function isMissingJobExtraEntriesTableError(err: unknown): boolean {
   if (typeof err !== "object" || err == null) return false;
@@ -112,12 +118,14 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     const extraReasonTrim = (extraReason ?? "").trim();
     if (!extraTypeTrim) throw new Error("Select an extra type.");
     if (!extraReasonTrim) throw new Error("Add a reason for this extra.");
-    const extraTypeUpper = (extraType ?? "").trim().toUpperCase();
     /**
      * Client-side Materials should stay on client only and must not inflate partner materials.
-     * We keep visual categorization by `extra_type` and persist financial impact in `extras_amount`.
+     * Charges default to extras line; Labour discount targets client_price via allocation labour.
      */
-    const allocation = "extras";
+    const allocation = customerExtraLedgerAllocation(extraTypeTrim);
+    const ledgerAllocation: "labour" | "extras" | "materials" =
+      allocation === "labour" ? "labour" : allocation === "materials" ? "materials" : "extras";
+
     let entry: { id: string } | null = null;
     try {
       entry = await createJobExtraEntry({
@@ -126,7 +134,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         extra_type: extraTypeTrim,
         reason: extraReasonTrim,
         amount: a,
-        allocation,
+        allocation: ledgerAllocation,
         ...(linkedGroupId?.trim() ? { linked_group_id: linkedGroupId.trim() } : {}),
         ...(actorUserId?.trim() ? { created_by: actorUserId.trim() } : {}),
         ...(actorUserName?.trim() ? { created_by_name: actorUserName.trim() } : {}),
@@ -135,7 +143,10 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
       if (!isMissingJobExtraEntriesTableError(err)) throw err;
     }
     try {
-      const patch = applyCustomerExtraPatch(job, a, allocation);
+      const discount = isJobExtraDiscountExtraType(extraTypeTrim);
+      const patch = discount
+        ? reverseCustomerExtraPatch(job, a, allocation)
+        : applyCustomerExtraPatch(job, a, allocation);
       const updated = await updateJob(jobId, patch);
       await bumpLinkedInvoiceAmountsToJobSchedule(updated);
       await syncSelfBillAfterJobChange(updated);
@@ -206,8 +217,9 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     if (!extraReasonTrim) throw new Error("Add a reason for this extra.");
     const extraTypeUpper = (extraType ?? "").trim().toUpperCase();
     const noteUpper = (noteTrim ?? "").toUpperCase();
-    const allocation =
-      extraTypeUpper === "MATERIALS" || noteUpper.startsWith("MATERIALS")
+    const allocation = isJobExtraDiscountExtraType(extraTypeTrim)
+      ? partnerDiscountAllocationFromExtraType(extraTypeTrim)
+      : extraTypeUpper === "MATERIALS" || noteUpper.startsWith("MATERIALS")
         ? "materials"
         : "partner_cost";
     let entry: { id: string } | null = null;
@@ -226,20 +238,26 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     } catch (err) {
       if (!isMissingJobExtraEntriesTableError(err)) throw err;
     }
+    const partnerDiscountRow = isJobExtraDiscountExtraType(extraTypeTrim);
     try {
-      const patch = applyPartnerExtraPatch(job, a, allocation);
+      const patch = partnerDiscountRow
+        ? reversePartnerExtraPatch(job, a, allocation)
+        : applyPartnerExtraPatch(job, a, allocation);
       try {
         const updated = await updateJob(jobId, patch);
         await syncSelfBillAfterJobChange(updated);
         return updated;
       } catch {
         // Fallback patch with minimal fields for schema-drifted environments.
+        const sign = partnerDiscountRow ? -1 : 1;
         const fallbackPatch =
           allocation === "materials"
-            ? ({ materials_cost: Math.round((Number(job.materials_cost ?? 0) + a) * 100) / 100 } as Partial<Job>)
+            ? ({
+                materials_cost: Math.round(Math.max(0, Number(job.materials_cost ?? 0) + sign * a) * 100) / 100,
+              } as Partial<Job>)
             : ({
-                partner_cost: Math.round((Number(job.partner_cost ?? 0) + a) * 100) / 100,
-                partner_extras_amount: Math.round((Number(job.partner_extras_amount ?? 0) + a) * 100) / 100,
+                partner_cost: Math.round(Math.max(0, Number(job.partner_cost ?? 0) + sign * a) * 100) / 100,
+                partner_extras_amount: Math.round(Math.max(0, Number(job.partner_extras_amount ?? 0) + sign * a) * 100) / 100,
               } as Partial<Job>);
         const updated = await updateJob(jobId, fallbackPatch);
         await syncSelfBillAfterJobChange(updated);
@@ -268,9 +286,9 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     const partnerCap = partnerPaymentCap(job);
     const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
     const maxPartner = Math.max(0, partnerCap - partnerPaid);
-    if (a > maxPartner + 1e-6) {
+    if (!partnerPayLedgerBypassesPartnerCap(paymentLedgerLabel) && a > maxPartner + 1e-6) {
       throw new Error(
-        `This amount is more than what’s due to the partner (${maxPartner.toFixed(2)}). Use Add extra payout to increase their cost, or lower the amount.`,
+        `This amount is more than what’s due under the labour cap (${maxPartner.toFixed(2)}). Add an extra payout to raise their cost, lower the amount, or choose Advance / Deposit pass-through when paying ahead of schedule.`,
       );
     }
 

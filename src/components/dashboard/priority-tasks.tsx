@@ -99,7 +99,7 @@ export function PriorityTasks() {
         for (const qt of (draftQuotes.data ?? []) as { id: string; reference: string; title: string; owner_name?: string }[]) {
           items.push({
             id: qt.id,
-            title: `Complete draft quote ${qt.reference}`,
+            title: `Complete quote request ${qt.reference}`,
             module: "Quotes",
             href: "/quotes",
             priority: "medium",

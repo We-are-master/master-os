@@ -1,10 +1,7 @@
 /**
- * Server Component shell for the Quotes page.
- *
- * Pre-fetches the first page of the default "pipeline" tab so the kanban /
- * table renders with data on first paint. The interactive client component
- * (`quotes-client.tsx`) hydrates from this payload and only re-fetches when
- * the user changes filters/page.
+ * Pre-fetches the first page for the same default tab as the client
+ * (`useSupabaseList` uses `initialStatus: "draft"`). Mismatching payloads
+ * would hydrate the table with unrelated rows until the first fetch.
  */
 import { fetchInitialQuotes } from "@/lib/server-fetchers/quotes";
 import { QuotesClient } from "./quotes-client";
@@ -12,6 +9,6 @@ import { QuotesClient } from "./quotes-client";
 export const dynamic = "force-dynamic";
 
 export default async function QuotesPage() {
-  const initialData = await fetchInitialQuotes({ status: "pipeline", pageSize: 10 });
+  const initialData = await fetchInitialQuotes({ status: "draft", pageSize: 10 });
   return <QuotesClient initialData={initialData} />;
 }

@@ -12,23 +12,74 @@ const CHUNK = 800;
 export async function loadAllJobsForPeriodOverlap(statusIn: string[], range: { from: string; to: string }): Promise<Job[]> {
   const supabase = createClient();
   const { from, to } = range;
+  const activeStatuses = statusIn.filter((s) => s !== "deleted");
+  const includeDeletedArchived = statusIn.includes("deleted");
   const out: Job[] = [];
-  for (let offset = 0; ; offset += CHUNK) {
-    const { data, error } = await supabase
-      .from("jobs")
-      .select("*")
-      .is("deleted_at", null)
-      .in("status", statusIn)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + CHUNK - 1);
-    if (error) throw error;
-    const batch = (data ?? []) as Job[];
+
+  const pushChunk = (batch: Job[]) => {
     for (const j of batch) {
       if (jobScheduleStartInYmdRange(j, from, to)) out.push(j);
     }
+  };
+
+  if (activeStatuses.length > 0) {
+    for (let offset = 0; ; offset += CHUNK) {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .is("deleted_at", null)
+        .in("status", activeStatuses)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + CHUNK - 1);
+      if (error) throw error;
+      const batch = (data ?? []) as Job[];
+      pushChunk(batch);
+      if (batch.length < CHUNK) break;
+    }
+  }
+
+  if (includeDeletedArchived) {
+    for (let offset = 0; ; offset += CHUNK) {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("status", "deleted")
+        .not("deleted_at", "is", null)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + CHUNK - 1);
+      if (error) throw error;
+      const batch = (data ?? []) as Job[];
+      pushChunk(batch);
+      if (batch.length < CHUNK) break;
+    }
+  }
+
+  return out;
+}
+
+/** Archived (`status = deleted`) jobs whose schedule start overlaps the window — for Closed tab counts. */
+export async function getArchivedDeletedJobsOverlappingScheduleCount(range: {
+  from: string;
+  to: string;
+}): Promise<number> {
+  const supabase = createClient();
+  let n = 0;
+  for (let offset = 0; ; offset += CHUNK) {
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("id,status,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date")
+      .eq("status", "deleted")
+      .not("deleted_at", "is", null)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + CHUNK - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as JobPeriodOverlapRow[];
+    for (const row of batch) {
+      if (jobScheduleStartInYmdRange(row, range.from, range.to)) n += 1;
+    }
     if (batch.length < CHUNK) break;
   }
-  return out;
+  return n;
 }
 
 /** Tab counts when a schedule window is active — same **start-day** semantics as the job list. */

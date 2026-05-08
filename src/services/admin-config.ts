@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { NavGroup, NavItem } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
@@ -134,6 +135,9 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     "/finance/dashboard",
     "/services",
     "/team",
+    "/requests",
+    "/compliance",
+    "/ppm",
   ]);
   const next = nav.map((g) => ({
     ...g,
@@ -190,6 +194,13 @@ function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByR
   return out;
 }
 
+/** Server/API routes: same merged matrix as client `getAdminConfig("permissions")`. */
+export async function loadMergedPermissions(supabase: SupabaseClient): Promise<PermissionsByRole> {
+  const { data, error } = await supabase.from("admin_config").select("value").eq("key", "permissions").maybeSingle();
+  if (error || !data) return DEFAULT_PERMISSIONS;
+  return mergePermissionsWithDefaults(data.value as PermissionsByRole);
+}
+
 const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Overview",
@@ -201,8 +212,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { label: "Requests", href: "/requests", icon: "inbox", permission: "requests" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
     ],
   },
@@ -210,7 +221,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     label: "Network",
     items: [
       { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
-      { label: "Clients", href: "/clients", icon: "user-circle", permission: "partners" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
     ],
   },
