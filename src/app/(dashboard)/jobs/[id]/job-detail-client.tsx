@@ -166,6 +166,7 @@ import {
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
 import { normalizeTypeOfWork, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -4145,11 +4146,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
-  const reportsValidatedCount = reportPhaseIndices(phaseCount).filter(
-    (n) => Boolean(job[`report_${n}_approved` as keyof Job]),
-  ).length;
+  /** V2 reports progress: counts only the reports the partner has actually
+   *  submitted (denominator = 0/1/2). Pre-mig-162 jobs without V2 payloads
+   *  fall back to the legacy phase counters. */
+  const v2StartSubmitted = !!(job.start_report && Object.keys(job.start_report).length > 0);
+  const v2FinalSubmitted = !!(job.final_report && Object.keys(job.final_report).length > 0);
+  const v2SubmittedCount = (v2StartSubmitted ? 1 : 0) + (v2FinalSubmitted ? 1 : 0);
+  const v2ApprovedCount =
+    (v2StartSubmitted && job.start_report_approved_at ? 1 : 0) +
+    (v2FinalSubmitted && job.final_report_approved_at ? 1 : 0);
+  const reportsValidatedCount = v2SubmittedCount > 0
+    ? v2ApprovedCount
+    : reportPhaseIndices(phaseCount).filter((n) => Boolean(job[`report_${n}_approved` as keyof Job])).length;
+  const reportsTotalCount = v2SubmittedCount > 0 ? v2SubmittedCount : phaseCount;
   const reportsProgressPercent =
-    phaseCount > 0 ? Math.min(100, Math.round((reportsValidatedCount / phaseCount) * 100)) : 0;
+    reportsTotalCount > 0 ? Math.min(100, Math.round((reportsValidatedCount / reportsTotalCount) * 100)) : 0;
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
   const primaryInvoiceForBadge = job.invoice_id
@@ -5638,258 +5649,32 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               <div className="p-[18px] space-y-[14px]">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
-                {reportPhaseIndices(job.total_phases).map((n) => {
-                  const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
-                  const approved = job[`report_${n}_approved` as keyof Job] as boolean;
-                  const uploadedAt = job[`report_${n}_uploaded_at` as keyof Job] as string | undefined;
-                  const approvedAt = job[`report_${n}_approved_at` as keyof Job] as string | undefined;
-                  const phaseLabel = reportPhaseLabel(n, job.total_phases);
-                  const uploadCheck = canMarkReportUploaded(job, n);
-                  const approveCheck = canApproveReport(job, n);
-                  const appReport = reportByPhase.get(n);
-                  const reportImages = [
-                    ...(appReport?.images ?? []),
-                    ...(appReport?.before_images ?? []),
-                    ...(appReport?.after_images ?? []),
-                  ].filter(Boolean);
-                  const reportCardStyle = approved
-                    ? { background: "#F0FBF7", border: "0.5px solid #B5E3D1" } /* success feedback */
-                    : uploaded
-                      ? { background: "#FFF8F3", border: "0.5px solid #F5CFB8" } /* coral — pending review */
-                      : { background: "#FAFAFB", border: "0.5px solid #E4E4E8" }; /* neutral inset */
-                  return (
-                    <div
-                      key={n}
-                      className="rounded-[10px] p-[14px] space-y-2"
-                      style={reportCardStyle}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {approved ? (
-                            <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "#0F6E56" }} />
-                          ) : uploaded ? (
-                            <Upload className="h-4 w-4 shrink-0" style={{ color: "#ED4B00" }} />
-                          ) : (
-                            <FileText className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
-                          )}
-                          <p
-                            className="text-[13px] font-medium truncate"
-                            style={{ color: "#020040" }}
-                          >
-                            {phaseLabel}
-                          </p>
-                        </div>
-                        <span
-                          className="text-[10px] font-medium px-[7px] py-[2px] rounded shrink-0"
-                          style={
-                            approved
-                              ? { background: "#E4F5EE", color: "#0F6E56" }
-                              : uploaded
-                                ? { background: "#FFF1EB", color: "#ED4B00" }
-                                : { background: "#F1F1F3", color: "#6B6B70" }
-                          }
-                        >
-                          {approved ? "Validated" : uploaded ? "Pending review" : "Not uploaded"}
-                        </span>
-                      </div>
-                      {approvedAt && (
-                        <p className="text-[11px]" style={{ color: "#0F6E56" }}>
-                          Approved {new Date(approvedAt).toLocaleDateString("en-GB")}
-                        </p>
-                      )}
-                      {uploadedAt && !approvedAt && (
-                        <p className="text-[11px]" style={{ color: "#ED4B00" }}>
-                          Uploaded {new Date(uploadedAt).toLocaleDateString("en-GB")}
-                        </p>
-                      )}
-                      {appReport && (
-                        <div
-                          className="rounded-[8px] p-3 space-y-2 bg-white"
-                          style={{ border: "0.5px solid #E4E4E8" }}
-                        >
-                          {appReport.description?.trim() ? (
-                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
-                              <span className="font-semibold" style={{ color: "#020040" }}>
-                                Notes:
-                              </span>{" "}
-                              {appReport.description.trim()}
-                            </p>
-                          ) : null}
-                          {appReport.materials?.trim() ? (
-                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
-                              <span className="font-semibold" style={{ color: "#020040" }}>
-                                Materials:
-                              </span>{" "}
-                              {appReport.materials.trim()}
-                            </p>
-                          ) : null}
-                          {reportImages.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {reportImages.slice(0, 4).map((url, idx) => (
-                                <button
-                                  key={`${appReport.id}-${idx}`}
-                                  type="button"
-                                  onClick={() => void openPartnerReportImage(url, `${appReport.id}-${idx}`)}
-                                  className="text-[11px] underline hover:opacity-80"
-                                  style={{ color: "#020040" }}
-                                >
-                                  {openingReportImageKey === `${appReport.id}-${idx}` ? "Opening..." : `Image ${idx + 1}`}
-                                </button>
-                              ))}
-                              {reportImages.length > 4 && (
-                                <span className="text-[11px]" style={{ color: "#6B6B70" }}>
-                                  +{reportImages.length - 4} more
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {appReport.pdf_url ? (
-                            <button
-                              type="button"
-                              onClick={() => void openPartnerReportPdf(appReport)}
-                              disabled={openingReportId === appReport.id}
-                              className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                              onMouseEnter={(e) => {
-                                if (!(e.currentTarget as HTMLButtonElement).disabled)
-                                  (e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB";
-                              }}
-                              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
-                            >
-                              <ExternalLink className="h-3 w-3" /> Open PDF
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                      <div className="space-y-2 pt-1">
-                        {!uploaded && (
-                          <>
-                            <input
-                              id={`phase-report-file-${n}`}
-                              type="file"
-                              accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                              className="sr-only"
-                              onChange={(e) => setPhaseReportFiles((prev) => ({ ...prev, [n]: e.target.files?.[0] ?? null }))}
-                            />
-                            <div
-                              className="rounded-[8px] p-3 bg-white"
-                              style={{ border: "0.5px dashed #D8D8DD" }}
-                            >
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <label
-                                  htmlFor={`phase-report-file-${n}`}
-                                  className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
-                                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                                  onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
-                                  onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
-                                >
-                                  <Upload className="h-3.5 w-3.5" />
-                                  {phaseReportFiles[n] ? "Change file" : "Choose file"}
-                                </label>
-                                {phaseReportFiles[n] && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setPhaseReportFiles((prev) => ({ ...prev, [n]: null }))}
-                                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
-                                    style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
-                                  >
-                                    <X className="h-3 w-3" /> Remove
-                                  </button>
-                                )}
-                              </div>
-                              <p
-                                className="mt-2 text-[11px] truncate"
-                                style={{ color: "#6B6B70" }}
-                              >
-                                {phaseReportFiles[n]?.name ?? "No file selected"}
-                              </p>
-                            </div>
-                            <div className="flex gap-2 flex-wrap">
-                              <button
-                                type="button"
-                                disabled={!uploadCheck.ok || !phaseReportFiles[n] || analyzingPhase === n}
-                                title={uploadCheck.message}
-                                onClick={() => {
-                                  if (!uploadCheck.ok) {
-                                    toast.error(uploadCheck.message ?? "Cannot upload yet");
-                                    return;
-                                  }
-                                  void handlePhaseReportUploadAnalyze(n);
-                                }}
-                                className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                style={{ background: "#020040" }}
-                                onMouseEnter={(e) => {
-                                  if (!(e.currentTarget as HTMLButtonElement).disabled)
-                                    (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                                }}
-                                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                              >
-                                <Upload className="h-3.5 w-3.5" />
-                                {analyzingPhase === n ? "Analyzing…" : "Upload & analyze"}
-                              </button>
-                            </div>
-                          </>
-                        )}
-                        {uploaded && !approved && (
-                          <button
-                            type="button"
-                            disabled={!approveCheck.ok}
-                            title={approveCheck.message}
-                            onClick={() => {
-                              if (!approveCheck.ok) {
-                                toast.error(approveCheck.message ?? "Cannot approve yet");
-                                return;
-                              }
-                              handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>);
-                            }}
-                            className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                            style={{ background: "#020040" }}
-                            onMouseEnter={(e) => {
-                              if (!(e.currentTarget as HTMLButtonElement).disabled)
-                                (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                            }}
-                            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                          >
-                            <ShieldCheck className="h-3.5 w-3.5" /> Validate now
-                          </button>
-                        )}
-                      </div>
-                      {!uploadCheck.ok && !uploaded && uploadCheck.message && (
-                        <p className="text-[11px] font-medium" style={{ color: "#ED4B00" }}>
-                          {uploadCheck.message}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
+                <JobReportV2Card
+                  jobId={job.id}
+                  kind="start"
+                  rawReport={job.start_report}
+                  approvedAt={job.start_report_approved_at ?? null}
+                  onApprovalChange={() => router.refresh()}
+                />
+                <JobReportV2Card
+                  jobId={job.id}
+                  kind="final"
+                  rawReport={job.final_report}
+                  approvedAt={job.final_report_approved_at ?? null}
+                  onApprovalChange={() => router.refresh()}
+                />
               </div>
-              <div
-                className="flex items-center justify-between gap-2 pt-[12px]"
-                style={{ borderTop: "0.5px solid #E4E4E8" }}
-              >
-                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-                  {loadingAppJobReports ? "Loading partner reports..." : `${appJobReports.length} report record(s) from partner app`}
-                </p>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!job?.id) return;
-                    setLoadingAppJobReports(true);
-                    try {
-                      const rows = await listAppJobReports(job.id);
-                      setAppJobReports(rows);
-                    } finally {
-                      setLoadingAppJobReports(false);
-                    }
-                  }}
-                  className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[10px] py-[5px] text-[11px] font-medium cursor-pointer"
-                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
+              {(v2StartSubmitted || v2FinalSubmitted) ? (
+                <div
+                  className="flex items-center justify-between gap-2 pt-[12px]"
+                  style={{ borderTop: "0.5px solid #E4E4E8" }}
                 >
-                  <RefreshCw className="h-3 w-3" /> Refresh reports
-                </button>
-              </div>
+                  <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+                    {v2ApprovedCount}/{v2SubmittedCount} report{v2SubmittedCount === 1 ? "" : "s"} validated
+                  </p>
+                  <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
+                </div>
+              ) : null}
               {allConfiguredReportsApproved(job) && (
                 <div
                   className="rounded-[10px] p-[14px] flex flex-col sm:flex-row sm:items-center gap-3"

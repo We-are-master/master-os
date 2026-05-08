@@ -57,12 +57,14 @@ export function lastInProgressStatusForTotal(_totalPhases: number): Job["status"
  * "configured reports approved".
  */
 export function allConfiguredReportsApproved(job: Job): boolean {
-  // Pre-mig-162 jobs may have report_1_approved set but no report_2/3 (total_phases=1).
-  // For those, "all configured" = report_1_approved. Fast path: if there's an
-  // approved final_report JSONB, that's authoritative regardless of legacy slots.
-  if (job.final_report && Object.keys(job.final_report as Record<string, unknown>).length > 0) {
-    return true;
-  }
+  // V2 (mig 162+): a job is "report-validated" once the final_report JSONB is
+  // present AND has been approved by an internal user (final_report_approved_at).
+  // The start_report is informational and does not gate completion.
+  const hasFinalReport =
+    !!job.final_report && Object.keys(job.final_report as Record<string, unknown>).length > 0;
+  const finalApprovedAt = (job as { final_report_approved_at?: string | null }).final_report_approved_at;
+  if (hasFinalReport && finalApprovedAt) return true;
+  // Legacy pre-mig-162 jobs only have the boolean flag.
   return Boolean(job.report_1_approved);
 }
 
