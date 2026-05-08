@@ -514,6 +514,12 @@ export interface Job {
   final_report?: Record<string, unknown> | null;
   final_report_submitted?: boolean;
   final_report_skipped?: boolean;
+  /** V2 office approval of the partner-app start_report (mig 168). */
+  start_report_approved_at?: string | null;
+  start_report_approved_by?: string | null;
+  /** V2 office approval of the partner-app final_report (mig 168). */
+  final_report_approved_at?: string | null;
+  final_report_approved_by?: string | null;
   /** Accumulated on-site seconds when timer stopped; never decremented by UI. */
   timer_elapsed_seconds?: number;
   timer_last_started_at?: string | null;
