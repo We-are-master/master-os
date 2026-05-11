@@ -177,6 +177,7 @@ import {
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
+import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -5986,6 +5987,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="p-[18px] space-y-[14px]">
+              <PartnerReportLinkPanel
+                jobId={job.id}
+                hasPartner={!!job.partner_id}
+                isZendeskLinked={job.external_source === "zendesk" && !!job.external_ref}
+                bothReportsSubmitted={v2StartSubmitted && v2FinalSubmitted}
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
                 <JobReportV2Card
                   jobId={job.id}
