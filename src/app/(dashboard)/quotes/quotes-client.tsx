@@ -2,6 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment } from "react";
 import { PageHeader } from "@/components/layout/page-header";
+import { DateRangeFilter } from "@/components/shared/date-range-filter";
+import {
+  DEFAULT_DATE_FILTER,
+  resolveDateFilter,
+  type DateFilterValue,
+} from "@/lib/date-range-filter";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
@@ -733,6 +739,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
+  /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". */
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
   const buFilter = useBuFilter();
   const { biddingSlaMs, biddingSlaHours } = useFrontendSetup();
   const biddingSlaHoursLabelPretty = formatBiddingSlaHoursLabel(biddingSlaHours);
@@ -844,7 +852,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [filterOpen, newQuoteMenuOpen]);
 
+  const dateBounds = useMemo(() => resolveDateFilter(dateFilter), [dateFilter]);
   const filteredQuotes = useMemo(() => {
+    const fromMs = dateBounds ? new Date(dateBounds.fromIso).getTime() : null;
+    const toMs = dateBounds ? new Date(dateBounds.toIso).getTime() : null;
     return data.filter((q) => {
       if (status === "pipeline") {
         if (!PIPELINE_STATUS_IN.includes(q.status as (typeof PIPELINE_STATUS_IN)[number])) return false;
@@ -862,6 +873,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const propertyInBu = Boolean(accFromProperty && buAccountIds.has(accFromProperty));
         if (!clientInBu && !propertyInBu) return false;
       }
+      if (fromMs !== null && toMs !== null) {
+        const t = new Date(q.created_at).getTime();
+        if (Number.isNaN(t)) return false;
+        if (t < fromMs || t > toMs) return false;
+      }
       return true;
     });
   }, [
@@ -872,6 +888,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     buFilter.clientIdsInBu,
     propertyIdToAccountId,
     buAccountIds,
+    dateBounds,
   ]);
 
   const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
@@ -2262,6 +2279,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              <DateRangeFilter variant="chip" value={dateFilter} onChange={setDateFilter} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter

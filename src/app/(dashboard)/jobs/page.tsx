@@ -137,6 +137,8 @@ import {
   ukTodayYmd,
   type ScheduleDatePreset,
 } from "@/lib/uk-schedule-range";
+import { DateRangeFilter } from "@/components/shared/date-range-filter";
+import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -285,7 +287,7 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
 }
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v2";
-const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
+const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "qtd", "custom"];
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";
@@ -514,8 +516,6 @@ function JobsPageContent() {
   }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
-  const [dateFilterOpen, setDateFilterOpen] = useState(false);
-  const dateFilterRef = useRef<HTMLDivElement>(null);
 
   const scheduleRange = useMemo(
     () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
@@ -661,11 +661,10 @@ function JobsPageContent() {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       if (filterOpen && filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
-      if (dateFilterOpen && dateFilterRef.current && !dateFilterRef.current.contains(t)) setDateFilterOpen(false);
     }
-    if (filterOpen || dateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen, dateFilterOpen]);
+  }, [filterOpen]);
 
   useEffect(() => {
     setJobsListSortKey(null);
@@ -2092,71 +2091,22 @@ function JobsPageContent() {
       <div className="space-y-5">
         <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative" ref={dateFilterRef}>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Calendar className="h-3.5 w-3.5" />}
-                onClick={() => setDateFilterOpen((o) => !o)}
-                className={cn(scheduleRange && "border-primary/40 bg-primary/5")}
-              >
-                {scheduleDatePreset === "all"
-                  ? "Dates"
-                  : scheduleDatePreset === "today"
-                    ? "Today"
-                    : scheduleDatePreset === "tomorrow"
-                      ? "Tomorrow"
-                      : scheduleDatePreset === "week"
-                        ? "This week"
-                        : scheduleDatePreset === "month"
-                          ? "This month"
-                          : "Custom range"}
-              </Button>
-              {dateFilterOpen && (
-                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Schedule window</p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        ["all", "All dates"],
-                        ["today", "Today"],
-                        ["tomorrow", "Tomorrow"],
-                        ["week", "This week"],
-                        ["month", "This month"],
-                        ["custom", "Custom"],
-                      ] as const
-                    ).map(([id, label]) => (
-                      <Button
-                        key={id}
-                        type="button"
-                        variant={scheduleDatePreset === id ? "primary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
-                          scheduleDatePreset !== id && "text-[#020040]",
-                        )}
-                        onClick={() => {
-                          setScheduleDatePreset(id);
-                          if (id === "custom") setDateFilterOpen(true);
-                          else setDateFilterOpen(false);
-                        }}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
-                  {scheduleDatePreset === "custom" ? (
-                    <div className="space-y-2 pt-1 border-t border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
-                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
-                        <Input type="date" value={customScheduleFrom} onChange={(e) => setCustomScheduleFrom(e.target.value)} className="h-9 text-sm" />
-                        <Input type="date" value={customScheduleTo} onChange={(e) => setCustomScheduleTo(e.target.value)} className="h-9 text-sm" />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
+            <DateRangeFilter
+              variant="chip"
+              value={{
+                // Legacy "all" preset falls back to "today" in the unified UI — storage stays valid for back-compat.
+                mode: (scheduleDatePreset === "all" ? "today" : scheduleDatePreset) as DateFilterMode,
+                customFrom: customScheduleFrom,
+                customTo: customScheduleTo,
+              }}
+              onChange={(next: DateFilterValue) => {
+                setScheduleDatePreset(next.mode);
+                if (next.mode === "custom") {
+                  setCustomScheduleFrom(next.customFrom ?? customScheduleFrom);
+                  setCustomScheduleTo(next.customTo ?? customScheduleTo);
+                }
+              }}
+            />
             <Button
               variant="outline"
               size="sm"
