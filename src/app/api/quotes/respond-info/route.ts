@@ -38,13 +38,50 @@ export async function GET(req: NextRequest) {
   const { data: quote, error: quoteError } = await supabase
     .from("quotes")
     .select(
-      "reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status",
+      "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type",
     )
     .eq("id", quoteId)
     .single();
 
   if (quoteError || !quote) {
     return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+  }
+
+  // When the quote was already converted to a job, surface the linked job's
+  // identity + report submission state so the public page can switch from
+  // accept/reject UI to the report submission form.
+  let linkedJob: {
+    id: string;
+    reference: string;
+    serviceType: string | null;
+    status: string;
+    title: string | null;
+    propertyAddress: string | null;
+    startReportSubmitted: boolean;
+    finalReportSubmitted: boolean;
+  } | null = null;
+
+  if (quote.status === "converted_to_job") {
+    const { data: jobRow } = await supabase
+      .from("jobs")
+      .select("id, reference, service_type, status, title, property_address, start_report_submitted, final_report_submitted")
+      .eq("quote_id", quote.id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (jobRow) {
+      linkedJob = {
+        id:                    jobRow.id,
+        reference:             jobRow.reference,
+        serviceType:           jobRow.service_type ?? quote.service_type ?? null,
+        status:                jobRow.status,
+        title:                 jobRow.title ?? null,
+        propertyAddress:       jobRow.property_address ?? null,
+        startReportSubmitted:  !!jobRow.start_report_submitted,
+        finalReportSubmitted:  !!jobRow.final_report_submitted,
+      };
+    }
   }
 
   const { data: rows } = await supabase
@@ -68,11 +105,13 @@ export async function GET(req: NextRequest) {
     clientName: quote.client_name,
     propertyAddress: quote.property_address ?? null,
     scope: quote.scope ?? null,
+    serviceType: quote.service_type ?? null,
     totalValue: Number(quote.total_value) || 0,
     depositRequired: Number(quote.deposit_required) || 0,
     startDateOption1: fmtDate(quote.start_date_option_1 ?? undefined),
     startDateOption2: fmtDate(quote.start_date_option_2 ?? undefined),
     status: quote.status,
     lineItems,
+    linkedJob,
   });
 }

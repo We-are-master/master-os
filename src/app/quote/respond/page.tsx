@@ -2,6 +2,19 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import PublicReportForm from "./public-report-form";
+import { pickReportTemplate } from "@/lib/public-report-templates";
+
+type LinkedJob = {
+  id:                    string;
+  reference:             string;
+  serviceType:           string | null;
+  status:                string;
+  title:                 string | null;
+  propertyAddress:       string | null;
+  startReportSubmitted:  boolean;
+  finalReportSubmitted:  boolean;
+};
 
 type QuoteSummary = {
   reference: string;
@@ -9,12 +22,14 @@ type QuoteSummary = {
   clientName: string;
   propertyAddress: string | null;
   scope: string | null;
+  serviceType?: string | null;
   totalValue: number;
   depositRequired: number;
   startDateOption1: string | null;
   startDateOption2: string | null;
   status: string;
   lineItems: { description: string; quantity: number; unitPrice: number; total: number }[];
+  linkedJob?: LinkedJob | null;
 };
 
 function formatMoney(n: number) {
@@ -144,6 +159,52 @@ function QuoteRespondContent() {
   }
 
   const isAccept = action === "accept";
+
+  // ─── Post-conversion: show report submission form ────────────────────
+  // Once the quote is converted to a job, the same public link switches
+  // from "approve quote" to "submit work report" (start + final combined,
+  // no timer — duration typed manually).
+  if (token && summary?.linkedJob && !(summary.linkedJob.finalReportSubmitted && summary.linkedJob.startReportSubmitted)) {
+    const job = summary.linkedJob;
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-lg w-full max-h-[min(100vh-3rem,900px)] flex flex-col overflow-hidden rounded-2xl shadow-lg border border-stone-200 bg-white">
+          <div className="flex-1 overflow-y-auto p-8">
+            <PublicReportForm
+              token={token}
+              jobReference={job.reference}
+              jobTitle={job.title ?? summary.title}
+              propertyAddress={job.propertyAddress ?? summary.propertyAddress ?? ""}
+              serviceType={job.serviceType ?? summary.serviceType ?? null}
+              template={pickReportTemplate({
+                serviceType: job.serviceType ?? summary.serviceType ?? null,
+                title: job.title ?? summary.title,
+              })}
+              onSubmitted={() =>
+                setResult({
+                  success: true,
+                  message: "Report submitted. Our team will review it shortly.",
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (token && summary?.linkedJob?.finalReportSubmitted && summary.linkedJob.startReportSubmitted) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-emerald-100 text-emerald-600">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Report already submitted</h1>
+          <p className="text-stone-600 mt-2">Our team is reviewing the report for job {summary.linkedJob.reference}.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
