@@ -34,3 +34,19 @@ export function patchOfficeCancelZeroJobEconomics(): Partial<Job> {
     hourly_partner_rate: null,
   };
 }
+
+/**
+ * Returns a Partial<Job> that captures the pre-cancel revenue + cost so the UI
+ * can display "lost revenue" later (after `patchOfficeCancelZeroJobEconomics`
+ * has zeroed the live fields). Pass the job as it is BEFORE applying the zero
+ * patch — typically `currentJob` in the cancel handler.
+ */
+export function patchOfficeCancelLostSnapshot(
+  currentJob: Pick<Job, "client_price" | "extras_amount" | "partner_cost">,
+): Partial<Job> {
+  return {
+    cancelled_client_price: Number(currentJob.client_price) || 0,
+    cancelled_extras_amount: Number(currentJob.extras_amount) || 0,
+    cancelled_partner_cost: Number(currentJob.partner_cost) || 0,
+  };
+}

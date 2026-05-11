@@ -3,7 +3,7 @@
 import type { JobDetailBundle } from "@/services/jobs";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
 import { differenceInCalendarDays } from "date-fns/differenceInCalendarDays";
 import { parseISO } from "date-fns/parseISO";
@@ -96,6 +96,8 @@ import {
 } from "@/services/job-reports";
 import { useProfile } from "@/hooks/use-profile";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { useCancelJob } from "@/hooks/use-cancel-job";
+import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { jobOnHoldPresetSelectOptions } from "@/lib/frontend-setup";
 import { JOB_DETAIL_MULTI_VISITS_UI_ENABLED } from "@/lib/constants";
 import { logAudit, logFieldChanges } from "@/services/audit";
@@ -351,13 +353,13 @@ const selfBillStatusConfig: Record<
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
 > = {
   draft: { label: "Draft", variant: "default" },
-  accumulating: { label: "Open week", variant: "default" },
-  pending_review: { label: "Review & approve", variant: "primary" },
-  needs_attention: { label: "Needs attention", variant: "danger" },
-  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
-  ready_to_pay: { label: "Ready to pay", variant: "info" },
+  accumulating: { label: "Open Week", variant: "default" },
+  pending_review: { label: "Review & Approve", variant: "primary" },
+  needs_attention: { label: "Needs Attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
+  ready_to_pay: { label: "Ready To Pay", variant: "info" },
   paid: { label: "Paid", variant: "success" },
-  audit_required: { label: "Audit required", variant: "danger" },
+  audit_required: { label: "Audit Required", variant: "danger" },
   rejected: { label: "Rejected", variant: "default" },
 };
 
@@ -470,10 +472,10 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
 /** Six-stage pipeline shown on job detail (matches ops mental model). */
 const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
-  { label: "On site", statuses: ["in_progress"], icon: HardHat },
-  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
-  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
-  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "On Site", statuses: ["in_progress"], icon: HardHat },
+  { label: "On Hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final Checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting Payment", statuses: ["awaiting_payment"], icon: CreditCard },
   { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
@@ -637,6 +639,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
   const { jobOnHoldPresets, officeCancellationPresets } = useFrontendSetup();
+  const cancelJob = useCancelJob();
   const putOnHoldReasonOptions = useMemo(
     () => jobOnHoldPresetSelectOptions(jobOnHoldPresets),
     [jobOnHoldPresets],
@@ -712,12 +715,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
+
+  /**
+   * Drag-from-Beacon entry point: when the URL carries `?action=approve|cancel`
+   * (set by Beacon Kanban when a card is dropped on Completed / Cancelled),
+   * open the matching modal once the page mounts and strip the param so a
+   * refresh doesn't re-trigger.
+   */
+  const searchParams = useSearchParams();
+  const actionFromUrl = searchParams?.get("action");
+  useEffect(() => {
+    if (!actionFromUrl) return;
+    if (actionFromUrl === "approve") {
+      setValidateCompleteOpen(true);
+    } else if (actionFromUrl === "cancel") {
+      setCancelJobOpen(true);
+    }
+    // Strip the query param so subsequent refreshes don't re-open the modal.
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("action");
+      window.history.replaceState({}, "", url.toString());
+    }
+    // intentionally only run on first mount + when action param appears
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionFromUrl]);
   /** Loaded when opening Final review from the job’s client → account. */
   const [accountEmailPolicy, setAccountEmailPolicy] = useState<AccountFinalEmailPolicy>({
     canIncludeInvoice: true,
     canIncludeReport: true,
   });
-  const [completionDelivery, setCompletionDelivery] = useState<CompletionDelivery | null>(null);
+  // Default to stage_only (internal completion, no client email) — the user-facing
+  // "Client communication" radio was removed from FinalReviewModal. Email pack
+  // can still be triggered programmatically by setting this to "email".
+  const [completionDelivery, setCompletionDelivery] = useState<CompletionDelivery | null>("stage_only");
   const [includeInvoiceInEmail, setIncludeInvoiceInEmail] = useState(true);
   const [includeReportInEmail, setIncludeReportInEmail] = useState(true);
   const [finalReviewBillingLabel, setFinalReviewBillingLabel] = useState<{
@@ -2402,11 +2433,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance]);
 
   useEffect(() => {
-    if (!cancelJobOpen) return;
-    setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
-  }, [cancelJobOpen, officeCancellationPresets]);
-
-  useEffect(() => {
     if (!resumeJobOpen || resumeAction !== "cancel") return;
     setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
     setCancelDetail("");
@@ -2414,86 +2440,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const handleConfirmOfficeCancel = useCallback(async (): Promise<boolean> => {
     if (!job) return false;
-    if (officeCancellationDetailRequired(cancelPresetId) && !cancelDetail.trim()) {
-      toast.error('Add details when the reason is "Other".');
-      return false;
-    }
-    const reasonText = buildOfficeCancellationReasonText(cancelPresetId, cancelDetail, officeCancellationPresets);
-
     setCancellingJob(true);
     try {
-      const now = new Date().toISOString();
-      const statusPatch: Partial<Job> = {
-        ...patchOfficeCancelZeroJobEconomics(),
-        status: "cancelled",
-        cancellation_reason: reasonText,
-        cancelled_at: now,
-        cancelled_by: profile?.id ?? null,
-        ...statusChangePartnerTimerPatch(job, "cancelled"),
-        ...statusChangeOfficeTimerPatch(job, "cancelled"),
-      };
-      const updated = await updateJob(job.id, statusPatch);
-
-      await logAudit({
-        entityType: "job",
-        entityId: job.id,
-        entityRef: job.reference,
-        action: "status_changed",
-        fieldName: "status",
-        oldValue: job.status,
-        newValue: "cancelled",
-        userId: profile?.id,
-        userName: profile?.full_name,
+      const result = await cancelJob.submit({
+        jobId: job.id,
+        presetId: cancelPresetId,
+        detail: cancelDetail,
+        presets: officeCancellationPresets,
       });
-      await logAudit({
-        entityType: "job",
-        entityId: job.id,
-        entityRef: job.reference,
-        action: "updated",
-        fieldName: "financial_documents",
-        newValue: "Job cancelled — labour zeroed; use Finance Summary extras for any further charges or payouts.",
-        userId: profile?.id,
-        userName: profile?.full_name,
-      });
-      setJob(updated);
-      try {
-        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-      } catch {
-        /* non-blocking */
-      }
+      if (!result.ok) return false;
+      setJob(result.updated);
       void refreshJobFinance();
       setCancelJobOpen(false);
       setCancelDetail("");
-      toast.success("Job cancelled");
-      if (updated.partner_id) {
-        notifyAssignedPartnerAboutJob({
-          partnerId: updated.partner_id,
-          job: updated,
-          kind: "job_cancelled_by_office",
-          cancellationReason: reasonText,
-        });
-        void notifyPartnerJobChange({
-          jobId: updated.id,
-          jobReference: updated.reference,
-          kind: "cancelled",
-          reason: reasonText,
-          newStatusLabel: "Cancelled",
-          skipPush: true,
-        });
-      }
       return true;
-    } catch (err) {
-      const detail = postgrestFullErrorText(err).trim().replace(/\s+/g, " ");
-      toast.error(
-        detail
-          ? `Failed to cancel job — ${detail.slice(0, 450)}${detail.length > 450 ? "…" : ""}`
-          : getErrorMessage(err, "Failed to cancel job"),
-      );
-      return false;
     } finally {
       setCancellingJob(false);
     }
-  }, [job, cancelPresetId, cancelDetail, officeCancellationPresets, profile?.id, profile?.full_name, refreshJobFinance]);
+  }, [job, cancelJob, cancelPresetId, cancelDetail, officeCancellationPresets, refreshJobFinance]);
 
   const handleStatusChange = useCallback(
     async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean; silent?: boolean; skipSelfBillSync?: boolean; extraPatch?: Partial<Job> }): Promise<Job | null> => {
@@ -4522,7 +4486,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       ? job.timer_is_running
         ? "Running"
         : job.status === "on_hold"
-          ? "On hold"
+          ? "On Hold"
           : job.status === "scheduled" && Number(job.timer_elapsed_seconds ?? 0) > 0
             ? "Paused"
             : "Saved"
@@ -4760,7 +4724,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   aria-label="Refresh job"
                 />
                 <h1 className="text-lg font-bold text-text-primary tabular-nums">{job.reference}</h1>
-                <ZendeskTicketBadge source={job.external_source} ref={job.external_ref} />
+                <ZendeskTicketBadge
+                  source={job.external_source}
+                  ref={job.external_ref}
+                  jobId={job.id}
+                  zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+                />
                 <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
                   {config.label}
                 </Badge>
@@ -4880,8 +4849,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
                           onClick={() => {
                             setJobMoreMenuOpen(false);
-                            setCancelPresetId(officeCancellationPresets[0]?.id ?? OFFICE_JOB_CANCELLATION_REASONS[0].id);
-                            setCancelDetail("");
                             setCancelJobOpen(true);
                           }}
                         >
@@ -4919,8 +4886,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
           </div>
         ) : null}
-        {/* Zendesk delivery status — hidden when the job didn't come from Zendesk */}
-        <JobZendeskStatus jobId={job.id} zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null} />
+        {/* Zendesk delivery status moved into the ZendeskTicketBadge hover popover (header) */}
         {job.status === "completed" ? (
           <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary">
             <p className="font-semibold text-text-primary">Job approval</p>
@@ -5076,12 +5042,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         {/* ── Job amount / margin (compact metrics bar) ── */}
         <div className="grid min-h-0 grid-cols-2 divide-x divide-y divide-border-light border-b border-border-light bg-surface-hover/30 px-1 py-2 dark:bg-surface-secondary/20 lg:grid-cols-4 lg:divide-y-0">
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Job amount</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Job Amount</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-primary">{formatCurrency(billableRevenue)}</p>
             <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">Incl. extras</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner cost</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner Cost</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
@@ -7674,70 +7640,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         </div>
       </Modal>
 
-      <Modal
-        open={cancelJobOpen}
-        onClose={() => {
-          if (!cancellingJob) {
-            setCancelJobOpen(false);
-            setCancelDetail("");
-          }
+      <CancelJobModal
+        jobId={job.id}
+        jobReference={job.reference}
+        isOpen={cancelJobOpen}
+        onClose={() => setCancelJobOpen(false)}
+        onCancelled={(updated) => {
+          setJob(updated);
+          void refreshJobFinance();
         }}
-        title="Cancel job"
-      >
-        <div className="p-4 space-y-4">
-          <p className="text-sm text-text-secondary">
-            The assigned partner will be notified with the reason below. The same note stays on this job for your team.
-          </p>
-          <p className="text-xs text-text-tertiary rounded-lg border border-border bg-muted/15 px-3 py-2">
-            Charges or partner payouts after a cancel belong in Finance Summary — use <strong className="text-text-secondary">Add extra charge</strong> or{" "}
-            <strong className="text-text-secondary">Add extra payout</strong> rather than cancelling with a dedicated fee flow.
-          </p>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
-            <select
-              value={cancelPresetId}
-              onChange={(e) => setCancelPresetId(e.target.value)}
-              className="w-full h-10 rounded-lg border border-border bg-card text-sm text-text-primary px-3"
-              disabled={cancellingJob}
-            >
-              {officeCancellationPresets.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              {officeCancellationDetailRequired(cancelPresetId) ? "Details (required)" : "Additional details (optional)"}
-            </label>
-            <textarea
-              value={cancelDetail}
-              onChange={(e) => setCancelDetail(e.target.value)}
-              rows={3}
-              placeholder={officeCancellationDetailRequired(cancelPresetId) ? "Describe why this job is being cancelled…" : "Optional context for the partner or internal record…"}
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
-              disabled={cancellingJob}
-            />
-          </div>
-          <div className="flex flex-wrap gap-2 justify-end pt-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={cancellingJob}
-              onClick={() => {
-                setCancelJobOpen(false);
-                setCancelDetail("");
-              }}
-            >
-              Back
-            </Button>
-            <Button variant="danger" size="sm" loading={cancellingJob} onClick={() => void handleConfirmOfficeCancel()}>
-              Cancel job
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      />
 
       <Modal
         open={jobBillingDetailsOpen}

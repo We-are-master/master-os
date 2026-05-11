@@ -51,10 +51,31 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     .order("created_at", { ascending: false })
     .limit(20);
 
+  // Subdomain priority: server env (ZENDESK_SUBDOMAIN) → company_settings.frontend_setup.zendesk_subdomain.
+  // Lets ops configure it from Settings → Setup without redeploy.
+  const envSubdomain = (process.env.ZENDESK_SUBDOMAIN ?? "").trim() || null;
+  let subdomain: string | null = envSubdomain;
+  if (!subdomain) {
+    const { data: settings } = await supabase
+      .from("company_settings")
+      .select("frontend_setup")
+      .limit(1)
+      .maybeSingle();
+    const fs = (settings as { frontend_setup?: { zendesk_subdomain?: string } | null } | null)?.frontend_setup;
+    const fromSettings = fs?.zendesk_subdomain?.trim();
+    if (fromSettings) subdomain = fromSettings;
+  }
+  const ticketId = job?.external_source === "zendesk" ? job?.external_ref ?? null : null;
+  const ticketUrl = subdomain && ticketId
+    ? `https://${subdomain}.zendesk.com/agent/tickets/${ticketId}`
+    : null;
+
   return NextResponse.json({
     ok: true,
     isZendeskJob: job?.external_source === "zendesk" && Boolean(job?.external_ref),
-    ticketId: job?.external_source === "zendesk" ? job?.external_ref ?? null : null,
+    ticketId,
+    ticketUrl,
+    subdomain,
     sideConversationId: job?.zendesk_side_conversation_id ?? null,
     events: (rows ?? []) as Array<{
       id: string;

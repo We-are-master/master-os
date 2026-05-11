@@ -4,22 +4,41 @@ import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronDown, ChevronUp, Loader2, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import { AlarmClock, CalendarClock, ChevronDown, ChevronUp, Loader2, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import {
   DEFAULT_JOB_ON_HOLD_PRESETS,
+  DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
+  DEFAULT_SLA_FINAL_CHECKS_HOURS,
+  DEFAULT_SLA_QUOTE_SEND_HOURS,
+  DEFAULT_WORKING_DAYS,
+  DEFAULT_WORKING_HOURS,
   MAX_JOB_ON_HOLD_PRESETS,
   MAX_JOB_ON_HOLD_PRESET_LEN,
   MAX_OFFICE_CANCEL_PRESET_LABEL_LEN,
   MAX_BIDDING_SLA_HOURS,
+  MAX_SLA_HOURS,
   MIN_BIDDING_SLA_HOURS,
+  MIN_SLA_HOURS,
   mergeFrontendSetup,
   normalizeOfficeJobCancellationPresets,
   parseFrontendSetup,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
+
+const WEEKDAY_LABELS: { id: number; short: string; full: string }[] = [
+  { id: 1, short: "Mon", full: "Monday" },
+  { id: 2, short: "Tue", full: "Tuesday" },
+  { id: 3, short: "Wed", full: "Wednesday" },
+  { id: 4, short: "Thu", full: "Thursday" },
+  { id: 5, short: "Fri", full: "Friday" },
+  { id: 6, short: "Sat", full: "Saturday" },
+  { id: 0, short: "Sun", full: "Sunday" },
+];
 
 function moveArrayItem<T>(arr: T[], index: number, delta: -1 | 1): T[] {
   const j = index + delta;
@@ -44,6 +63,16 @@ export function SetupTab() {
     normalizeOfficeJobCancellationPresets(null),
   );
 
+  const [workingDays, setWorkingDays] = useState<Set<number>>(() => new Set(DEFAULT_WORKING_DAYS));
+  const [workStartStr, setWorkStartStr] = useState<string>(DEFAULT_WORKING_HOURS.start);
+  const [workEndStr, setWorkEndStr] = useState<string>(DEFAULT_WORKING_HOURS.end);
+
+  const [slaArrivalStr, setSlaArrivalStr] = useState(String(DEFAULT_SLA_ARRIVAL_GRACE_HOURS));
+  const [slaQuoteSendStr, setSlaQuoteSendStr] = useState(String(DEFAULT_SLA_QUOTE_SEND_HOURS));
+  const [slaFinalChecksStr, setSlaFinalChecksStr] = useState(String(DEFAULT_SLA_FINAL_CHECKS_HOURS));
+
+  const [zendeskSubdomain, setZendeskSubdomain] = useState("");
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -56,6 +85,13 @@ export function SetupTab() {
       setBiddingSlaHoursStr(String(parsed.bidding_sla_hours ?? 8));
       setOnHoldPresets([...(parsed.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
       setOfficeCancelPresets([...(parsed.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
+      setWorkingDays(new Set(parsed.working_days ?? DEFAULT_WORKING_DAYS));
+      setWorkStartStr(parsed.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
+      setWorkEndStr(parsed.working_hours?.end ?? DEFAULT_WORKING_HOURS.end);
+      setSlaArrivalStr(String(parsed.sla_arrival_grace_hours ?? DEFAULT_SLA_ARRIVAL_GRACE_HOURS));
+      setSlaQuoteSendStr(String(parsed.sla_quote_send_hours ?? DEFAULT_SLA_QUOTE_SEND_HOURS));
+      setSlaFinalChecksStr(String(parsed.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
+      setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
       setLoading(false);
     })();
     return () => {
@@ -70,27 +106,72 @@ export function SetupTab() {
       toast.error(`SLA hours must be between ${MIN_BIDDING_SLA_HOURS} and ${MAX_BIDDING_SLA_HOURS}.`);
       return;
     }
-    if (!settingsId) {
-      toast.error("Company settings row missing — save System settings first or run migrations.");
-      return;
-    }
     setSaving(true);
     try {
       const supabase = getSupabase();
+      const slaArrival = Number(slaArrivalStr);
+      const slaQuote = Number(slaQuoteSendStr);
+      const slaFinal = Number(slaFinalChecksStr);
+      for (const v of [slaArrival, slaQuote, slaFinal]) {
+        if (!Number.isFinite(v) || v < MIN_SLA_HOURS || v > MAX_SLA_HOURS) {
+          toast.error(`SLA hours must be between ${MIN_SLA_HOURS} and ${MAX_SLA_HOURS}.`);
+          setSaving(false);
+          return;
+        }
+      }
       const next = mergeFrontendSetup(rawSetup, {
         bidding_sla_hours: hours,
         job_on_hold_presets: onHoldPresets,
         office_job_cancellation_presets: officeCancelPresets,
+        working_days: [...workingDays],
+        working_hours: { start: workStartStr, end: workEndStr },
+        sla_arrival_grace_hours: slaArrival,
+        sla_quote_send_hours: slaQuote,
+        sla_final_checks_hours: slaFinal,
+        zendesk_subdomain: zendeskSubdomain,
       });
-      const { error } = await supabase.from("company_settings").update({ frontend_setup: next }).eq("id", settingsId);
-      if (error) throw error;
+
+      // No row yet → seed one with safe defaults so future Settings work.
+      // This makes the UX a single click; no manual SQL or migration needed.
+      if (!settingsId) {
+        const { data: created, error: insertErr } = await supabase
+          .from("company_settings")
+          .insert({
+            company_name: "My Company",
+            address: "",
+            phone: "",
+            email: "",
+            frontend_setup: next,
+          })
+          .select("id")
+          .single();
+        if (insertErr) throw insertErr;
+        if (created?.id) setSettingsId(created.id);
+      } else {
+        const { error } = await supabase.from("company_settings").update({ frontend_setup: next }).eq("id", settingsId);
+        if (error) throw error;
+      }
       setRawSetup(next);
       setOnHoldPresets([...(next.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
       setOfficeCancelPresets([...(next.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
+      setWorkingDays(new Set(next.working_days ?? DEFAULT_WORKING_DAYS));
+      setWorkStartStr(next.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
+      setWorkEndStr(next.working_hours?.end ?? DEFAULT_WORKING_HOURS.end);
+      setSlaArrivalStr(String(next.sla_arrival_grace_hours ?? DEFAULT_SLA_ARRIVAL_GRACE_HOURS));
+      setSlaQuoteSendStr(String(next.sla_quote_send_hours ?? DEFAULT_SLA_QUOTE_SEND_HOURS));
+      setSlaFinalChecksStr(String(next.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
+      setZendeskSubdomain(next.zendesk_subdomain ?? "");
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save");
+      console.error("[setup-tab] save failed", e);
+      const msg = (() => {
+        if (!e || typeof e !== "object") return "Failed to save";
+        const err = e as { message?: string; details?: string; hint?: string; code?: string };
+        const parts = [err.message, err.details, err.hint, err.code].filter(Boolean);
+        return parts.length > 0 ? parts.join(" · ") : "Failed to save";
+      })();
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -105,66 +186,192 @@ export function SetupTab() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
         <h3 className="text-lg font-semibold text-text-primary">Setup</h3>
-        <p className="text-sm text-text-tertiary">
-          Front-office behaviour and labels. More options will land here; each new control will be wired in code once.
-        </p>
+        <p className="text-sm text-text-tertiary">Office defaults and labels.</p>
       </div>
 
-      <Card padding="none">
-        <CardHeader className="px-6 pt-6">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
-            <CardTitle>Quotes · Bidding SLA</CardTitle>
+      <section className="space-y-3">
+        <MicroLabel>Working Calendar</MicroLabel>
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Working Hours &amp; Days</CardTitle>
+              <FixfyHintIcon text="Drives how monthly overhead (workforce + recurring bills) is split across working days in Pulse. Hours are also kept for SLA windows and Beacon time markers." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Working Days</label>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAY_LABELS.map((d) => {
+                const active = workingDays.has(d.id);
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    disabled={!canEditConfig}
+                    onClick={() =>
+                      setWorkingDays((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(d.id)) next.delete(d.id);
+                        else next.add(d.id);
+                        return next;
+                      })
+                    }
+                    className={
+                      active
+                        ? "inline-flex items-center justify-center min-w-[52px] px-3 py-1.5 rounded-md text-xs font-semibold border border-primary bg-primary text-white transition-colors disabled:opacity-50"
+                        : "inline-flex items-center justify-center min-w-[52px] px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-card text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                    }
+                    aria-pressed={active}
+                    aria-label={`${active ? "Disable" : "Enable"} ${d.full}`}
+                  >
+                    {d.short}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[10px] text-text-tertiary">
+              {workingDays.size} Day{workingDays.size === 1 ? "" : "s"}/Week · ≈ {(workingDays.size * 4.345).toFixed(2)}/Month
+            </p>
           </div>
-        </CardHeader>
-        <div className="space-y-4 px-6 pb-6">
-          <p className="text-sm text-text-secondary">
-            Target time for the Bidding stage: the list shows a minute-by-minute countdown to this limit, then overdue time.
-            Does not change database triggers — only what operators see.
-          </p>
           <div className="flex flex-wrap items-end gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">SLA (hours)</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Start</label>
               <Input
-                type="number"
-                min={MIN_BIDDING_SLA_HOURS}
-                max={MAX_BIDDING_SLA_HOURS}
-                step={0.5}
-                value={biddingSlaHoursStr}
-                onChange={(e) => setBiddingSlaHoursStr(e.target.value)}
-                className="w-28"
+                type="time"
+                value={workStartStr}
+                onChange={(e) => setWorkStartStr(e.target.value)}
+                className="w-32"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">End</label>
+              <Input
+                type="time"
+                value={workEndStr}
+                onChange={(e) => setWorkEndStr(e.target.value)}
+                className="w-32"
               />
             </div>
             <Button
               type="button"
               onClick={() => void handleSave()}
-              disabled={!canEditConfig || saving}
+              disabled={!canEditConfig || saving || workingDays.size === 0}
               icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
             >
-              {saving ? "Saving…" : "Save setup"}
+              {saving ? "Saving…" : "Save Setup"}
             </Button>
           </div>
-          <p className="text-[10px] text-text-tertiary">
-            Allowed range: {MIN_BIDDING_SLA_HOURS}h–{MAX_BIDDING_SLA_HOURS}h (30 days).
-          </p>
         </div>
       </Card>
+      </section>
 
-      <Card padding="none">
-        <CardHeader className="px-6 pt-6">
-          <div className="flex items-center gap-2">
-            <PauseCircle className="h-4 w-4 text-text-tertiary" />
-            <CardTitle>Jobs · On hold reasons</CardTitle>
+      <section className="space-y-3">
+        <MicroLabel>Operations</MicroLabel>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <AlarmClock className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>SLA Rules</CardTitle>
+              <FixfyHintIcon text="Hours before a job breaches SLA. Used by Pulse 'SLA At Risk' and by Live View badges." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Arrival Grace (Hrs)
+                  <FixfyHintIcon text="Hours past scheduled_start_at with no progress before the job breaches arrival SLA." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_SLA_HOURS}
+                  max={MAX_SLA_HOURS}
+                  step={0.25}
+                  value={slaArrivalStr}
+                  onChange={(e) => setSlaArrivalStr(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Quote To Be Sent (Hrs)
+                  <FixfyHintIcon text="Maximum wall-clock from request creation until the quote is sent to the client." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_SLA_HOURS}
+                  max={MAX_SLA_HOURS}
+                  step={0.5}
+                  value={slaQuoteSendStr}
+                  onChange={(e) => setSlaQuoteSendStr(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Final Checks Max (Hrs)
+                  <FixfyHintIcon text="Maximum time a job may sit in Final Checks before flagged as overdue." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_SLA_HOURS}
+                  max={MAX_SLA_HOURS}
+                  step={0.5}
+                  value={slaFinalChecksStr}
+                  onChange={(e) => setSlaFinalChecksStr(e.target.value)}
+                />
+              </div>
+            </div>
           </div>
-        </CardHeader>
-        <div className="space-y-4 px-6 pb-6">
-          <p className="text-sm text-text-secondary">
-            Options shown in the &quot;Reason preset&quot; list when you put a job on hold. You can add or remove as many as you need (up to {MAX_JOB_ON_HOLD_PRESETS}).
-            Use the arrows to change display order — add an &quot;Other&quot; line if staff should pick a typed reason.
-          </p>
+        </Card>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Quotes · Bidding SLA</CardTitle>
+              <FixfyHintIcon text={`Target time for the Bidding stage. The list shows a countdown to this limit, then overdue time. Range ${MIN_BIDDING_SLA_HOURS}h–${MAX_BIDDING_SLA_HOURS}h.`} />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">SLA (Hours)</label>
+                <Input
+                  type="number"
+                  min={MIN_BIDDING_SLA_HOURS}
+                  max={MAX_BIDDING_SLA_HOURS}
+                  step={0.5}
+                  value={biddingSlaHoursStr}
+                  onChange={(e) => setBiddingSlaHoursStr(e.target.value)}
+                  className="w-28"
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={!canEditConfig || saving}
+                icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+              >
+                {saving ? "Saving…" : "Save Setup"}
+              </Button>
+            </div>
+          </div>
+        </Card>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <PauseCircle className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Jobs · On Hold Reasons</CardTitle>
+              <FixfyHintIcon text={`Options in the 'Reason preset' list when putting a job on hold. Add or remove up to ${MAX_JOB_ON_HOLD_PRESETS}. Use arrows to reorder.`} />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
           <div className="space-y-2 max-w-xl">
             {onHoldPresets.map((row, idx) => (
               <div key={`on-hold-${idx}`} className="flex items-center gap-2">
@@ -229,7 +436,7 @@ export function SetupTab() {
               }
             >
               <Plus className="h-4 w-4 mr-1.5 inline" />
-              Add reason
+              Add Reason
             </Button>
             <Button
               type="button"
@@ -237,12 +444,9 @@ export function SetupTab() {
               disabled={!canEditConfig || saving}
               icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
             >
-              {saving ? "Saving…" : "Save setup"}
+              {saving ? "Saving…" : "Save Setup"}
             </Button>
           </div>
-          <p className="text-[10px] text-text-tertiary">
-            Blank rows are dropped when you save. If every row is blank, the list falls back to the built-in defaults.
-          </p>
         </div>
       </Card>
 
@@ -250,14 +454,11 @@ export function SetupTab() {
         <CardHeader className="px-6 pt-6">
           <div className="flex items-center gap-2">
             <XCircle className="h-4 w-4 text-text-tertiary" />
-            <CardTitle>Jobs · Office cancellation reasons</CardTitle>
+            <CardTitle>Jobs · Cancellation Reasons</CardTitle>
+            <FixfyHintIcon text="Reasons shown when cancelling a job. Internal id stays fixed (integrations and 'Other' behaviour rely on it). Rename labels to match your team." />
           </div>
         </CardHeader>
         <div className="space-y-4 px-6 pb-6">
-          <p className="text-sm text-text-secondary">
-            Reasons in the dropdown when cancelling a job from the dashboard or bulk-cancel. The internal id stays fixed (integrations and the &quot;Other&quot;
-            behaviour use it) — reorder and rename the labels here to match your team&apos;s wording.
-          </p>
           <div className="space-y-2 max-w-xl">
             {officeCancelPresets.map((row, idx) => (
               <div key={row.id} className="flex items-start gap-2">
@@ -311,11 +512,48 @@ export function SetupTab() {
           >
             {saving ? "Saving…" : "Save setup"}
           </Button>
-          <p className="text-[10px] text-text-tertiary">
-            Saved with the rest of Setup. An empty label on save restores the English default for that id.
-          </p>
         </div>
       </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Integrations · Zendesk</CardTitle>
+            <FixfyHintIcon text="Subdomain used to deep-link to Zendesk tickets from the Zendesk badge popover. Falls back to the server ZENDESK_SUBDOMAIN env when blank." />
+          </div>
+        </CardHeader>
+        <div className="space-y-4 px-6 pb-6">
+          <div className="flex flex-wrap items-end gap-3 max-w-2xl">
+            <div className="flex-1 min-w-[260px]">
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Subdomain
+              </label>
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={zendeskSubdomain}
+                  onChange={(e) => setZendeskSubdomain(e.target.value)}
+                  placeholder="e.g. yourcompany or yourcompany.zendesk.com"
+                  className="flex-1"
+                />
+                <span className="text-[11px] text-fx-mute font-mono">.zendesk.com</span>
+              </div>
+              <p className="mt-1 text-[10px] text-text-tertiary">
+                Accepts plain subdomain, full domain, or full URL — we normalize on save.
+              </p>
+            </div>
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canEditConfig || saving}
+              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            >
+              {saving ? "Saving…" : "Save Setup"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+      </section>
     </div>
   );
 }

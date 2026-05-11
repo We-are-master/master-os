@@ -48,7 +48,7 @@ export default function DashboardLayout({
         <ProfileContext.Provider value={profileState}>
           <AdminConfigProvider>
           <DuplicateConfirmProvider>
-          <div className="min-h-screen bg-surface-secondary">
+          <div className="min-h-screen bg-fx-paper">
             <Sidebar />
             <div
               style={{ marginLeft: collapsed ? 72 : 256 }}

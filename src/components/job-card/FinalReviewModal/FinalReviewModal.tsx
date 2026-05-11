@@ -1,9 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { canSendClientEmailWithPack } from "@/lib/account-final-email-policy";
 import { modalTransition, overlayTransition } from "@/lib/motion";
-import { FinalCompletionDeliverySection } from "./components/FinalCompletionDeliverySection";
 import { FinanceCards } from "./components/FinanceCards";
 import { ForceApproveBlock } from "./components/ForceApproveBlock";
 import { MarginHero } from "./components/MarginHero";
@@ -37,12 +35,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     selfBillReference,
     reports,
     completionDelivery,
-    onCompletionDeliveryChange,
-    includeInvoiceInEmail,
-    onIncludeInvoiceInEmailChange,
-    includeReportInEmail,
-    onIncludeReportInEmailChange,
-    accountEmailPolicy,
     confirmed,
     onConfirmedChange,
     sentToAccounts,
@@ -64,18 +56,12 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     reports.every((r) => r.uploaded) &&
     reports.every((r) => r.approved);
 
-  const canSendEmailPack = canSendClientEmailWithPack(accountEmailPolicy);
-  const emailPackHasContent =
-    (includeReportInEmail && accountEmailPolicy.canIncludeReport) ||
-    (includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice);
-  const deliverChoiceOk =
-    completionDelivery !== null &&
-    (completionDelivery === "stage_only" || (completionDelivery === "email" && canSendEmailPack && emailPackHasContent));
-
+  // Client-communication choice removed from this modal — defaults to internal-only
+  // ("stage_only"). Approval gating now depends only on attestations + steps.
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = deliverChoiceOk && attestationsOk && allStepsComplete && !forceMode && !submitting;
+  const canApprove = attestationsOk && allStepsComplete && !forceMode && !submitting;
   const canForceApprove =
-    deliverChoiceOk && attestationsOk && forceMode && forceReason.trim().length >= 20 && !submitting;
+    attestationsOk && forceMode && forceReason.trim().length >= 20 && !submitting;
 
   return (
     <AnimatePresence>
@@ -155,16 +141,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
               {hourlySlot ? <div className="px-6 pb-[18px]">{hourlySlot}</div> : null}
             </div>
-
-            <FinalCompletionDeliverySection
-              completionDelivery={completionDelivery}
-              onCompletionDeliveryChange={onCompletionDeliveryChange}
-              accountPolicy={accountEmailPolicy}
-              includeInvoice={includeInvoiceInEmail}
-              onIncludeInvoiceChange={onIncludeInvoiceInEmailChange}
-              includeReport={includeReportInEmail}
-              onIncludeReportChange={onIncludeReportInEmailChange}
-            />
 
             <ResponsibilityCheck
               confirmed={confirmed}

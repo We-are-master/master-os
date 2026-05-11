@@ -61,22 +61,24 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full min-h-0 h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden my-auto",
+              "relative w-full min-h-0 h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-xl shadow-modal border border-fx-line overflow-hidden my-auto",
               sizeStyles[size],
               className
             )}
           >
-            <div className="flex shrink-0 items-start justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4 border-b border-border-light">
-              <div className="flex min-w-0 flex-1 items-start gap-2.5 pr-1">
+            <div className="relative flex shrink-0 items-start justify-between gap-3 px-5 py-4 sm:px-6 border-b border-fx-line">
+              {/* Coral accent rail (fx-modal__head::before) */}
+              <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-fx-coral" aria-hidden />
+              <div className="flex min-w-0 flex-1 items-start gap-2.5 pl-1 pr-1">
                 {headerLeading ? (
-                  <span className="mt-0.5 shrink-0 text-[#020040]" aria-hidden>
+                  <span className="mt-0.5 shrink-0 text-fx-navy" aria-hidden>
                     {headerLeading}
                   </span>
                 ) : null}
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-base font-semibold text-text-primary leading-snug">{title}</h2>
+                  <h2 className="text-[16px] font-semibold text-text-primary leading-tight tracking-[-0.01em]">{title}</h2>
                   {subtitle && (
-                    <p className="mt-0.5 text-xs leading-snug text-text-tertiary break-words line-clamp-3" title={subtitle}>
+                    <p className="mt-1 text-xs leading-snug text-fx-mute break-words line-clamp-3" title={subtitle}>
                       {subtitle}
                     </p>
                   )}
@@ -85,7 +87,8 @@ export function Modal({
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
+                className="h-[30px] w-[30px] rounded-md flex items-center justify-center text-fx-mute hover:bg-fx-paper hover:text-text-primary transition-colors"
+                aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>

@@ -44,6 +44,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# claude code local artifacts (per-developer)
+.claude/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

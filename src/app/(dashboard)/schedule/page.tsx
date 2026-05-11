@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
+import { BeaconHeader, type BeaconView } from "@/components/beacon/beacon-header";
+import { BeaconKanban } from "@/components/beacon/beacon-kanban";
+import { BeaconList } from "@/components/beacon/beacon-list";
+import {
+  type BeaconFilters,
+  DEFAULT_BEACON_FILTERS,
+  getDateRangeForMode,
+} from "@/components/beacon/beacon-filters";
 import {
   ScheduleLiveMap,
   LIVE_MAP_TOOLBAR_BTN_CLASS,
@@ -40,9 +47,6 @@ import type { BadgeVariant } from "@/components/ui/badge";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
 const LIVE_MAP_INACTIVE_MINUTES = 15;
-
-const LIVE_MAP_INFO_TOOLTIP =
-  "Partner locations and jobs on the map. Calendar views live under Operations → Schedule.";
 
 const LIVE_MAP_JOB_LAYER_HINT_BASE =
   "Map area / trade filters do not narrow job pins — overlay uses all jobs overlapping the selected date layer.";
@@ -84,8 +88,40 @@ function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
 }
 
 export default function SchedulePage() {
+  const [view, setView] = useState<BeaconView>("kanban");
+  const [beaconFilters, setBeaconFilters] = useState<BeaconFilters>(DEFAULT_BEACON_FILTERS);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Live count scoped to the date filter the user picked (Today/Week/Month/QTD/All).
+   *  Live = unassigned + scheduled + in_progress; late is a warning label, not a
+   *  live state on its own. Mirrors the Pulse "Live Now" semantic. */
+  const [realTimeLiveCount, setRealTimeLiveCount] = useState(0);
+  const loadRealTimeLiveCount = useCallback(async () => {
+    const supabase = getSupabase();
+    let query = supabase
+      .from("jobs")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["unassigned", "scheduled", "in_progress"])
+      .is("deleted_at", null);
+    const range = getDateRangeForMode(beaconFilters);
+    if (range) {
+      query = query
+        .gte("scheduled_start_at", range.fromIso)
+        .lte("scheduled_start_at", range.toIso);
+    }
+    const { count } = await query;
+    setRealTimeLiveCount(count ?? 0);
+  }, [beaconFilters]);
+  useEffect(() => {
+    void loadRealTimeLiveCount();
+  }, [loadRealTimeLiveCount]);
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") void loadRealTimeLiveCount();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [loadRealTimeLiveCount]);
   const loadJobs = useCallback(async () => {
     setLoading(true);
     try {
@@ -398,24 +434,39 @@ export default function SchedulePage() {
 
   const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
   const liveInactiveCount = useMemo(() => liveMapPoints.filter((p) => p.inactive).length, [liveMapPoints]);
+  // Mirrors Pulse "Live Now": real-time count, full status set
+  // (in_progress + late + final_check), no period filter.
+  const beaconLiveCount = realTimeLiveCount;
 
   return (
-    <PageTransition className="flex min-h-0 flex-col gap-2 overflow-hidden sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]">
-      <PageHeader
-        className="shrink-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between"
-        title="Live View"
-        infoTooltip={LIVE_MAP_INFO_TOOLTIP}
+    <PageTransition
+      className={cn(
+        "flex flex-col min-w-0 gap-4",
+        view === "map" &&
+          "min-h-0 overflow-hidden gap-2 sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]",
+      )}
+    >
+      <BeaconHeader
+        view={view}
+        onViewChange={setView}
+        liveCount={beaconLiveCount}
+        filters={beaconFilters}
+        onFiltersChange={setBeaconFilters}
       />
 
-      {loading && jobs.length === 0 ? (
+      {view === "list" && <BeaconList filters={beaconFilters} />}
+      {view === "kanban" && <BeaconKanban filters={beaconFilters} />}
+
+      {view === "map" && loading && jobs.length === 0 ? (
         <p className="shrink-0 text-xs text-text-tertiary">Loading jobs for map overlays…</p>
       ) : null}
 
+      {view === "map" && (
       <motion.div
         variants={fadeInUp}
         initial="hidden"
         animate="visible"
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#E4E4E8]"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-fx-line"
       >
         <ScheduleLiveMap
           className="flex min-h-0 flex-1 flex-col"
@@ -607,6 +658,7 @@ export default function SchedulePage() {
           }
         />
       </motion.div>
+      )}
     </PageTransition>
   );
 }

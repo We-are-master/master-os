@@ -102,8 +102,8 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const Icon = iconMap[item.icon] || LayoutGrid;
   const LogoComponent = navLogoComponents[item.href];
   const iconClassName = cn(
-    "h-[18px] w-[18px] shrink-0 transition-colors",
-    isActive ? "text-primary" : "text-sidebar-text-muted group-hover:text-stone-300"
+    "h-4 w-4 shrink-0 transition-colors",
+    isActive ? "text-fx-coral opacity-100" : "text-white/60 opacity-85 group-hover:text-white"
   );
 
   return (
@@ -112,17 +112,17 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
         whileHover={{ x: 2 }}
         whileTap={{ scale: 0.98 }}
         className={cn(
-          "group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+          "group relative flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13.5px] font-medium transition-colors duration-200",
           collapsed && "justify-center px-2",
           isActive
-            ? "text-white bg-white/10"
-            : "text-sidebar-text hover:text-white hover:bg-white/5"
+            ? "text-white bg-fx-coral/10"
+            : "text-white/60 hover:text-white/90 hover:bg-white/[0.04]"
         )}
       >
         {isActive && (
           <motion.div
             layoutId="sidebar-active"
-            className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full"
+            className="absolute -left-3 top-1.5 bottom-1.5 w-[3px] bg-fx-coral rounded-r"
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           />
         )}
@@ -147,7 +147,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
           <motion.span
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="ml-auto text-[10px] font-bold bg-primary/20 text-primary px-1.5 py-0.5 rounded-md"
+            className="ml-auto fx-kk text-fx-coral bg-fx-coral/15 px-1.5 py-0.5 rounded-sm"
           >
             {item.badge}
           </motion.span>
@@ -184,8 +184,8 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
         />
       ) : (
         <>
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-            <Layers className="h-4 w-4 text-white" />
+          <div className="h-6 w-6 rounded-md bg-fx-coral flex items-center justify-center shrink-0 font-mono font-semibold text-[13px] text-white leading-none">
+            f
           </div>
           <AnimatePresence>
             {!collapsed && (
@@ -195,7 +195,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
                 exit={{ opacity: 0, width: 0 }}
                 className="overflow-hidden"
               >
-                <span className="text-base font-bold text-white tracking-tight whitespace-nowrap">
+                <span className="text-[15px] font-semibold text-white tracking-[-0.01em] whitespace-nowrap">
                   {title}
                 </span>
               </motion.div>
@@ -270,9 +270,9 @@ export function Sidebar() {
       initial={false}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ type: "spring", damping: 25, stiffness: 300 }}
-      className="fixed left-0 top-0 bottom-0 z-30 bg-sidebar flex flex-col border-r border-white/5"
+      className="fixed left-0 top-0 bottom-0 z-30 bg-fx-navy-2 flex flex-col border-r border-white/[0.04]"
     >
-      <div className={cn("flex items-center h-16 px-4 border-b border-white/5", collapsed && "justify-center px-2")}>
+      <div className={cn("flex items-center h-14 px-5 pt-1", collapsed && "justify-center px-2")}>
         <SidebarBrand collapsed={collapsed} />
       </div>
 
@@ -292,7 +292,7 @@ export function Sidebar() {
                       [group.label]: !prev[group.label],
                     }))
                   }
-                  className="group mb-2 flex w-full items-center justify-between px-3 text-[10px] font-bold uppercase tracking-[0.08em] text-sidebar-text-muted transition-colors hover:text-sidebar-text"
+                  className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/60"
                 >
                   <span>{group.label}</span>
                   {collapsedSections[group.label] ? (
