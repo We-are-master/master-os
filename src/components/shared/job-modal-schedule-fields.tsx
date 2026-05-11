@@ -5,7 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import { cn } from "@/lib/utils";
-import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
+import {
+  ARRIVAL_SLOTS,
+  type ArrivalSlotId,
+  matchArrivalSlot,
+  nearestArrivalSlot,
+} from "@/lib/job-arrival-window";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import type { RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { BYDAY_LABELS, BYDAY_ORDER, seriesPreview } from "@/lib/job-recurrence";
@@ -79,22 +84,34 @@ export function JobModalScheduleFields({
 
   const setKind = (k: JobKind) => onChange("job_kind", k);
 
+  /** Resolve the current (arrival_from, mins) pair to the active slot id.
+   * Exact match preferred; legacy / non-aligned values snap to the nearest. */
+  const activeSlotId: ArrivalSlotId =
+    matchArrivalSlot(arrivalFrom, arrivalWindowMins) ?? nearestArrivalSlot(arrivalFrom, arrivalWindowMins);
+
+  const pickSlot = (id: ArrivalSlotId) => {
+    const slot = ARRIVAL_SLOTS.find((s) => s.id === id);
+    if (!slot) return;
+    onChange("arrival_from", slot.from);
+    onChange("arrival_window_mins", String(slot.mins));
+  };
+
   return (
     <>
-      {/* Primary toggle: Single day / Multiple visits */}
+      {/* Primary toggle: One-Off / Recurring */}
       <div className="flex flex-wrap items-center gap-1.5">
         <KindTab
-          label="Single day"
+          label="One-Off"
           description="One day only"
           active={isOneOff}
           onClick={() => setKind("one_off")}
         />
         <KindTab
-          label="Multiple visits"
+          label="Recurring"
           description="Spans days or repeats"
           active={isMultiple}
           onClick={() => {
-            // First click on Multiple → default to Spans days.
+            // First click on Recurring → default to Spans days.
             if (!isMultiple) setKind("multi_day");
           }}
         />
@@ -134,22 +151,36 @@ export function JobModalScheduleFields({
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
-            <TimeSelect
-              label="Arrival time (from)"
-              value={arrivalFrom}
-              onChange={(v) => onChange("arrival_from", v)}
-              className={requiredFieldClassName}
-            />
-            <Select
-              label="Arrival window length"
-              value={arrivalWindowMins}
-              onChange={(e) => onChange("arrival_window_mins", e.target.value)}
-              options={[...ARRIVAL_WINDOW_OPTIONS]}
-            />
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Arrival time *
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {ARRIVAL_SLOTS.map((slot) => {
+                  const active = activeSlotId === slot.id;
+                  return (
+                    <button
+                      key={slot.id}
+                      type="button"
+                      onClick={() => pickSlot(slot.id)}
+                      aria-pressed={active}
+                      className={cn(
+                        "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        active
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
+                      )}
+                    >
+                      {slot.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
           <p className="text-[10px] text-text-tertiary -mt-1">
-            Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time; late is still based on window end.
+            Clients and partners see this slot as the arrival window. Late status is still based on the window end.
           </p>
         </>
       ) : isMultiDay ? (
