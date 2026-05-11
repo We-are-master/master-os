@@ -35,9 +35,10 @@ export async function GET(req: NextRequest) {
   // Three token formats land on the same endpoint:
   //   - customer quote link  → carries quoteId only
   //   - partner bid link     → carries quoteId + partnerId, kind="bid"
-  //   - partner report link  → carries quoteId + partnerId, kind="report"
+  //   - partner report link  → carries jobId   + partnerId, kind="report"
   // We surface `tokenKind` so the page can pick the right UI.
   let quoteId: string | null = null;
+  let tokenJobId: string | null = null;
   let tokenPartnerId: string | null = null;
   let tokenKind: "customer" | "partner_bid" | "partner_report" = "customer";
 
@@ -49,29 +50,92 @@ export async function GET(req: NextRequest) {
   } else {
     const reportMatch = verifyPartnerReportToken(token);
     if (reportMatch) {
-      quoteId = reportMatch.quoteId;
+      tokenJobId = reportMatch.jobId;
       tokenPartnerId = reportMatch.partnerId;
       tokenKind = "partner_report";
     } else {
       quoteId = verifyQuoteResponseToken(token);
     }
   }
-  if (!quoteId) {
+  if (!quoteId && !tokenJobId) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
   }
 
   const supabase = getServiceSupabase();
 
-  const { data: quote, error: quoteError } = await supabase
-    .from("quotes")
-    .select(
-      "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type",
-    )
-    .eq("id", quoteId)
-    .single();
+  // For partner_report tokens, the token references a job directly (the job
+  // may or may not have a parent quote). Resolve the job first, then pull
+  // the optional parent quote for display context.
+  if (!quoteId && tokenJobId) {
+    const { data: jobByToken } = await supabase
+      .from("jobs")
+      .select("quote_id")
+      .eq("id", tokenJobId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    quoteId = (jobByToken?.quote_id as string | null | undefined) ?? null;
+  }
 
-  if (quoteError || !quote) {
-    return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+  // For partner_report jobs without a parent quote, fall back to job fields
+  // so the page still has display context. Build a shaped "quote-ish" object.
+  let quote:
+    | {
+        id: string;
+        reference: string;
+        title: string | null;
+        client_name: string | null;
+        property_address: string | null;
+        scope: string | null;
+        total_value: number | null;
+        deposit_required: number | null;
+        start_date_option_1: string | null;
+        start_date_option_2: string | null;
+        status: string;
+        service_type: string | null;
+      }
+    | null = null;
+
+  if (quoteId) {
+    const { data: quoteRow, error: quoteError } = await supabase
+      .from("quotes")
+      .select(
+        "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type",
+      )
+      .eq("id", quoteId)
+      .single();
+    if (!quoteError && quoteRow) {
+      quote = quoteRow as unknown as NonNullable<typeof quote>;
+    }
+  }
+
+  // Synthetic display for jobs without a parent quote (partner_report only).
+  if (!quote && tokenKind === "partner_report" && tokenJobId) {
+    const { data: jobRow } = await supabase
+      .from("jobs")
+      .select("id, reference, title, client_name, property_address, scope, service_type, status")
+      .eq("id", tokenJobId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (jobRow) {
+      quote = {
+        id: jobRow.id as string,
+        reference: jobRow.reference as string,
+        title: (jobRow.title as string | null) ?? null,
+        client_name: (jobRow.client_name as string | null) ?? null,
+        property_address: (jobRow.property_address as string | null) ?? null,
+        scope: (jobRow.scope as string | null) ?? null,
+        total_value: null,
+        deposit_required: null,
+        start_date_option_1: null,
+        start_date_option_2: null,
+        status: "converted_to_job",
+        service_type: (jobRow.service_type as string | null) ?? null,
+      };
+    }
+  }
+
+  if (!quote) {
+    return NextResponse.json({ error: "Quote or job not found" }, { status: 404 });
   }
 
   // When the quote was already converted to a job, surface the linked job's
@@ -122,34 +186,24 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  if (quote.status === "converted_to_job") {
+  if (tokenKind === "partner_report" && tokenJobId) {
     const { data: jobRow } = await supabase
       .from("jobs")
       .select("id, reference, service_type, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
-      .eq("quote_id", quote.id)
+      .eq("id", tokenJobId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
       .maybeSingle();
-    if (jobRow) {
-      // Only expose linkedJob to partner-report tokens whose partnerId matches
-      // the current job partner. Customer-token holders never see the report form.
-      const tokenMatchesAssignedPartner =
-        tokenKind === "partner_report" &&
-        !!jobRow.partner_id &&
-        jobRow.partner_id === tokenPartnerId;
-      if (tokenMatchesAssignedPartner) {
-        linkedJob = {
-          id:                    jobRow.id,
-          reference:             jobRow.reference,
-          serviceType:           jobRow.service_type ?? quote.service_type ?? null,
-          status:                jobRow.status,
-          title:                 jobRow.title ?? null,
-          propertyAddress:       jobRow.property_address ?? null,
-          startReportSubmitted:  !!jobRow.start_report_submitted,
-          finalReportSubmitted:  !!jobRow.final_report_submitted,
-        };
-      }
+    if (jobRow && jobRow.partner_id === tokenPartnerId) {
+      linkedJob = {
+        id:                    jobRow.id,
+        reference:             jobRow.reference,
+        serviceType:           (jobRow.service_type as string | null) ?? quote.service_type ?? null,
+        status:                jobRow.status as string,
+        title:                 (jobRow.title as string | null) ?? null,
+        propertyAddress:       (jobRow.property_address as string | null) ?? null,
+        startReportSubmitted:  !!jobRow.start_report_submitted,
+        finalReportSubmitted:  !!jobRow.final_report_submitted,
+      };
     }
   }
 

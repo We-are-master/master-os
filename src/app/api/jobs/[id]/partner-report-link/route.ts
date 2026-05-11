@@ -44,19 +44,13 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const admin = createServiceClient();
   const { data: job, error } = await admin
     .from("jobs")
-    .select("id, reference, quote_id, partner_id, partners ( contact_name, company_name )")
+    .select("id, reference, partner_id, partners ( contact_name, company_name )")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
 
   if (error || !job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
-  if (!job.quote_id) {
-    return NextResponse.json(
-      { error: "Job has no linked quote — report link is only available for quote-converted jobs." },
-      { status: 400 },
-    );
   }
   if (!job.partner_id) {
     return NextResponse.json(
@@ -65,7 +59,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     );
   }
 
-  const token = createPartnerReportToken(String(job.quote_id), String(job.partner_id));
+  const token = createPartnerReportToken(String(job.id), String(job.partner_id));
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
   const url = `${base}/quote/respond?token=${encodeURIComponent(token)}`;
 

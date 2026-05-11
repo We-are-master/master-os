@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { quoteId, partnerId: tokenPartnerId } = verified;
+  const { jobId: tokenJobId, partnerId: tokenPartnerId } = verified;
 
   const template = String(form.get("template") ?? "").trim();
   if (!VALID_TEMPLATES.has(template)) {
@@ -97,18 +97,16 @@ export async function POST(req: NextRequest) {
 
   const supabase = getServiceSupabase();
 
-  // Resolve job linked to this quote.
+  // Resolve job from the token directly — the token is bound to job.id.
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted")
-    .eq("quote_id", quoteId)
+    .eq("id", tokenJobId)
     .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   if (jobErr || !job) {
     return NextResponse.json(
-      { error: "No active job linked to this quote yet." },
+      { error: "Job not found." },
       { status: 404 },
     );
   }

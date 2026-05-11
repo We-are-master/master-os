@@ -60,15 +60,20 @@ export function verifyQuoteResponseToken(token: string): string | null {
 }
 
 // ─── Partner-scoped tokens (report submission + bid) ─────────────────────────
-// Both bind quoteId + partnerId so a leaked link can only act on behalf of
-// that exact partner. A `kind` prefix distinguishes the two so a bid token
-// can't be reused as a report token (and vice-versa).
+// Both bind a primary entity id + partnerId so a leaked link can only act on
+// behalf of that exact partner. A `kind` prefix distinguishes the two so a
+// bid token can't be reused as a report token (and vice-versa).
+//
+// Bid token  → carries (quoteId, partnerId): bids are submitted on a quote
+// Report token → carries (jobId, partnerId): work reports are submitted on a job.
+//   Earlier prototype tied this to quoteId — switched to jobId so jobs created
+//   without a parent quote can still produce a report link.
 
 type PartnerTokenKind = "report" | "bid";
 
-function makePartnerToken(kind: PartnerTokenKind, quoteId: string, partnerId: string): string {
+function makePartnerToken(kind: PartnerTokenKind, entityId: string, partnerId: string): string {
   const secret = getSecret();
-  const joined = `${kind}:${quoteId}:${partnerId}`;
+  const joined = `${kind}:${entityId}:${partnerId}`;
   const payload = Buffer.from(joined, "utf8").toString("base64url");
   const sig = createHmac("sha256", secret).update(joined).digest("base64url");
   return `${payload}${TOKEN_SEP}${sig}`;
@@ -77,7 +82,7 @@ function makePartnerToken(kind: PartnerTokenKind, quoteId: string, partnerId: st
 function verifyPartnerToken(
   token: string,
   expectedKind: PartnerTokenKind,
-): { quoteId: string; partnerId: string } | null {
+): { entityId: string; partnerId: string } | null {
   if (!token || typeof token !== "string") return null;
   const i = token.indexOf(TOKEN_SEP);
   if (i <= 0) return null;
@@ -91,49 +96,26 @@ function verifyPartnerToken(
   }
   const parts = joined.split(":");
   if (parts.length < 3) return null;
-  const [kind, quoteId, partnerId] = parts;
-  if (kind !== expectedKind || !quoteId || !partnerId) return null;
+  const [kind, entityId, partnerId] = parts;
+  if (kind !== expectedKind || !entityId || !partnerId) return null;
   const secret = getSecret();
   const expected = createHmac("sha256", secret).update(joined).digest("base64url");
   if (sig !== expected) return null;
-  return { quoteId, partnerId };
+  return { entityId, partnerId };
 }
 
-/** Backwards-compatible verifier that accepts the pre-`kind:` two-part
- * partner-report token alongside the new prefixed form. New code should
- * prefer createPartnerReportToken (which now emits the prefixed form). */
-function verifyLegacyPartnerToken(token: string): { quoteId: string; partnerId: string } | null {
-  if (!token || typeof token !== "string") return null;
-  const i = token.indexOf(TOKEN_SEP);
-  if (i <= 0) return null;
-  const payload = token.slice(0, i);
-  const sig = token.slice(i + 1);
-  let joined: string;
-  try {
-    joined = Buffer.from(payload, "base64url").toString("utf8");
-  } catch {
-    return null;
-  }
-  const parts = joined.split(":");
-  if (parts.length !== 2) return null;
-  const [quoteId, partnerId] = parts;
-  if (!quoteId || !partnerId) return null;
-  const secret = getSecret();
-  const expected = createHmac("sha256", secret).update(joined).digest("base64url");
-  if (sig !== expected) return null;
-  return { quoteId, partnerId };
+export function createPartnerReportToken(jobId: string, partnerId: string): string {
+  return makePartnerToken("report", jobId, partnerId);
 }
-
-export function createPartnerReportToken(quoteId: string, partnerId: string): string {
-  return makePartnerToken("report", quoteId, partnerId);
-}
-export function verifyPartnerReportToken(token: string): { quoteId: string; partnerId: string } | null {
-  return verifyPartnerToken(token, "report") ?? verifyLegacyPartnerToken(token);
+export function verifyPartnerReportToken(token: string): { jobId: string; partnerId: string } | null {
+  const v = verifyPartnerToken(token, "report");
+  return v ? { jobId: v.entityId, partnerId: v.partnerId } : null;
 }
 
 export function createPartnerBidToken(quoteId: string, partnerId: string): string {
   return makePartnerToken("bid", quoteId, partnerId);
 }
 export function verifyPartnerBidToken(token: string): { quoteId: string; partnerId: string } | null {
-  return verifyPartnerToken(token, "bid");
+  const v = verifyPartnerToken(token, "bid");
+  return v ? { quoteId: v.entityId, partnerId: v.partnerId } : null;
 }
