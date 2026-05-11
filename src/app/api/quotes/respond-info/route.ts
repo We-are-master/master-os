@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { verifyPartnerReportToken, verifyQuoteResponseToken } from "@/lib/quote-response-token";
+import {
+  verifyPartnerBidToken,
+  verifyPartnerReportToken,
+  verifyQuoteResponseToken,
+} from "@/lib/quote-response-token";
 
 function getServiceSupabase() {
   return createClient(
@@ -28,21 +32,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Token is required" }, { status: 400 });
   }
 
-  // Two token formats land on the same endpoint:
-  //   - customer quote link → carries quoteId only
-  //   - partner report link → carries quoteId + partnerId
+  // Three token formats land on the same endpoint:
+  //   - customer quote link  → carries quoteId only
+  //   - partner bid link     → carries quoteId + partnerId, kind="bid"
+  //   - partner report link  → carries quoteId + partnerId, kind="report"
   // We surface `tokenKind` so the page can pick the right UI.
   let quoteId: string | null = null;
   let tokenPartnerId: string | null = null;
-  let tokenKind: "customer" | "partner_report" = "customer";
+  let tokenKind: "customer" | "partner_bid" | "partner_report" = "customer";
 
-  const partnerMatch = verifyPartnerReportToken(token);
-  if (partnerMatch) {
-    quoteId = partnerMatch.quoteId;
-    tokenPartnerId = partnerMatch.partnerId;
-    tokenKind = "partner_report";
+  const bidMatch = verifyPartnerBidToken(token);
+  if (bidMatch) {
+    quoteId = bidMatch.quoteId;
+    tokenPartnerId = bidMatch.partnerId;
+    tokenKind = "partner_bid";
   } else {
-    quoteId = verifyQuoteResponseToken(token);
+    const reportMatch = verifyPartnerReportToken(token);
+    if (reportMatch) {
+      quoteId = reportMatch.quoteId;
+      tokenPartnerId = reportMatch.partnerId;
+      tokenKind = "partner_report";
+    } else {
+      quoteId = verifyQuoteResponseToken(token);
+    }
   }
   if (!quoteId) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
@@ -75,6 +87,40 @@ export async function GET(req: NextRequest) {
     startReportSubmitted: boolean;
     finalReportSubmitted: boolean;
   } | null = null;
+
+  // Bid context: when this is a partner-bid token AND the quote is still in
+  // bidding state, surface the partner display name + any existing bid the
+  // partner has already submitted (so the form preloads / shows "you've
+  // already bid X, update?").
+  let bidContext:
+    | { partnerName: string | null; existingBid: { amount: number; jobType: "fixed" | "hourly"; notes: string | null } | null }
+    | null = null;
+
+  if (tokenKind === "partner_bid" && tokenPartnerId && quote.status === "bidding") {
+    const { data: partner } = await supabase
+      .from("partners")
+      .select("contact_name, company_name")
+      .eq("id", tokenPartnerId)
+      .maybeSingle();
+    const partnerName =
+      (partner?.company_name?.trim() || partner?.contact_name?.trim()) ?? null;
+    const { data: existing } = await supabase
+      .from("quote_bids")
+      .select("bid_amount, job_type, notes")
+      .eq("quote_id", quote.id)
+      .eq("partner_id", tokenPartnerId)
+      .maybeSingle();
+    bidContext = {
+      partnerName,
+      existingBid: existing
+        ? {
+            amount:  Number(existing.bid_amount) || 0,
+            jobType: (existing.job_type as "fixed" | "hourly") ?? "fixed",
+            notes:   (existing.notes as string | null) ?? null,
+          }
+        : null,
+    };
+  }
 
   if (quote.status === "converted_to_job") {
     const { data: jobRow } = await supabase
@@ -137,5 +183,6 @@ export async function GET(req: NextRequest) {
     lineItems,
     tokenKind,
     linkedJob,
+    bidContext,
   });
 }

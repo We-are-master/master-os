@@ -59,30 +59,25 @@ export function verifyQuoteResponseToken(token: string): string | null {
   return quoteId;
 }
 
-// ─── Partner-scoped report token ─────────────────────────────────────────────
-// Used for the work-report submission link sent to the specific partner
-// assigned to a job. The token binds quoteId + partnerId so a leaked link
-// can only post a report for that exact partner — if the partner is
-// reassigned, older links stop working.
+// ─── Partner-scoped tokens (report submission + bid) ─────────────────────────
+// Both bind quoteId + partnerId so a leaked link can only act on behalf of
+// that exact partner. A `kind` prefix distinguishes the two so a bid token
+// can't be reused as a report token (and vice-versa).
 
-/**
- * Creates a signed token for the partner work-report submission link.
- * Format: base64(quoteId:partnerId).hmac(quoteId:partnerId)
- */
-export function createPartnerReportToken(quoteId: string, partnerId: string): string {
+type PartnerTokenKind = "report" | "bid";
+
+function makePartnerToken(kind: PartnerTokenKind, quoteId: string, partnerId: string): string {
   const secret = getSecret();
-  const joined = `${quoteId}:${partnerId}`;
+  const joined = `${kind}:${quoteId}:${partnerId}`;
   const payload = Buffer.from(joined, "utf8").toString("base64url");
   const sig = createHmac("sha256", secret).update(joined).digest("base64url");
   return `${payload}${TOKEN_SEP}${sig}`;
 }
 
-/**
- * Verifies a partner-report token and returns {quoteId, partnerId}, or null.
- * Distinct from verifyQuoteResponseToken: this token carries TWO ids; callers
- * must pick the right verifier based on which surface produced the link.
- */
-export function verifyPartnerReportToken(token: string): { quoteId: string; partnerId: string } | null {
+function verifyPartnerToken(
+  token: string,
+  expectedKind: PartnerTokenKind,
+): { quoteId: string; partnerId: string } | null {
   if (!token || typeof token !== "string") return null;
   const i = token.indexOf(TOKEN_SEP);
   if (i <= 0) return null;
@@ -94,13 +89,51 @@ export function verifyPartnerReportToken(token: string): { quoteId: string; part
   } catch {
     return null;
   }
-  const sep = joined.indexOf(":");
-  if (sep <= 0) return null;
+  const parts = joined.split(":");
+  if (parts.length < 3) return null;
+  const [kind, quoteId, partnerId] = parts;
+  if (kind !== expectedKind || !quoteId || !partnerId) return null;
   const secret = getSecret();
   const expected = createHmac("sha256", secret).update(joined).digest("base64url");
   if (sig !== expected) return null;
-  const quoteId = joined.slice(0, sep);
-  const partnerId = joined.slice(sep + 1);
-  if (!quoteId || !partnerId) return null;
   return { quoteId, partnerId };
+}
+
+/** Backwards-compatible verifier that accepts the pre-`kind:` two-part
+ * partner-report token alongside the new prefixed form. New code should
+ * prefer createPartnerReportToken (which now emits the prefixed form). */
+function verifyLegacyPartnerToken(token: string): { quoteId: string; partnerId: string } | null {
+  if (!token || typeof token !== "string") return null;
+  const i = token.indexOf(TOKEN_SEP);
+  if (i <= 0) return null;
+  const payload = token.slice(0, i);
+  const sig = token.slice(i + 1);
+  let joined: string;
+  try {
+    joined = Buffer.from(payload, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  const parts = joined.split(":");
+  if (parts.length !== 2) return null;
+  const [quoteId, partnerId] = parts;
+  if (!quoteId || !partnerId) return null;
+  const secret = getSecret();
+  const expected = createHmac("sha256", secret).update(joined).digest("base64url");
+  if (sig !== expected) return null;
+  return { quoteId, partnerId };
+}
+
+export function createPartnerReportToken(quoteId: string, partnerId: string): string {
+  return makePartnerToken("report", quoteId, partnerId);
+}
+export function verifyPartnerReportToken(token: string): { quoteId: string; partnerId: string } | null {
+  return verifyPartnerToken(token, "report") ?? verifyLegacyPartnerToken(token);
+}
+
+export function createPartnerBidToken(quoteId: string, partnerId: string): string {
+  return makePartnerToken("bid", quoteId, partnerId);
+}
+export function verifyPartnerBidToken(token: string): { quoteId: string; partnerId: string } | null {
+  return verifyPartnerToken(token, "bid");
 }
