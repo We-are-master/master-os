@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
+import { verifyPartnerReportToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -62,8 +62,14 @@ export async function POST(req: NextRequest) {
 
   const token = String(form.get("token") ?? "").trim();
   if (!token) return NextResponse.json({ error: "Token is required." }, { status: 400 });
-  const quoteId = verifyQuoteResponseToken(token);
-  if (!quoteId) return NextResponse.json({ error: "Invalid or expired link." }, { status: 400 });
+  const verified = verifyPartnerReportToken(token);
+  if (!verified) {
+    return NextResponse.json(
+      { error: "Invalid or expired report link. Reports must be submitted from the partner-specific link." },
+      { status: 400 },
+    );
+  }
+  const { quoteId, partnerId: tokenPartnerId } = verified;
 
   const template = String(form.get("template") ?? "").trim();
   if (!VALID_TEMPLATES.has(template)) {
@@ -94,7 +100,7 @@ export async function POST(req: NextRequest) {
   // Resolve job linked to this quote.
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, status, start_report_submitted, final_report_submitted")
+    .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted")
     .eq("quote_id", quoteId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
@@ -106,6 +112,22 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
   }
+
+  // Lock to the assigned partner: token must match the job's current
+  // partner_id. If the partner was reassigned, older links stop working.
+  if (!job.partner_id) {
+    return NextResponse.json(
+      { error: "This job has no partner assigned. Ask the office to assign a partner first." },
+      { status: 409 },
+    );
+  }
+  if (job.partner_id !== tokenPartnerId) {
+    return NextResponse.json(
+      { error: "This report link is for a different partner. Ask the office for an updated link." },
+      { status: 403 },
+    );
+  }
+
   if (job.start_report_submitted && job.final_report_submitted) {
     return NextResponse.json(
       { error: "A report has already been submitted for this job." },

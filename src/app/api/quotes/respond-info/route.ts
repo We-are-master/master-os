@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
+import { verifyPartnerReportToken, verifyQuoteResponseToken } from "@/lib/quote-response-token";
 
 function getServiceSupabase() {
   return createClient(
@@ -28,7 +28,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Token is required" }, { status: 400 });
   }
 
-  const quoteId = verifyQuoteResponseToken(token);
+  // Two token formats land on the same endpoint:
+  //   - customer quote link → carries quoteId only
+  //   - partner report link → carries quoteId + partnerId
+  // We surface `tokenKind` so the page can pick the right UI.
+  let quoteId: string | null = null;
+  let tokenPartnerId: string | null = null;
+  let tokenKind: "customer" | "partner_report" = "customer";
+
+  const partnerMatch = verifyPartnerReportToken(token);
+  if (partnerMatch) {
+    quoteId = partnerMatch.quoteId;
+    tokenPartnerId = partnerMatch.partnerId;
+    tokenKind = "partner_report";
+  } else {
+    quoteId = verifyQuoteResponseToken(token);
+  }
   if (!quoteId) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
   }
@@ -64,23 +79,31 @@ export async function GET(req: NextRequest) {
   if (quote.status === "converted_to_job") {
     const { data: jobRow } = await supabase
       .from("jobs")
-      .select("id, reference, service_type, status, title, property_address, start_report_submitted, final_report_submitted")
+      .select("id, reference, service_type, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
       .eq("quote_id", quote.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     if (jobRow) {
-      linkedJob = {
-        id:                    jobRow.id,
-        reference:             jobRow.reference,
-        serviceType:           jobRow.service_type ?? quote.service_type ?? null,
-        status:                jobRow.status,
-        title:                 jobRow.title ?? null,
-        propertyAddress:       jobRow.property_address ?? null,
-        startReportSubmitted:  !!jobRow.start_report_submitted,
-        finalReportSubmitted:  !!jobRow.final_report_submitted,
-      };
+      // Only expose linkedJob to partner-report tokens whose partnerId matches
+      // the current job partner. Customer-token holders never see the report form.
+      const tokenMatchesAssignedPartner =
+        tokenKind === "partner_report" &&
+        !!jobRow.partner_id &&
+        jobRow.partner_id === tokenPartnerId;
+      if (tokenMatchesAssignedPartner) {
+        linkedJob = {
+          id:                    jobRow.id,
+          reference:             jobRow.reference,
+          serviceType:           jobRow.service_type ?? quote.service_type ?? null,
+          status:                jobRow.status,
+          title:                 jobRow.title ?? null,
+          propertyAddress:       jobRow.property_address ?? null,
+          startReportSubmitted:  !!jobRow.start_report_submitted,
+          finalReportSubmitted:  !!jobRow.final_report_submitted,
+        };
+      }
     }
   }
 
@@ -112,6 +135,7 @@ export async function GET(req: NextRequest) {
     startDateOption2: fmtDate(quote.start_date_option_2 ?? undefined),
     status: quote.status,
     lineItems,
+    tokenKind,
     linkedJob,
   });
 }

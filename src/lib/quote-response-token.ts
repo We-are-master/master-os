@@ -58,3 +58,49 @@ export function verifyQuoteResponseToken(token: string): string | null {
   if (sig !== expected) return null;
   return quoteId;
 }
+
+// ─── Partner-scoped report token ─────────────────────────────────────────────
+// Used for the work-report submission link sent to the specific partner
+// assigned to a job. The token binds quoteId + partnerId so a leaked link
+// can only post a report for that exact partner — if the partner is
+// reassigned, older links stop working.
+
+/**
+ * Creates a signed token for the partner work-report submission link.
+ * Format: base64(quoteId:partnerId).hmac(quoteId:partnerId)
+ */
+export function createPartnerReportToken(quoteId: string, partnerId: string): string {
+  const secret = getSecret();
+  const joined = `${quoteId}:${partnerId}`;
+  const payload = Buffer.from(joined, "utf8").toString("base64url");
+  const sig = createHmac("sha256", secret).update(joined).digest("base64url");
+  return `${payload}${TOKEN_SEP}${sig}`;
+}
+
+/**
+ * Verifies a partner-report token and returns {quoteId, partnerId}, or null.
+ * Distinct from verifyQuoteResponseToken: this token carries TWO ids; callers
+ * must pick the right verifier based on which surface produced the link.
+ */
+export function verifyPartnerReportToken(token: string): { quoteId: string; partnerId: string } | null {
+  if (!token || typeof token !== "string") return null;
+  const i = token.indexOf(TOKEN_SEP);
+  if (i <= 0) return null;
+  const payload = token.slice(0, i);
+  const sig = token.slice(i + 1);
+  let joined: string;
+  try {
+    joined = Buffer.from(payload, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  const sep = joined.indexOf(":");
+  if (sep <= 0) return null;
+  const secret = getSecret();
+  const expected = createHmac("sha256", secret).update(joined).digest("base64url");
+  if (sig !== expected) return null;
+  const quoteId = joined.slice(0, sep);
+  const partnerId = joined.slice(sep + 1);
+  if (!quoteId || !partnerId) return null;
+  return { quoteId, partnerId };
+}
