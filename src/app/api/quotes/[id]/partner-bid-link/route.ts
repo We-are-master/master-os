@@ -56,12 +56,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
   const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
 
-  const { shortPath } = await upsertShortLink({
-    targetPath,
-    kind:       "partner_bid",
-    entityRef:  `quote:${quote.id}:partner:${partner.id}`,
-    createdBy:  auth.user.id,
-  });
+  let shortPath = targetPath;
+  try {
+    const result = await upsertShortLink({
+      targetPath,
+      kind:       "partner_bid",
+      entityRef:  `quote:${quote.id}:partner:${partner.id}`,
+      createdBy:  auth.user.id,
+    });
+    shortPath = result.shortPath;
+  } catch (err) {
+    console.error("[partner-bid-link] short link upsert failed, falling back to long URL:", err);
+  }
 
   return NextResponse.json({
     url:           `${base}${shortPath}`,
