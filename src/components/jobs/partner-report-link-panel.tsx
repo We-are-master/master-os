@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Loader2, Send, ExternalLink, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,16 +30,22 @@ export function PartnerReportLinkPanel({
 }: PartnerReportLinkPanelProps) {
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [loadingUrl, setLoadingUrl] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [sending, setSending] = useState(false);
+  /** Guard against React StrictMode + dep-cycle loops: load the link once per jobId. */
+  const fetchedForJobId = useRef<string | null>(null);
 
-  const fetchUrl = useCallback(async (): Promise<string | null> => {
+  const fetchUrl = useCallback(async (opts: { silent?: boolean } = {}): Promise<string | null> => {
     setLoadingUrl(true);
+    setLoadError(null);
     try {
       const res = await fetch(`/api/jobs/${jobId}/partner-report-link`);
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        toast.error(body?.error ?? "Could not load partner link.");
+        const message = body?.error ?? "Could not load partner link.";
+        setLoadError(message);
+        if (!opts.silent) toast.error(message);
         return null;
       }
       const body = (await res.json()) as { url?: string };
@@ -53,8 +59,14 @@ export function PartnerReportLinkPanel({
 
   useEffect(() => {
     if (!hasPartner) return;
-    void fetchUrl();
-  }, [hasPartner, fetchUrl]);
+    if (fetchedForJobId.current === jobId) return;
+    fetchedForJobId.current = jobId;
+    void fetchUrl({ silent: true });
+    // fetchUrl is intentionally not in deps — `useRef` already guards against
+    // double-fire, and React would otherwise loop when deps reference an inner
+    // callback whose stale closure includes setState.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPartner, jobId]);
 
   const onCopy = useCallback(async () => {
     const url = reportUrl ?? (await fetchUrl());
@@ -132,6 +144,17 @@ export function PartnerReportLinkPanel({
         </div>
       ) : loadingUrl ? (
         <p className="text-[11px]" style={{ color: "#6B6B70" }}>Loading link…</p>
+      ) : loadError ? (
+        <div className="text-[11px]" style={{ color: "#ED4B00" }}>
+          {loadError}
+          <button
+            type="button"
+            onClick={() => void fetchUrl()}
+            className="ml-2 underline"
+          >
+            Retry
+          </button>
+        </div>
       ) : null}
 
       <div className="flex flex-wrap gap-2">

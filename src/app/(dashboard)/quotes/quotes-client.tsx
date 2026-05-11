@@ -27,7 +27,9 @@ import {
   ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain,
   Wallet, Percent, PoundSterling, ImagePlus, X, Pencil, UserPlus,
   MailCheck,
+  Link as LinkIcon,
 } from "lucide-react";
+import { QuoteBidLinksModal } from "@/components/quotes/quote-bid-links-modal";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
@@ -2797,6 +2799,7 @@ function QuoteDetailDrawer({
   const [scopeText, setScopeText] = useState("");
   const [convertedJob, setConvertedJob] = useState<Job | null>(null);
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
+  const [bidLinksOpen, setBidLinksOpen] = useState(false);
   const [manualContinueOpen, setManualContinueOpen] = useState(false);
   const [manualContinueSending, setManualContinueSending] = useState(false);
   /** Editable scope in Invite Partners modal — persisted when invites send. */
@@ -5422,9 +5425,22 @@ function QuoteDetailDrawer({
                   quotedPartnersCount={quotedPartnersCount}
                 />
               ) : null}
-              <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
-                Invite more partners
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-2 w-full">
+                <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="flex-1">
+                  Invite more partners
+                </Button>
+                {invitedPartnersCount > 0 ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={<LinkIcon className="h-3.5 w-3.5" />}
+                    onClick={() => setBidLinksOpen(true)}
+                    className="flex-1"
+                  >
+                    Bid links ({invitedPartnersCount})
+                  </Button>
+                ) : null}
+              </div>
               {quote.quote_type === "partner" && (quote.status === "draft" || quote.status === "in_survey") && (
                 <Button
                   type="button"
@@ -5963,6 +5979,14 @@ function QuoteDetailDrawer({
           onCancel={() => setManualContinueOpen(false)}
         />
       </Modal>
+
+      {/* Bid links — per-partner short URLs (for copy/share). */}
+      <QuoteBidLinksModal
+        open={bidLinksOpen}
+        onClose={() => setBidLinksOpen(false)}
+        quoteId={quote.id}
+        quoteReference={quote.reference}
+      />
 
       {/* Invite Partner Modal */}
       <Modal

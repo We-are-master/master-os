@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { escapeHtmlAttr, normalizeEmailAssetUrl } from "@/lib/email-asset-url";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
 
 function escapeHtml(s: string): string {
   return s
@@ -106,8 +107,19 @@ export async function POST(req: NextRequest) {
       if (!email) return false;
       // Per-partner web bid link — bound to (quoteId, partnerId) so bids
       // submitted via this URL are traceable to the specific invited partner.
+      // Wrapped in a short link so the email CTA + WhatsApp shares look clean.
       const bidToken = createPartnerBidToken(quoteId, p.id);
-      const bidWebUrl = `${publicOsBaseUrl(req)}/quote/respond?token=${encodeURIComponent(bidToken)}`;
+      const targetPath = `/quote/respond?token=${encodeURIComponent(bidToken)}`;
+      const { shortPath } = await upsertShortLink({
+        targetPath,
+        kind:      "partner_bid",
+        entityRef: `quote:${quoteId}:partner:${p.id}`,
+        createdBy: auth.user.id,
+      }).catch((err) => {
+        console.error("[partner-invite-email] short link upsert failed, falling back:", err);
+        return { shortPath: targetPath };
+      });
+      const bidWebUrl = `${publicOsBaseUrl(req)}${shortPath}`;
       const bidWebEsc = escapeHtmlAttr(bidWebUrl);
       const html = `
         <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
@@ -133,7 +145,30 @@ export async function POST(req: NextRequest) {
     const results = await Promise.all((partners ?? []).map((p) => sendOne(p as { id: string; email?: string | null; company_name?: string | null })));
     const sent = results.filter(Boolean).length;
 
-    return NextResponse.json({ ok: true, sent });
+    // Track every invited partner in quote_partner_invitations (idempotent
+    // on (quote_id, partner_id)) so the Bids tab can list "who got the
+    // invite" with each partner's unique link. We track ALL selected
+    // partners — even those without an email get a row (the office can
+    // still copy the link manually for them).
+    const nowIso = new Date().toISOString();
+    const rows = partnerIds.map((pid) => ({
+      quote_id:        quoteId,
+      partner_id:      pid,
+      invited_by:      auth.user.id,
+      invited_at:      nowIso,
+      last_invited_at: nowIso,
+      last_channel:    "email",
+    }));
+    if (rows.length > 0) {
+      void supabase
+        .from("quote_partner_invitations")
+        .upsert(rows, { onConflict: "quote_id,partner_id" })
+        .then(({ error }) => {
+          if (error) console.error("[partner-invite-email] invitations upsert failed:", error.message);
+        });
+    }
+
+    return NextResponse.json({ ok: true, sent, invited: partnerIds.length });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }

@@ -50,16 +50,16 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const admin = createServiceClient();
   const { data: job, error: jobErr } = await admin
     .from("jobs")
-    .select(`
-      id, reference, title, property_address, partner_id,
-      external_source, external_ref, zendesk_side_conversation_id,
-      partners ( contact_name, company_name, email )
-    `)
+    .select("id, reference, title, property_address, partner_id, external_source, external_ref, zendesk_side_conversation_id")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (jobErr || !job) {
+  if (jobErr) {
+    console.error("[send-partner-report-link] job lookup error:", jobErr.message);
+    return NextResponse.json({ error: "Job lookup failed." }, { status: 500 });
+  }
+  if (!job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
   if (!job.partner_id) {
@@ -69,11 +69,16 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     );
   }
 
-  const partner = (job as unknown as {
-    partners?: { contact_name?: string | null; company_name?: string | null; email?: string | null } | null;
-  }).partners;
-  const partnerEmail = partner?.email?.trim() ?? "";
-  const partnerName = partner?.company_name?.trim() || partner?.contact_name?.trim() || "there";
+  const { data: partner } = await admin
+    .from("partners")
+    .select("contact_name, company_name, email")
+    .eq("id", job.partner_id)
+    .maybeSingle();
+  const partnerEmail = (partner as { email?: string | null } | null)?.email?.trim() ?? "";
+  const partnerName =
+    (partner as { company_name?: string | null } | null)?.company_name?.trim() ||
+    (partner as { contact_name?: string | null } | null)?.contact_name?.trim() ||
+    "there";
   if (!partnerEmail) {
     return NextResponse.json(
       { error: "Assigned partner has no email on file." },

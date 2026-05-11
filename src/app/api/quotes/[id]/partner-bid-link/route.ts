@@ -3,6 +3,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -53,13 +54,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   const token = createPartnerBidToken(quote.id, partner.id);
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
-  const url = `${base}/quote/respond?token=${encodeURIComponent(token)}`;
+  const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
+
+  const { shortPath } = await upsertShortLink({
+    targetPath,
+    kind:       "partner_bid",
+    entityRef:  `quote:${quote.id}:partner:${partner.id}`,
+    createdBy:  auth.user.id,
+  });
 
   return NextResponse.json({
-    url,
-    partnerId:    partner.id,
-    partnerName:  partner.company_name?.trim() || partner.contact_name?.trim() || null,
-    partnerEmail: partner.email ?? null,
+    url:           `${base}${shortPath}`,
+    longUrl:       `${base}${targetPath}`,
+    partnerId:     partner.id,
+    partnerName:   partner.company_name?.trim() || partner.contact_name?.trim() || null,
+    partnerEmail:  partner.email ?? null,
     quoteReference: quote.reference,
     quoteStatus:    quote.status,
   });
