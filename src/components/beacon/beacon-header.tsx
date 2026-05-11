@@ -28,7 +28,7 @@ type Props = {
   onFiltersChange: (next: BeaconFilters) => void;
 };
 
-const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>(["today", "tomorrow", "week", "month", "qtd", "custom"]);
+const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>(["all", "today", "tomorrow", "week", "month", "qtd", "custom"]);
 
 export function BeaconHeader({ view, onViewChange, liveCount, filters, onFiltersChange }: Props) {
   // Beacon's BeaconDateMode is a superset (adds "all"); map both directions.

@@ -2094,8 +2094,7 @@ function JobsPageContent() {
             <DateRangeFilter
               variant="chip"
               value={{
-                // Legacy "all" preset falls back to "today" in the unified UI — storage stays valid for back-compat.
-                mode: (scheduleDatePreset === "all" ? "today" : scheduleDatePreset) as DateFilterMode,
+                mode: scheduleDatePreset as DateFilterMode,
                 customFrom: customScheduleFrom,
                 customTo: customScheduleTo,
               }}

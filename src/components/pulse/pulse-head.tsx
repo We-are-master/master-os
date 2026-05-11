@@ -19,6 +19,7 @@ type Props = {
 /** Shared-filter ↔ dashboard-preset mapping. The provider keeps its broader preset
  * vocabulary (7d/30d/ytd/all) for legacy callers; this just bridges the 6 user-facing modes. */
 const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
+  all: "all",
   today: "1d",
   tomorrow: "tomorrow",
   week: "wtd",
@@ -28,6 +29,7 @@ const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
 };
 
 const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
+  all: "all",
   "1d": "today",
   tomorrow: "tomorrow",
   wtd: "week",

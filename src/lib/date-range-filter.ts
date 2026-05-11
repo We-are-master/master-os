@@ -8,7 +8,7 @@
  * The shared filter intentionally exposes just 6 user-facing modes.
  */
 
-export type DateFilterMode = "today" | "tomorrow" | "week" | "month" | "qtd" | "custom";
+export type DateFilterMode = "all" | "today" | "tomorrow" | "week" | "month" | "qtd" | "custom";
 
 export type DateFilterValue = {
   mode: DateFilterMode;
@@ -27,6 +27,7 @@ export const DEFAULT_DATE_FILTER: DateFilterValue = {
 export type DateFilterBounds = { fromIso: string; toIso: string };
 
 export const DATE_FILTER_QUICK_OPTIONS: { id: Exclude<DateFilterMode, "custom">; label: string }[] = [
+  { id: "all", label: "All" },
   { id: "today", label: "Today" },
   { id: "tomorrow", label: "Tomorrow" },
   { id: "week", label: "Week" },
@@ -40,6 +41,8 @@ export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | nu
   const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   switch (value.mode) {
+    case "all":
+      return null;
     case "today":
       return { fromIso: startOfToday.toISOString(), toIso: endOfToday.toISOString() };
     case "tomorrow": {
@@ -88,6 +91,7 @@ export function localYmd(d: Date): string {
 }
 
 export function dateFilterLabel(value: DateFilterValue): string {
+  if (value.mode === "all") return "All";
   if (value.mode === "custom") {
     const bounds = resolveDateFilter(value);
     if (!bounds) return "Custom";
