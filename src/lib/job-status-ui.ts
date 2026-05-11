@@ -31,6 +31,30 @@ export function jobStatusBadgeVariant(status: string): BadgeVariant {
   return JOB_STATUS_BADGE_VARIANT[status as JobStatus] ?? "default";
 }
 
+/**
+ * Canonical UI labels for job statuses. Single source of truth across Jobs, Schedule,
+ * Pulse, Beacon, Job detail. Use this instead of inventing local synonyms like
+ * "On-site" or "Wrap-up" — keeps the product language consistent with the data model.
+ */
+export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
+  unassigned: "Unassigned",
+  auto_assigning: "Assigning",
+  scheduled: "Scheduled",
+  late: "Late",
+  in_progress: "In Progress",
+  final_check: "Final Checks",
+  awaiting_payment: "Awaiting Payment",
+  need_attention: "Needs Attention",
+  on_hold: "On Hold",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  deleted: "Deleted",
+};
+
+export function jobStatusLabel(status: string): string {
+  return JOB_STATUS_LABEL[status as JobStatus] ?? status.replace(/_/g, " ");
+}
+
 /** Accent for Jobs management tabs (underline + count chip when active). */
 export type JobsManagementTabAccent =
   | "neutral"

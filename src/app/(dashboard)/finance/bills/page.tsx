@@ -27,6 +27,7 @@ import {
   CalendarDays,
   Sunrise,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -79,7 +80,7 @@ const statusConfig: Record<
   approved: { label: "Approved", variant: "success" },
   paid: { label: "Paid", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
-  needs_attention: { label: "Needs attention", variant: "danger" },
+  needs_attention: { label: "Needs Attention", variant: "danger" },
 };
 
 export default function BillsPage() {
@@ -106,6 +107,8 @@ export default function BillsPage() {
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
   /** `item.key` for recurring series while Approve all is running for that card */
   const [approveSeriesBusyKey, setApproveSeriesBusyKey] = useState<string | null>(null);
+  /** Per-row archive busy keys (for the X button) */
+  const [archiveRowBusyKey, setArchiveRowBusyKey] = useState<string | null>(null);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -301,7 +304,7 @@ export default function BillsPage() {
         const status = item.visible.every((r) => r.status === "approved")
           ? "Approved"
           : item.visible.every((r) => r.status === "needs_attention")
-            ? "Needs attention"
+            ? "Needs Attention"
             : "Mixed";
         const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
         return {
@@ -313,6 +316,9 @@ export default function BillsPage() {
           meta: `${due ? `Next due ${formatDate(due)}` : "No due date"} · ${cadence} · ${visibleCount} occurrence${visibleCount === 1 ? "" : "s"}`,
           status,
           children: item.visible,
+          /** ALL bill ids in the series (for bulk archive) — includes occurrences outside the period. */
+          allBillIds: item.all.map((b) => b.id),
+          isSeries: true,
           expandable: true,
           onToggle: () => setExpandedSeries((s) => ({ ...s, [item.key]: !(s[item.key] ?? false) })),
           expanded: expandedSeries[item.key] ?? false,
@@ -329,6 +335,8 @@ export default function BillsPage() {
         meta: `${row.due_date ? `Next due ${formatDate(row.due_date)}` : "No due date"} · ${row.is_recurring ? recurrenceLabel(row.recurrence_interval) : "One-off"} · 1 occurrence`,
         status,
         children: [] as Bill[],
+        allBillIds: [row.id],
+        isSeries: false,
         expandable: false,
         onToggle: () => undefined,
         expanded: false,
@@ -480,6 +488,33 @@ export default function BillsPage() {
       toast.error("Failed to archive");
     } finally {
       setArchiveSeriesBusy(false);
+    }
+  };
+
+  const handleArchiveRow = async (
+    rowKey: string,
+    rowTitle: string,
+    isSeries: boolean,
+    billIds: string[],
+  ) => {
+    if (billIds.length === 0) return;
+    const message = isSeries
+      ? `Archive all ${billIds.length} occurrence${billIds.length === 1 ? "" : "s"} of "${rowTitle}"? They will be removed from cost KPIs and pay runs (restorable from Archived).`
+      : `Archive "${rowTitle}"? It will be removed from cost KPIs (restorable from Archived).`;
+    if (!window.confirm(message)) return;
+    setArchiveRowBusyKey(rowKey);
+    try {
+      await archiveBillsByIds(billIds);
+      toast.success(
+        isSeries
+          ? `Archived ${billIds.length} occurrence${billIds.length === 1 ? "" : "s"}.`
+          : "Bill archived.",
+      );
+      load();
+    } catch {
+      toast.error("Failed to archive");
+    } finally {
+      setArchiveRowBusyKey(null);
     }
   };
 
@@ -773,9 +808,9 @@ export default function BillsPage() {
         <div className="flex flex-wrap gap-1.5">
           {([
             { id: "all", label: "All" },
-            { id: "one_off", label: "One-off" },
+            { id: "one_off", label: "One-Off" },
             { id: "recurring", label: "Recurring" },
-            { id: "needs_attention", label: "Needs attention" },
+            { id: "needs_attention", label: "Needs Attention" },
             { id: "approved", label: "Approved" },
             { id: "archived", label: "Archived" },
           ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
@@ -837,7 +872,7 @@ export default function BillsPage() {
                     <Badge
                       variant={
                         row.status === "Approved" || row.status === "Paid" ? "success"
-                        : row.status === "Needs attention" || row.status === "Rejected" ? "danger"
+                        : row.status === "Needs Attention" || row.status === "Rejected" ? "danger"
                         : row.status === "Submitted" ? "warning"
                         : "default"
                       }
@@ -846,6 +881,29 @@ export default function BillsPage() {
                     >
                       {row.status}
                     </Badge>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleArchiveRow(row.key, row.title, row.isSeries, row.allBillIds);
+                      }}
+                      disabled={archiveRowBusyKey === row.key}
+                      className="inline-flex items-center justify-center h-7 w-7 rounded-md text-text-tertiary hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 disabled:opacity-40 transition-colors shrink-0"
+                      title={
+                        row.isSeries
+                          ? `Archive all ${row.allBillIds.length} occurrences of this bill`
+                          : "Archive this bill"
+                      }
+                      aria-label={
+                        row.isSeries ? "Archive entire bill series" : "Archive bill"
+                      }
+                    >
+                      {archiveRowBusyKey === row.key ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <X className="h-3.5 w-3.5" />
+                      )}
+                    </button>
                   </div>
                 </div>
                 {row.expandable && row.expanded ? (

@@ -1,27 +1,51 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState } from "react";
 
 export interface FixfyHintIconProps {
   /** Hint copy (rich tooltip + aria-label). */
   text: string;
+  /** Optional eyebrow label rendered above the body in the popover (uppercase mono). */
+  label?: string;
   className?: string;
-  /** Use native `title` only (no dark hover panel). */
+  /** Use native `title` only (no styled popover). */
   nativeTitleOnly?: boolean;
+  /** Anchor of the popover relative to the icon. Default: bottom-start. */
+  placement?: "bottom-start" | "bottom-end" | "top-start" | "top-end";
 }
 
 /**
- * Fixfy informational hint: “!” in a 14×14 grey circle (#ECECEE / #6B6B70).
- * Default: dark tooltip on hover/focus (same behavior as KPI / page header hints).
+ * Fixfy informational hint: "!" in a small circle that reveals a styled hover
+ * popover (white card · fx-line border · shadow-fx-2). The icon hue lifts to
+ * coral on hover to signal it's interactive. Same lazy show/hide pattern as
+ * the Zendesk ticket badge popover.
  */
-export function FixfyHintIcon({ text, className, nativeTitleOnly = false }: FixfyHintIconProps) {
+export function FixfyHintIcon({
+  text,
+  label,
+  className,
+  nativeTitleOnly = false,
+  placement = "bottom-start",
+}: FixfyHintIconProps) {
+  const [open, setOpen] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+    };
+  }, []);
+
   const circle = (
     <span
       tabIndex={nativeTitleOnly ? undefined : 0}
       aria-label={text}
       title={nativeTitleOnly ? text : undefined}
-      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full text-[10px] font-medium leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-      style={{ background: "#ECECEE", color: "#6B6B70", fontSize: "10px", fontWeight: 500 }}
+      className={cn(
+        "inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-fx-line/70 text-fx-mute font-mono text-[10px] font-semibold leading-none cursor-help outline-none transition-colors",
+        "hover:bg-fx-coral/10 hover:text-fx-coral focus-visible:ring-2 focus-visible:ring-fx-coral/30",
+      )}
     >
       !
     </span>
@@ -31,15 +55,56 @@ export function FixfyHintIcon({ text, className, nativeTitleOnly = false }: Fixf
     return <span className={cn("inline-flex", className)}>{circle}</span>;
   }
 
+  const positionClass = (() => {
+    switch (placement) {
+      case "bottom-end":
+        return "top-full right-0 mt-1.5";
+      case "top-start":
+        return "bottom-full left-0 mb-1.5";
+      case "top-end":
+        return "bottom-full right-0 mb-1.5";
+      case "bottom-start":
+      default:
+        return "top-full left-0 mt-1.5";
+    }
+  })();
+
+  const handleEnter = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setOpen(true);
+  };
+  const handleLeave = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setOpen(false), 120);
+  };
+
   return (
-    <span className={cn("group relative inline-flex", className)}>
+    <span
+      className={cn("relative inline-flex", className)}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+      onFocus={handleEnter}
+      onBlur={handleLeave}
+    >
       {circle}
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 max-w-xs whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-      >
-        {text}
-      </span>
+      {open && (
+        <span
+          role="tooltip"
+          className={cn(
+            "absolute z-[60] w-max max-w-[280px] rounded-lg border border-fx-line bg-card shadow-fx-2 p-3 text-[12px] leading-[1.5] text-text-secondary cursor-default whitespace-pre-wrap break-words",
+            positionClass,
+          )}
+          onMouseEnter={handleEnter}
+          onMouseLeave={handleLeave}
+        >
+          {label ? (
+            <span className="block font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-fx-mute mb-1.5">
+              {label}
+            </span>
+          ) : null}
+          {text}
+        </span>
+      )}
     </span>
   );
 }

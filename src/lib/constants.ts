@@ -19,7 +19,7 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: "Dashboard", href: "/", icon: "grid-2x2" },
+      { label: "Pulse", href: "/", icon: "grid-2x2" },
       { label: "Live View", href: "/schedule", icon: "calendar" },
     ],
   },
@@ -49,7 +49,7 @@ export const NAVIGATION: NavGroup[] = [
     label: "Finance",
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
-      { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
+      { label: "Self-Billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Payouts", href: "/payout", icon: "calendar-clock", permission: "finance" },
     ],

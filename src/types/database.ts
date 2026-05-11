@@ -489,6 +489,12 @@ export interface Job {
   cancellation_reason?: string | null;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
+  /** Snapshot of `client_price` at the moment the job was cancelled (pre-zeroing). Drives "lost revenue" KPIs in Pulse / Live View. */
+  cancelled_client_price?: number | null;
+  /** Snapshot of `extras_amount` at cancel. */
+  cancelled_extras_amount?: number | null;
+  /** Snapshot of `partner_cost` at cancel. */
+  cancelled_partner_cost?: number | null;
   /** Snapshot when office cancels from dashboard: fee + who pays (separate from partner app cancel fields). */
   cancellation_fee_gbp?: number | null;
   cancellation_fee_party?: "none" | "client" | "partner" | "both";

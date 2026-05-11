@@ -171,7 +171,7 @@ function GlobalSearch() {
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => { if (query.trim().length >= 2) setOpen(true); }}
           placeholder="Search jobs, quotes, requests, address, postcode…"
-          className="h-9 w-72 rounded-xl bg-surface-tertiary border border-border-light pl-9 pr-16 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 transition-colors"
+          className="h-8 w-80 rounded-md bg-fx-paper border border-transparent pl-9 pr-16 text-[13px] text-text-primary placeholder:text-fx-mute focus:outline-none focus:border-fx-line hover:border-fx-line transition-colors"
         />
         {query ? (
           <button
@@ -181,7 +181,7 @@ function GlobalSearch() {
             <X className="h-3.5 w-3.5" />
           </button>
         ) : (
-          <kbd className="absolute right-2.5 text-[10px] text-text-tertiary bg-surface-hover border border-border-light rounded px-1 select-none">⌘K</kbd>
+          <kbd className="absolute right-2.5 font-mono text-[10px] text-fx-mute bg-surface border border-fx-line rounded-sm px-1.5 py-0.5 select-none">⌘K</kbd>
         )}
       </div>
 
@@ -259,7 +259,7 @@ export function Header() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
       className={cn(
-        "z-20 h-16 shrink-0 bg-surface/80 backdrop-blur-xl border-b border-border-light flex items-center justify-between px-6 transition-all duration-300",
+        "z-20 h-14 shrink-0 bg-surface border-b border-fx-line flex items-center justify-between px-6 transition-all duration-300",
       )}
     >
       <div className="flex items-center gap-4">

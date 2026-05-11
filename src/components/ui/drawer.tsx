@@ -51,35 +51,43 @@ export function Drawer({
             animate="visible"
             exit="exit"
             className={cn(
-              "fixed right-0 top-0 bottom-0 max-h-[100dvh] bg-surface border-l border-border shadow-modal z-50 flex flex-col",
+              "fixed right-0 top-0 bottom-0 max-h-[100dvh] bg-surface border-l border-fx-line shadow-modal z-50 flex flex-col",
               width,
               className
             )}
           >
             {title && (
-              <div className="shrink-0 border-b border-border-light">
-                <div className="flex items-start justify-between gap-3 px-6 py-4">
+              <div className="shrink-0 border-b border-fx-line sticky top-0 bg-surface z-[2]">
+                <div className="flex items-start justify-between gap-3 px-5 py-3.5">
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-base font-semibold text-text-primary truncate">{title}</h3>
+                    <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em]">{title}</h3>
                     {subtitle && (
-                      <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2 break-words">{subtitle}</p>
+                      <p className="text-xs text-fx-mute mt-0.5 line-clamp-2 break-words">{subtitle}</p>
                     )}
                   </div>
                   <button
                     type="button"
                     onClick={onClose}
-                    className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
+                    className="h-[30px] w-[30px] shrink-0 rounded-md flex items-center justify-center text-fx-mute hover:bg-fx-paper hover:text-text-primary transition-colors"
+                    aria-label="Close"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                {headerExtra ? <div className="px-6 pb-3">{headerExtra}</div> : null}
+                {headerExtra ? <div className="px-5 pb-3">{headerExtra}</div> : null}
               </div>
             )}
             <div className="flex flex-1 flex-col min-h-0">
               <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
               {footer != null ? (
-                <div className={cn("shrink-0 border-t border-border-light bg-surface", footerClassName)}>{footer}</div>
+                <div
+                  className={cn(
+                    "shrink-0 border-t border-fx-line bg-fx-paper sticky bottom-0",
+                    footerClassName,
+                  )}
+                >
+                  {footer}
+                </div>
               ) : null}
             </div>
           </motion.div>
