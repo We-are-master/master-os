@@ -34,7 +34,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     invoiceReference,
     selfBillReference,
     reports,
-    completionDelivery,
     confirmed,
     onConfirmedChange,
     sentToAccounts,
@@ -152,7 +151,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
             <ModalFooter
               forceMode={forceMode}
-              completionDelivery={completionDelivery}
               canApprove={canApprove}
               canForceApprove={canForceApprove}
               submitting={submitting}

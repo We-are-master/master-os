@@ -3680,10 +3680,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const localPhaseIndexes = reportPhaseIndices(normalizeTotalPhases(j.total_phases));
     const localReportsUploaded = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_uploaded` as keyof Job]));
     const localReportsApproved = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_approved` as keyof Job]));
-    if (completionDelivery == null) {
-      toast.error("Choose how to complete: internal only, or send a client email with the selected pack.");
-      return;
-    }
     if ((!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) && !forceApprovalChecked) {
       toast.error("Complete all mandatory checks: reports uploaded/approved and owner authorization.");
       return;
