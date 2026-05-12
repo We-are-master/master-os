@@ -510,40 +510,38 @@ function KanbanCard({
           <X className="h-3 w-3" />
         </button>
       )}
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex flex-col min-w-0 gap-0.5">
+          <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
+          {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at) ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 font-mono text-[10.5px] tabular-nums",
+                isLive ? "text-fx-coral-p" : "text-text-secondary",
+              )}
+              title="Arrival window"
+            >
+              <Clock className="h-2.5 w-2.5 shrink-0" />
+              {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at)}
+            </span>
+          ) : null}
+        </div>
         <StatusPill status={job.status} />
       </div>
       <div className="text-[13px] font-medium text-text-primary leading-[1.35] mb-1.5 line-clamp-2">
         {job.title}
       </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2">
-        {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at) ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-[11px] font-mono tabular-nums shrink-0 px-1.5 py-0.5 rounded-sm border",
-              isLive
-                ? "text-fx-coral-p bg-fx-coral/8 border-fx-coral/25"
-                : "text-text-secondary bg-card border-fx-line",
-            )}
-            title="Arrival window"
-          >
-            <Clock className="h-2.5 w-2.5 shrink-0" />
-            {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at)}
-          </span>
-        ) : null}
-        <div className="flex items-center gap-1.5 text-[11px] text-fx-mute font-mono min-w-0">
-          <MapPin className="h-2.5 w-2.5 shrink-0" />
-          <span className="truncate">
-            {[
-              extractPostcode(job.property_address),
-              shortAddress(job.property_address),
-              job.client_name,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        </div>
+      <div className="flex items-center gap-1.5 text-[11px] text-fx-mute font-mono mb-2">
+        <MapPin className="h-2.5 w-2.5 shrink-0" />
+        <span className="truncate">
+          {[
+            extractPostcode(job.property_address),
+            shortAddress(job.property_address),
+            job.client_name,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-dashed border-fx-line">
         <div className="flex items-center gap-1.5 min-w-0">
