@@ -100,18 +100,24 @@ function QuoteRespondContent() {
     };
   }, [token]);
 
-  if (!token || !action) {
+  if (!token) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
           <h1 className="text-xl font-bold text-stone-800">Invalid link</h1>
-          <p className="text-stone-600 mt-2">This quote response link is missing parameters. Please use the link from your email.</p>
+          <p className="text-stone-600 mt-2">This link is missing its token. Please use the link from your email.</p>
         </div>
       </div>
     );
   }
 
-  if (action !== "accept" && action !== "reject") {
+  // `action` is only meaningful for customer accept/reject tokens (legacy
+  // emailed CTAs). Partner bid + partner report tokens land here with no
+  // `action` query param — the page below picks the right form by
+  // `summary.tokenKind`. Skip the `action` shape validation in those cases.
+  const isCustomerActionToken = summary?.tokenKind === "customer";
+
+  if (isCustomerActionToken && action && action !== "accept" && action !== "reject") {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
