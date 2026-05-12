@@ -86,7 +86,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       partner?.contact_name?.trim() ||
       "Unknown partner";
     const token = createPartnerBidToken(quote.id, r.partner_id);
-    const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
+    const targetPath = `/quote/bid?token=${encodeURIComponent(token)}`;
     let shortPath = targetPath;
     try {
       const result = await upsertShortLink({

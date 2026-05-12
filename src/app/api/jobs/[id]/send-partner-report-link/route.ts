@@ -88,7 +88,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
 
   const token = createPartnerReportToken(String(job.id), String(job.partner_id));
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
-  const reportUrl = `${base}/quote/respond?token=${encodeURIComponent(token)}`;
+  // Semantic /job/report path for partner work-report submission.
+  const reportUrl = `${base}/job/report?token=${encodeURIComponent(token)}`;
 
   const subject = `Submit work report — ${String(job.reference ?? "")}`;
   const { html, text } = buildPartnerReportRequestEmail({
