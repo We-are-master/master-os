@@ -128,7 +128,22 @@ export function buildPartnerJobConfirmedSideConvBody(args: {
   scheduledHour:   string;
   propertyAddress: string;
   scope:           string | null;
+  /** Partner-scoped report submission link — included as a CTA when set so
+   *  the partner can submit the work report directly from this email. */
+  reportUrl?:      string;
 }): string {
+  const cta = args.reportUrl
+    ? `
+  <p style="margin:18px 0 6px;">
+    <a href="${escapeHtml(args.reportUrl)}" style="display:inline-block;background:#020040;color:#ffffff;text-decoration:none;padding:11px 18px;border-radius:6px;font-weight:600;font-size:13px;">
+      Submit work report
+    </a>
+  </p>
+  <p style="margin:0;font-size:11px;color:#9A9AA0;">
+    No app needed — opens a web form. Photos are resized automatically before upload.
+  </p>`
+    : "";
+
   const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;max-width:560px;">
   <h2 style="margin:0 0 8px;font-size:18px;">Job confirmed — #${escapeHtml(args.reference)}</h2>
@@ -136,6 +151,7 @@ export function buildPartnerJobConfirmedSideConvBody(args: {
   <p style="margin:0 0 6px;font-size:13px;color:#6B6B85;">📅 ${escapeHtml(args.scheduledDate)} · 🕐 ${escapeHtml(args.scheduledHour)}</p>
   <p style="margin:0 0 12px;font-size:13px;color:#6B6B85;">📍 ${escapeHtml(args.propertyAddress)}</p>
   ${args.scope ? `<p style="margin:0;font-size:13px;line-height:20px;color:#3A3A55;white-space:pre-wrap;">${escapeHtml(args.scope)}</p>` : ""}
+  ${cta}
 </div>
   `;
   return compactHtml(html);
