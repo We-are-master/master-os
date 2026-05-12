@@ -190,12 +190,15 @@ export async function GET(req: NextRequest) {
   }
 
   if (tokenKind === "partner_report" && tokenJobId) {
-    const { data: jobRow } = await supabase
+    const { data: jobRow, error: jobLookupError } = await supabase
       .from("jobs")
       .select("id, reference, service_type, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
       .eq("id", tokenJobId)
       .is("deleted_at", null)
       .maybeSingle();
+    console.log(
+      `[respond-info] partner_report job lookup: id=${tokenJobId} found=${!!jobRow} jobPartnerId=${jobRow?.partner_id ?? "null"} tokenPartnerId=${tokenPartnerId} match=${!!jobRow && jobRow.partner_id === tokenPartnerId} err=${jobLookupError?.message ?? "none"}`,
+    );
     if (jobRow && jobRow.partner_id === tokenPartnerId) {
       linkedJob = {
         id:                    jobRow.id,
@@ -225,7 +228,7 @@ export async function GET(req: NextRequest) {
     }),
   );
 
-  return NextResponse.json({
+  const responseBody = {
     reference: quote.reference,
     title: quote.title,
     clientName: quote.client_name,
@@ -241,5 +244,9 @@ export async function GET(req: NextRequest) {
     tokenKind,
     linkedJob,
     bidContext,
-  });
+  };
+  console.log(
+    `[respond-info] response: tokenKind=${tokenKind} linkedJob=${linkedJob ? `{${linkedJob.reference}}` : "null"} bidContext=${bidContext ? "set" : "null"} status=${quote.status}`,
+  );
+  return NextResponse.json(responseBody);
 }
