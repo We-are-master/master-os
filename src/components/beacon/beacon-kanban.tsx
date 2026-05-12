@@ -71,14 +71,16 @@ const STAGES: Stage[] = [
     id: "scheduled",
     title: "Scheduled",
     tone: "green",
-    matches: (s) => s === "scheduled",
+    // `late` means scheduled but past arrival without starting — still pre-start,
+    // belongs with Scheduled (red overdue chip is what flags the SLA breach).
+    matches: (s) => s === "scheduled" || s === "late",
     dropStatus: "scheduled",
   },
   {
     id: "in_progress",
     title: "In Progress",
     tone: "coral",
-    matches: (s) => s === "in_progress" || s === "late",
+    matches: (s) => s === "in_progress",
     dropStatus: "in_progress",
   },
   {

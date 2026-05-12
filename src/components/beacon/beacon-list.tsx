@@ -40,8 +40,9 @@ type Group = {
 };
 
 const GROUPS: Group[] = [
-  { id: "live", title: "In Progress · Happening Now", color: "var(--color-fx-coral)", matches: (s) => s === "in_progress" || s === "late" },
-  { id: "scheduled", title: "Scheduled · Today / Soon", color: "var(--color-fx-green)", matches: (s) => s === "scheduled" },
+  { id: "live", title: "In Progress · Happening Now", color: "var(--color-fx-coral)", matches: (s) => s === "in_progress" },
+  // `late` means scheduled-but-overdue (still pre-start), so it belongs here, not in Live.
+  { id: "scheduled", title: "Scheduled · Today / Soon", color: "var(--color-fx-green)", matches: (s) => s === "scheduled" || s === "late" },
   { id: "wrap", title: "Final Checks · Sign-Off & Payment", color: "#7C3AED", matches: (s) => s === "final_check" || s === "awaiting_payment" || s === "need_attention" || s === "on_hold" },
   { id: "new", title: "Unassigned · Awaiting Assignment", color: "var(--color-fx-red)", matches: (s) => s === "unassigned" || s === "auto_assigning" },
   { id: "done", title: "Completed · This Week", color: "var(--color-fx-green)", matches: (s) => s === "completed" },
@@ -208,7 +209,7 @@ function ListRow({ job, accent }: { job: ListJob; accent: string }) {
     >
       <span className="h-full self-stretch" style={{ background: accent }} />
       <span className="font-mono text-[11.5px] text-fx-mute tracking-[0.02em] flex items-center gap-2 pl-3">
-        {(job.status === "in_progress" || job.status === "late") && <span className="fx-live-dot" />}
+        {job.status === "in_progress" && <span className="fx-live-dot" />}
         <strong className="text-text-primary font-medium">{job.reference}</strong>
       </span>
       <span className="flex flex-col min-w-0 pr-3">
