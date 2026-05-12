@@ -81,15 +81,21 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
   const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
 
-  // Short link: one stable slug per (job, partner). Reassigning the partner
-  // upserts a new slug (because entity_ref includes the partner_id), so
-  // older shared links automatically stop working in the same flow.
-  const { shortPath } = await upsertShortLink({
-    targetPath,
-    kind:       "partner_report",
-    entityRef:  `job:${job.id}:partner:${job.partner_id}`,
-    createdBy:  auth.user.id,
-  });
+  // Short link: one stable slug per (job, partner). Falls back gracefully to
+  // the long URL if the short_links table doesn't exist yet (migration 183
+  // not applied) — so the panel keeps working through a partial deploy.
+  let shortPath = targetPath;
+  try {
+    const result = await upsertShortLink({
+      targetPath,
+      kind:       "partner_report",
+      entityRef:  `job:${job.id}:partner:${job.partner_id}`,
+      createdBy:  auth.user.id,
+    });
+    shortPath = result.shortPath;
+  } catch (err) {
+    console.error("[partner-report-link] short link upsert failed, falling back to long URL:", err);
+  }
 
   return NextResponse.json({
     url:        `${base}${shortPath}`,

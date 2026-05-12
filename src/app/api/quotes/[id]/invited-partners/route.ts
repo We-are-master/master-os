@@ -87,12 +87,18 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       "Unknown partner";
     const token = createPartnerBidToken(quote.id, r.partner_id);
     const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
-    const { shortPath } = await upsertShortLink({
-      targetPath,
-      kind: "partner_bid",
-      entityRef: `quote:${quote.id}:partner:${r.partner_id}`,
-      createdBy: auth.user.id,
-    });
+    let shortPath = targetPath;
+    try {
+      const result = await upsertShortLink({
+        targetPath,
+        kind: "partner_bid",
+        entityRef: `quote:${quote.id}:partner:${r.partner_id}`,
+        createdBy: auth.user.id,
+      });
+      shortPath = result.shortPath;
+    } catch (err) {
+      console.error("[invited-partners] short link upsert failed, falling back:", err);
+    }
     const bidUrl = `${base}${shortPath}`;
     const bid = bidsByPartner.get(r.partner_id) ?? null;
     return {
