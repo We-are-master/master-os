@@ -71,12 +71,17 @@ export function jobStatusToZendesk(status: JobStatus): number | null {
     case "in_progress":
       return ZD_STATUS_IN_PROGRESS;
     case "final_check":
-    case "awaiting_payment":
       return ZD_STATUS_FINAL_CHECKS;
-    case "on_hold":
-      return ZD_STATUS_ON_HOLD;
+    /** Work is done; only payment collection is pending. From the customer's
+     *  perspective the support thread is closed, so flip the ticket to
+     *  Completed (which auto-solves it in Zendesk). If finance moves the job
+     *  back to final_check / in_progress, the trigger fires again and the
+     *  ticket re-opens to the right status. */
+    case "awaiting_payment":
     case "completed":
       return ZD_STATUS_COMPLETED;
+    case "on_hold":
+      return ZD_STATUS_ON_HOLD;
     case "cancelled":
       return ZD_STATUS_CANCELLED;
     case "deleted":
