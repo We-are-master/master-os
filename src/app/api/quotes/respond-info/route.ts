@@ -112,10 +112,13 @@ export async function GET(req: NextRequest) {
   }
 
   // Synthetic display for jobs without a parent quote (partner_report only).
+  // `jobs` table has no `service_type` column — that lives on `quotes` /
+  // `service_requests`. Fall back to job.title for template detection on
+  // the client (pickReportTemplate handles a null serviceType gracefully).
   if (!quote && tokenKind === "partner_report" && tokenJobId) {
     const { data: jobRow } = await supabase
       .from("jobs")
-      .select("id, reference, title, client_name, property_address, scope, service_type, status")
+      .select("id, reference, title, client_name, property_address, scope, status")
       .eq("id", tokenJobId)
       .is("deleted_at", null)
       .maybeSingle();
@@ -132,7 +135,7 @@ export async function GET(req: NextRequest) {
         start_date_option_1: null,
         start_date_option_2: null,
         status: "converted_to_job",
-        service_type: (jobRow.service_type as string | null) ?? null,
+        service_type: null,
       };
     }
   }
@@ -190,9 +193,11 @@ export async function GET(req: NextRequest) {
   }
 
   if (tokenKind === "partner_report" && tokenJobId) {
+    // `jobs` has no service_type column — template detection on the client
+    // uses job.title (via pickReportTemplate) as the fallback.
     const { data: jobRow, error: jobLookupError } = await supabase
       .from("jobs")
-      .select("id, reference, service_type, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
+      .select("id, reference, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
       .eq("id", tokenJobId)
       .is("deleted_at", null)
       .maybeSingle();
@@ -203,7 +208,7 @@ export async function GET(req: NextRequest) {
       linkedJob = {
         id:                    jobRow.id,
         reference:             jobRow.reference,
-        serviceType:           (jobRow.service_type as string | null) ?? quote.service_type ?? null,
+        serviceType:           quote.service_type ?? null,
         status:                jobRow.status as string,
         title:                 (jobRow.title as string | null) ?? null,
         propertyAddress:       (jobRow.property_address as string | null) ?? null,
