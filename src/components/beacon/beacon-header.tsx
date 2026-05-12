@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { List, LayoutGrid, Map as MapIcon, Plus } from "lucide-react";
+import { List, LayoutGrid, Map as MapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
 import {
@@ -83,13 +82,6 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
           })}
         </div>
         <BeaconFiltersButton filters={filters} onChange={onFiltersChange} />
-        <Link
-          href="/jobs"
-          className="inline-flex items-center gap-1.5 px-3 py-[7px] rounded-md text-[13px] font-medium bg-fx-coral text-white hover:bg-fx-coral-h transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Job
-        </Link>
       </div>
     </div>
   );

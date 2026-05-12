@@ -9,6 +9,8 @@ import {
   resolveBiddingSlaHours,
   resolveJobOnHoldPresets,
   resolveOfficeJobCancellationPresets,
+  resolveMarginThresholds,
+  type MarginThresholds,
 } from "@/lib/frontend-setup";
 
 export function useFrontendSetup() {
@@ -37,6 +39,7 @@ export function useFrontendSetup() {
   const biddingSlaMs = useMemo(() => biddingSlaMsFromHours(biddingSlaHours), [biddingSlaHours]);
   const jobOnHoldPresets = useMemo(() => resolveJobOnHoldPresets(setup), [setup]);
   const officeCancellationPresets = useMemo(() => resolveOfficeJobCancellationPresets(setup), [setup]);
+  const marginThresholds = useMemo<MarginThresholds>(() => resolveMarginThresholds(setup), [setup]);
 
   return {
     loading,
@@ -45,6 +48,7 @@ export function useFrontendSetup() {
     biddingSlaMs,
     jobOnHoldPresets,
     officeCancellationPresets,
+    marginThresholds,
     refetch: load,
   };
 }

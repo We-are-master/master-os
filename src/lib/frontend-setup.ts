@@ -36,6 +36,14 @@ export type FrontendSetup = {
   pulse_revenue_weeks?: number;
   pulse_low_margin_pct?: number;
 
+  /**
+   * Target gross margin % the company aims for on a job. Drives green / neutral
+   * / red colouring on margin chips across the app (Beacon Kanban, future
+   * dashboards). Jobs at-or-above this number show as green; jobs below the
+   * `pulse_low_margin_pct` lower bound show as red; in-between is neutral.
+   */
+  target_margin_pct?: number;
+
   /** Beacon defaults (Settings → Setup → Beacon Defaults). */
   beacon_default_view?: BeaconViewId;
   beacon_default_date_filter?: BeaconDateFilterId;
@@ -101,6 +109,7 @@ export const DEFAULT_PULSE_LIVE_JOBS_COUNT = 5;
 export const DEFAULT_PULSE_TOP_ACCOUNTS_COUNT = 5;
 export const DEFAULT_PULSE_REVENUE_WEEKS = 8;
 export const DEFAULT_PULSE_LOW_MARGIN_PCT = 20;
+export const DEFAULT_TARGET_MARGIN_PCT = 40;
 export const MIN_PULSE_ROW_COUNT = 3;
 export const MAX_PULSE_ROW_COUNT = 20;
 export const MIN_PULSE_REVENUE_WEEKS = 4;
@@ -134,6 +143,7 @@ export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   pulse_top_accounts_count: DEFAULT_PULSE_TOP_ACCOUNTS_COUNT,
   pulse_revenue_weeks: DEFAULT_PULSE_REVENUE_WEEKS,
   pulse_low_margin_pct: DEFAULT_PULSE_LOW_MARGIN_PCT,
+  target_margin_pct: DEFAULT_TARGET_MARGIN_PCT,
   beacon_default_view: DEFAULT_BEACON_VIEW,
   beacon_default_date_filter: DEFAULT_BEACON_DATE_FILTER,
   beacon_partner_inactive_minutes: DEFAULT_BEACON_PARTNER_INACTIVE_MIN,
@@ -301,6 +311,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.pulse_top_accounts_count = clampInt(o.pulse_top_accounts_count, DEFAULT_PULSE_TOP_ACCOUNTS_COUNT, MIN_PULSE_ROW_COUNT, MAX_PULSE_ROW_COUNT);
   base.pulse_revenue_weeks = clampInt(o.pulse_revenue_weeks, DEFAULT_PULSE_REVENUE_WEEKS, MIN_PULSE_REVENUE_WEEKS, MAX_PULSE_REVENUE_WEEKS);
   base.pulse_low_margin_pct = clampNum(o.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100);
+  base.target_margin_pct = clampNum(o.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
   base.beacon_default_view = pickEnum(o.beacon_default_view, BEACON_VIEW_IDS, DEFAULT_BEACON_VIEW);
   base.beacon_default_date_filter = pickEnum(o.beacon_default_date_filter, BEACON_DATE_FILTER_IDS, DEFAULT_BEACON_DATE_FILTER);
   base.beacon_partner_inactive_minutes = clampInt(o.beacon_partner_inactive_minutes, DEFAULT_BEACON_PARTNER_INACTIVE_MIN, 1, 240);
@@ -372,6 +383,9 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.pulse_low_margin_pct !== undefined) {
     base.pulse_low_margin_pct = clampNum(patch.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100);
   }
+  if (patch.target_margin_pct !== undefined) {
+    base.target_margin_pct = clampNum(patch.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
+  }
   if (patch.beacon_default_view !== undefined) {
     base.beacon_default_view = pickEnum(patch.beacon_default_view, BEACON_VIEW_IDS, DEFAULT_BEACON_VIEW);
   }
@@ -439,6 +453,29 @@ export function resolvePulseDefaults(setup?: FrontendSetup | null): ResolvedPuls
     revenueWeeks: clampInt(setup?.pulse_revenue_weeks, DEFAULT_PULSE_REVENUE_WEEKS, MIN_PULSE_REVENUE_WEEKS, MAX_PULSE_REVENUE_WEEKS),
     lowMarginPct: clampNum(setup?.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100),
   };
+}
+
+export type MarginThresholds = {
+  /** Above this → green chip. */
+  targetPct: number;
+  /** Below this → red chip. Between low and target → neutral. */
+  lowPct: number;
+};
+
+/** Resolved margin thresholds used by every chip that colours by margin %. */
+export function resolveMarginThresholds(setup?: FrontendSetup | null): MarginThresholds {
+  const low = clampNum(setup?.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100);
+  let target = clampNum(setup?.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
+  // Guarantee target ≥ low so the "neutral" band always has positive width.
+  if (target < low) target = low;
+  return { targetPct: target, lowPct: low };
+}
+
+/** Pick a Tailwind text-color class for a margin value given the configured thresholds. */
+export function marginColorClass(pct: number, thresholds: MarginThresholds): string {
+  if (pct >= thresholds.targetPct) return "text-fx-green";
+  if (pct >= thresholds.lowPct) return "text-text-secondary";
+  return "text-fx-red";
 }
 
 export type ResolvedBeaconDefaults = {

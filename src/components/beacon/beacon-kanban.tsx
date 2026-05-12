@@ -9,6 +9,8 @@ import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { marginColorClass, type MarginThresholds } from "@/lib/frontend-setup";
 import type { JobStatus } from "@/types/database";
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import {
@@ -116,6 +118,7 @@ const STAGE_DOT: Record<Stage["tone"], string> = {
 const COLLAPSE_STORAGE_KEY = "beacon_kanban_collapsed_v1";
 
 export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: BeaconFilters }) {
+  const { marginThresholds } = useFrontendSetup();
   const [jobs, setJobs] = useState<KanbanJob[]>([]);
   const [loading, setLoading] = useState(true);
   /** partner_id → avatar_url. Loaded lazily once we know which partners appear in the visible cards. */
@@ -469,6 +472,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                       onCancelClick={openCancelModal}
                       isCancelledStage={isCancelStage}
                       partnerAvatarUrl={j.partner_id ? partnerAvatars[j.partner_id] ?? null : null}
+                      marginThresholds={marginThresholds}
                     />
                   ))
                 ))}
@@ -499,6 +503,7 @@ function KanbanCard({
   onCancelClick,
   isCancelledStage = false,
   partnerAvatarUrl,
+  marginThresholds,
 }: {
   job: KanbanJob;
   pending?: boolean;
@@ -506,6 +511,7 @@ function KanbanCard({
   onCancelClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
   isCancelledStage?: boolean;
   partnerAvatarUrl?: string | null;
+  marginThresholds: MarginThresholds;
 }) {
   const isLive = job.status === "in_progress" || job.status === "late";
   const lostValue =
@@ -514,18 +520,13 @@ function KanbanCard({
   const value = isCancelledStage ? lostValue : liveValue;
   const partnerInitials = job.partner_name ? initials(job.partner_name) : "?";
   /** Gross margin: (price − partner cost) / price. Hidden when price is 0 or
-   * we don't have a partner cost yet (avoids 100% / NaN noise on draft rows). */
+   * we don't have a partner cost yet (avoids 100% / NaN noise on draft rows).
+   * Colour comes from the configured thresholds (Settings → Setup → Margin Targets). */
   const partnerCost = Number(job.partner_cost) || 0;
   const marginPct = liveValue > 0 && partnerCost > 0
     ? Math.round(((liveValue - partnerCost) / liveValue) * 100)
     : null;
-  const marginTone = marginPct == null
-    ? ""
-    : marginPct >= 40
-      ? "text-fx-green"
-      : marginPct >= 20
-        ? "text-text-secondary"
-        : "text-fx-red";
+  const marginTone = marginPct == null ? "" : marginColorClass(marginPct, marginThresholds);
   // Arrival overdue: end of arrival window has passed AND the job never reached
   // in_progress (so it's still waiting / running late). status === "late" is the
   // canonical signal; we also catch stale unassigned/scheduled rows defensively.
@@ -606,7 +607,7 @@ function KanbanCard({
             .join(" · ")}
         </span>
       </div>
-      <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-dashed border-fx-line">
+      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-dashed border-fx-line">
         <div className="flex items-center gap-1.5 min-w-0">
           <FxAvatar
             initials={partnerInitials}
@@ -627,18 +628,18 @@ function KanbanCard({
             {value > 0 ? `Lost ${formatGbp(value)}` : "Lost £0"}
           </span>
         ) : (
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-baseline gap-1.5 shrink-0">
+            <span className="font-medium text-fx-coral-p text-[13px] tabular-nums">
+              {formatGbp(value)}
+            </span>
             {marginPct != null ? (
               <span
                 className={cn("font-mono text-[10.5px] tabular-nums", marginTone)}
-                title={`Gross margin: (£${liveValue.toFixed(0)} − £${partnerCost.toFixed(0)}) / £${liveValue.toFixed(0)}`}
+                title={`Gross margin · target ≥${marginThresholds.targetPct}% · low <${marginThresholds.lowPct}%`}
               >
                 {marginPct}%
               </span>
             ) : null}
-            <span className="font-medium text-fx-coral-p text-[13px] tabular-nums">
-              {formatGbp(value)}
-            </span>
           </div>
         )}
       </div>
