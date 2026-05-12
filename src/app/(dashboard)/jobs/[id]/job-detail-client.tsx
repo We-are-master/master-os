@@ -178,6 +178,7 @@ import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinute
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
+import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -5853,6 +5854,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {detailTab === 0 ? (
               <div className="space-y-3">
               <p className="text-[11px] text-text-secondary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
+
+              <JobZendeskLinkCard
+                jobId={job.id}
+                externalSource={job.external_source}
+                externalRef={job.external_ref}
+                zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+                onChanged={() => router.refresh()}
+              />
+
               <div className="space-y-1.5 border-t border-border pt-2">
                 <p className="text-xs font-semibold text-text-primary">Scope</p>
                 <textarea

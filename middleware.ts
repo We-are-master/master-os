@@ -37,6 +37,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/p/") ||
     pathname.startsWith("/payment-success") ||
     pathname.startsWith("/quote/") ||
+    pathname.startsWith("/job/report") ||   // partner work-report submission (rewrites to /quote/respond)
+    pathname.startsWith("/r/") ||           // short-link resolver
     pathname.startsWith("/portal/login") ||
     pathname.startsWith("/portal/auth/");
 

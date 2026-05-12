@@ -4,6 +4,8 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation, updateTicket as zdUpdateTicket } from "@/lib/zendesk";
 import { ZD_STATUS_ON_HOLD } from "@/lib/zendesk-statuses";
+import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -154,9 +156,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     : `£${Number(job.partner_cost ?? 0).toFixed(2)}`;
   const partnerFirstName = (partner.contact_name?.trim().split(/\s+/)[0])
     || (partner.company_name?.trim() ?? "Partner");
-  const partnerAppBase = process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim()?.replace(/\/$/, "")
-    || "https://app.getfixfy.com";
-  const reportUrl = `${partnerAppBase}/jobs/${job.reference}/report`;
+  // Partner-scoped web report link — shipped as the primary CTA in every
+  // partner email (assigned/completed/etc) so the partner can submit the
+  // report straight from their inbox without the app. The token binds
+  // (jobId, partnerId), so reassigning the partner invalidates older links.
+  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  let reportUrl = `${appBaseUrl}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
+  try {
+    const r = await upsertShortLink({
+      targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
+      kind:       "partner_report",
+      entityRef:  `job:${job.id}:partner:${partner.id}`,
+      createdBy:  auth.user.id,
+    });
+    reportUrl = `${appBaseUrl}${r.shortPath}`;
+  } catch (err) {
+    console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
+  }
 
   // Resolve final reason / status label
   const effectiveReason = reason
