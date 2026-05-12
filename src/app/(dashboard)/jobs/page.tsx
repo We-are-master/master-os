@@ -554,7 +554,13 @@ function JobsPageContent() {
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
-  const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
+  /** "all" · "__none__" (unassigned) · partner_id */
+  const [filterPartner, setFilterPartner] = useState<string>("all");
+  /** "all" · account_id (corporate account) */
+  const [filterAccountId, setFilterAccountId] = useState<string>("all");
+  /** Dynamic option lists for the partner + account pickers (loaded once). */
+  const [filterPartnersList, setFilterPartnersList] = useState<{ id: string; name: string }[]>([]);
+  const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const buFilter = useBuFilter();
   const [buAccountIds, setBuAccountIds] = useState<Set<string>>(new Set());
@@ -676,10 +682,60 @@ function JobsPageContent() {
     setJobsListSortDir(direction);
   }, []);
 
+  // Load partner + account option lists for the filter popover (once per mount).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const [partnersRes, accountsRes] = await Promise.all([
+        supabase
+          .from("jobs")
+          .select("partner_id, partner_name")
+          .not("partner_id", "is", null)
+          .not("partner_name", "is", null)
+          .is("deleted_at", null)
+          .limit(2000),
+        supabase
+          .from("accounts")
+          .select("id, name")
+          .order("name", { ascending: true })
+          .limit(2000),
+      ]);
+      if (cancelled) return;
+      const seen = new Map<string, string>();
+      for (const r of (partnersRes.data ?? []) as { partner_id: string | null; partner_name: string | null }[]) {
+        const id = r.partner_id?.trim();
+        const nm = r.partner_name?.trim();
+        if (!id || !nm) continue;
+        if (!seen.has(id)) seen.set(id, nm);
+      }
+      setFilterPartnersList(
+        Array.from(seen.entries())
+          .map(([id, name]) => ({ id, name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      setFilterAccountsList(
+        ((accountsRes.data ?? []) as { id: string; name: string | null }[])
+          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
+          .filter((a) => a.id && a.name),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const filteredData = useMemo(() => {
     return data.filter((j) => {
-      if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
-      if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
+      if (filterPartner === "__none__") {
+        if (j.partner_id || j.partner_name) return false;
+      } else if (filterPartner !== "all") {
+        if (j.partner_id !== filterPartner) return false;
+      }
+      if (filterAccountId !== "all") {
+        const acc = j.client_id ? clientIdToSourceAccountId[j.client_id] ?? null : null;
+        if (acc !== filterAccountId) return false;
+      }
       const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
       if (filterScheduled === "scheduled" && !hasDate) return false;
       if (filterScheduled === "unscheduled" && hasDate) return false;
@@ -693,11 +749,13 @@ function JobsPageContent() {
   }, [
     data,
     filterPartner,
+    filterAccountId,
     filterScheduled,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
     buAccountIds,
     propertyIdToAccountId,
+    clientIdToSourceAccountId,
   ]);
 
   /** Default sorting for Jobs Management (kanban / filter bar): nearest schedule first. */
@@ -2043,8 +2101,15 @@ function JobsPageContent() {
         p += 1;
       }
       const filtered = allRows.filter((j) => {
-        if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
-        if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
+        if (filterPartner === "__none__") {
+          if (j.partner_id || j.partner_name) return false;
+        } else if (filterPartner !== "all") {
+          if (j.partner_id !== filterPartner) return false;
+        }
+        if (filterAccountId !== "all") {
+          const acc = j.client_id ? clientIdToSourceAccountId[j.client_id] ?? null : null;
+          if (acc !== filterAccountId) return false;
+        }
         const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
         if (filterScheduled === "scheduled" && !hasDate) return false;
         if (filterScheduled === "unscheduled" && hasDate) return false;
@@ -2068,11 +2133,13 @@ function JobsPageContent() {
     listParams,
     fetchJobsManagementList,
     filterPartner,
+    filterAccountId,
     filterScheduled,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
     buAccountIds,
     propertyIdToAccountId,
+    clientIdToSourceAccountId,
   ]);
 
   const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
@@ -2183,29 +2250,48 @@ function JobsPageContent() {
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
                 </Button>
-                {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && (
+                {(filterPartner !== "all" || filterAccountId !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && (
                   <span className="text-[10px] font-medium text-primary">Active</span>
                 )}
                 {filterOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                    <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
-                    </select>
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
-                    <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
-                    </select>
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
-                    <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="schedule_nearest">Nearest schedule (default)</option>
-                      <option value="schedule_farthest">Farthest schedule</option>
-                      <option value="booking_recent">Most recent booking</option>
-                      <option value="booking_oldest">Oldest booking</option>
-                    </select>
+                  <div className="absolute top-full right-0 mt-1 w-64 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Partner</p>
+                      <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value)} className="w-full h-9 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All Partners</option>
+                        <option value="__none__">Unassigned Only</option>
+                        {filterPartnersList.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Account</p>
+                      <select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-full h-9 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All Accounts</option>
+                        {filterAccountsList.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scheduled</p>
+                      <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Sort</p>
+                      <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="schedule_nearest">Nearest schedule (default)</option>
+                        <option value="schedule_farthest">Farthest schedule</option>
+                        <option value="booking_recent">Most recent booking</option>
+                        <option value="booking_oldest">Oldest booking</option>
+                      </select>
+                    </div>
                     {buFilter.visible && (
-                      <>
-                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                      <div>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Business Unit</p>
                         <select
                           value={buFilter.selectedBuId ?? ""}
                           onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
@@ -2216,9 +2302,9 @@ function JobsPageContent() {
                             <option key={bu.id} value={bu.id}>{bu.name}</option>
                           ))}
                         </select>
-                      </>
+                      </div>
                     )}
-                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterAccountId("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
                   </div>
                 )}
               </div>

@@ -13,6 +13,7 @@ import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
 
 type ListJob = {
@@ -58,10 +59,20 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
     });
     void (async () => {
       const supabase = getSupabase();
+
+      // Account → client_ids lookup (null = no filter; [] = empty result short-circuit).
+      const accountClientIds = await resolveAccountClientIds(filters.accountId);
+      if (cancelled) return;
+      if (accountClientIds !== null && accountClientIds.length === 0) {
+        setJobs([]);
+        setLoading(false);
+        return;
+      }
+
       let query = supabase
         .from("jobs")
         .select(
-          "id, reference, title, status, partner_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
+          "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
         )
         .neq("status", "cancelled")
         .neq("status", "deleted")
@@ -80,9 +91,13 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
         query = query.eq("partner_id", filters.partnerId);
       }
 
+      if (accountClientIds !== null) {
+        query = query.in("client_id", accountClientIds);
+      }
+
       const { data } = await query.order("scheduled_start_at", { ascending: true }).limit(200);
       if (cancelled) return;
-      setJobs((data ?? []) as ListJob[]);
+      setJobs((data ?? []) as unknown as ListJob[]);
       setLoading(false);
     })();
     return () => {

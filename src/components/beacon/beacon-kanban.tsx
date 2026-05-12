@@ -15,6 +15,7 @@ import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
 
 type KanbanJob = {
@@ -201,8 +202,18 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
       // cancellations + can drag a job into the Cancelled column. `deleted` is
       // still hidden (soft-deleted, out of the workflow).
       const baseCols =
-        "id, reference, title, status, partner_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount";
+        "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount";
       const snapshotCols = "cancelled_client_price, cancelled_extras_amount";
+
+      // Account filter: jobs link via clients.source_account_id, so resolve
+      // the account → client_ids list once and apply with `.in(client_id, …)`.
+      // null = no account filter; [] = account has no clients → return zero rows.
+      const accountClientIds = await resolveAccountClientIds(filters.accountId);
+      if (signal?.cancelled) return;
+      if (accountClientIds !== null && accountClientIds.length === 0) {
+        setJobs([]);
+        return;
+      }
 
       const buildQuery = (cols: string) => {
         let q = supabase
@@ -218,6 +229,9 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
           q = q.is("partner_id", null);
         } else if (filters.partnerId !== "all") {
           q = q.eq("partner_id", filters.partnerId);
+        }
+        if (accountClientIds !== null) {
+          q = q.in("client_id", accountClientIds);
         }
         return q.order("scheduled_start_at", { ascending: true }).limit(200);
       };

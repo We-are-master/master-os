@@ -739,6 +739,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
+  /** "all" · account_id (corporate account). Filters by `quote.source_account_id`. */
+  const [filterAccountId, setFilterAccountId] = useState<string>("all");
+  const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
   /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". */
   const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
   const buFilter = useBuFilter();
@@ -878,12 +881,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         if (Number.isNaN(t)) return false;
         if (t < fromMs || t > toMs) return false;
       }
+      if (filterAccountId !== "all") {
+        if ((q.source_account_id ?? null) !== filterAccountId) return false;
+      }
       return true;
     });
   }, [
     data,
     status,
     filterQuoteType,
+    filterAccountId,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
     propertyIdToAccountId,
@@ -1079,6 +1086,28 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         totalCount: 0,
       });
     }
+  }, []);
+
+  // Load corporate accounts for the filter popover Account picker.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const { data } = await supabase
+        .from("accounts")
+        .select("id, name")
+        .order("name", { ascending: true })
+        .limit(2000);
+      if (cancelled) return;
+      setFilterAccountsList(
+        ((data ?? []) as { id: string; name: string | null }[])
+          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
+          .filter((a) => a.id && a.name),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /** Company-wide Bidding SLA rollup for the SLA overdue KPI (same logic as the Bidding tab snapshot). */
@@ -2284,11 +2313,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
                 </Button>
-                {(filterQuoteType !== "all" || buFilter.selectedBuId) && (
+                {(filterQuoteType !== "all" || filterAccountId !== "all" || buFilter.selectedBuId) && (
                   <span className="text-[10px] font-medium text-primary">Active</span>
                 )}
                 {filterOpen && (
                   <div className="absolute top-full right-0 mt-1 w-[min(100vw-2rem,18rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Account</p>
+                      <select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-full h-9 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All Accounts</option>
+                        {filterAccountsList.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
                       <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
@@ -2312,7 +2350,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                         </select>
                       </div>
                     )}
-                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); setFilterAccountId("all"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
                   </div>
                 )}
               </div>
