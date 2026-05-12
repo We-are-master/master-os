@@ -513,7 +513,10 @@ function KanbanCard({
   partnerAvatarUrl?: string | null;
   marginThresholds: MarginThresholds;
 }) {
-  const isLive = job.status === "in_progress" || job.status === "late";
+  // "Live" = work actually started. `late` here means "scheduled but past
+  // arrival time, partner hasn't started yet" — that's NOT live, it's overdue.
+  // Only `in_progress` zeroes the arrival SLA.
+  const isLive = job.status === "in_progress";
   const lostValue =
     (Number(job.cancelled_client_price) || 0) + (Number(job.cancelled_extras_amount) || 0);
   const liveValue = Number(job.client_price) + (Number(job.extras_amount) || 0);
@@ -527,14 +530,17 @@ function KanbanCard({
     ? Math.round(((liveValue - partnerCost) / liveValue) * 100)
     : null;
   const marginTone = marginPct == null ? "" : marginColorClass(marginPct, marginThresholds);
-  // Arrival overdue: end of arrival window has passed AND the job never reached
-  // in_progress (so it's still waiting / running late). status === "late" is the
-  // canonical signal; we also catch stale unassigned/scheduled rows defensively.
+  // Arrival overdue: end of arrival window has passed AND the job hasn't started
+  // yet. `in_progress` (and beyond) clears the SLA — work began, so the arrival
+  // window is no longer the relevant clock.
   const arrivalEndMs = job.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : NaN;
   const isOverdueArrival =
     !Number.isNaN(arrivalEndMs) &&
     arrivalEndMs < Date.now() &&
-    (job.status === "late" || job.status === "unassigned" || job.status === "auto_assigning" || job.status === "scheduled");
+    (job.status === "unassigned" ||
+      job.status === "auto_assigning" ||
+      job.status === "scheduled" ||
+      job.status === "late");
 
   return (
     <Link
