@@ -183,16 +183,57 @@ export function FxAvatar({
   initials,
   tone = "neutral",
   size = "md",
+  src,
+  alt,
 }: {
   initials: string;
   tone?: Tone;
   size?: "sm" | "md";
+  /** When provided, renders a real photo; falls back to initials on load error. */
+  src?: string | null;
+  alt?: string;
 }) {
+  const sizing = size === "md" ? "h-7 w-7 text-[11px]" : "h-[22px] w-[22px] text-[9.5px]";
+
+  if (src) {
+    return (
+      <span
+        className={cn(
+          "relative inline-block rounded-full overflow-hidden shrink-0 ring-1 ring-fx-line",
+          sizing,
+        )}
+        title={alt}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt ?? initials}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+          onError={(e) => {
+            // Hide the broken image; the initials fallback below shows through.
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+        <span
+          className={cn(
+            "absolute inset-0 inline-grid place-items-center rounded-full font-semibold tracking-[0.02em] -z-10",
+            AVATAR_TONE[tone],
+          )}
+        >
+          {initials}
+        </span>
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn(
         "inline-grid place-items-center rounded-full font-semibold tracking-[0.02em] shrink-0",
-        size === "md" ? "h-7 w-7 text-[11px]" : "h-[22px] w-[22px] text-[9.5px]",
+        sizing,
         AVATAR_TONE[tone],
       )}
     >

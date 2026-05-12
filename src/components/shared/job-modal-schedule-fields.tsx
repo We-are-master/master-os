@@ -124,7 +124,15 @@ export function JobModalScheduleFields({
       {/* Form per mode */}
       {isOneOff ? (
         <>
-          <div className={cn("grid grid-cols-1 gap-4", !hideArrivalSlot && "md:grid-cols-2")}>
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4",
+              // Date input is narrow; arrival picker needs more room. Give the
+              // arrival column ~1.6× the date column so 4 chips fit in one row
+              // on wider viewports without stretching the date field.
+              !hideArrivalSlot && "sm:grid-cols-[180px_minmax(0,1fr)]",
+            )}
+          >
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Start date{startDateRequired ? " *" : ""}
@@ -133,7 +141,7 @@ export function JobModalScheduleFields({
                 type="date"
                 value={scheduledDate}
                 onChange={(e) => onChange("scheduled_date", e.target.value)}
-                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+                className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>

@@ -44,7 +44,12 @@ export function ArrivalSlotPicker({
           Arrival time *
         </label>
       )}
-      <div className={cn("flex flex-wrap gap-1.5", compact && "gap-1")}>
+      <div
+        className={cn(
+          "grid gap-1.5 grid-cols-2 sm:grid-cols-4",
+          compact && "gap-1 grid-cols-2",
+        )}
+      >
         {ARRIVAL_SLOTS.map((slot) => {
           const active = activeSlotId === slot.id;
           return (
@@ -54,10 +59,10 @@ export function ArrivalSlotPicker({
               onClick={() => onPick(slot.from, String(slot.mins))}
               aria-pressed={active}
               className={cn(
-                "rounded-md border font-semibold transition-colors",
-                compact ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs",
+                "rounded-md border font-semibold transition-all tabular-nums text-center",
+                compact ? "px-1.5 py-1 text-[11px]" : "px-2.5 py-2 text-xs",
                 active
-                  ? "border-primary bg-primary/10 text-primary"
+                  ? "border-primary bg-primary/10 text-primary shadow-[0_0_0_1px_var(--color-primary)_inset]"
                   : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
               )}
             >

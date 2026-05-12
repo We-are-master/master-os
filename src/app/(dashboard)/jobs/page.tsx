@@ -3413,36 +3413,77 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </details>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2 border-b border-border-light/70 pb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+              <span className="text-[10px] font-medium text-text-tertiary">
+                {form.job_type === "hourly" ? "Auto from rates × hours" : "Manual entry"}
+              </span>
+            </div>
+            {/* Single Client/Partner/Materials row — readonly in Smart Pricing, editable in Custom Price. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Client price £
+                  {pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
+                  onChange={form.job_type === "hourly" ? undefined : (e) => update("client_price", e.target.value)}
+                  readOnly={form.job_type === "hourly"}
+                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Partner cost £
+                  {pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
+                  onChange={form.job_type === "hourly" ? undefined : (e) => update("partner_cost", e.target.value)}
+                  readOnly={form.job_type === "hourly"}
+                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+                {form.job_type === "fixed" ? (
+                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label>
+                <Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" />
+              </div>
+            </div>
+            {/* Rate + hours row only for Smart Pricing — drives the totals above. */}
             {form.job_type === "hourly" ? (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={String(hourlyPreview.clientTotal + accessSurchargePreview)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-border-light/50">
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Client hourly rate (£/h)
-                      {pricing ? (
-                        <span className="ml-1.5">
-                          <PricingSourceChip source={pricing.client.hourly_rate_source} />
-                        </span>
-                      ) : null}
-                    </label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
                     <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Partner hourly rate (£/h)
-                      {pricing ? (
-                        <span className="ml-1.5">
-                          <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
-                        </span>
-                      ) : null}
-                    </label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
                     <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
@@ -3451,39 +3492,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </div>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
-                  Hourly rates are prefilled from the selected call-out; you can override. Billing: up to 1h = 1h minimum, then 30-minute increments from timer logs.
+                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
                 </p>
               </>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Client price £
-                    {pricing ? (
-                      <span className="ml-1.5">
-                        <PricingSourceChip source={pricing.client.fixed_price_source} />
-                      </span>
-                    ) : null}
-                  </label>
-                  <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Partner cost £
-                    {pricing ? (
-                      <span className="ml-1.5">
-                        <PricingSourceChip source={pricing.partner.fixed_partner_cost_source} />
-                      </span>
-                    ) : null}
-                  </label>
-                  <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
-                  </p>
-                </div>
-                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-              </div>
-            )}
+            ) : null}
           </section>
 
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2">
