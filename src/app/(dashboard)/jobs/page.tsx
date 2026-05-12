@@ -89,7 +89,6 @@ import {
 } from "@/lib/type-of-work";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
@@ -3058,23 +3057,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rate type</p>
             </div>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-              <div className="grid grid-cols-2 gap-2 min-w-0">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,260px)_minmax(0,1fr)]">
+              <div className="grid grid-cols-2 gap-1.5 min-w-0">
                   <button
                     type="button"
                     onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
                     className={cn(
-                      "min-w-0 rounded-lg px-3 py-2 text-left transition-all border shadow-sm",
+                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
                       form.job_type === "fixed"
                         ? "bg-[#1DB87A] text-white border-[#1DB87A] shadow-[0_6px_18px_rgba(29,184,122,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-center gap-1.5 text-xs font-bold leading-tight">
-                      <Lock className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
+                      <Lock className="h-3 w-3 shrink-0" />
                       <span className="truncate">{pricingModeLabel("fixed")}</span>
                     </span>
-                    <span className={cn("mt-1 block text-[10px] leading-tight", form.job_type === "fixed" ? "text-white/75" : "text-[#888]")}>
+                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "fixed" ? "text-white/75" : "text-[#888]")}>
                       Set prices on this job
                     </span>
                   </button>
@@ -3082,17 +3081,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     type="button"
                     onClick={() => update("job_type", "hourly")}
                     className={cn(
-                      "min-w-0 rounded-lg px-3 py-2 text-left transition-all border shadow-sm",
+                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
                       form.job_type === "hourly"
                         ? "bg-[#7c3aed] text-white border-[#7c3aed] shadow-[0_6px_18px_rgba(124,58,237,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-center gap-1.5 text-xs font-bold leading-tight">
-                      <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
+                      <Clock3 className="h-3 w-3 shrink-0" />
                       <span className="truncate">{pricingModeLabel("hourly")}</span>
                     </span>
-                    <span className={cn("mt-1 block text-[10px] leading-tight", form.job_type === "hourly" ? "text-white/75" : "text-[#888]")}>
+                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "hourly" ? "text-white/75" : "text-[#888]")}>
                       From Services, accounts &amp; partners
                     </span>
                   </button>
@@ -3236,17 +3235,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     </p>
                   </div>
                 ) : null}
-                {form.job_kind === "one_off" ? (
-                  <ArrivalSlotPicker
-                    compact
-                    arrivalFrom={form.arrival_from}
-                    arrivalWindowMins={form.arrival_window_mins}
-                    onPick={(from, mins) => {
-                      update("arrival_from", from);
-                      update("arrival_window_mins", mins);
-                    }}
-                  />
-                ) : null}
               </div>
             </div>
           </section>
@@ -3268,7 +3256,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
               onChange={(field, value) => update(field, value)}
               startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
               requiredFieldClassName={requiredFieldClass}
-              hideArrivalSlot={form.job_kind === "one_off"}
             />
           </section>
 
