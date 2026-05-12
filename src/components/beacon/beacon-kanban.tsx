@@ -475,6 +475,14 @@ function KanbanCard({
   const liveValue = Number(job.client_price) + (Number(job.extras_amount) || 0);
   const value = isCancelledStage ? lostValue : liveValue;
   const partnerInitials = job.partner_name ? initials(job.partner_name) : "?";
+  // Arrival overdue: end of arrival window has passed AND the job never reached
+  // in_progress (so it's still waiting / running late). status === "late" is the
+  // canonical signal; we also catch stale unassigned/scheduled rows defensively.
+  const arrivalEndMs = job.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : NaN;
+  const isOverdueArrival =
+    !Number.isNaN(arrivalEndMs) &&
+    arrivalEndMs < Date.now() &&
+    (job.status === "late" || job.status === "unassigned" || job.status === "auto_assigning" || job.status === "scheduled");
 
   return (
     <Link
@@ -518,9 +526,13 @@ function KanbanCard({
             <span
               className={cn(
                 "inline-flex items-center gap-1 font-mono text-[10.5px] tabular-nums",
-                isLive ? "text-fx-coral-p" : "text-text-secondary",
+                isOverdueArrival
+                  ? "text-fx-red font-semibold"
+                  : isLive
+                    ? "text-fx-coral-p"
+                    : "text-text-secondary",
               )}
-              title="Arrival window"
+              title={isOverdueArrival ? "Arrival window passed — job hasn't started" : "Arrival window"}
             >
               <Clock className="h-2.5 w-2.5 shrink-0" />
               {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at)}

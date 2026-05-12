@@ -5,12 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import { cn } from "@/lib/utils";
-import {
-  ARRIVAL_SLOTS,
-  type ArrivalSlotId,
-  matchArrivalSlot,
-  nearestArrivalSlot,
-} from "@/lib/job-arrival-window";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import type { RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { BYDAY_LABELS, BYDAY_ORDER, seriesPreview } from "@/lib/job-recurrence";
@@ -45,6 +40,8 @@ type Props = {
   startDateFooter?: ReactNode;
   startDateRequired?: boolean;
   requiredFieldClassName?: string;
+  /** When true, the one-off form skips the arrival-slot picker — the caller is rendering it elsewhere (e.g. inline with Type of Work in the Rate Type section). */
+  hideArrivalSlot?: boolean;
 };
 
 /**
@@ -75,6 +72,7 @@ export function JobModalScheduleFields({
   startDateFooter,
   startDateRequired,
   requiredFieldClassName,
+  hideArrivalSlot = false,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
   const isOneOff = jobKind === "one_off";
@@ -83,18 +81,6 @@ export function JobModalScheduleFields({
   const isMultiple = isMultiDay || isRecurring;
 
   const setKind = (k: JobKind) => onChange("job_kind", k);
-
-  /** Resolve the current (arrival_from, mins) pair to the active slot id.
-   * Exact match preferred; legacy / non-aligned values snap to the nearest. */
-  const activeSlotId: ArrivalSlotId =
-    matchArrivalSlot(arrivalFrom, arrivalWindowMins) ?? nearestArrivalSlot(arrivalFrom, arrivalWindowMins);
-
-  const pickSlot = (id: ArrivalSlotId) => {
-    const slot = ARRIVAL_SLOTS.find((s) => s.id === id);
-    if (!slot) return;
-    onChange("arrival_from", slot.from);
-    onChange("arrival_window_mins", String(slot.mins));
-  };
 
   return (
     <>
@@ -138,7 +124,7 @@ export function JobModalScheduleFields({
       {/* Form per mode */}
       {isOneOff ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={cn("grid grid-cols-1 gap-4", !hideArrivalSlot && "md:grid-cols-2")}>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Start date{startDateRequired ? " *" : ""}
@@ -151,32 +137,16 @@ export function JobModalScheduleFields({
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Arrival time *
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {ARRIVAL_SLOTS.map((slot) => {
-                  const active = activeSlotId === slot.id;
-                  return (
-                    <button
-                      key={slot.id}
-                      type="button"
-                      onClick={() => pickSlot(slot.id)}
-                      aria-pressed={active}
-                      className={cn(
-                        "rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
-                        active
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
-                      )}
-                    >
-                      {slot.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            {!hideArrivalSlot && (
+              <ArrivalSlotPicker
+                arrivalFrom={arrivalFrom}
+                arrivalWindowMins={arrivalWindowMins}
+                onPick={(from, mins) => {
+                  onChange("arrival_from", from);
+                  onChange("arrival_window_mins", mins);
+                }}
+              />
+            )}
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
           <p className="text-[10px] text-text-tertiary -mt-1">

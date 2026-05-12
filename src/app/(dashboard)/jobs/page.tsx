@@ -89,6 +89,7 @@ import {
 } from "@/lib/type-of-work";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
@@ -3235,6 +3236,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     </p>
                   </div>
                 ) : null}
+                {form.job_kind === "one_off" ? (
+                  <ArrivalSlotPicker
+                    compact
+                    arrivalFrom={form.arrival_from}
+                    arrivalWindowMins={form.arrival_window_mins}
+                    onPick={(from, mins) => {
+                      update("arrival_from", from);
+                      update("arrival_window_mins", mins);
+                    }}
+                  />
+                ) : null}
               </div>
             </div>
           </section>
@@ -3256,6 +3268,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
               onChange={(field, value) => update(field, value)}
               startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
               requiredFieldClassName={requiredFieldClass}
+              hideArrivalSlot={form.job_kind === "one_off"}
             />
           </section>
 
