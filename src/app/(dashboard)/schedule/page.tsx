@@ -9,7 +9,9 @@ import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
+import { getDrivingRoute, formatDuration, formatDistanceMiles, type DrivingRoute } from "@/lib/mapbox-directions";
 import {
   ScheduleLiveMap,
   LIVE_MAP_TOOLBAR_BTN_CLASS,
@@ -145,6 +147,16 @@ export default function SchedulePage() {
   const [liveMapCustomTo, setLiveMapCustomTo] = useState<string>(() => formatLocalYmd(new Date()));
   const [liveMapSelectedJobIds, setLiveMapSelectedJobIds] = useState<Set<string>>(() => new Set());
   const [liveMapPartnerFilter, setLiveMapPartnerFilter] = useState<string>("all");
+  /** "all" · account_id. Filters job pins by clients.source_account_id (partner pins stay visible). */
+  const [liveMapAccountFilter, setLiveMapAccountFilter] = useState<string>("all");
+  const [liveMapAccountsList, setLiveMapAccountsList] = useState<{ id: string; name: string }[]>([]);
+  /** Resolved client_ids for the active account filter (null when filter = "all"). */
+  const [liveMapAccountClientIds, setLiveMapAccountClientIds] = useState<Set<string> | null>(null);
+  /** Selected partner for the "route to next job" affordance + the computed route. */
+  const [liveMapRoutedPartnerId, setLiveMapRoutedPartnerId] = useState<string | null>(null);
+  const [liveMapRoute, setLiveMapRoute] = useState<DrivingRoute | null>(null);
+  const [liveMapRouteJobId, setLiveMapRouteJobId] = useState<string | null>(null);
+  const [liveMapRouteLoading, setLiveMapRouteLoading] = useState(false);
   /** Matches Live View trade filter + job title parsing to Admin → Services catalog names. */
   const [serviceCatalogTypeNames, setServiceCatalogTypeNames] = useState<string[]>([]);
 
@@ -244,6 +256,67 @@ export default function SchedulePage() {
     }, 60_000);
     return () => window.clearInterval(timer);
   }, [loadLiveMap]);
+
+  // Realtime: any change to `user_locations` triggers a debounced reload so
+  // partner pins move within ~1s of a heartbeat instead of waiting for the
+  // 60s poll. The poll stays on as a defensive heartbeat.
+  useEffect(() => {
+    const supabase = getSupabase();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void loadLiveMap(), 500);
+    };
+    const channel = supabase
+      .channel("schedule_live_map_user_locations")
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_locations" }, schedule)
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [loadLiveMap]);
+
+  // Load corporate accounts once for the Account picker.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const { data } = await supabase
+        .from("accounts")
+        .select("id, name")
+        .order("name", { ascending: true })
+        .limit(2000);
+      if (cancelled) return;
+      setLiveMapAccountsList(
+        ((data ?? []) as { id: string; name: string | null }[])
+          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
+          .filter((a) => a.id && a.name),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Resolve the account filter to a client_id set used downstream when
+  // narrowing job pins. `null` = no account filter; empty Set = account has
+  // no clients (caller should render zero job pins).
+  useEffect(() => {
+    let cancelled = false;
+    if (liveMapAccountFilter === "all") {
+      setLiveMapAccountClientIds(null);
+      return;
+    }
+    void (async () => {
+      const ids = await resolveAccountClientIds(liveMapAccountFilter);
+      if (cancelled) return;
+      setLiveMapAccountClientIds(ids ? new Set(ids) : new Set());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveMapAccountFilter]);
 
   const anchorCal = useMemo(() => {
     const t = new Date();
@@ -388,6 +461,11 @@ export default function SchedulePage() {
     for (const j of jobsForSelectedDay) {
       const normalized = normalizeLiveMapCoordinate(j.latitude, j.longitude);
       if (!normalized) continue;
+      // Account filter: drop jobs whose client_id isn't in the resolved set.
+      // null set = no account filter; empty set = account has no clients.
+      if (liveMapAccountClientIds !== null) {
+        if (!j.client_id || !liveMapAccountClientIds.has(j.client_id)) continue;
+      }
       points.push({
         id: j.id,
         latitude: normalized.latitude,
@@ -404,7 +482,75 @@ export default function SchedulePage() {
       });
     }
     return points;
-  }, [jobsForSelectedDay, serviceCatalogTypeNames]);
+  }, [jobsForSelectedDay, serviceCatalogTypeNames, liveMapAccountClientIds]);
+
+  /** Compute the next eligible job for the routed partner and fetch the driving
+   *  route from Mapbox. Runs whenever the user clicks a partner pin (or the
+   *  underlying data changes while a partner is selected). */
+  useEffect(() => {
+    if (!liveMapRoutedPartnerId) {
+      setLiveMapRoute(null);
+      setLiveMapRouteJobId(null);
+      return;
+    }
+    const partner = liveMapPoints.find((p) => p.id === liveMapRoutedPartnerId);
+    if (!partner) {
+      setLiveMapRoute(null);
+      setLiveMapRouteJobId(null);
+      return;
+    }
+    // Next eligible job: earliest scheduled_start_at where partner matches and
+    // the job hasn't started yet (status in {scheduled, late, unassigned}).
+    const candidates = jobs
+      .filter((j) => {
+        if (j.partner_id !== liveMapRoutedPartnerId) return false;
+        if (
+          j.status !== "scheduled" &&
+          j.status !== "late" &&
+          j.status !== "unassigned" &&
+          j.status !== "auto_assigning"
+        ) {
+          return false;
+        }
+        if (typeof j.latitude !== "number" || typeof j.longitude !== "number") return false;
+        if (!j.scheduled_start_at) return false;
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          new Date(a.scheduled_start_at ?? 0).getTime() -
+          new Date(b.scheduled_start_at ?? 0).getTime(),
+      );
+    const nextJob = candidates[0];
+    if (!nextJob) {
+      setLiveMapRoute(null);
+      setLiveMapRouteJobId(null);
+      return;
+    }
+    let cancelled = false;
+    setLiveMapRouteLoading(true);
+    void (async () => {
+      const route = await getDrivingRoute(
+        { latitude: partner.latitude, longitude: partner.longitude },
+        { latitude: nextJob.latitude as number, longitude: nextJob.longitude as number },
+      );
+      if (cancelled) return;
+      setLiveMapRoute(route);
+      setLiveMapRouteJobId(nextJob.id);
+      setLiveMapRouteLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveMapRoutedPartnerId, liveMapPoints, jobs]);
+
+  const handlePartnerMarkerClick = useCallback((partnerId: string) => {
+    setLiveMapRoutedPartnerId((cur) => (cur === partnerId ? null : partnerId));
+  }, []);
+
+  const clearRoute = useCallback(() => {
+    setLiveMapRoutedPartnerId(null);
+  }, []);
 
   const toggleJobSelection = useCallback((id: string) => {
     setLiveMapSelectedJobIds((prev) => {
@@ -477,6 +623,8 @@ export default function SchedulePage() {
           jobPoints={liveMapJobPoints}
           selectedJobIds={liveMapSelectedJobSet}
           onJobMarkerClick={toggleJobSelection}
+          onPartnerMarkerClick={handlePartnerMarkerClick}
+          routeGeometry={liveMapRoute?.geometry ?? null}
           toolbarExtra={
             <button
               type="button"
@@ -519,6 +667,22 @@ export default function SchedulePage() {
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
               </div>
+              <div className="relative">
+                <select
+                  aria-label="Account filter"
+                  value={liveMapAccountFilter}
+                  onChange={(e) => setLiveMapAccountFilter(e.target.value)}
+                  className="h-7 min-w-[130px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
+                >
+                  <option value="all">All accounts</option>
+                  {liveMapAccountsList.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+              </div>
               {liveMapTradeFilter !== "all" && (
                 <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF2FF] px-2 py-0.5 text-[11px] font-medium text-[#020040]">
                   <Users className="h-3 w-3" aria-hidden />
@@ -531,7 +695,71 @@ export default function SchedulePage() {
             </div>
           }
           bottomLeftOverlay={
-            <div className="rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
+            <div className="flex flex-col gap-2">
+              {liveMapRoutedPartnerId ? (() => {
+                const partner = liveMapPoints.find((p) => p.id === liveMapRoutedPartnerId);
+                const job = liveMapRouteJobId ? jobs.find((j) => j.id === liveMapRouteJobId) : null;
+                const arrivalEndMs = job?.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : null;
+                const etaMs = liveMapRoute ? Date.now() + liveMapRoute.durationSec * 1000 : null;
+                const willMissWindow = arrivalEndMs && etaMs ? etaMs > arrivalEndMs : false;
+                return (
+                  <div className="w-[300px] max-w-[92vw] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2.5 shadow-md backdrop-blur-sm space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#ED4B00]">Route · next job</p>
+                        <p className="mt-0.5 text-[12.5px] font-semibold text-[#020040] truncate">
+                          {partner?.name ?? "Partner"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearRoute}
+                        className="text-[10px] font-medium text-[#64748B] hover:text-[#020040]"
+                      >
+                        Clear ✕
+                      </button>
+                    </div>
+                    {liveMapRouteLoading ? (
+                      <p className="text-[11px] text-[#64748B]">Calculating route…</p>
+                    ) : !job ? (
+                      <p className="text-[11px] text-[#64748B]">No upcoming job assigned to this partner.</p>
+                    ) : (
+                      <>
+                        <div className="rounded-md border border-[#E4E4E8] bg-[#FAFAFB] px-2 py-1.5 text-[11px] leading-snug">
+                          <p className="font-mono text-[10px] text-[#64748B] tracking-[0.04em]">{job.reference}</p>
+                          <p className="font-medium text-[#020040] truncate">{job.title}</p>
+                          {job.scheduled_start_at ? (
+                            <p className="mt-0.5 text-[10.5px] text-[#64748B]">
+                              Arrival {new Date(job.scheduled_start_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}
+                              {job.scheduled_end_at ? `–${new Date(job.scheduled_end_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}` : ""}
+                              {job.client_name ? ` · ${job.client_name}` : ""}
+                            </p>
+                          ) : null}
+                          {job.property_address ? (
+                            <p className="text-[10.5px] text-[#64748B] truncate">{job.property_address}</p>
+                          ) : null}
+                        </div>
+                        {liveMapRoute ? (
+                          <div className={cn(
+                            "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px]",
+                            willMissWindow ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#ECFDF5] text-[#065F46]",
+                          )}>
+                            <span className="font-semibold">
+                              {willMissWindow ? "⚠ ETA past window" : "On track"}
+                            </span>
+                            <span className="font-mono tabular-nums">
+                              {formatDuration(liveMapRoute.durationSec)} · {formatDistanceMiles(liveMapRoute.distanceM)}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-[#64748B]">No driving route available.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })() : null}
+              <div className="rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
               <div className="flex items-center gap-3 text-[11px]">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#1D9E75]" aria-hidden />
@@ -560,6 +788,7 @@ export default function SchedulePage() {
                     {entry.label}
                   </span>
                 ))}
+              </div>
               </div>
             </div>
           }

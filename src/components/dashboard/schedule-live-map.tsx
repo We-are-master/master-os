@@ -159,6 +159,10 @@ interface ScheduleLiveMapProps {
   selectedJobIds?: ReadonlySet<string>;
   /** Fired when a job pin is clicked. Caller decides: toggle selection, open drawer, etc. */
   onJobMarkerClick?: (jobId: string) => void;
+  /** Fired when a partner pin is clicked — used by the page to compute the route to that partner's next job. */
+  onPartnerMarkerClick?: (partnerId: string) => void;
+  /** Optional driving route geometry to overlay (e.g. partner → next job). */
+  routeGeometry?: { type: "LineString"; coordinates: [number, number][] } | null;
   /** Filter controls panel — floated below the top-left toolbar on the map. */
   filterOverlay?: ReactNode;
   /** Live stats + legend panel — floated at the bottom-left corner of the map. */
@@ -221,6 +225,8 @@ export function ScheduleLiveMap({
   jobPoints,
   selectedJobIds,
   onJobMarkerClick,
+  onPartnerMarkerClick,
+  routeGeometry,
   filterOverlay,
   bottomLeftOverlay,
   bottomRightOverlay,
@@ -625,11 +631,18 @@ export function ScheduleLiveMap({
       onJobMarkerClick(id);
     };
 
+    const handlePartnerClick = (e: MapLayerMouseEvent) => {
+      const id = e.features?.[0]?.properties?.id as string | undefined;
+      if (!id || !onPartnerMarkerClick) return;
+      onPartnerMarkerClick(id);
+    };
+
     map.on("mouseenter", PARTNER_CIRCLE_LAYER_ID, handlePartnerEnter);
     map.on("mouseleave", PARTNER_CIRCLE_LAYER_ID, handlePartnerLeave);
     map.on("mouseenter", JOB_CIRCLE_LAYER_ID, handleJobEnter);
     map.on("mouseleave", JOB_CIRCLE_LAYER_ID, handleJobLeave);
     map.on("click", JOB_CIRCLE_LAYER_ID, handleJobClick);
+    map.on("click", PARTNER_CIRCLE_LAYER_ID, handlePartnerClick);
 
     return () => {
       map.off("mouseenter", PARTNER_CIRCLE_LAYER_ID, handlePartnerEnter);
@@ -637,8 +650,63 @@ export function ScheduleLiveMap({
       map.off("mouseenter", JOB_CIRCLE_LAYER_ID, handleJobEnter);
       map.off("mouseleave", JOB_CIRCLE_LAYER_ID, handleJobLeave);
       map.off("click", JOB_CIRCLE_LAYER_ID, handleJobClick);
+      map.off("click", PARTNER_CIRCLE_LAYER_ID, handlePartnerClick);
     };
-  }, [mapReady, partnerById, jobById, onJobMarkerClick, selectedJobIds]);
+  }, [mapReady, partnerById, jobById, onJobMarkerClick, onPartnerMarkerClick, selectedJobIds]);
+
+  /** Route overlay: a single LineString source + line layer that updates
+   *  whenever `routeGeometry` changes. Mounted below partner pins so the pins
+   *  stay clickable on top of the line. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const SOURCE_ID = "live-map-route";
+    const LAYER_ID = "live-map-route-line";
+
+    const ensureLayer = () => {
+      const emptyFc = { type: "FeatureCollection" as const, features: [] };
+      if (!map.getSource(SOURCE_ID)) {
+        map.addSource(SOURCE_ID, { type: "geojson", data: emptyFc });
+      }
+      if (!map.getLayer(LAYER_ID)) {
+        const beforeLayer = map.getLayer(PARTNER_CIRCLE_LAYER_ID) ? PARTNER_CIRCLE_LAYER_ID : undefined;
+        map.addLayer(
+          {
+            id: LAYER_ID,
+            type: "line",
+            source: SOURCE_ID,
+            layout: { "line-join": "round", "line-cap": "round" },
+            paint: {
+              "line-color": "#ED4B00",
+              "line-width": 4,
+              "line-opacity": 0.85,
+            },
+          },
+          beforeLayer,
+        );
+      }
+    };
+
+    ensureLayer();
+    const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    if (!source) return;
+    if (!routeGeometry || routeGeometry.coordinates.length < 2) {
+      source.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    source.setData({
+      type: "FeatureCollection",
+      features: [{ type: "Feature", geometry: routeGeometry, properties: {} }],
+    });
+    // Frame the route once when it appears.
+    const bounds = new mapboxgl.LngLatBounds();
+    for (const [lng, lat] of routeGeometry.coordinates) {
+      bounds.extend([lng, lat]);
+    }
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { padding: 60, duration: 600, maxZoom: 14 });
+    }
+  }, [mapReady, routeGeometry]);
 
   /** Fixed regions: only when the user changes the preset (not when filters change). */
   useEffect(() => {
