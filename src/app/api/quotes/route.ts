@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { safePostgrestEnumValue } from "@/lib/supabase/sanitize";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
@@ -218,32 +219,58 @@ export async function POST(req: NextRequest) {
   const status    = typeOfQuoting === "bidding" ? "bidding"  : "draft";
   const quoteType = typeOfQuoting === "bidding" ? "partner"  : "internal";
 
-  const { data: inserted, error: insErr } = await supabase
-    .from("quotes")
-    .insert({
-      reference:            ref,
-      title,
-      status,
-      client_id:            clientId,
-      client_name:          clientName || null,
-      client_email:         clientEmail || null,
-      scope:                description,
-      service_type:         serviceType,
-      start_date_option_1:  startIso,
-      total_value:          0,
-      cost:                 0,
-      sell_price:           0,
-      margin_percent:       0,
-      partner_cost:         0,
-      partner_quotes_count: 0,
-      quote_type:           quoteType,
-      customer_accepted:    false,
-      customer_deposit_paid: false,
-      draft_route_completed: true,
-      ...(ticketId ? { external_source: "zendesk", external_ref: ticketId } : {}),
-    })
-    .select("id, reference, status")
-    .single();
+  const baseQuoteRow = {
+    reference:            ref,
+    title,
+    status,
+    client_id:            clientId,
+    client_name:          clientName || null,
+    client_email:         clientEmail || null,
+    scope:                description,
+    service_type:         serviceType,
+    start_date_option_1:  startIso,
+    total_value:          0,
+    cost:                 0,
+    sell_price:           0,
+    margin_percent:       0,
+    partner_cost:         0,
+    partner_quotes_count: 0,
+    quote_type:           quoteType,
+    customer_accepted:    false,
+    customer_deposit_paid: false,
+    ...(ticketId ? { external_source: "zendesk", external_ref: ticketId } : {}),
+  };
+  // Newer column from mig 165 — wrap optimistically. When the DB / PostgREST
+  // schema cache is behind, retry without it.
+  const quoteRowWithExtras = { ...baseQuoteRow, draft_route_completed: true };
+
+  type QuoteInsertResult = { id: string; reference: string; status: string };
+  type InsertErr = { message: string; code?: string };
+
+  let inserted: QuoteInsertResult | null = null;
+  let insErr: InsertErr | null = null;
+  {
+    const r1 = await supabase
+      .from("quotes")
+      .insert(quoteRowWithExtras)
+      .select("id, reference, status")
+      .single();
+    inserted = (r1.data as QuoteInsertResult | null) ?? null;
+    insErr = (r1.error as InsertErr | null) ?? null;
+    if (insErr && isPostgrestWriteRetryableError(insErr)) {
+      console.warn(
+        "[api/quotes] insert hit schema cache miss, retrying without draft_route_completed:",
+        insErr.message,
+      );
+      const r2 = await supabase
+        .from("quotes")
+        .insert(baseQuoteRow)
+        .select("id, reference, status")
+        .single();
+      inserted = (r2.data as QuoteInsertResult | null) ?? null;
+      insErr = (r2.error as InsertErr | null) ?? null;
+    }
+  }
   if (insErr || !inserted) {
     console.error("[api/quotes] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create quote." }, { status: 500 });
