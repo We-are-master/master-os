@@ -74,18 +74,27 @@ function QuoteRespondContent() {
           setInfoError(data.error);
           setSummary(null);
         } else {
+          // ⚠️  Carry tokenKind / linkedJob / bidContext through — the page
+          // branches on these to decide whether to render the customer
+          // accept/reject view, the partner bid form, or the partner
+          // report form. Dropping them here made every partner link fall
+          // through to the customer view.
           setSummary({
             reference: data.reference ?? "",
             title: data.title ?? "",
             clientName: data.clientName ?? "",
             propertyAddress: data.propertyAddress ?? null,
             scope: data.scope ?? null,
+            serviceType: data.serviceType ?? null,
             totalValue: data.totalValue ?? 0,
             depositRequired: data.depositRequired ?? 0,
             startDateOption1: data.startDateOption1 ?? null,
             startDateOption2: data.startDateOption2 ?? null,
             status: data.status ?? "",
             lineItems: data.lineItems ?? [],
+            tokenKind: data.tokenKind ?? "customer",
+            linkedJob: data.linkedJob ?? null,
+            bidContext: data.bidContext ?? null,
           });
         }
       })
