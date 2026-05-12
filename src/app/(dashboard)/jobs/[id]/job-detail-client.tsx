@@ -4498,13 +4498,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk =
     reportsUploaded && reportsApproved && ownerApprovalChecked && sentToAccountsChecked;
-  /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 20 chars). */
+  /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 10 chars). */
   const canSubmitApproval =
     mandatoryChecksOk ||
     (forceApprovalChecked &&
       ownerApprovalChecked &&
       sentToAccountsChecked &&
-      forceApprovalReason.trim().length >= 20);
+      forceApprovalReason.trim().length >= 10);
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
