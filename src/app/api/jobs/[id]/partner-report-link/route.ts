@@ -79,7 +79,11 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
   const token = createPartnerReportToken(String(job.id), String(job.partner_id));
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
-  const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
+  // Semantic path for partner work-report links. Next.js rewrites this to
+  // /quote/respond internally so the same page handles all token kinds,
+  // but the URL the partner sees is /job/report — not the legacy
+  // /quote/respond which makes no sense for a job report submission.
+  const targetPath = `/job/report?token=${encodeURIComponent(token)}`;
 
   // Short link: one stable slug per (job, partner). Falls back gracefully to
   // the long URL if the short_links table doesn't exist yet (migration 183

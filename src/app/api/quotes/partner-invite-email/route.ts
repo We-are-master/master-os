@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
       // submitted via this URL are traceable to the specific invited partner.
       // Wrapped in a short link so the email CTA + WhatsApp shares look clean.
       const bidToken = createPartnerBidToken(quoteId, p.id);
-      const targetPath = `/quote/respond?token=${encodeURIComponent(bidToken)}`;
+      const targetPath = `/quote/bid?token=${encodeURIComponent(bidToken)}`;
       const { shortPath } = await upsertShortLink({
         targetPath,
         kind:      "partner_bid",

@@ -54,7 +54,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   const token = createPartnerBidToken(quote.id, partner.id);
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
-  const targetPath = `/quote/respond?token=${encodeURIComponent(token)}`;
+  // Semantic /quote/bid path for partner bid submission (rewrites to the
+  // same /quote/respond page internally).
+  const targetPath = `/quote/bid?token=${encodeURIComponent(token)}`;
 
   let shortPath = targetPath;
   try {
