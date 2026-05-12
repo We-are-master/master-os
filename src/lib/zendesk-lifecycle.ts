@@ -31,6 +31,8 @@ import {
   buildPartnerJobConfirmedSideConvBody,
   buildQuoteRejectedHtml,
 } from "@/lib/zendesk-lifecycle-templates";
+import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
 
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
 
@@ -116,6 +118,25 @@ export async function dispatchJobCreatedZendesk(args: {
 
   if (!sideConvId && job.partner_id && partnerEmail) {
     try {
+      // Build the partner-scoped report URL up front and include it as the
+      // primary CTA so the partner can submit the report without waiting
+      // for a separate email or having the app installed.
+      const reportToken = createPartnerReportToken(String(job.id), String(job.partner_id));
+      const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+      const reportTargetPath = `/job/report?token=${encodeURIComponent(reportToken)}`;
+      let reportShortPath = reportTargetPath;
+      try {
+        const r = await upsertShortLink({
+          targetPath: reportTargetPath,
+          kind:       "partner_report",
+          entityRef:  `job:${job.id}:partner:${job.partner_id}`,
+        });
+        reportShortPath = r.shortPath;
+      } catch (err) {
+        console.error("[zendesk-lifecycle] short link upsert for report failed:", err);
+      }
+      const reportUrl = `${base}${reportShortPath}`;
+
       const sideConvBody = buildPartnerJobConfirmedSideConvBody({
         reference: String(job.reference ?? ""),
         title: String(job.title ?? ""),
@@ -123,6 +144,7 @@ export async function dispatchJobCreatedZendesk(args: {
         scheduledHour: hour,
         propertyAddress: String(job.property_address ?? ""),
         scope: (job.scope as string | null) ?? null,
+        reportUrl,
       });
       const result = await createSideConversation({
         ticketId,

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createSideConversation, replyToSideConversation, updateTicket as zdUpdateTicket } from "@/lib/zendesk";
-import { ZD_STATUS_ON_HOLD } from "@/lib/zendesk-statuses";
+import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
+import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
+import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -154,9 +156,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     : `£${Number(job.partner_cost ?? 0).toFixed(2)}`;
   const partnerFirstName = (partner.contact_name?.trim().split(/\s+/)[0])
     || (partner.company_name?.trim() ?? "Partner");
-  const partnerAppBase = process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim()?.replace(/\/$/, "")
-    || "https://app.getfixfy.com";
-  const reportUrl = `${partnerAppBase}/jobs/${job.reference}/report`;
+  // Partner-scoped web report link — shipped as the primary CTA in every
+  // partner email (assigned/completed/etc) so the partner can submit the
+  // report straight from their inbox without the app. The token binds
+  // (jobId, partnerId), so reassigning the partner invalidates older links.
+  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  let reportUrl = `${appBaseUrl}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
+  try {
+    const r = await upsertShortLink({
+      targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
+      kind:       "partner_report",
+      entityRef:  `job:${job.id}:partner:${partner.id}`,
+      createdBy:  auth.user.id,
+    });
+    reportUrl = `${appBaseUrl}${r.shortPath}`;
+  } catch (err) {
+    console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
+  }
 
   // Resolve final reason / status label
   const effectiveReason = reason
@@ -265,17 +281,41 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     zendeskResult = { ok: false, error: `skipped_kind_${kind}` };
   }
 
-  // ─── Sync custom_status_id on the main ticket for on_hold ──────────
-  // Independent of the partner-email policy above: the support team
-  // needs to see the job is paused even when we don't email the partner.
-  // Fire-and-forget so a status sync failure can't block the response.
-  if (zendeskTicketId && kind === "on_hold") {
-    void zdUpdateTicket({
-      ticketId:       zendeskTicketId,
-      customStatusId: ZD_STATUS_ON_HOLD,
-    }).then(
-      () => console.log("[notify-partner-zendesk] Zendesk ticket", zendeskTicketId, "status set to on-hold for job", job.reference),
-      (err) => console.error("[notify-partner-zendesk] Zendesk status update failed for ticket", zendeskTicketId, ":", err),
+  // ─── Always sync custom_status_id on the main ticket ─────────────
+  // Every notify call carries an implicit "the office did something
+  // on this job — make sure the ticket reflects it". The central
+  // syncJobZendeskStatus reads the current job.status and maps it to
+  // the right Zendesk custom_status_id (Scheduled, In Progress,
+  // Final Checks, Completed, Cancelled, …). Fire-and-forget so a
+  // status sync failure can't block the partner notification.
+  //
+  // Previously only `on_hold` got this; everything else (job booked /
+  // scheduled / completed / cancelled) relied on the DB trigger fire
+  // on status change, which doesn't fire when the office runs notify
+  // without changing the job's status (e.g. clicking "Send via
+  // Zendesk" on an already-scheduled job).
+  if (zendeskTicketId) {
+    void syncJobZendeskStatus(job.id, supabase).then(
+      (r) => {
+        if (!r.ok) {
+          console.error(
+            "[notify-partner-zendesk] status sync failed for ticket",
+            zendeskTicketId,
+            ":",
+            r.error ?? r.skip ?? "unknown",
+          );
+        } else {
+          console.log(
+            "[notify-partner-zendesk] status synced for ticket",
+            zendeskTicketId,
+            "→",
+            r.customStatusId ?? "(skipped)",
+            "job",
+            job.reference,
+          );
+        }
+      },
+      (err) => console.error("[notify-partner-zendesk] status sync threw:", err),
     );
   }
 

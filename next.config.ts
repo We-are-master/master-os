@@ -28,6 +28,22 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "date-fns", "recharts"],
   },
+  /**
+   * Public link aliases. The same /quote/respond page handles three token
+   * kinds (customer accept/reject, partner bid, partner report) — these
+   * rewrites let each kind ship a URL whose path actually describes what
+   * the page is doing, without duplicating the page itself.
+   *
+   *   /job/report?token=…   → partner work-report submission
+   *   /quote/bid?token=…    → partner bid submission
+   *   /quote/respond?token=… → legacy / customer accept/reject (kept as-is)
+   */
+  async rewrites() {
+    return [
+      { source: "/job/report",  destination: "/quote/respond" },
+      { source: "/quote/bid",   destination: "/quote/respond" },
+    ];
+  },
 };
 
 export default nextConfig;

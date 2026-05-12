@@ -4,6 +4,8 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { escapeHtmlAttr, normalizeEmailAssetUrl } from "@/lib/email-asset-url";
+import { createPartnerBidToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
 
 function escapeHtml(s: string): string {
   return s
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     const invitationScope = quoteScope || requestDescription.trim();
 
-    const { data: partners } = await supabase.from("partners").select("id, email, company_name").in("id", partnerIds);
+    const { data: partners } = await supabase.from("partners").select("id, email, company_name, contact_name").in("id", partnerIds);
 
     const resendKey = process.env.RESEND_API_KEY?.trim();
     if (!resendKey) {
@@ -100,18 +102,35 @@ export async function POST(req: NextRequest) {
     const officeQuoteUrl = `${publicOsBaseUrl(req)}/quotes?quoteId=${encodeURIComponent(quoteId)}&drawerTab=bids`;
     const officeEsc = escapeHtmlAttr(officeQuoteUrl);
 
-    const sendOne = async (p: { email?: string | null; company_name?: string | null }) => {
+    const sendOne = async (p: { id: string; email?: string | null; company_name?: string | null }) => {
       const email = p.email?.trim();
       if (!email) return false;
+      // Per-partner web bid link — bound to (quoteId, partnerId) so bids
+      // submitted via this URL are traceable to the specific invited partner.
+      // Wrapped in a short link so the email CTA + WhatsApp shares look clean.
+      const bidToken = createPartnerBidToken(quoteId, p.id);
+      const targetPath = `/quote/bid?token=${encodeURIComponent(bidToken)}`;
+      const { shortPath } = await upsertShortLink({
+        targetPath,
+        kind:      "partner_bid",
+        entityRef: `quote:${quoteId}:partner:${p.id}`,
+        createdBy: auth.user.id,
+      }).catch((err) => {
+        console.error("[partner-invite-email] short link upsert failed, falling back:", err);
+        return { shortPath: targetPath };
+      });
+      const bidWebUrl = `${publicOsBaseUrl(req)}${shortPath}`;
+      const bidWebEsc = escapeHtmlAttr(bidWebUrl);
       const html = `
         <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
         <p>You have been invited to bid on <strong>${escapeHtml(quote.reference)}</strong> — ${escapeHtml(quote.title ?? "")}</p>
         <p><strong>Property:</strong> ${escapeHtml(quote.property_address ?? "—")}</p>
         ${invitationScope ? `<p><strong>Scope:</strong><br/>${escapeHtml(invitationScope).replace(/\n/g, "<br/>")}</p>` : ""}
         ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
-        <p style="margin-top:20px"><strong>Submit your bid in the partner app</strong></p>
+        <p style="margin-top:20px"><strong>Submit your bid</strong></p>
+        <p style="margin:12px 0;font-size:14px"><a href="${bidWebEsc}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600">Open bid form</a></p>
+        <p style="margin:8px 0;font-size:12px;color:#666">Or open in the Fixfy partner app: <a href="${deepEsc}">in-app invitation</a></p>
         ${storeBlock}
-        <p style="margin:12px 0;font-size:14px"><a href="${deepEsc}">Open invitation in app</a> (tap after installing Fixfy)</p>
         <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Fixfy OS</a></p>
       `;
       const { error } = await resend.emails.send({
@@ -123,10 +142,33 @@ export async function POST(req: NextRequest) {
       return !error;
     };
 
-    const results = await Promise.all((partners ?? []).map((p) => sendOne(p)));
+    const results = await Promise.all((partners ?? []).map((p) => sendOne(p as { id: string; email?: string | null; company_name?: string | null })));
     const sent = results.filter(Boolean).length;
 
-    return NextResponse.json({ ok: true, sent });
+    // Track every invited partner in quote_partner_invitations (idempotent
+    // on (quote_id, partner_id)) so the Bids tab can list "who got the
+    // invite" with each partner's unique link. We track ALL selected
+    // partners — even those without an email get a row (the office can
+    // still copy the link manually for them).
+    const nowIso = new Date().toISOString();
+    const rows = partnerIds.map((pid) => ({
+      quote_id:        quoteId,
+      partner_id:      pid,
+      invited_by:      auth.user.id,
+      invited_at:      nowIso,
+      last_invited_at: nowIso,
+      last_channel:    "email",
+    }));
+    if (rows.length > 0) {
+      void supabase
+        .from("quote_partner_invitations")
+        .upsert(rows, { onConflict: "quote_id,partner_id" })
+        .then(({ error }) => {
+          if (error) console.error("[partner-invite-email] invitations upsert failed:", error.message);
+        });
+    }
+
+    return NextResponse.json({ ok: true, sent, invited: partnerIds.length });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }

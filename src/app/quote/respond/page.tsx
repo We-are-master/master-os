@@ -2,6 +2,25 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import PublicReportForm from "./public-report-form";
+import PublicBidForm from "./public-bid-form";
+import { pickReportTemplate } from "@/lib/public-report-templates";
+
+type LinkedJob = {
+  id:                    string;
+  reference:             string;
+  serviceType:           string | null;
+  status:                string;
+  title:                 string | null;
+  propertyAddress:       string | null;
+  startReportSubmitted:  boolean;
+  finalReportSubmitted:  boolean;
+};
+
+type BidContext = {
+  partnerName: string | null;
+  existingBid: { amount: number; jobType: "fixed" | "hourly"; notes: string | null } | null;
+};
 
 type QuoteSummary = {
   reference: string;
@@ -9,12 +28,17 @@ type QuoteSummary = {
   clientName: string;
   propertyAddress: string | null;
   scope: string | null;
+  serviceType?: string | null;
   totalValue: number;
   depositRequired: number;
   startDateOption1: string | null;
   startDateOption2: string | null;
   status: string;
   lineItems: { description: string; quantity: number; unitPrice: number; total: number }[];
+  /** Distinguishes the three token surfaces (customer accept/reject, partner bid, partner report). */
+  tokenKind?: "customer" | "partner_bid" | "partner_report";
+  linkedJob?: LinkedJob | null;
+  bidContext?: BidContext | null;
 };
 
 function formatMoney(n: number) {
@@ -50,18 +74,27 @@ function QuoteRespondContent() {
           setInfoError(data.error);
           setSummary(null);
         } else {
+          // ⚠️  Carry tokenKind / linkedJob / bidContext through — the page
+          // branches on these to decide whether to render the customer
+          // accept/reject view, the partner bid form, or the partner
+          // report form. Dropping them here made every partner link fall
+          // through to the customer view.
           setSummary({
             reference: data.reference ?? "",
             title: data.title ?? "",
             clientName: data.clientName ?? "",
             propertyAddress: data.propertyAddress ?? null,
             scope: data.scope ?? null,
+            serviceType: data.serviceType ?? null,
             totalValue: data.totalValue ?? 0,
             depositRequired: data.depositRequired ?? 0,
             startDateOption1: data.startDateOption1 ?? null,
             startDateOption2: data.startDateOption2 ?? null,
             status: data.status ?? "",
             lineItems: data.lineItems ?? [],
+            tokenKind: data.tokenKind ?? "customer",
+            linkedJob: data.linkedJob ?? null,
+            bidContext: data.bidContext ?? null,
           });
         }
       })
@@ -76,18 +109,24 @@ function QuoteRespondContent() {
     };
   }, [token]);
 
-  if (!token || !action) {
+  if (!token) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
           <h1 className="text-xl font-bold text-stone-800">Invalid link</h1>
-          <p className="text-stone-600 mt-2">This quote response link is missing parameters. Please use the link from your email.</p>
+          <p className="text-stone-600 mt-2">This link is missing its token. Please use the link from your email.</p>
         </div>
       </div>
     );
   }
 
-  if (action !== "accept" && action !== "reject") {
+  // `action` is only meaningful for customer accept/reject tokens (legacy
+  // emailed CTAs). Partner bid + partner report tokens land here with no
+  // `action` query param — the page below picks the right form by
+  // `summary.tokenKind`. Skip the `action` shape validation in those cases.
+  const isCustomerActionToken = summary?.tokenKind === "customer";
+
+  if (isCustomerActionToken && action && action !== "accept" && action !== "reject") {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
@@ -144,6 +183,125 @@ function QuoteRespondContent() {
   }
 
   const isAccept = action === "accept";
+
+  // ─── Partner bid submission form ─────────────────────────────────────
+  // The partner-scoped bid token (createPartnerBidToken) routes here when
+  // the quote is still in `bidding` state. Each invited partner has their
+  // own link, so bids written through this surface are traceable per
+  // partner via the audit log + quote_bids row.
+  if (token && summary?.tokenKind === "partner_bid" && summary.status === "bidding" && summary.bidContext) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-lg w-full max-h-[min(100vh-3rem,900px)] flex flex-col overflow-hidden rounded-2xl shadow-lg border border-stone-200 bg-white">
+          <div className="flex-1 overflow-y-auto p-8">
+            <PublicBidForm
+              token={token}
+              quoteReference={summary.reference}
+              quoteTitle={summary.title}
+              propertyAddress={summary.propertyAddress}
+              scope={summary.scope}
+              partnerName={summary.bidContext.partnerName}
+              existingBid={summary.bidContext.existingBid}
+              onSubmitted={(msg) => setResult({ success: true, message: msg })}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (token && summary?.tokenKind === "partner_bid" && summary.status !== "bidding") {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-stone-100 text-stone-500">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Bidding closed</h1>
+          <p className="text-stone-600 mt-2">This quote is no longer accepting bids.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Partner report submission form ──────────────────────────────────
+  // The partner-scoped token (createPartnerReportToken) routes here when
+  // the job exists and the report is still pending. Customer tokens never
+  // reach this branch: respond-info only surfaces `linkedJob` when the
+  // token is partner-typed and matches the job's current partner_id.
+  if (token && summary?.linkedJob && !(summary.linkedJob.finalReportSubmitted && summary.linkedJob.startReportSubmitted)) {
+    const job = summary.linkedJob;
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-lg w-full max-h-[min(100vh-3rem,900px)] flex flex-col overflow-hidden rounded-2xl shadow-lg border border-stone-200 bg-white">
+          <div className="flex-1 overflow-y-auto p-8">
+            <PublicReportForm
+              token={token}
+              jobReference={job.reference}
+              jobTitle={job.title ?? summary.title}
+              propertyAddress={job.propertyAddress ?? summary.propertyAddress ?? ""}
+              serviceType={job.serviceType ?? summary.serviceType ?? null}
+              template={pickReportTemplate({
+                serviceType: job.serviceType ?? summary.serviceType ?? null,
+                title: job.title ?? summary.title,
+              })}
+              onSubmitted={() =>
+                setResult({
+                  success: true,
+                  message: "Report submitted. Our team will review it shortly.",
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (token && summary?.linkedJob?.finalReportSubmitted && summary.linkedJob.startReportSubmitted) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-emerald-100 text-emerald-600">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Report already submitted</h1>
+          <p className="text-stone-600 mt-2">Our team is reviewing the report for job {summary.linkedJob.reference}.</p>
+        </div>
+      </div>
+    );
+  }
+  // A partner-typed token where the assignment doesn't match anymore (job
+  // reassigned to someone else, or job not yet created) → explicit message.
+  if (token && summary?.tokenKind === "partner_report" && !summary.linkedJob) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-amber-100 text-amber-600">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m-9.303 3.376C1.83 17.624 2.91 19.5 4.645 19.5h14.71c1.736 0 2.815-1.876 1.948-3.374L13.948 3.376c-.867-1.5-3.031-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12V15.75Z" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Link no longer valid</h1>
+          <p className="text-stone-600 mt-2">This report link is no longer linked to an active assignment. Please contact the office for an updated link.</p>
+        </div>
+      </div>
+    );
+  }
+  // Defensive: any partner-typed token that didn't hit a more specific
+  // branch above should NOT render the customer accept/reject view by
+  // accident. Treat it as a transient/invalid state and surface that.
+  if (token && summary && summary.tokenKind && summary.tokenKind !== "customer") {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-amber-100 text-amber-600">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m-9.303 3.376C1.83 17.624 2.91 19.5 4.645 19.5h14.71c1.736 0 2.815-1.876 1.948-3.374L13.948 3.376c-.867-1.5-3.031-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12V15.75Z" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Link state unclear</h1>
+          <p className="text-stone-600 mt-2">
+            We couldn&apos;t determine what this link should show. Please contact the office for an updated link.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
