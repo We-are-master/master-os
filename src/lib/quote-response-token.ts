@@ -38,8 +38,16 @@ export function createQuoteResponseToken(quoteId: string): string {
   return `${payload}${TOKEN_SEP}${sig}`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * Verifies the token and returns the quoteId, or null if invalid.
+ *
+ * Format-strict: customer quote tokens always carry a bare UUID v4. We
+ * reject anything else even when the HMAC happens to match — without this,
+ * a partner-scoped token (which signs `kind:entityId:partnerId` with the
+ * same secret) would round-trip as a "valid" customer token because the
+ * underlying HMAC algorithm is identical.
  */
 export function verifyQuoteResponseToken(token: string): string | null {
   if (!token || typeof token !== "string") return null;
@@ -53,6 +61,9 @@ export function verifyQuoteResponseToken(token: string): string | null {
   } catch {
     return null;
   }
+  // Customer token payload MUST be a bare UUID. Reject partner tokens that
+  // happen to share the HMAC algorithm + secret.
+  if (!UUID_RE.test(quoteId.trim())) return null;
   const secret = getSecret();
   const expected = createHmac("sha256", secret).update(quoteId).digest("base64url");
   if (sig !== expected) return null;

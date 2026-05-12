@@ -275,6 +275,24 @@ function QuoteRespondContent() {
       </div>
     );
   }
+  // Defensive: any partner-typed token that didn't hit a more specific
+  // branch above should NOT render the customer accept/reject view by
+  // accident. Treat it as a transient/invalid state and surface that.
+  if (token && summary && summary.tokenKind && summary.tokenKind !== "customer") {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg border border-stone-200 p-8 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-amber-100 text-amber-600">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m-9.303 3.376C1.83 17.624 2.91 19.5 4.645 19.5h14.71c1.736 0 2.815-1.876 1.948-3.374L13.948 3.376c-.867-1.5-3.031-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12V15.75Z" /></svg>
+          </div>
+          <h1 className="text-xl font-bold text-stone-800 mt-4">Link state unclear</h1>
+          <p className="text-stone-600 mt-2">
+            We couldn&apos;t determine what this link should show. Please contact the office for an updated link.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">

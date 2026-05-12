@@ -57,6 +57,9 @@ export async function GET(req: NextRequest) {
       quoteId = verifyQuoteResponseToken(token);
     }
   }
+  console.log(
+    `[respond-info] tokenKind=${tokenKind} quoteId=${quoteId ?? "null"} tokenJobId=${tokenJobId ?? "null"} tokenPartnerId=${tokenPartnerId ?? "null"} tokenLen=${token.length}`,
+  );
   if (!quoteId && !tokenJobId) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
   }
