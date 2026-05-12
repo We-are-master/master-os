@@ -34,7 +34,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     invoiceReference,
     selfBillReference,
     reports,
-    completionDelivery,
     confirmed,
     onConfirmedChange,
     sentToAccounts,
@@ -60,8 +59,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   // ("stage_only"). Approval gating now depends only on attestations + steps.
   const attestationsOk = confirmed && sentToAccounts;
   const canApprove = attestationsOk && allStepsComplete && !forceMode && !submitting;
+  // Keep this aligned with ForceApproveBlock's counter copy (min. 10 chars).
   const canForceApprove =
-    attestationsOk && forceMode && forceReason.trim().length >= 20 && !submitting;
+    attestationsOk && forceMode && forceReason.trim().length >= 10 && !submitting;
 
   return (
     <AnimatePresence>
@@ -152,7 +152,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
             <ModalFooter
               forceMode={forceMode}
-              completionDelivery={completionDelivery}
               canApprove={canApprove}
               canForceApprove={canForceApprove}
               submitting={submitting}

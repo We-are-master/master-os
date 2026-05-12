@@ -137,6 +137,8 @@ import {
   ukTodayYmd,
   type ScheduleDatePreset,
 } from "@/lib/uk-schedule-range";
+import { DateRangeFilter } from "@/components/shared/date-range-filter";
+import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -285,7 +287,7 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
 }
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v2";
-const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
+const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "qtd", "custom"];
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";
@@ -514,8 +516,6 @@ function JobsPageContent() {
   }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
-  const [dateFilterOpen, setDateFilterOpen] = useState(false);
-  const dateFilterRef = useRef<HTMLDivElement>(null);
 
   const scheduleRange = useMemo(
     () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
@@ -554,7 +554,13 @@ function JobsPageContent() {
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
-  const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
+  /** "all" · "__none__" (unassigned) · partner_id */
+  const [filterPartner, setFilterPartner] = useState<string>("all");
+  /** "all" · account_id (corporate account) */
+  const [filterAccountId, setFilterAccountId] = useState<string>("all");
+  /** Dynamic option lists for the partner + account pickers (loaded once). */
+  const [filterPartnersList, setFilterPartnersList] = useState<{ id: string; name: string }[]>([]);
+  const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const buFilter = useBuFilter();
   const [buAccountIds, setBuAccountIds] = useState<Set<string>>(new Set());
@@ -661,11 +667,10 @@ function JobsPageContent() {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       if (filterOpen && filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
-      if (dateFilterOpen && dateFilterRef.current && !dateFilterRef.current.contains(t)) setDateFilterOpen(false);
     }
-    if (filterOpen || dateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen, dateFilterOpen]);
+  }, [filterOpen]);
 
   useEffect(() => {
     setJobsListSortKey(null);
@@ -677,10 +682,60 @@ function JobsPageContent() {
     setJobsListSortDir(direction);
   }, []);
 
+  // Load partner + account option lists for the filter popover (once per mount).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const [partnersRes, accountsRes] = await Promise.all([
+        supabase
+          .from("jobs")
+          .select("partner_id, partner_name")
+          .not("partner_id", "is", null)
+          .not("partner_name", "is", null)
+          .is("deleted_at", null)
+          .limit(2000),
+        supabase
+          .from("accounts")
+          .select("id, name")
+          .order("name", { ascending: true })
+          .limit(2000),
+      ]);
+      if (cancelled) return;
+      const seen = new Map<string, string>();
+      for (const r of (partnersRes.data ?? []) as { partner_id: string | null; partner_name: string | null }[]) {
+        const id = r.partner_id?.trim();
+        const nm = r.partner_name?.trim();
+        if (!id || !nm) continue;
+        if (!seen.has(id)) seen.set(id, nm);
+      }
+      setFilterPartnersList(
+        Array.from(seen.entries())
+          .map(([id, name]) => ({ id, name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      setFilterAccountsList(
+        ((accountsRes.data ?? []) as { id: string; name: string | null }[])
+          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
+          .filter((a) => a.id && a.name),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const filteredData = useMemo(() => {
     return data.filter((j) => {
-      if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
-      if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
+      if (filterPartner === "__none__") {
+        if (j.partner_id || j.partner_name) return false;
+      } else if (filterPartner !== "all") {
+        if (j.partner_id !== filterPartner) return false;
+      }
+      if (filterAccountId !== "all") {
+        const acc = j.client_id ? clientIdToSourceAccountId[j.client_id] ?? null : null;
+        if (acc !== filterAccountId) return false;
+      }
       const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
       if (filterScheduled === "scheduled" && !hasDate) return false;
       if (filterScheduled === "unscheduled" && hasDate) return false;
@@ -694,11 +749,13 @@ function JobsPageContent() {
   }, [
     data,
     filterPartner,
+    filterAccountId,
     filterScheduled,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
     buAccountIds,
     propertyIdToAccountId,
+    clientIdToSourceAccountId,
   ]);
 
   /** Default sorting for Jobs Management (kanban / filter bar): nearest schedule first. */
@@ -2044,8 +2101,15 @@ function JobsPageContent() {
         p += 1;
       }
       const filtered = allRows.filter((j) => {
-        if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
-        if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
+        if (filterPartner === "__none__") {
+          if (j.partner_id || j.partner_name) return false;
+        } else if (filterPartner !== "all") {
+          if (j.partner_id !== filterPartner) return false;
+        }
+        if (filterAccountId !== "all") {
+          const acc = j.client_id ? clientIdToSourceAccountId[j.client_id] ?? null : null;
+          if (acc !== filterAccountId) return false;
+        }
         const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
         if (filterScheduled === "scheduled" && !hasDate) return false;
         if (filterScheduled === "unscheduled" && hasDate) return false;
@@ -2069,11 +2133,13 @@ function JobsPageContent() {
     listParams,
     fetchJobsManagementList,
     filterPartner,
+    filterAccountId,
     filterScheduled,
     buFilter.selectedBuId,
     buFilter.clientIdsInBu,
     buAccountIds,
     propertyIdToAccountId,
+    clientIdToSourceAccountId,
   ]);
 
   const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
@@ -2092,71 +2158,21 @@ function JobsPageContent() {
       <div className="space-y-5">
         <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative" ref={dateFilterRef}>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Calendar className="h-3.5 w-3.5" />}
-                onClick={() => setDateFilterOpen((o) => !o)}
-                className={cn(scheduleRange && "border-primary/40 bg-primary/5")}
-              >
-                {scheduleDatePreset === "all"
-                  ? "Dates"
-                  : scheduleDatePreset === "today"
-                    ? "Today"
-                    : scheduleDatePreset === "tomorrow"
-                      ? "Tomorrow"
-                      : scheduleDatePreset === "week"
-                        ? "This week"
-                        : scheduleDatePreset === "month"
-                          ? "This month"
-                          : "Custom range"}
-              </Button>
-              {dateFilterOpen && (
-                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Schedule window</p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        ["all", "All dates"],
-                        ["today", "Today"],
-                        ["tomorrow", "Tomorrow"],
-                        ["week", "This week"],
-                        ["month", "This month"],
-                        ["custom", "Custom"],
-                      ] as const
-                    ).map(([id, label]) => (
-                      <Button
-                        key={id}
-                        type="button"
-                        variant={scheduleDatePreset === id ? "primary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
-                          scheduleDatePreset !== id && "text-[#020040]",
-                        )}
-                        onClick={() => {
-                          setScheduleDatePreset(id);
-                          if (id === "custom") setDateFilterOpen(true);
-                          else setDateFilterOpen(false);
-                        }}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
-                  {scheduleDatePreset === "custom" ? (
-                    <div className="space-y-2 pt-1 border-t border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
-                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
-                        <Input type="date" value={customScheduleFrom} onChange={(e) => setCustomScheduleFrom(e.target.value)} className="h-9 text-sm" />
-                        <Input type="date" value={customScheduleTo} onChange={(e) => setCustomScheduleTo(e.target.value)} className="h-9 text-sm" />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </div>
+            <DateRangeFilter
+              variant="chip"
+              value={{
+                mode: scheduleDatePreset as DateFilterMode,
+                customFrom: customScheduleFrom,
+                customTo: customScheduleTo,
+              }}
+              onChange={(next: DateFilterValue) => {
+                setScheduleDatePreset(next.mode);
+                if (next.mode === "custom") {
+                  setCustomScheduleFrom(next.customFrom ?? customScheduleFrom);
+                  setCustomScheduleTo(next.customTo ?? customScheduleTo);
+                }
+              }}
+            />
             <Button
               variant="outline"
               size="sm"
@@ -2234,29 +2250,48 @@ function JobsPageContent() {
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
                 </Button>
-                {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && (
+                {(filterPartner !== "all" || filterAccountId !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && (
                   <span className="text-[10px] font-medium text-primary">Active</span>
                 )}
                 {filterOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                    <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
-                    </select>
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
-                    <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
-                    </select>
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
-                    <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                      <option value="schedule_nearest">Nearest schedule (default)</option>
-                      <option value="schedule_farthest">Farthest schedule</option>
-                      <option value="booking_recent">Most recent booking</option>
-                      <option value="booking_oldest">Oldest booking</option>
-                    </select>
+                  <div className="absolute top-full right-0 mt-1 w-64 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Partner</p>
+                      <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value)} className="w-full h-9 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All Partners</option>
+                        <option value="__none__">Unassigned Only</option>
+                        {filterPartnersList.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Account</p>
+                      <select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-full h-9 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All Accounts</option>
+                        {filterAccountsList.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scheduled</p>
+                      <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
+                      </select>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Sort</p>
+                      <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                        <option value="schedule_nearest">Nearest schedule (default)</option>
+                        <option value="schedule_farthest">Farthest schedule</option>
+                        <option value="booking_recent">Most recent booking</option>
+                        <option value="booking_oldest">Oldest booking</option>
+                      </select>
+                    </div>
                     {buFilter.visible && (
-                      <>
-                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                      <div>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Business Unit</p>
                         <select
                           value={buFilter.selectedBuId ?? ""}
                           onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
@@ -2267,9 +2302,9 @@ function JobsPageContent() {
                             <option key={bu.id} value={bu.id}>{bu.name}</option>
                           ))}
                         </select>
-                      </>
+                      </div>
                     )}
-                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterAccountId("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
                   </div>
                 )}
               </div>
@@ -3022,23 +3057,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rate type</p>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-[200px_minmax(0,1fr)]">
-              <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,260px)_minmax(0,1fr)]">
+              <div className="grid grid-cols-2 gap-1.5 min-w-0">
                   <button
                     type="button"
                     onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
                     className={cn(
-                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
                       form.job_type === "fixed"
                         ? "bg-[#1DB87A] text-white border-[#1DB87A] shadow-[0_6px_18px_rgba(29,184,122,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-start gap-1.5 leading-snug">
-                      <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      {pricingModeLabel("fixed")}
+                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
+                      <Lock className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{pricingModeLabel("fixed")}</span>
                     </span>
-                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "fixed" ? "text-white/70" : "text-[#888]")}>
+                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "fixed" ? "text-white/75" : "text-[#888]")}>
                       Set prices on this job
                     </span>
                   </button>
@@ -3046,17 +3081,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     type="button"
                     onClick={() => update("job_type", "hourly")}
                     className={cn(
-                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
                       form.job_type === "hourly"
                         ? "bg-[#7c3aed] text-white border-[#7c3aed] shadow-[0_6px_18px_rgba(124,58,237,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-start gap-1.5 leading-snug">
-                      <Clock3 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      {pricingModeLabel("hourly")}
+                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
+                      <Clock3 className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{pricingModeLabel("hourly")}</span>
                     </span>
-                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "hourly" ? "text-white/70" : "text-[#888]")}>
+                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "hourly" ? "text-white/75" : "text-[#888]")}>
                       From Services, accounts &amp; partners
                     </span>
                   </button>
@@ -3378,36 +3413,77 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </details>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2 border-b border-border-light/70 pb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+              <span className="text-[10px] font-medium text-text-tertiary">
+                {form.job_type === "hourly" ? "Auto from rates × hours" : "Manual entry"}
+              </span>
+            </div>
+            {/* Single Client/Partner/Materials row — readonly in Smart Pricing, editable in Custom Price. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Client price £
+                  {pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
+                  onChange={form.job_type === "hourly" ? undefined : (e) => update("client_price", e.target.value)}
+                  readOnly={form.job_type === "hourly"}
+                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Partner cost £
+                  {pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
+                  onChange={form.job_type === "hourly" ? undefined : (e) => update("partner_cost", e.target.value)}
+                  readOnly={form.job_type === "hourly"}
+                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+                {form.job_type === "fixed" ? (
+                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label>
+                <Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" />
+              </div>
+            </div>
+            {/* Rate + hours row only for Smart Pricing — drives the totals above. */}
             {form.job_type === "hourly" ? (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={String(hourlyPreview.clientTotal + accessSurchargePreview)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-border-light/50">
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Client hourly rate (£/h)
-                      {pricing ? (
-                        <span className="ml-1.5">
-                          <PricingSourceChip source={pricing.client.hourly_rate_source} />
-                        </span>
-                      ) : null}
-                    </label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
                     <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Partner hourly rate (£/h)
-                      {pricing ? (
-                        <span className="ml-1.5">
-                          <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
-                        </span>
-                      ) : null}
-                    </label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
                     <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
@@ -3416,39 +3492,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </div>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
-                  Hourly rates are prefilled from the selected call-out; you can override. Billing: up to 1h = 1h minimum, then 30-minute increments from timer logs.
+                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
                 </p>
               </>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Client price £
-                    {pricing ? (
-                      <span className="ml-1.5">
-                        <PricingSourceChip source={pricing.client.fixed_price_source} />
-                      </span>
-                    ) : null}
-                  </label>
-                  <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Partner cost £
-                    {pricing ? (
-                      <span className="ml-1.5">
-                        <PricingSourceChip source={pricing.partner.fixed_partner_cost_source} />
-                      </span>
-                    ) : null}
-                  </label>
-                  <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
-                  </p>
-                </div>
-                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-              </div>
-            )}
+            ) : null}
           </section>
 
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2">

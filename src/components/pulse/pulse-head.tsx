@@ -4,13 +4,9 @@ import { Crown, Download, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
-
-const PRESETS = [
-  { id: "1d", label: "Today" },
-  { id: "wtd", label: "Week" },
-  { id: "mtd", label: "Month" },
-  { id: "qtd", label: "QTD" },
-] as const;
+import { DateRangeFilter } from "@/components/shared/date-range-filter";
+import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
+import type { DateRangePreset } from "@/lib/dashboard-date-range";
 
 type Props = {
   firstName: string;
@@ -20,10 +16,48 @@ type Props = {
   onToggleCeo: (v: boolean) => void;
 };
 
+/** Shared-filter ↔ dashboard-preset mapping. The provider keeps its broader preset
+ * vocabulary (7d/30d/ytd/all) for legacy callers; this just bridges the 6 user-facing modes. */
+const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
+  all: "all",
+  today: "1d",
+  tomorrow: "tomorrow",
+  week: "wtd",
+  month: "mtd",
+  qtd: "qtd",
+  custom: "custom",
+};
+
+const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
+  all: "all",
+  "1d": "today",
+  tomorrow: "tomorrow",
+  wtd: "week",
+  mtd: "month",
+  qtd: "qtd",
+  custom: "custom",
+};
+
 export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onToggleCeo }: Props) {
-  const { preset, setPreset } = useDashboardDateRange();
+  const { preset, setPreset, customFrom, customTo, setCustomFrom, setCustomTo } = useDashboardDateRange();
   const greeting = getGreeting();
   const today = new Date();
+
+  // Legacy presets (7d/30d/90d/ytd/all) fall through to "today" in the shared chip strip —
+  // those callers still set them programmatically via the older toolbar, this UI just won't highlight one.
+  const sharedValue: DateFilterValue = {
+    mode: PRESET_TO_SHARED[preset] ?? "today",
+    customFrom,
+    customTo,
+  };
+
+  const applyShared = (next: DateFilterValue) => {
+    setPreset(SHARED_TO_PRESET[next.mode]);
+    if (next.mode === "custom") {
+      setCustomFrom(next.customFrom ?? "");
+      setCustomTo(next.customTo ?? "");
+    }
+  };
 
   return (
     <div className="flex items-end justify-between gap-6 flex-wrap">
@@ -40,23 +74,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
         </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setPreset(p.id)}
-              className={cn(
-                "px-3 py-[5px] rounded text-[12.5px] font-medium transition-colors",
-                preset === p.id
-                  ? "bg-card text-text-primary shadow-fx-1"
-                  : "bg-transparent text-fx-mute hover:text-text-primary",
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <DateRangeFilter value={sharedValue} onChange={applyShared} variant="segment" />
         {canSeeCeo && (
           <button
             type="button"

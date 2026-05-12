@@ -12,9 +12,11 @@ import { getSupabase } from "@/services/base";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import {
   DEFAULT_JOB_ON_HOLD_PRESETS,
+  DEFAULT_PULSE_LOW_MARGIN_PCT,
   DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
   DEFAULT_SLA_FINAL_CHECKS_HOURS,
   DEFAULT_SLA_QUOTE_SEND_HOURS,
+  DEFAULT_TARGET_MARGIN_PCT,
   DEFAULT_WORKING_DAYS,
   DEFAULT_WORKING_HOURS,
   MAX_JOB_ON_HOLD_PRESETS,
@@ -71,6 +73,10 @@ export function SetupTab() {
   const [slaQuoteSendStr, setSlaQuoteSendStr] = useState(String(DEFAULT_SLA_QUOTE_SEND_HOURS));
   const [slaFinalChecksStr, setSlaFinalChecksStr] = useState(String(DEFAULT_SLA_FINAL_CHECKS_HOURS));
 
+  /** Margin colouring thresholds — drive green / neutral / red chips company-wide. */
+  const [targetMarginPctStr, setTargetMarginPctStr] = useState(String(DEFAULT_TARGET_MARGIN_PCT));
+  const [lowMarginPctStr, setLowMarginPctStr] = useState(String(DEFAULT_PULSE_LOW_MARGIN_PCT));
+
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
 
   useEffect(() => {
@@ -91,6 +97,8 @@ export function SetupTab() {
       setSlaArrivalStr(String(parsed.sla_arrival_grace_hours ?? DEFAULT_SLA_ARRIVAL_GRACE_HOURS));
       setSlaQuoteSendStr(String(parsed.sla_quote_send_hours ?? DEFAULT_SLA_QUOTE_SEND_HOURS));
       setSlaFinalChecksStr(String(parsed.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
+      setTargetMarginPctStr(String(parsed.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
+      setLowMarginPctStr(String(parsed.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
       setLoading(false);
     })();
@@ -119,6 +127,20 @@ export function SetupTab() {
           return;
         }
       }
+      const targetMargin = Number(targetMarginPctStr);
+      const lowMargin = Number(lowMarginPctStr);
+      for (const v of [targetMargin, lowMargin]) {
+        if (!Number.isFinite(v) || v < 0 || v > 100) {
+          toast.error("Margin % must be between 0 and 100.");
+          setSaving(false);
+          return;
+        }
+      }
+      if (targetMargin < lowMargin) {
+        toast.error("Target margin must be ≥ the low-margin threshold.");
+        setSaving(false);
+        return;
+      }
       const next = mergeFrontendSetup(rawSetup, {
         bidding_sla_hours: hours,
         job_on_hold_presets: onHoldPresets,
@@ -128,6 +150,8 @@ export function SetupTab() {
         sla_arrival_grace_hours: slaArrival,
         sla_quote_send_hours: slaQuote,
         sla_final_checks_hours: slaFinal,
+        target_margin_pct: targetMargin,
+        pulse_low_margin_pct: lowMargin,
         zendesk_subdomain: zendeskSubdomain,
       });
 
@@ -160,6 +184,8 @@ export function SetupTab() {
       setSlaArrivalStr(String(next.sla_arrival_grace_hours ?? DEFAULT_SLA_ARRIVAL_GRACE_HOURS));
       setSlaQuoteSendStr(String(next.sla_quote_send_hours ?? DEFAULT_SLA_QUOTE_SEND_HOURS));
       setSlaFinalChecksStr(String(next.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
+      setTargetMarginPctStr(String(next.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
+      setLowMarginPctStr(String(next.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
@@ -325,6 +351,57 @@ export function SetupTab() {
                   onChange={(e) => setSlaFinalChecksStr(e.target.value)}
                 />
               </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Margin Targets</CardTitle>
+              <FixfyHintIcon text="Drives green / neutral / red colouring on margin chips across the app (Beacon Kanban, job cards, future dashboards). Margin ≥ Target = green, between Low and Target = neutral, below Low = red." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Target Margin (%)
+                  <FixfyHintIcon text="Goal gross margin per job — at or above this number the chip is green." />
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={targetMarginPctStr}
+                  onChange={(e) => setTargetMarginPctStr(e.target.value)}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">Default {DEFAULT_TARGET_MARGIN_PCT}%.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Low Margin Threshold (%)
+                  <FixfyHintIcon text="Below this margin the chip turns red. Also drives the Pulse 'Low margin jobs' KPI." />
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={lowMarginPctStr}
+                  onChange={(e) => setLowMarginPctStr(e.target.value)}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">Default {DEFAULT_PULSE_LOW_MARGIN_PCT}%.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-tertiary">
+              <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-fx-green" /> ≥ {targetMarginPctStr || DEFAULT_TARGET_MARGIN_PCT}%</span>
+              <span>·</span>
+              <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-text-secondary/50" /> {lowMarginPctStr || DEFAULT_PULSE_LOW_MARGIN_PCT}–{targetMarginPctStr || DEFAULT_TARGET_MARGIN_PCT}%</span>
+              <span>·</span>
+              <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-fx-red" /> &lt; {lowMarginPctStr || DEFAULT_PULSE_LOW_MARGIN_PCT}%</span>
             </div>
           </div>
         </Card>

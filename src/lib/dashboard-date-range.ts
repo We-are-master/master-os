@@ -2,6 +2,7 @@
 
 export type DateRangePreset =
   | "1d"
+  | "tomorrow"
   | "wtd"
   | "7d"
   | "30d"
@@ -58,6 +59,11 @@ export function getBoundsForPreset(
     case "1d":
       /* Today only — same as start */
       break;
+    case "tomorrow": {
+      start.setDate(start.getDate() + 1);
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 23, 59, 59, 999);
+      break;
+    }
     case "wtd": {
       const day = start.getDay();
       const diff = day === 0 ? 6 : day - 1;
@@ -107,6 +113,7 @@ export function getLocalCalendarMonthDashboardBounds(now = new Date()): Dashboar
 
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "1d", label: "Today" },
+  { id: "tomorrow", label: "Tomorrow" },
   { id: "wtd", label: "Week to date" },
   { id: "mtd", label: "This month (full)" },
   { id: "qtd", label: "Quarter to date" },

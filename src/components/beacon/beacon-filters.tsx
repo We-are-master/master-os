@@ -13,6 +13,7 @@ export type BeaconFilters = {
   customFrom: string;
   customTo: string;
   partnerId: string; // "all" · "__unassigned__" · partner_id
+  accountId: string; // "all" · account_id
 };
 
 export const DEFAULT_BEACON_FILTERS: BeaconFilters = {
@@ -20,17 +21,8 @@ export const DEFAULT_BEACON_FILTERS: BeaconFilters = {
   customFrom: "",
   customTo: "",
   partnerId: "all",
+  accountId: "all",
 };
-
-const DATE_OPTIONS: { id: BeaconDateMode; label: string }[] = [
-  { id: "today", label: "Today" },
-  { id: "tomorrow", label: "Tomorrow" },
-  { id: "week", label: "This Week" },
-  { id: "month", label: "This Month" },
-  { id: "qtd", label: "QTD" },
-  { id: "all", label: "All Time" },
-  { id: "custom", label: "Custom" },
-];
 
 type Props = {
   filters: BeaconFilters;
@@ -40,8 +32,10 @@ type Props = {
 export function BeaconFiltersButton({ filters, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [partners, setPartners] = useState<{ id: string; name: string }[]>([]);
+  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  // Load partners from non-cancelled jobs (covers active partners only).
   useEffect(() => {
     void (async () => {
       const supabase = getSupabase();
@@ -69,6 +63,26 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
     })();
   }, []);
 
+  // Load corporate accounts directly from the `accounts` table — used for the
+  // account picker. Jobs link via clients.source_account_id, so the consumer
+  // (BeaconList/BeaconKanban) resolves account_id → client_ids before querying.
+  useEffect(() => {
+    void (async () => {
+      const supabase = getSupabase();
+      const { data } = await supabase
+        .from("accounts")
+        .select("id, name")
+        .order("name", { ascending: true })
+        .limit(2000);
+      type Row = { id: string; name: string | null };
+      setAccounts(
+        (data ?? [])
+          .map((r) => ({ id: (r as Row).id, name: (r as Row).name?.trim() ?? "" }))
+          .filter((a) => a.id && a.name),
+      );
+    })();
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -78,8 +92,9 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Date is owned by the page header (BeaconHeader's DateRangeFilter) — not counted here.
   const activeCount =
-    (filters.dateMode !== "all" ? 1 : 0) + (filters.partnerId !== "all" ? 1 : 0);
+    (filters.partnerId !== "all" ? 1 : 0) + (filters.accountId !== "all" ? 1 : 0);
 
   const partnerLabel = (() => {
     if (filters.partnerId === "all") return "All Partners";
@@ -87,7 +102,10 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
     return partners.find((p) => p.id === filters.partnerId)?.name ?? "Partner";
   })();
 
-  const dateLabel = DATE_OPTIONS.find((o) => o.id === filters.dateMode)?.label ?? "Range";
+  const accountLabel = (() => {
+    if (filters.accountId === "all") return "All Accounts";
+    return accounts.find((a) => a.id === filters.accountId)?.name ?? "Account";
+  })();
 
   return (
     <div ref={wrapRef} className="relative">
@@ -114,52 +132,6 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
         <div className="absolute right-0 top-full mt-1.5 z-50 w-[300px] rounded-xl border border-fx-line bg-card shadow-fx-2 p-3 space-y-3">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <MicroLabel>Date</MicroLabel>
-              <span className="text-[11px] text-fx-mute">{dateLabel}</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {DATE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => onChange({ ...filters, dateMode: opt.id })}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors border",
-                    filters.dateMode === opt.id
-                      ? "bg-fx-coral text-white border-fx-coral"
-                      : "bg-card border-fx-line text-text-primary hover:bg-fx-paper",
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            {filters.dateMode === "custom" && (
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div>
-                  <MicroLabel className="block mb-1">From</MicroLabel>
-                  <input
-                    type="date"
-                    value={filters.customFrom}
-                    onChange={(e) => onChange({ ...filters, customFrom: e.target.value })}
-                    className="w-full h-8 text-[12px] px-2 rounded-md border border-fx-line bg-card outline-none focus:border-fx-coral"
-                  />
-                </div>
-                <div>
-                  <MicroLabel className="block mb-1">To</MicroLabel>
-                  <input
-                    type="date"
-                    value={filters.customTo}
-                    onChange={(e) => onChange({ ...filters, customTo: e.target.value })}
-                    className="w-full h-8 text-[12px] px-2 rounded-md border border-fx-line bg-card outline-none focus:border-fx-coral"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-fx-line pt-3">
-            <div className="flex items-center justify-between mb-2">
               <MicroLabel>Partner</MicroLabel>
               <span className="text-[11px] text-fx-mute truncate max-w-[160px]">{partnerLabel}</span>
             </div>
@@ -178,10 +150,31 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
             </select>
           </div>
 
+          <div className="border-t border-fx-line pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <MicroLabel>Account</MicroLabel>
+              <span className="text-[11px] text-fx-mute truncate max-w-[160px]">{accountLabel}</span>
+            </div>
+            <select
+              value={filters.accountId}
+              onChange={(e) => onChange({ ...filters, accountId: e.target.value })}
+              className="w-full h-9 text-[13px] px-2 rounded-md border border-fx-line bg-card outline-none focus:border-fx-coral"
+            >
+              <option value="all">All Accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {activeCount > 0 && (
             <button
               type="button"
-              onClick={() => onChange(DEFAULT_BEACON_FILTERS)}
+              onClick={() =>
+                onChange({ ...filters, partnerId: "all", accountId: "all" })
+              }
               className="inline-flex items-center gap-1 text-[12px] font-medium text-fx-mute hover:text-text-primary"
             >
               <X className="h-3 w-3" />
@@ -192,6 +185,24 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
       )}
     </div>
   );
+}
+
+/**
+ * Resolve `filters.accountId` to the list of `client_id`s linked to that
+ * account. Returns `null` when no account filter is active (caller should skip
+ * the `.in()` filter entirely in that case). Returns `[]` when the account
+ * exists but has no clients — caller should produce zero results to avoid a
+ * leaking "all jobs" query.
+ */
+export async function resolveAccountClientIds(accountId: string): Promise<string[] | null> {
+  if (!accountId || accountId === "all") return null;
+  const supabase = getSupabase();
+  const { data } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("source_account_id", accountId)
+    .limit(5000);
+  return ((data ?? []) as { id: string }[]).map((r) => r.id);
 }
 
 export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; toIso: string } | null {

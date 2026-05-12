@@ -50,7 +50,7 @@ export function ForceApproveBlock({ reason, onReasonChange, onCancel, currentUse
         <textarea
           value={reason}
           onChange={(e) => onReasonChange(e.target.value)}
-          placeholder="Why are you force approving this job? (min. 20 characters, mandatory)"
+          placeholder="Why are you force approving this job? (min. 10 characters, mandatory)"
           className="w-full box-border min-h-[70px] rounded-lg px-3 py-[10px] text-[13px] bg-white resize-vertical outline-none"
           style={{
             border: "0.5px solid #F5CFB8",
@@ -62,8 +62,10 @@ export function ForceApproveBlock({ reason, onReasonChange, onCancel, currentUse
         />
 
         <div className="flex justify-between mt-[6px] text-[11px]">
-          <span style={{ color: reason.trim().length >= 20 ? "#0F6E56" : "#9A9AA0" }}>
-            {reason.length} / 20 min
+          {/* Counter mirrors the validation — trimmed length, not raw. Otherwise trailing
+              spaces could push the count to "10 / 10 min" while the gate still rejects. */}
+          <span style={{ color: reason.trim().length >= 10 ? "#0F6E56" : "#9A9AA0" }}>
+            {reason.trim().length} / 10 min
           </span>
           <span style={{ color: "#6B6B70" }}>
             Logged as:{" "}

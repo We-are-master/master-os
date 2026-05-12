@@ -2,19 +2,22 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, MapPin, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { marginColorClass, type MarginThresholds } from "@/lib/frontend-setup";
 import type { JobStatus } from "@/types/database";
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
 
 type KanbanJob = {
@@ -22,6 +25,7 @@ type KanbanJob = {
   reference: string;
   title: string;
   status: JobStatus;
+  partner_id: string | null;
   client_name: string;
   property_address: string | null;
   partner_name: string | null;
@@ -29,6 +33,8 @@ type KanbanJob = {
   scheduled_end_at: string | null;
   client_price: number;
   extras_amount: number | null;
+  /** Drives the margin % chip on each card (gross margin on labour). */
+  partner_cost: number | null;
   /** Snapshot fields populated when a cancel happens — used to show "lost revenue" on cards already in the Cancelled column. */
   cancelled_client_price: number | null;
   cancelled_extras_amount: number | null;
@@ -65,14 +71,16 @@ const STAGES: Stage[] = [
     id: "scheduled",
     title: "Scheduled",
     tone: "green",
-    matches: (s) => s === "scheduled",
+    // `late` means scheduled but past arrival without starting — still pre-start,
+    // belongs with Scheduled (red overdue chip is what flags the SLA breach).
+    matches: (s) => s === "scheduled" || s === "late",
     dropStatus: "scheduled",
   },
   {
     id: "in_progress",
     title: "In Progress",
     tone: "coral",
-    matches: (s) => s === "in_progress" || s === "late",
+    matches: (s) => s === "in_progress",
     dropStatus: "in_progress",
   },
   {
@@ -112,8 +120,11 @@ const STAGE_DOT: Record<Stage["tone"], string> = {
 const COLLAPSE_STORAGE_KEY = "beacon_kanban_collapsed_v1";
 
 export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: BeaconFilters }) {
+  const { marginThresholds } = useFrontendSetup();
   const [jobs, setJobs] = useState<KanbanJob[]>([]);
   const [loading, setLoading] = useState(true);
+  /** partner_id → avatar_url. Loaded lazily once we know which partners appear in the visible cards. */
+  const [partnerAvatars, setPartnerAvatars] = useState<Record<string, string | null>>({});
   /** Stage being hovered during a drag — drives the drop-target highlight. */
   const [dragOverStageId, setDragOverStageId] = useState<StageId | null>(null);
   /** Job ids currently mid-flight to the API; cards show a busy state while saving. */
@@ -201,8 +212,18 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
       // cancellations + can drag a job into the Cancelled column. `deleted` is
       // still hidden (soft-deleted, out of the workflow).
       const baseCols =
-        "id, reference, title, status, partner_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount";
+        "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
       const snapshotCols = "cancelled_client_price, cancelled_extras_amount";
+
+      // Account filter: jobs link via clients.source_account_id, so resolve
+      // the account → client_ids list once and apply with `.in(client_id, …)`.
+      // null = no account filter; [] = account has no clients → return zero rows.
+      const accountClientIds = await resolveAccountClientIds(filters.accountId);
+      if (signal?.cancelled) return;
+      if (accountClientIds !== null && accountClientIds.length === 0) {
+        setJobs([]);
+        return;
+      }
 
       const buildQuery = (cols: string) => {
         let q = supabase
@@ -218,6 +239,9 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
           q = q.is("partner_id", null);
         } else if (filters.partnerId !== "all") {
           q = q.eq("partner_id", filters.partnerId);
+        }
+        if (accountClientIds !== null) {
+          q = q.in("client_id", accountClientIds);
         }
         return q.order("scheduled_start_at", { ascending: true }).limit(200);
       };
@@ -257,6 +281,36 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
       signal.cancelled = true;
     };
   }, [loadJobs]);
+
+  // Lazy-load partner avatar URLs for the partner_ids currently on screen.
+  // Only fetches partners we don't already have cached, so re-renders are cheap.
+  useEffect(() => {
+    const supabase = getSupabase();
+    const unknownIds = Array.from(
+      new Set(
+        jobs
+          .map((j) => j.partner_id)
+          .filter((id): id is string => !!id && !(id in partnerAvatars)),
+      ),
+    );
+    if (unknownIds.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase.from("partners").select("id, avatar_url").in("id", unknownIds);
+      if (cancelled) return;
+      setPartnerAvatars((prev) => {
+        const next = { ...prev };
+        for (const id of unknownIds) next[id] = null; // mark as fetched (so we don't retry on next render)
+        for (const row of (data ?? []) as { id: string; avatar_url: string | null }[]) {
+          next[row.id] = row.avatar_url?.trim() || null;
+        }
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobs, partnerAvatars]);
 
   /**
    * Realtime: subscribe to changes on the `jobs` table and refetch on any
@@ -419,6 +473,8 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                       showCancelButton={showCardCancelButton}
                       onCancelClick={openCancelModal}
                       isCancelledStage={isCancelStage}
+                      partnerAvatarUrl={j.partner_id ? partnerAvatars[j.partner_id] ?? null : null}
+                      marginThresholds={marginThresholds}
                     />
                   ))
                 ))}
@@ -448,19 +504,45 @@ function KanbanCard({
   showCancelButton = false,
   onCancelClick,
   isCancelledStage = false,
+  partnerAvatarUrl,
+  marginThresholds,
 }: {
   job: KanbanJob;
   pending?: boolean;
   showCancelButton?: boolean;
   onCancelClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
   isCancelledStage?: boolean;
+  partnerAvatarUrl?: string | null;
+  marginThresholds: MarginThresholds;
 }) {
-  const isLive = job.status === "in_progress" || job.status === "late";
+  // "Live" = work actually started. `late` here means "scheduled but past
+  // arrival time, partner hasn't started yet" — that's NOT live, it's overdue.
+  // Only `in_progress` zeroes the arrival SLA.
+  const isLive = job.status === "in_progress";
   const lostValue =
     (Number(job.cancelled_client_price) || 0) + (Number(job.cancelled_extras_amount) || 0);
   const liveValue = Number(job.client_price) + (Number(job.extras_amount) || 0);
   const value = isCancelledStage ? lostValue : liveValue;
   const partnerInitials = job.partner_name ? initials(job.partner_name) : "?";
+  /** Gross margin: (price − partner cost) / price. Hidden when price is 0 or
+   * we don't have a partner cost yet (avoids 100% / NaN noise on draft rows).
+   * Colour comes from the configured thresholds (Settings → Setup → Margin Targets). */
+  const partnerCost = Number(job.partner_cost) || 0;
+  const marginPct = liveValue > 0 && partnerCost > 0
+    ? Math.round(((liveValue - partnerCost) / liveValue) * 100)
+    : null;
+  const marginTone = marginPct == null ? "" : marginColorClass(marginPct, marginThresholds);
+  // Arrival overdue: end of arrival window has passed AND the job hasn't started
+  // yet. `in_progress` (and beyond) clears the SLA — work began, so the arrival
+  // window is no longer the relevant clock.
+  const arrivalEndMs = job.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : NaN;
+  const isOverdueArrival =
+    !Number.isNaN(arrivalEndMs) &&
+    arrivalEndMs < Date.now() &&
+    (job.status === "unassigned" ||
+      job.status === "auto_assigning" ||
+      job.status === "scheduled" ||
+      job.status === "late");
 
   return (
     <Link
@@ -496,12 +578,30 @@ function KanbanCard({
           <X className="h-3 w-3" />
         </button>
       )}
-      <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
         <StatusPill status={job.status} />
       </div>
-      <div className="text-[13px] font-medium text-text-primary leading-[1.35] mb-1.5 line-clamp-2">
-        {job.title}
+      <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+        <div className="text-[13px] font-medium text-text-primary leading-[1.3] line-clamp-2 min-w-0">
+          {job.title}
+        </div>
+        {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at) ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 font-mono text-[10.5px] tabular-nums shrink-0",
+              isOverdueArrival
+                ? "text-fx-red font-semibold"
+                : isLive
+                  ? "text-fx-coral-p"
+                  : "text-text-secondary",
+            )}
+            title={isOverdueArrival ? "Arrival window passed — job hasn't started" : "Arrival window"}
+          >
+            <Clock className="h-2.5 w-2.5 shrink-0" />
+            {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at)}
+          </span>
+        ) : null}
       </div>
       <div className="flex items-center gap-1.5 text-[11px] text-fx-mute font-mono mb-2">
         <MapPin className="h-2.5 w-2.5 shrink-0" />
@@ -515,12 +615,14 @@ function KanbanCard({
             .join(" · ")}
         </span>
       </div>
-      <div className="flex items-center justify-between gap-1.5 mt-2 pt-2 border-t border-dashed border-fx-line">
+      <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-dashed border-fx-line">
         <div className="flex items-center gap-1.5 min-w-0">
           <FxAvatar
             initials={partnerInitials}
             tone={job.partner_name ? "coral" : "neutral"}
             size="sm"
+            src={partnerAvatarUrl}
+            alt={job.partner_name ?? undefined}
           />
           <span className={cn("fx-kk truncate", !job.partner_name && "italic")}>
             {job.partner_name || "Unassigned"}
@@ -534,9 +636,19 @@ function KanbanCard({
             {value > 0 ? `Lost ${formatGbp(value)}` : "Lost £0"}
           </span>
         ) : (
-          <span className="font-medium text-fx-coral-p text-[13px] tabular-nums shrink-0">
-            {formatGbp(value)}
-          </span>
+          <div className="flex items-baseline gap-1.5 shrink-0">
+            <span className="font-medium text-fx-coral-p text-[13px] tabular-nums">
+              {formatGbp(value)}
+            </span>
+            {marginPct != null ? (
+              <span
+                className={cn("font-mono text-[10.5px] tabular-nums", marginTone)}
+                title={`Gross margin · target ≥${marginThresholds.targetPct}% · low <${marginThresholds.lowPct}%`}
+              >
+                {marginPct}%
+              </span>
+            ) : null}
+          </div>
         )}
       </div>
     </Link>
@@ -585,6 +697,30 @@ function initials(name: string): string {
 function shortAddress(addr: string | null): string {
   if (!addr) return "";
   return addr.split(",").slice(0, 1).join(",").trim();
+}
+
+/** Compact "09:00–12:00" arrival window for the card, rendered in UK time
+ *  (Europe/London — handles GMT/BST automatically) so it matches the job
+ *  detail page and the partner app regardless of the viewer's browser TZ. */
+const UK_HHMM = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatArrivalWindow(startIso: string | null, endIso: string | null): string {
+  const fmt = (iso: string | null): string => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return UK_HHMM.format(d);
+  };
+  const a = fmt(startIso);
+  const b = fmt(endIso);
+  if (!a && !b) return "";
+  if (a && b && a !== b) return `${a}–${b}`;
+  return a || b;
 }
 
 /**

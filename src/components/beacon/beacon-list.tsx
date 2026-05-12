@@ -13,6 +13,7 @@ import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
 
 type ListJob = {
@@ -39,8 +40,9 @@ type Group = {
 };
 
 const GROUPS: Group[] = [
-  { id: "live", title: "In Progress · Happening Now", color: "var(--color-fx-coral)", matches: (s) => s === "in_progress" || s === "late" },
-  { id: "scheduled", title: "Scheduled · Today / Soon", color: "var(--color-fx-green)", matches: (s) => s === "scheduled" },
+  { id: "live", title: "In Progress · Happening Now", color: "var(--color-fx-coral)", matches: (s) => s === "in_progress" },
+  // `late` means scheduled-but-overdue (still pre-start), so it belongs here, not in Live.
+  { id: "scheduled", title: "Scheduled · Today / Soon", color: "var(--color-fx-green)", matches: (s) => s === "scheduled" || s === "late" },
   { id: "wrap", title: "Final Checks · Sign-Off & Payment", color: "#7C3AED", matches: (s) => s === "final_check" || s === "awaiting_payment" || s === "need_attention" || s === "on_hold" },
   { id: "new", title: "Unassigned · Awaiting Assignment", color: "var(--color-fx-red)", matches: (s) => s === "unassigned" || s === "auto_assigning" },
   { id: "done", title: "Completed · This Week", color: "var(--color-fx-green)", matches: (s) => s === "completed" },
@@ -58,10 +60,20 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
     });
     void (async () => {
       const supabase = getSupabase();
+
+      // Account → client_ids lookup (null = no filter; [] = empty result short-circuit).
+      const accountClientIds = await resolveAccountClientIds(filters.accountId);
+      if (cancelled) return;
+      if (accountClientIds !== null && accountClientIds.length === 0) {
+        setJobs([]);
+        setLoading(false);
+        return;
+      }
+
       let query = supabase
         .from("jobs")
         .select(
-          "id, reference, title, status, partner_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
+          "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
         )
         .neq("status", "cancelled")
         .neq("status", "deleted")
@@ -80,9 +92,13 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
         query = query.eq("partner_id", filters.partnerId);
       }
 
+      if (accountClientIds !== null) {
+        query = query.in("client_id", accountClientIds);
+      }
+
       const { data } = await query.order("scheduled_start_at", { ascending: true }).limit(200);
       if (cancelled) return;
-      setJobs((data ?? []) as ListJob[]);
+      setJobs((data ?? []) as unknown as ListJob[]);
       setLoading(false);
     })();
     return () => {
@@ -193,7 +209,7 @@ function ListRow({ job, accent }: { job: ListJob; accent: string }) {
     >
       <span className="h-full self-stretch" style={{ background: accent }} />
       <span className="font-mono text-[11.5px] text-fx-mute tracking-[0.02em] flex items-center gap-2 pl-3">
-        {(job.status === "in_progress" || job.status === "late") && <span className="fx-live-dot" />}
+        {job.status === "in_progress" && <span className="fx-live-dot" />}
         <strong className="text-text-primary font-medium">{job.reference}</strong>
       </span>
       <span className="flex flex-col min-w-0 pr-3">

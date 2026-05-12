@@ -1,6 +1,6 @@
 /** UK calendar schedule presets — shared by Jobs, Quotes (KPIs), and Requests (created date). */
 
-export type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
+export type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "qtd" | "custom";
 
 const UK_TIMEZONE = "Europe/London";
 
@@ -63,6 +63,13 @@ export function getScheduleRangeYmd(
   }
   if (preset === "month") {
     return { from: startOfMonthYmd(anchor), to: endOfMonthYmd(anchor) };
+  }
+  if (preset === "qtd") {
+    // Quarter-to-date: first day of current calendar quarter through today.
+    const [y, m] = anchor.split("-").map(Number);
+    const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1;
+    const from = `${y}-${String(qStartMonth).padStart(2, "0")}-01`;
+    return { from, to: anchor };
   }
   let from = customFrom.trim();
   let to = customTo.trim();

@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { List, LayoutGrid, Map as MapIcon, Plus } from "lucide-react";
+import { List, LayoutGrid, Map as MapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
 import {
@@ -9,6 +8,8 @@ import {
   type BeaconFilters,
   type BeaconDateMode,
 } from "@/components/beacon/beacon-filters";
+import { DateRangeFilter } from "@/components/shared/date-range-filter";
+import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 
 export type BeaconView = "list" | "kanban" | "map";
 
@@ -16,13 +17,6 @@ const VIEWS: { id: BeaconView; label: string; icon: React.ComponentType<{ classN
   { id: "list", label: "List", icon: List },
   { id: "kanban", label: "Kanban", icon: LayoutGrid },
   { id: "map", label: "Map", icon: MapIcon },
-];
-
-const DATE_PRESETS: { id: BeaconDateMode; label: string }[] = [
-  { id: "today", label: "Today" },
-  { id: "week", label: "Week" },
-  { id: "month", label: "Month" },
-  { id: "qtd", label: "QTD" },
 ];
 
 type Props = {
@@ -33,7 +27,24 @@ type Props = {
   onFiltersChange: (next: BeaconFilters) => void;
 };
 
+const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>(["all", "today", "tomorrow", "week", "month", "qtd", "custom"]);
+
 export function BeaconHeader({ view, onViewChange, liveCount, filters, onFiltersChange }: Props) {
+  // Beacon's BeaconDateMode is a superset (adds "all"); map both directions.
+  const sharedValue: DateFilterValue = {
+    mode: SUPPORTED_SHARED_MODES.has(filters.dateMode) ? (filters.dateMode as DateFilterMode) : "today",
+    customFrom: filters.customFrom,
+    customTo: filters.customTo,
+  };
+  const applyShared = (next: DateFilterValue) => {
+    onFiltersChange({
+      ...filters,
+      dateMode: next.mode,
+      customFrom: next.customFrom ?? filters.customFrom,
+      customTo: next.customTo ?? filters.customTo,
+    });
+  };
+
   return (
     <div className="flex items-end justify-between gap-6 flex-wrap">
       <div className="flex flex-col gap-1 min-w-0">
@@ -49,24 +60,7 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
         </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
-          {DATE_PRESETS.map((p) => {
-            const active = filters.dateMode === p.id;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onFiltersChange({ ...filters, dateMode: p.id })}
-                className={cn(
-                  "inline-flex items-center px-3 py-[5px] rounded text-[12.5px] font-medium transition-colors",
-                  active ? "bg-card text-text-primary shadow-fx-1" : "bg-transparent text-fx-mute hover:text-text-primary",
-                )}
-              >
-                {p.label}
-              </button>
-            );
-          })}
-        </div>
+        <DateRangeFilter value={sharedValue} onChange={applyShared} variant="segment" />
         <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
           {VIEWS.map((v) => {
             const Icon = v.icon;
@@ -88,13 +82,6 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
           })}
         </div>
         <BeaconFiltersButton filters={filters} onChange={onFiltersChange} />
-        <Link
-          href="/jobs"
-          className="inline-flex items-center gap-1.5 px-3 py-[7px] rounded-md text-[13px] font-medium bg-fx-coral text-white hover:bg-fx-coral-h transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Job
-        </Link>
       </div>
     </div>
   );

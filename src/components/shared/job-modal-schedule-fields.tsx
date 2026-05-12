@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import { cn } from "@/lib/utils";
-import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import type { RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { BYDAY_LABELS, BYDAY_ORDER, seriesPreview } from "@/lib/job-recurrence";
@@ -40,6 +40,8 @@ type Props = {
   startDateFooter?: ReactNode;
   startDateRequired?: boolean;
   requiredFieldClassName?: string;
+  /** When true, the one-off form skips the arrival-slot picker — the caller is rendering it elsewhere (e.g. inline with Type of Work in the Rate Type section). */
+  hideArrivalSlot?: boolean;
 };
 
 /**
@@ -70,6 +72,7 @@ export function JobModalScheduleFields({
   startDateFooter,
   startDateRequired,
   requiredFieldClassName,
+  hideArrivalSlot = false,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
   const isOneOff = jobKind === "one_off";
@@ -81,20 +84,20 @@ export function JobModalScheduleFields({
 
   return (
     <>
-      {/* Primary toggle: Single day / Multiple visits */}
+      {/* Primary toggle: One-Off / Recurring */}
       <div className="flex flex-wrap items-center gap-1.5">
         <KindTab
-          label="Single day"
+          label="One-Off"
           description="One day only"
           active={isOneOff}
           onClick={() => setKind("one_off")}
         />
         <KindTab
-          label="Multiple visits"
+          label="Recurring"
           description="Spans days or repeats"
           active={isMultiple}
           onClick={() => {
-            // First click on Multiple → default to Spans days.
+            // First click on Recurring → default to Spans days.
             if (!isMultiple) setKind("multi_day");
           }}
         />
@@ -121,7 +124,15 @@ export function JobModalScheduleFields({
       {/* Form per mode */}
       {isOneOff ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4",
+              // Date input is narrow; arrival picker needs more room. Give the
+              // arrival column ~1.6× the date column so 4 chips fit in one row
+              // on wider viewports without stretching the date field.
+              !hideArrivalSlot && "sm:grid-cols-[180px_minmax(0,1fr)]",
+            )}
+          >
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Start date{startDateRequired ? " *" : ""}
@@ -130,26 +141,24 @@ export function JobModalScheduleFields({
                 type="date"
                 value={scheduledDate}
                 onChange={(e) => onChange("scheduled_date", e.target.value)}
-                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+                className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
-            <TimeSelect
-              label="Arrival time (from)"
-              value={arrivalFrom}
-              onChange={(v) => onChange("arrival_from", v)}
-              className={requiredFieldClassName}
-            />
-            <Select
-              label="Arrival window length"
-              value={arrivalWindowMins}
-              onChange={(e) => onChange("arrival_window_mins", e.target.value)}
-              options={[...ARRIVAL_WINDOW_OPTIONS]}
-            />
+            {!hideArrivalSlot && (
+              <ArrivalSlotPicker
+                arrivalFrom={arrivalFrom}
+                arrivalWindowMins={arrivalWindowMins}
+                onPick={(from, mins) => {
+                  onChange("arrival_from", from);
+                  onChange("arrival_window_mins", mins);
+                }}
+              />
+            )}
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
           <p className="text-[10px] text-text-tertiary -mt-1">
-            Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time; late is still based on window end.
+            Clients and partners see this slot as the arrival window. Late status is still based on the window end.
           </p>
         </>
       ) : isMultiDay ? (

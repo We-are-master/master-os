@@ -1,8 +1,5 @@
-import type { CompletionDelivery } from "../types";
-
 type Props = {
   forceMode: boolean;
-  completionDelivery: CompletionDelivery | null;
   canApprove: boolean;
   canForceApprove: boolean;
   submitting?: boolean;
@@ -11,17 +8,8 @@ type Props = {
   onForceApprove: () => void;
 };
 
-function primaryButtonLabel(completionDelivery: CompletionDelivery | null, force: boolean): string {
-  if (!completionDelivery) return "Choose how to complete";
-  if (completionDelivery === "email") {
-    return force ? "Force finalise & email client" : "Finalise & email client";
-  }
-  return force ? "Force finalise (no client email)" : "Finalise (no client email)";
-}
-
 export function ModalFooter({
   forceMode,
-  completionDelivery,
   canApprove,
   canForceApprove,
   submitting,
@@ -31,20 +19,15 @@ export function ModalFooter({
 }: Props) {
   return (
     <div
-      className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end bg-white"
-      style={{
-        padding: "14px 20px 14px 24px",
-        borderTop: "0.5px solid var(--color-border-tertiary, #E4E4E7)",
-      }}
+      className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end bg-white px-5 py-3.5 sm:px-6 sm:py-3.5"
+      style={{ borderTop: "0.5px solid var(--color-border-tertiary, #E4E4E7)" }}
     >
       <button
         type="button"
         onClick={onCancel}
         disabled={submitting}
-        className="order-2 w-full bg-transparent px-4 py-[9px] text-[13px] rounded-lg cursor-pointer sm:order-1 sm:w-auto"
+        className="w-full sm:w-auto bg-transparent px-4 py-[9px] text-[13px] font-medium rounded-lg cursor-pointer transition-colors hover:bg-[#FAFAFB] disabled:cursor-not-allowed"
         style={{ border: "0.5px solid #D4D4D8", color: "#020040" }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "transparent")}
       >
         Cancel
       </button>
@@ -54,31 +37,29 @@ export function ModalFooter({
           type="button"
           onClick={onForceApprove}
           disabled={!canForceApprove || submitting}
-          className="order-1 w-full whitespace-normal px-[18px] py-[9px] text-[13px] font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed sm:order-2 sm:flex-1 sm:min-w-0 md:flex-none text-white border-none flex flex-wrap items-center justify-center gap-[6px] text-center leading-tight sm:justify-end"
-          style={{ background: "#ED4B00", cursor: !canForceApprove || submitting ? "not-allowed" : "pointer" }}
-          onMouseEnter={(e) => {
-            if (!(e.currentTarget as HTMLButtonElement).disabled)
-              (e.currentTarget as HTMLButtonElement).style.background = "#D43F00";
+          className="w-full sm:w-auto sm:min-w-[220px] px-[18px] py-[9px] text-[13px] font-medium rounded-lg text-white border-none transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:bg-[#D43F00]"
+          style={{
+            background: "#ED4B00",
+            cursor: !canForceApprove || submitting ? "not-allowed" : "pointer",
           }}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
         >
-          <span className="text-[12px]">⚠</span> {primaryButtonLabel(completionDelivery, true)}
-          <span className="text-[14px]">→</span>
+          <span aria-hidden>⚠</span>
+          <span>Force finalise</span>
+          <span aria-hidden className="text-[14px]">→</span>
         </button>
       ) : (
         <button
           type="button"
           onClick={onApprove}
           disabled={!canApprove || submitting}
-          className="order-1 w-full whitespace-normal px-[18px] py-[9px] text-[13px] font-medium rounded-lg flex flex-wrap items-center justify-center gap-[6px] text-center leading-tight disabled:opacity-35 disabled:cursor-not-allowed sm:order-2 sm:flex-1 sm:min-w-0 sm:justify-end md:flex-none text-white border-none"
-          style={{ background: "#020040", cursor: !canApprove || submitting ? "not-allowed" : "pointer" }}
-          onMouseEnter={(e) => {
-            if (!(e.currentTarget as HTMLButtonElement).disabled)
-              (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+          className="w-full sm:w-auto sm:min-w-[200px] px-[18px] py-[9px] text-[13px] font-medium rounded-lg text-white border-none transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-35 disabled:cursor-not-allowed hover:enabled:bg-[#0a0860]"
+          style={{
+            background: "#020040",
+            cursor: !canApprove || submitting ? "not-allowed" : "pointer",
           }}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
         >
-          {primaryButtonLabel(completionDelivery, false)} <span className="text-[14px]">→</span>
+          <span>Finalise &amp; approve</span>
+          <span aria-hidden className="text-[14px]">→</span>
         </button>
       )}
     </div>
