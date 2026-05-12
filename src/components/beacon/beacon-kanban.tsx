@@ -615,14 +615,22 @@ function shortAddress(addr: string | null): string {
   return addr.split(",").slice(0, 1).join(",").trim();
 }
 
-/** Compact "09:00–12:00" arrival window for the card. Falls back to a single time when only the start is known. */
+/** Compact "09:00–12:00" arrival window for the card, rendered in UK time
+ *  (Europe/London — handles GMT/BST automatically) so it matches the job
+ *  detail page and the partner app regardless of the viewer's browser TZ. */
+const UK_HHMM = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 function formatArrivalWindow(startIso: string | null, endIso: string | null): string {
   const fmt = (iso: string | null): string => {
     if (!iso) return "";
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "";
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return UK_HHMM.format(d);
   };
   const a = fmt(startIso);
   const b = fmt(endIso);

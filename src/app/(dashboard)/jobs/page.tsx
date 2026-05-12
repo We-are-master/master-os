@@ -3057,23 +3057,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rate type</p>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-[200px_minmax(0,1fr)]">
-              <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+              <div className="grid grid-cols-2 gap-2 min-w-0">
                   <button
                     type="button"
                     onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
                     className={cn(
-                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      "min-w-0 rounded-lg px-3 py-2 text-left transition-all border shadow-sm",
                       form.job_type === "fixed"
                         ? "bg-[#1DB87A] text-white border-[#1DB87A] shadow-[0_6px_18px_rgba(29,184,122,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-start gap-1.5 leading-snug">
-                      <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      {pricingModeLabel("fixed")}
+                    <span className="flex items-center gap-1.5 text-xs font-bold leading-tight">
+                      <Lock className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{pricingModeLabel("fixed")}</span>
                     </span>
-                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "fixed" ? "text-white/70" : "text-[#888]")}>
+                    <span className={cn("mt-1 block text-[10px] leading-tight", form.job_type === "fixed" ? "text-white/75" : "text-[#888]")}>
                       Set prices on this job
                     </span>
                   </button>
@@ -3081,17 +3081,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     type="button"
                     onClick={() => update("job_type", "hourly")}
                     className={cn(
-                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      "min-w-0 rounded-lg px-3 py-2 text-left transition-all border shadow-sm",
                       form.job_type === "hourly"
                         ? "bg-[#7c3aed] text-white border-[#7c3aed] shadow-[0_6px_18px_rgba(124,58,237,0.25)]"
                         : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
                     )}
                   >
-                    <span className="flex items-start gap-1.5 leading-snug">
-                      <Clock3 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      {pricingModeLabel("hourly")}
+                    <span className="flex items-center gap-1.5 text-xs font-bold leading-tight">
+                      <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{pricingModeLabel("hourly")}</span>
                     </span>
-                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "hourly" ? "text-white/70" : "text-[#888]")}>
+                    <span className={cn("mt-1 block text-[10px] leading-tight", form.job_type === "hourly" ? "text-white/75" : "text-[#888]")}>
                       From Services, accounts &amp; partners
                     </span>
                   </button>
