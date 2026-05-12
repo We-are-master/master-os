@@ -511,8 +511,9 @@ function KanbanCard({
         </button>
       )}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex flex-col min-w-0 gap-0.5">
-          <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
+        <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate pt-0.5">{job.reference}</span>
+        <div className="flex flex-col items-end gap-0.5 shrink-0">
+          <StatusPill status={job.status} />
           {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at) ? (
             <span
               className={cn(
@@ -526,7 +527,6 @@ function KanbanCard({
             </span>
           ) : null}
         </div>
-        <StatusPill status={job.status} />
       </div>
       <div className="text-[13px] font-medium text-text-primary leading-[1.35] mb-1.5 line-clamp-2">
         {job.title}
