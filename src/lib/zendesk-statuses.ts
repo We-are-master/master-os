@@ -45,8 +45,11 @@ export const ZD_STATUS_FINAL_CHECKS = 5688492712607;
  */
 export const ZD_STATUS_ON_HOLD = 5679178036127;
 
-/** Completed — job finished successfully. Solved category (auto-closes the ticket). */
-export const ZD_STATUS_COMPLETED = 5688725804959;
+/** Completed — job finished successfully. Solved category (auto-closes the ticket).
+ *  Uses the built-in "Solved" custom status (always enabled on every form);
+ *  the previous custom "Completed" id (5688725804959) wasn't enabled on the
+ *  ticket forms in production and 422'd every transition. */
+export const ZD_STATUS_COMPLETED = 5679178036383;
 
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
 export const ZD_STATUS_CANCELLED = 5697338496671;
@@ -63,3 +66,37 @@ export const ZENDESK_STATUS_JOB_CREATED = ZD_STATUS_SCHEDULED;
 
 /** @deprecated Use ZD_STATUS_ON_HOLD */
 export const ZENDESK_STATUS_JOB_ON_HOLD = ZD_STATUS_ON_HOLD;
+
+// ─── Base-status category for each custom status ────────────────────────────
+// Zendesk rejects `PUT /tickets/X { custom_status_id }` with
+// "Custom status is invalid" when the new custom_status_id belongs to a
+// different category than the ticket's current base `status`. Setting both
+// `status` (open / pending / hold / solved / closed) AND `custom_status_id`
+// together always works — so the updateTicket helper looks up the category
+// here whenever a custom_status_id is supplied.
+
+export type ZendeskBaseStatus = "open" | "pending" | "hold" | "solved" | "closed";
+
+const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
+  [ZD_STATUS_READY_TO_QUOTE]:    "open",
+  [ZD_STATUS_BIDDING]:           "open",
+  [ZD_STATUS_AWAITING_APPROVAL]: "open",
+  [ZD_STATUS_UNASSIGNED]:        "open",
+  [ZD_STATUS_SCHEDULED]:         "open",
+  [ZD_STATUS_IN_PROGRESS]:       "open",
+  [ZD_STATUS_FINAL_CHECKS]:      "open",
+  [ZD_STATUS_ON_HOLD]:           "pending",
+  [ZD_STATUS_COMPLETED]:         "solved",
+  [ZD_STATUS_CANCELLED]:         "solved",
+  [ZD_STATUS_LOST]:              "solved",
+};
+
+/** Returns the Zendesk base-status (`open`/`pending`/`solved`/etc.) for a
+ *  known custom_status_id, or null when the id isn't in the lifecycle map
+ *  (caller can fall back to whichever default they prefer). */
+export function baseStatusForCustomStatusId(
+  customStatusId: number | null | undefined,
+): ZendeskBaseStatus | null {
+  if (customStatusId == null) return null;
+  return STATUS_CATEGORY[customStatusId] ?? null;
+}

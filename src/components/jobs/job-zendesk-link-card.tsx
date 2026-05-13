@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Link2, Loader2, Pencil, X } from "lucide-react";
+import { ExternalLink, Link2, Loader2, Pencil, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface JobZendeskLinkCardProps {
@@ -34,6 +34,7 @@ export function JobZendeskLinkCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState((externalRef ?? "").trim());
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     setDraft((externalRef ?? "").trim());
@@ -64,6 +65,38 @@ export function JobZendeskLinkCard({
     isLinked && zendeskSubdomain
       ? `https://${zendeskSubdomain}.zendesk.com/agent/tickets/${encodeURIComponent(String(externalRef))}`
       : null;
+
+  const syncStatusNow = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/sync-zendesk-status`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: boolean; synced?: boolean; customStatusId?: number | null; skip?: string | null; error?: string | null }
+        | null;
+      if (!res.ok) {
+        toast.error(body?.error ?? "Status sync request failed.");
+        return;
+      }
+      if (body?.synced && body.customStatusId) {
+        toast.success(`Ticket status flipped to custom_status_id ${body.customStatusId}.`);
+      } else if (body?.skip) {
+        const labels: Record<string, string> = {
+          not_zendesk_linked:      "Job is not linked to a Zendesk ticket.",
+          no_ticket_id:            "No external_ref on the job.",
+          zendesk_not_configured:  "Server is missing ZENDESK_* env vars.",
+          no_status_mapping:       "Current job status has no Zendesk mapping (e.g. deleted).",
+          entity_not_found:        "Job not found.",
+        };
+        toast.message(labels[body.skip] ?? `Skipped: ${body.skip}`);
+      } else if (body?.error) {
+        toast.error(body.error);
+      } else {
+        toast.success("Sync completed.");
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
     <div
@@ -107,8 +140,19 @@ export function JobZendeskLinkCard({
           ) : null}
           <button
             type="button"
+            onClick={() => void syncStatusNow()}
+            disabled={syncing}
+            className="ml-auto inline-flex items-center gap-1 rounded-[6px] bg-white px-2 py-1 text-[11px] font-medium cursor-pointer disabled:opacity-40"
+            style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+            title="Force a status sync to Zendesk now (matches what the DB trigger does)"
+          >
+            {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Sync status
+          </button>
+          <button
+            type="button"
             onClick={() => setEditing(true)}
-            className="ml-auto inline-flex items-center gap-1 rounded-[6px] bg-white px-2 py-1 text-[11px] font-medium cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-[6px] bg-white px-2 py-1 text-[11px] font-medium cursor-pointer"
             style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
           >
             <Pencil className="h-3 w-3" />

@@ -7,6 +7,8 @@
  * Docs: https://developer.zendesk.com/api-reference/ticketing/introduction/
  */
 
+import { baseStatusForCustomStatusId } from "@/lib/zendesk-statuses";
+
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN?.trim();
 const EMAIL     = process.env.ZENDESK_EMAIL?.trim();
 const API_TOKEN = process.env.ZENDESK_API_TOKEN?.trim();
@@ -120,12 +122,22 @@ interface UpdateTicketArgs {
 /**
  * Update a Zendesk ticket — set custom status and/or post a public comment
  * with optional attachments.
+ *
+ * When a `customStatusId` is supplied, also sets the matching base `status`
+ * (open / pending / solved). Zendesk returns 422 "Custom status is invalid"
+ * if the new custom_status_id belongs to a different category than the
+ * ticket's current base status, so we always send both together when we
+ * know the mapping (lifecycle ids are in lib/zendesk-statuses.ts).
  */
 export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
 
   const ticket: Record<string, unknown> = {};
-  if (args.customStatusId != null) ticket.custom_status_id = args.customStatusId;
+  if (args.customStatusId != null) {
+    ticket.custom_status_id = args.customStatusId;
+    const baseStatus = baseStatusForCustomStatusId(args.customStatusId);
+    if (baseStatus) ticket.status = baseStatus;
+  }
 
   const hasContent = args.commentBody || args.htmlBody || (args.uploadTokens && args.uploadTokens.length > 0);
   if (hasContent) {
@@ -142,14 +154,41 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   }
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "Authorization": authHeader(),
-      "Content-Type":  "application/json",
-    },
-    body: JSON.stringify({ ticket }),
-  });
+  const tryPut = async (payload: Record<string, unknown>) => {
+    const body = JSON.stringify({ ticket: payload });
+    console.log(`[zendesk.updateTicket] PUT ${url} body=${body.length > 500 ? body.slice(0, 500) + "…" : body}`);
+    return fetch(url, {
+      method: "PUT",
+      headers: {
+        "Authorization": authHeader(),
+        "Content-Type":  "application/json",
+      },
+      body,
+    });
+  };
+
+  let res = await tryPut(ticket);
+
+  // Defensive fallback: when Zendesk rejects the custom_status_id (typically
+  // because the id isn't enabled on the ticket's form), retry with just the
+  // base `status` — that's always valid and the ticket still ends up in the
+  // right category (open/pending/solved). The custom label is just lost.
+  if (
+    !res.ok &&
+    res.status === 422 &&
+    ticket.custom_status_id != null &&
+    typeof ticket.status === "string"
+  ) {
+    const errText = await res.clone().text().catch(() => "");
+    if (errText.includes("custom_status_id") || errText.toLowerCase().includes("custom status is invalid")) {
+      console.warn(
+        `[zendesk.updateTicket] 422 on custom_status_id=${ticket.custom_status_id} (ticket ${args.ticketId}) — retrying with base status="${ticket.status}" only. Likely the custom status isn't enabled on the ticket's form in Zendesk admin.`,
+      );
+      const { custom_status_id: _drop, ...rest } = ticket;
+      void _drop;
+      res = await tryPut(rest);
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
