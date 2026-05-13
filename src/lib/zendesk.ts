@@ -7,6 +7,8 @@
  * Docs: https://developer.zendesk.com/api-reference/ticketing/introduction/
  */
 
+import { baseStatusForCustomStatusId } from "@/lib/zendesk-statuses";
+
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN?.trim();
 const EMAIL     = process.env.ZENDESK_EMAIL?.trim();
 const API_TOKEN = process.env.ZENDESK_API_TOKEN?.trim();
@@ -133,8 +135,6 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   const ticket: Record<string, unknown> = {};
   if (args.customStatusId != null) {
     ticket.custom_status_id = args.customStatusId;
-    // Lazy require to avoid a circular import at module load.
-    const { baseStatusForCustomStatusId } = await import("@/lib/zendesk-statuses");
     const baseStatus = baseStatusForCustomStatusId(args.customStatusId);
     if (baseStatus) ticket.status = baseStatus;
   }
@@ -154,13 +154,15 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   }
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
+  const bodyPayload = JSON.stringify({ ticket });
+  console.log(`[zendesk.updateTicket] PUT ${url} body=${bodyPayload.length > 500 ? bodyPayload.slice(0, 500) + "…" : bodyPayload}`);
   const res = await fetch(url, {
     method: "PUT",
     headers: {
       "Authorization": authHeader(),
       "Content-Type":  "application/json",
     },
-    body: JSON.stringify({ ticket }),
+    body: bodyPayload,
   });
 
   if (!res.ok) {
