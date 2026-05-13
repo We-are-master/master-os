@@ -175,7 +175,15 @@ export function computeAvgScheduleToFinalChecksPipelineSeconds(
 let lastMarkLateAt = 0;
 const MARK_LATE_INTERVAL_MS = 30 * 60 * 1000;
 
-/** Jobs "All" tab: non-deleted rows only, excluding Lost & Cancelled (`cancelled`). */
+/**
+ * Jobs "Active" tab: pre-Closed lifecycle only — i.e. Action Required, Scheduled,
+ * In Progress, and Final Checks groupings. Excludes `awaiting_payment` /
+ * `completed` / `cancelled` / `deleted` (those live under the Closed tab and
+ * its sub-filters).
+ *
+ * Constant exported under the legacy name for backwards-compat with downstream
+ * imports; semantics narrowed in May 2026 when the tab was renamed.
+ */
 export const JOB_LIST_ALL_TAB_STATUSES = [
   "unassigned",
   "auto_assigning",
@@ -184,9 +192,7 @@ export const JOB_LIST_ALL_TAB_STATUSES = [
   "in_progress",
   "on_hold",
   "final_check",
-  "awaiting_payment",
   "need_attention",
-  "completed",
 ] as const;
 
 /** Same grouping as `listJobs` / Jobs Management tabs — used for KPI rows + counts. */

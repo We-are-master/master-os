@@ -94,7 +94,9 @@ export function CreateInvoiceModal({
           search: s || undefined,
           page: 1,
           pageSize: s ? 16 : 12,
-          statusIn: [...JOB_LIST_ALL_TAB_STATUSES, "cancelled"],
+          // Active + Closed buckets — invoices can attach to completed /
+          // awaiting_payment / cancelled jobs too, not just the Active subset.
+          statusIn: [...JOB_LIST_ALL_TAB_STATUSES, "awaiting_payment", "completed", "cancelled"],
         }),
         listQuotes({ search: s || undefined, page: 1, pageSize: s ? 16 : 12 }),
       ]);

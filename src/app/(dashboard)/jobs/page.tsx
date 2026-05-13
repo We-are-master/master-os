@@ -1059,11 +1059,13 @@ function JobsPageContent() {
   const kpiActiveJobsCount =
     actionRequiredTabCount + scheduledTabCount + inProgressTabCount + finalChecksTabCount;
 
-  /** First tab badge still = all jobs in the date window. */
+  /** First tab badge = Active jobs (Action Required → Final Checks). Closed
+   *  buckets (awaiting_payment / completed / cancelled / deleted) live under
+   *  the Closed tab and are intentionally excluded here. */
   const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
-    { id: "all", label: "All jobs", count: kpiAllJobsCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
+    { id: "all", label: "Active jobs", count: kpiAllJobsCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
     { id: "action_required", label: "Action Required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
