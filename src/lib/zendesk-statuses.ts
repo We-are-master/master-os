@@ -45,8 +45,11 @@ export const ZD_STATUS_FINAL_CHECKS = 5688492712607;
  */
 export const ZD_STATUS_ON_HOLD = 5679178036127;
 
-/** Completed — job finished successfully. Solved category (auto-closes the ticket). */
-export const ZD_STATUS_COMPLETED = 5688725804959;
+/** Completed — job finished successfully. Solved category (auto-closes the ticket).
+ *  Uses the built-in "Solved" custom status (always enabled on every form);
+ *  the previous custom "Completed" id (5688725804959) wasn't enabled on the
+ *  ticket forms in production and 422'd every transition. */
+export const ZD_STATUS_COMPLETED = 5679178036383;
 
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
 export const ZD_STATUS_CANCELLED = 5697338496671;
