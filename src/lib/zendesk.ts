@@ -120,12 +120,24 @@ interface UpdateTicketArgs {
 /**
  * Update a Zendesk ticket — set custom status and/or post a public comment
  * with optional attachments.
+ *
+ * When a `customStatusId` is supplied, also sets the matching base `status`
+ * (open / pending / solved). Zendesk returns 422 "Custom status is invalid"
+ * if the new custom_status_id belongs to a different category than the
+ * ticket's current base status, so we always send both together when we
+ * know the mapping (lifecycle ids are in lib/zendesk-statuses.ts).
  */
 export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
 
   const ticket: Record<string, unknown> = {};
-  if (args.customStatusId != null) ticket.custom_status_id = args.customStatusId;
+  if (args.customStatusId != null) {
+    ticket.custom_status_id = args.customStatusId;
+    // Lazy require to avoid a circular import at module load.
+    const { baseStatusForCustomStatusId } = await import("@/lib/zendesk-statuses");
+    const baseStatus = baseStatusForCustomStatusId(args.customStatusId);
+    if (baseStatus) ticket.status = baseStatus;
+  }
 
   const hasContent = args.commentBody || args.htmlBody || (args.uploadTokens && args.uploadTokens.length > 0);
   if (hasContent) {
