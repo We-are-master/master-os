@@ -154,16 +154,41 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   }
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
-  const bodyPayload = JSON.stringify({ ticket });
-  console.log(`[zendesk.updateTicket] PUT ${url} body=${bodyPayload.length > 500 ? bodyPayload.slice(0, 500) + "…" : bodyPayload}`);
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "Authorization": authHeader(),
-      "Content-Type":  "application/json",
-    },
-    body: bodyPayload,
-  });
+  const tryPut = async (payload: Record<string, unknown>) => {
+    const body = JSON.stringify({ ticket: payload });
+    console.log(`[zendesk.updateTicket] PUT ${url} body=${body.length > 500 ? body.slice(0, 500) + "…" : body}`);
+    return fetch(url, {
+      method: "PUT",
+      headers: {
+        "Authorization": authHeader(),
+        "Content-Type":  "application/json",
+      },
+      body,
+    });
+  };
+
+  let res = await tryPut(ticket);
+
+  // Defensive fallback: when Zendesk rejects the custom_status_id (typically
+  // because the id isn't enabled on the ticket's form), retry with just the
+  // base `status` — that's always valid and the ticket still ends up in the
+  // right category (open/pending/solved). The custom label is just lost.
+  if (
+    !res.ok &&
+    res.status === 422 &&
+    ticket.custom_status_id != null &&
+    typeof ticket.status === "string"
+  ) {
+    const errText = await res.clone().text().catch(() => "");
+    if (errText.includes("custom_status_id") || errText.toLowerCase().includes("custom status is invalid")) {
+      console.warn(
+        `[zendesk.updateTicket] 422 on custom_status_id=${ticket.custom_status_id} (ticket ${args.ticketId}) — retrying with base status="${ticket.status}" only. Likely the custom status isn't enabled on the ticket's form in Zendesk admin.`,
+      );
+      const { custom_status_id: _drop, ...rest } = ticket;
+      void _drop;
+      res = await tryPut(rest);
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
