@@ -78,13 +78,14 @@ export type TimeFormatId = "24h" | "12h";
 
 export type OfficeJobCancellationPresetRow = { id: string; label: string };
 
-/** Matches the original hardcoded list so behaviour is unchanged until Settings overrides. */
+/** Default presets shown in "Put job on hold" until Settings → Setup overrides. */
 export const DEFAULT_JOB_ON_HOLD_PRESETS: string[] = [
   "Waiting for materials",
   "Client rescheduled",
   "Access issue",
   "Partner unavailable",
   "Awaiting confirmation",
+  "Complaint",
   "Other",
 ];
 
