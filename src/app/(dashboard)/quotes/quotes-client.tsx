@@ -1206,6 +1206,19 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           });
           resolvedName = b.displayName;
           resolvedEmail = b.documentEmail ?? resolvedEmail;
+        } else if (!resolvedName.trim() && formData.source_account_id?.trim()) {
+          // Account-only quote: mirror the drawer's company_name || contact_name
+          // precedence so list/kanban cards have a label and downstream guards
+          // that read `client_name` keep working.
+          const { data } = await getSupabase()
+            .from("accounts")
+            .select("company_name, contact_name")
+            .eq("id", formData.source_account_id.trim())
+            .maybeSingle();
+          resolvedName =
+            bidPayloadTrimmedString(data?.company_name as unknown) ||
+            bidPayloadTrimmedString(data?.contact_name as unknown) ||
+            "";
         }
         const intent = createQuoteIntentRef.current;
         const oneShotPartnerIds = options?.oneShotBiddingPartnerIds?.filter(Boolean) ?? [];
@@ -3660,8 +3673,9 @@ function QuoteDetailDrawer({
 
   const prepareSendToBid = useCallback(async () => {
     const nm = bidPayloadTrimmedString(quote.client_name as unknown);
-    if (!nm || /^pending$/i.test(nm)) {
-      toast.error("Link an account (Account on this quote)");
+    const hasAccount = !!bidPayloadTrimmedString(quote.source_account_id as unknown);
+    if ((!nm || /^pending$/i.test(nm)) && !hasAccount) {
+      toast.error("Link a client or account before sending to bid");
       return;
     }
     const siteAddr =
@@ -3683,6 +3697,7 @@ function QuoteDetailDrawer({
     if (ok) setInvitePartnerOpen(true);
   }, [
     quote.client_name,
+    quote.source_account_id,
     quote.property_address,
     routingTitleDraft,
     routingPropertyAddress,
@@ -4705,7 +4720,7 @@ function QuoteDetailDrawer({
                             updates = {
                               client_id: null as unknown as undefined,
                               client_address_id: null as unknown as undefined,
-                              client_name: accountDisplayName || quote.client_name || "Account",
+                              client_name: accountDisplayName || quote.client_name || "",
                               client_email: "",
                               property_address: addr,
                               source_account_id: accountId.trim() ? accountId.trim() : null,
@@ -6387,7 +6402,13 @@ function QuoteDetailDrawer({
 
 /** Required fields before leaving draft/survey; partner bidding allows zero totals once scope is set. */
 function quoteBasicsForPipeline(quote: Quote, nextStatus?: string): { ok: boolean; message?: string } {
-  if (!bidPayloadTrimmedString(quote.client_name as unknown)) return { ok: false, message: "Fill client or account name (Step 1: Job details)." };
+  const hasClient = !!bidPayloadTrimmedString(quote.client_name as unknown);
+  const hasAccount =
+    !!bidPayloadTrimmedString(quote.source_account_id as unknown) ||
+    !!bidPayloadTrimmedString(quote.source_account_name as unknown);
+  if (!hasClient && !hasAccount) {
+    return { ok: false, message: "Link a client or an account before advancing (Step 1: Job details)." };
+  }
   if (!bidPayloadTrimmedString(quote.property_address as unknown)) return { ok: false, message: "Fill property address (Step 1: Job details)." };
   if (!bidPayloadTrimmedString(quote.title as unknown)) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
   const isPartner = (quote.quote_type ?? "internal") === "partner";
