@@ -19,6 +19,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import {
+  LIVE_MAP_PARTNER_STATUS_COLOR,
+  LIVE_MAP_PARTNER_STATUS_LABEL,
+  type LiveMapPartnerStatus,
+} from "@/lib/live-map-partner-status";
 
 /** Partner marker canvas — needs extra room for the top-right trade badge. */
 const PARTNER_MARKER_SIZE = 52;
@@ -142,7 +147,7 @@ function escapeHtml(s: string) {
 
 export function buildLiveMapPopupHtml(point: {
   name: string;
-  inactive: boolean;
+  status: LiveMapPartnerStatus;
   lastUpdateIso: string;
   trade?: string;
   trades?: string[] | null;
@@ -165,9 +170,11 @@ export function buildLiveMapPopupHtml(point: {
           )
           .join("")}</div>`
       : "";
-  const statusChip = point.inactive
-    ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:#FFF4ED;color:#ED4B00;font-size:10px;font-weight:600">Inactive</span>`
-    : `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:#E8F4EE;color:#2B9966;font-size:10px;font-weight:600">Active</span>`;
+  const statusColor = LIVE_MAP_PARTNER_STATUS_COLOR[point.status];
+  const statusLabel = LIVE_MAP_PARTNER_STATUS_LABEL[point.status];
+  const statusChip = `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:${statusColor}1A;color:${statusColor};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px">${escapeHtml(
+    statusLabel,
+  )}</span>`;
   const lastSeen = escapeHtml(new Date(point.lastUpdateIso).toLocaleString());
   const stats: string[] = [];
   if (typeof point.jobsInWindow === "number") {

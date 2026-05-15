@@ -20,23 +20,27 @@ import {
   type ScheduleLiveMapPoint,
 } from "@/components/dashboard/schedule-live-map";
 import {
-  liveMapJobStatusLegend,
   liveMapTradeFilterOptions,
   type LiveMapJobStatusCategory,
 } from "@/components/dashboard/live-map-marker-icons";
+import { LiveMapPartnersPanel } from "@/components/dashboard/live-map-partners-panel";
+import { LiveMapJobsPanel } from "@/components/dashboard/live-map-jobs-panel";
+import {
+  computePartnerStatus,
+  type LiveMapPartnerStatus,
+} from "@/lib/live-map-partner-status";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
 import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { Briefcase, AlertTriangle, Users, RefreshCw, ChevronDown, Calendar as CalIcon } from "lucide-react";
+import { RefreshCw, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
   formatJobScheduleLine,
-  formatLocalYmd,
   jobFinishYmd,
   jobIntersectsLocalMonth,
   jobScheduleYmd,
@@ -46,12 +50,8 @@ import { fetchScheduleCalendarJobsForMonth } from "@/lib/fetch-schedule-calendar
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
-import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
 const LIVE_MAP_INACTIVE_MINUTES = 15;
-
-const LIVE_MAP_JOB_LAYER_HINT_BASE =
-  "Map area / trade filters do not narrow job pins — overlay uses all jobs overlapping the selected date layer.";
 
 const LIVE_MAP_REGION_OPTIONS: { value: LiveMapRegionPreset; label: string }[] = [
   { value: "london", label: "London" },
@@ -59,6 +59,16 @@ const LIVE_MAP_REGION_OPTIONS: { value: LiveMapRegionPreset; label: string }[] =
   { value: "uk", label: "United Kingdom" },
   { value: "europe", label: "Europe" },
 ];
+
+const DATE_MODE_LABEL: Record<string, string> = {
+  today: "Today",
+  tomorrow: "Tomorrow",
+  week: "This week",
+  month: "This month",
+  qtd: "Quarter to date",
+  all: "All time",
+  custom: "Custom range",
+};
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
@@ -74,6 +84,10 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted },
 };
+
+/** Raw partner location loaded from Supabase — status is computed later from
+ *  jobs + heartbeat freshness, so it lives outside the loader. */
+type RawLiveMapPoint = Omit<ScheduleLiveMapPoint, "status"> & { inactive: boolean };
 
 function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
   if (status === "unassigned" || status === "auto_assigning") return "unassigned";
@@ -137,19 +151,12 @@ export default function SchedulePage() {
     }
   }, []);
 
-  const [liveMapPoints, setLiveMapPoints] = useState<ScheduleLiveMapPoint[]>([]);
+  const [liveMapPoints, setLiveMapPoints] = useState<RawLiveMapPoint[]>([]);
   const [loadingLiveMap, setLoadingLiveMap] = useState(false);
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
   const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("london");
   const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
-  const [liveMapDateMode, setLiveMapDateMode] = useState<"today" | "tomorrow" | "custom">("today");
-  const [liveMapCustomFrom, setLiveMapCustomFrom] = useState<string>(() => formatLocalYmd(new Date()));
-  const [liveMapCustomTo, setLiveMapCustomTo] = useState<string>(() => formatLocalYmd(new Date()));
   const [liveMapSelectedJobIds, setLiveMapSelectedJobIds] = useState<Set<string>>(() => new Set());
-  const [liveMapPartnerFilter, setLiveMapPartnerFilter] = useState<string>("all");
-  /** "all" · account_id. Filters job pins by clients.source_account_id (partner pins stay visible). */
-  const [liveMapAccountFilter, setLiveMapAccountFilter] = useState<string>("all");
-  const [liveMapAccountsList, setLiveMapAccountsList] = useState<{ id: string; name: string }[]>([]);
   /** Resolved client_ids for the active account filter (null when filter = "all"). */
   const [liveMapAccountClientIds, setLiveMapAccountClientIds] = useState<Set<string> | null>(null);
   /** Selected partner for the "route to next job" affordance + the computed route. */
@@ -157,6 +164,10 @@ export default function SchedulePage() {
   const [liveMapRoute, setLiveMapRoute] = useState<DrivingRoute | null>(null);
   const [liveMapRouteJobId, setLiveMapRouteJobId] = useState<string | null>(null);
   const [liveMapRouteLoading, setLiveMapRouteLoading] = useState(false);
+  /** Status row scoping the partner pins on the map (left panel). */
+  const [liveMapPartnerStatus, setLiveMapPartnerStatus] = useState<LiveMapPartnerStatus | null>(null);
+  /** Status row scoping the job pins on the map (right panel). */
+  const [liveMapJobStatusFilter, setLiveMapJobStatusFilter] = useState<LiveMapJobStatusCategory | null>(null);
   /** Matches Live View trade filter + job title parsing to Admin → Services catalog names. */
   const [serviceCatalogTypeNames, setServiceCatalogTypeNames] = useState<string[]>([]);
 
@@ -236,11 +247,11 @@ export default function SchedulePage() {
             inactive,
             trade: tr?.trade ?? "General",
             trades: tr?.trades ?? null,
-          } as ScheduleLiveMapPoint;
+          } as RawLiveMapPoint;
         }),
       );
 
-      setLiveMapPoints(rows.filter((r): r is ScheduleLiveMapPoint => r !== null));
+      setLiveMapPoints(rows.filter((r): r is RawLiveMapPoint => r !== null));
       setLiveMapUpdatedAt(new Date().toISOString());
     } catch {
       /* ignore */
@@ -277,46 +288,24 @@ export default function SchedulePage() {
     };
   }, [loadLiveMap]);
 
-  // Load corporate accounts once for the Account picker.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const supabase = getSupabase();
-      const { data } = await supabase
-        .from("accounts")
-        .select("id, name")
-        .order("name", { ascending: true })
-        .limit(2000);
-      if (cancelled) return;
-      setLiveMapAccountsList(
-        ((data ?? []) as { id: string; name: string | null }[])
-          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
-          .filter((a) => a.id && a.name),
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // Resolve the account filter to a client_id set used downstream when
   // narrowing job pins. `null` = no account filter; empty Set = account has
   // no clients (caller should render zero job pins).
   useEffect(() => {
     let cancelled = false;
-    if (liveMapAccountFilter === "all") {
+    if (beaconFilters.accountId === "all") {
       setLiveMapAccountClientIds(null);
       return;
     }
     void (async () => {
-      const ids = await resolveAccountClientIds(liveMapAccountFilter);
+      const ids = await resolveAccountClientIds(beaconFilters.accountId);
       if (cancelled) return;
       setLiveMapAccountClientIds(ids ? new Set(ids) : new Set());
     })();
     return () => {
       cancelled = true;
     };
-  }, [liveMapAccountFilter]);
+  }, [beaconFilters.accountId]);
 
   const anchorCal = useMemo(() => {
     const t = new Date();
@@ -332,49 +321,35 @@ export default function SchedulePage() {
     return liveMapPoints.filter((p) => liveMapPointMatchesTradeFilter(p, liveMapTradeFilter));
   }, [liveMapPoints, liveMapTradeFilter]);
 
-  const liveMapJobLayerHint = useMemo(() => {
-    if (liveMapTradeFilter !== "all") {
-      return `${LIVE_MAP_JOB_LAYER_HINT_BASE}\nTrade still narrows which job trades appear when a trade filter is applied.`;
-    }
-    return LIVE_MAP_JOB_LAYER_HINT_BASE;
-  }, [liveMapTradeFilter]);
-
+  /** Map's date window comes from the top BeaconHeader so it stays in sync
+   *  with List / Kanban. "All" → unbounded. */
   const liveSelectedWindow = useMemo<{ fromMs: number; toMs: number }>(() => {
-    const today = new Date();
-    const todayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    if (liveMapDateMode === "today") return { fromMs: todayMs, toMs: todayMs };
-    if (liveMapDateMode === "tomorrow") {
-      const t = new Date();
-      t.setDate(t.getDate() + 1);
-      const ms = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
-      return { fromMs: ms, toMs: ms };
-    }
-    const parse = (s: string): number | null => {
-      const [yy, mm, dd] = s.split("-").map(Number);
-      if (!yy || !mm || !dd) return null;
-      return new Date(yy, mm - 1, dd).getTime();
+    const range = getDateRangeForMode(beaconFilters);
+    if (!range) return { fromMs: -Infinity, toMs: Infinity };
+    return {
+      fromMs: new Date(range.fromIso).getTime(),
+      toMs: new Date(range.toIso).getTime(),
     };
-    const a = parse(liveMapCustomFrom) ?? todayMs;
-    const b = parse(liveMapCustomTo) ?? a;
-    return { fromMs: Math.min(a, b), toMs: Math.max(a, b) };
-  }, [liveMapDateMode, liveMapCustomFrom, liveMapCustomTo]);
+  }, [beaconFilters]);
 
   const liveMapSelectedLabel = useMemo(() => {
-    const from = new Date(liveSelectedWindow.fromMs);
-    const to = new Date(liveSelectedWindow.toMs);
-    const sameDay = liveSelectedWindow.fromMs === liveSelectedWindow.toMs;
-    if (sameDay) {
-      return from.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    if (beaconFilters.dateMode === "custom") {
+      if (!Number.isFinite(liveSelectedWindow.fromMs) || !Number.isFinite(liveSelectedWindow.toMs)) {
+        return "Custom range";
+      }
+      const from = new Date(liveSelectedWindow.fromMs);
+      const to = new Date(liveSelectedWindow.toMs);
+      const sameDay = from.toDateString() === to.toDateString();
+      if (sameDay) {
+        return from.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+      }
+      return `${from.toLocaleDateString(undefined, { day: "numeric", month: "short" })}–${to.toLocaleDateString(
+        undefined,
+        { day: "numeric", month: "short" },
+      )}`;
     }
-    const sameMonth = from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear();
-    if (sameMonth) {
-      return `${from.getDate()}–${to.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
-    }
-    return `${from.toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${to.toLocaleDateString(undefined, {
-      day: "numeric",
-      month: "short",
-    })}`;
-  }, [liveSelectedWindow]);
+    return DATE_MODE_LABEL[beaconFilters.dateMode] ?? "All time";
+  }, [beaconFilters.dateMode, liveSelectedWindow]);
 
   const jobsForSelectedDay = useMemo<Job[]>(() => {
     const { fromMs, toMs } = liveSelectedWindow;
@@ -398,16 +373,17 @@ export default function SchedulePage() {
         const wanted = normalizeTypeOfWork(liveMapTradeFilter) || liveMapTradeFilter;
         if (jobTrade !== wanted) return false;
       }
-      if (liveMapPartnerFilter !== "all") {
-        if (liveMapPartnerFilter === "__unassigned__") {
+      const pid = beaconFilters.partnerId;
+      if (pid !== "all") {
+        if (pid === "__unassigned__") {
           if (j.partner_id || j.partner_name) return false;
-        } else if (j.partner_id !== liveMapPartnerFilter) {
+        } else if (j.partner_id !== pid) {
           return false;
         }
       }
       return true;
     });
-  }, [jobs, liveSelectedWindow, liveMapTradeFilter, liveMapPartnerFilter, serviceCatalogTypeNames]);
+  }, [jobs, liveSelectedWindow, liveMapTradeFilter, beaconFilters.partnerId, serviceCatalogTypeNames]);
 
   const partnerStatsById = useMemo(() => {
     const stats = new Map<string, { completed: number; inWindow: number }>();
@@ -433,28 +409,37 @@ export default function SchedulePage() {
   }, [jobsTouchingCalendarMonth, jobsForSelectedDay]);
 
   const partnerPointsForMap = useMemo<ScheduleLiveMapPoint[]>(() => {
+    const nowMs = Date.now();
     return filteredLiveMapPoints.map((p) => {
       const s = partnerStatsById.get(p.id);
+      const status = computePartnerStatus({
+        partnerId: p.id,
+        partnerLat: p.latitude,
+        partnerLng: p.longitude,
+        inactive: p.inactive,
+        jobs: jobs.map((j) => ({
+          partner_id: j.partner_id,
+          status: j.status,
+          latitude: j.latitude,
+          longitude: j.longitude,
+          scheduled_start_at: j.scheduled_start_at,
+        })),
+        nowMs,
+      });
       return {
-        ...p,
+        id: p.id,
+        name: p.name,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        lastUpdateIso: p.lastUpdateIso,
+        trade: p.trade,
+        trades: p.trades,
+        status,
         jobsCompleted: s?.completed,
         jobsInWindow: s?.inWindow,
-      };
+      } satisfies ScheduleLiveMapPoint;
     });
-  }, [filteredLiveMapPoints, partnerStatsById]);
-
-  const liveMapPartnerOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const j of jobs) {
-      const pid = j.partner_id?.trim();
-      if (!pid) continue;
-      const name = (j.partner_name ?? "").trim() || "Partner";
-      if (!seen.has(pid)) seen.set(pid, name);
-    }
-    return Array.from(seen.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [jobs]);
+  }, [filteredLiveMapPoints, partnerStatsById, jobs]);
 
   const liveMapJobPoints = useMemo<ScheduleLiveMapJobPoint[]>(() => {
     const points: ScheduleLiveMapJobPoint[] = [];
@@ -564,7 +549,6 @@ export default function SchedulePage() {
   const clearJobSelection = useCallback(() => setLiveMapSelectedJobIds(new Set()), []);
 
   const liveMapSelectedJobSet = liveMapSelectedJobIds;
-  const liveMapJobsWithLocation = jobsForSelectedDay.length;
   const liveMapJobsMissingLocation = useMemo(() => {
     const { fromMs, toMs } = liveSelectedWindow;
     return jobs.filter((j) => {
@@ -578,11 +562,21 @@ export default function SchedulePage() {
     }).length;
   }, [jobs, liveSelectedWindow]);
 
-  const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
-  const liveInactiveCount = useMemo(() => liveMapPoints.filter((p) => p.inactive).length, [liveMapPoints]);
   // Mirrors Pulse "Live Now": real-time count, full status set
   // (in_progress + late + final_check), no period filter.
   const beaconLiveCount = realTimeLiveCount;
+
+  const togglePartnerStatus = useCallback((status: LiveMapPartnerStatus) => {
+    setLiveMapPartnerStatus((cur) => (cur === status ? null : status));
+  }, []);
+
+  const toggleJobStatus = useCallback((category: LiveMapJobStatusCategory) => {
+    setLiveMapJobStatusFilter((cur) => (cur === category ? null : category));
+  }, []);
+
+  const focusPartner = useCallback((partnerId: string) => {
+    setLiveMapRoutedPartnerId(partnerId);
+  }, []);
 
   return (
     <PageTransition
@@ -635,6 +629,8 @@ export default function SchedulePage() {
               Refresh
             </button>
           }
+          partnerStatusFilter={liveMapPartnerStatus}
+          jobStatusFilter={liveMapJobStatusFilter}
           filterOverlay={
             <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 px-2 py-1.5 shadow-md backdrop-blur-sm sm:gap-2 sm:py-2">
               <div className="relative">
@@ -667,28 +663,6 @@ export default function SchedulePage() {
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
               </div>
-              <div className="relative">
-                <select
-                  aria-label="Account filter"
-                  value={liveMapAccountFilter}
-                  onChange={(e) => setLiveMapAccountFilter(e.target.value)}
-                  className="h-7 min-w-[130px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
-                >
-                  <option value="all">All accounts</option>
-                  {liveMapAccountsList.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-              </div>
-              {liveMapTradeFilter !== "all" && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF2FF] px-2 py-0.5 text-[11px] font-medium text-[#020040]">
-                  <Users className="h-3 w-3" aria-hidden />
-                  {filteredLiveMapPoints.length} visible
-                </span>
-              )}
               {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
                 <span className="text-[11px] font-medium text-red-500">No partners match</span>
               )}
@@ -697,7 +671,7 @@ export default function SchedulePage() {
           bottomLeftOverlay={
             <div className="flex flex-col gap-2">
               {liveMapRoutedPartnerId ? (() => {
-                const partner = liveMapPoints.find((p) => p.id === liveMapRoutedPartnerId);
+                const partner = partnerPointsForMap.find((p) => p.id === liveMapRoutedPartnerId);
                 const job = liveMapRouteJobId ? jobs.find((j) => j.id === liveMapRouteJobId) : null;
                 const arrivalEndMs = job?.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : null;
                 const etaMs = liveMapRoute ? Date.now() + liveMapRoute.durationSec * 1000 : null;
@@ -759,131 +733,25 @@ export default function SchedulePage() {
                   </div>
                 );
               })() : null}
-              <div className="rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
-              <div className="flex items-center gap-3 text-[11px]">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#1D9E75]" aria-hidden />
-                  <span className="text-[#64748B]">Active</span>
-                  <span className="font-semibold tabular-nums text-[#020040]">{liveActiveCount}</span>
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ED4B00]" aria-hidden />
-                  <span className="text-[#64748B]">Inactive</span>
-                  <span className="font-semibold tabular-nums text-[#020040]">{liveInactiveCount}</span>
-                </span>
-                {liveMapUpdatedAt ? (
-                  <span className="text-[10px] text-[#64748B]">
-                    · {new Date(liveMapUpdatedAt).toLocaleTimeString()}
-                  </span>
-                ) : null}
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[#64748B]">
-                {liveMapJobStatusLegend().map((entry) => (
-                  <span key={entry.key} className="inline-flex items-center gap-1">
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-[3px] ring-1 ring-white/80"
-                      style={{ background: entry.color }}
-                      aria-hidden
-                    />
-                    {entry.label}
-                  </span>
-                ))}
-              </div>
-              </div>
+              <LiveMapPartnersPanel
+                points={partnerPointsForMap}
+                selectedStatus={liveMapPartnerStatus}
+                onStatusToggle={togglePartnerStatus}
+                onPartnerClick={focusPartner}
+                lastUpdatedAt={liveMapUpdatedAt}
+              />
             </div>
           }
           bottomRightOverlay={
-            <div className="w-full sm:max-w-[380px] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#020040]">
-                  <CalIcon className="h-3 w-3 text-[#ED4B00]" aria-hidden />
-                  Jobs of the day
-                  <FixfyHintIcon text={liveMapJobLayerHint} />
-                </span>
-                <div className="inline-flex items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
-                  {(
-                    [
-                      { id: "today" as const, label: "Today" },
-                      { id: "tomorrow" as const, label: "Tomorrow" },
-                      { id: "custom" as const, label: "Custom" },
-                    ] as const
-                  ).map(({ id, label }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setLiveMapDateMode(id)}
-                      className={cn(
-                        "rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-colors",
-                        liveMapDateMode === id ? "bg-[#ED4B00] text-white" : "border-[0.5px] border-[#D8D8DD] bg-white text-[#020040] hover:bg-white",
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {liveMapDateMode === "custom" && (
-                  <div className="inline-flex items-center gap-1">
-                    <input
-                      type="date"
-                      aria-label="Range start"
-                      value={liveMapCustomFrom}
-                      onChange={(e) => setLiveMapCustomFrom(e.target.value)}
-                      className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
-                    />
-                    <span className="text-[11px] text-[#64748B]">→</span>
-                    <input
-                      type="date"
-                      aria-label="Range end"
-                      value={liveMapCustomTo}
-                      onChange={(e) => setLiveMapCustomTo(e.target.value)}
-                      className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
-                    />
-                  </div>
-                )}
-                <div className="relative">
-                  <select
-                    aria-label="Filter jobs by partner"
-                    value={liveMapPartnerFilter}
-                    onChange={(e) => setLiveMapPartnerFilter(e.target.value)}
-                    className="h-7 appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
-                  >
-                    <option value="all">All partners</option>
-                    <option value="__unassigned__">Unassigned only</option>
-                    {liveMapPartnerOptions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-                </div>
-                <span className="inline-flex items-center gap-1 rounded-md bg-[#FFF4ED] px-2 py-0.5 text-[11px] font-medium text-[#ED4B00]">
-                  <Briefcase className="h-3 w-3" aria-hidden />
-                  {liveMapJobsWithLocation} {liveMapJobsWithLocation === 1 ? "job" : "jobs"} · {liveMapSelectedLabel}
-                </span>
-                {liveMapJobsMissingLocation > 0 && (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-md bg-[#FEF3C7] px-2 py-0.5 text-[11px] font-medium text-[#92400E]"
-                    title="These jobs have no geocoded address so they can't be placed on the map."
-                  >
-                    <AlertTriangle className="h-3 w-3" aria-hidden />
-                    {liveMapJobsMissingLocation} no location
-                  </span>
-                )}
-                {liveMapSelectedJobIds.size > 0 && (
-                  <span className="inline-flex items-center gap-1.5 rounded-md bg-[#020040] px-2.5 py-0.5 text-[11px] font-semibold text-white">
-                    {liveMapSelectedJobIds.size} selected for dispatch
-                    <button
-                      type="button"
-                      onClick={clearJobSelection}
-                      className="ml-0.5 rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-white/25"
-                    >
-                      Clear
-                    </button>
-                  </span>
-                )}
-              </div>
-            </div>
+            <LiveMapJobsPanel
+              jobPoints={liveMapJobPoints}
+              selectedStatus={liveMapJobStatusFilter}
+              onStatusToggle={toggleJobStatus}
+              selectedJobIds={liveMapSelectedJobSet}
+              onClearSelection={clearJobSelection}
+              jobsMissingLocation={liveMapJobsMissingLocation}
+              dateLabel={liveMapSelectedLabel}
+            />
           }
         />
       </motion.div>

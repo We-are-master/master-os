@@ -17,6 +17,10 @@ import {
   renderLiveMapTradeIconSvg,
   type LiveMapJobStatusCategory,
 } from "@/components/dashboard/live-map-marker-icons";
+import {
+  LIVE_MAP_PARTNER_STATUS_COLOR,
+  type LiveMapPartnerStatus,
+} from "@/lib/live-map-partner-status";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -27,6 +31,7 @@ const PARTNER_CIRCLE_LAYER_ID = "live-map-partners-circle";
 const PARTNER_INITIALS_LAYER_ID = "live-map-partners-initials";
 const PARTNER_BADGE_LAYER_ID = "live-map-partners-badge";
 const PARTNER_BADGE_ICON_LAYER_ID = "live-map-partners-badge-icon";
+const PARTNER_ONSITE_DOT_LAYER_ID = "live-map-partners-onsite-dot";
 
 const JOB_SOURCE_ID = "live-map-jobs";
 const JOB_CIRCLE_LAYER_ID = "live-map-jobs-circle";
@@ -112,7 +117,8 @@ export interface ScheduleLiveMapPoint {
   latitude: number;
   longitude: number;
   lastUpdateIso: string;
-  inactive: boolean;
+  /** Operational state — drives the marker badge ring color and visibility. */
+  status: LiveMapPartnerStatus;
   /** Primary trade label from partners (or inferred). */
   trade?: string;
   trades?: string[] | null;
@@ -169,6 +175,10 @@ interface ScheduleLiveMapProps {
   bottomLeftOverlay?: ReactNode;
   /** Dispatch / jobs-of-the-day panel — floated at the bottom-right corner of the map. */
   bottomRightOverlay?: ReactNode;
+  /** When set, partner markers not matching this status are hidden. */
+  partnerStatusFilter?: LiveMapPartnerStatus | null;
+  /** When set, job markers not matching this status category are hidden. */
+  jobStatusFilter?: LiveMapJobStatusCategory | null;
 }
 
 const LONDON_CENTER: [number, number] = [-0.1276, 51.5072];
@@ -230,6 +240,8 @@ export function ScheduleLiveMap({
   filterOverlay,
   bottomLeftOverlay,
   bottomRightOverlay,
+  partnerStatusFilter,
+  jobStatusFilter,
 }: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -243,6 +255,7 @@ export function ScheduleLiveMap({
     () => {
       const next: ScheduleLiveMapPoint[] = [];
       for (const point of points) {
+        if (partnerStatusFilter && point.status !== partnerStatusFilter) continue;
         const normalized = normalizeLiveMapCoordinate(point.latitude, point.longitude);
         if (!normalized) continue;
         next.push({
@@ -253,13 +266,14 @@ export function ScheduleLiveMap({
       }
       return next;
     },
-    [points],
+    [points, partnerStatusFilter],
   );
 
   const validJobPoints = useMemo(
     () => {
       const next: ScheduleLiveMapJobPoint[] = [];
       for (const job of jobPoints ?? []) {
+        if (jobStatusFilter && job.statusCategory !== jobStatusFilter) continue;
         const normalized = normalizeLiveMapCoordinate(job.latitude, job.longitude);
         if (!normalized) continue;
         next.push({
@@ -270,7 +284,7 @@ export function ScheduleLiveMap({
       }
       return next;
     },
-    [jobPoints],
+    [jobPoints, jobStatusFilter],
   );
 
   const pointSig = useMemo(() => pointGeometrySignature(validPoints), [validPoints]);
@@ -388,22 +402,27 @@ export function ScheduleLiveMap({
     if (!map) return;
     if (!mapReady) return;
 
-    const partnerFeatures = validPoints.map((p) => ({
-      type: "Feature" as const,
-      geometry: {
-        type: "Point" as const,
-        coordinates: [p.longitude, p.latitude] as [number, number],
-      },
-      properties: {
-        id: p.id,
-        name: p.name,
-        initials: toInitials(p.name),
-        inactive: p.inactive ? 1 : 0,
-        badgeIconId: `${p.inactive ? PARTNER_BADGE_INACTIVE_ICON_PREFIX : PARTNER_BADGE_ACTIVE_ICON_PREFIX}${liveMapTradeIconKey(
-          tradeFilter === "all" ? p.trade : tradeFilter,
-        )}`,
-      },
-    }));
+    const partnerFeatures = validPoints.map((p) => {
+      const offline = p.status === "offline";
+      return {
+        type: "Feature" as const,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [p.longitude, p.latitude] as [number, number],
+        },
+        properties: {
+          id: p.id,
+          name: p.name,
+          initials: toInitials(p.name),
+          status: p.status,
+          offline: offline ? 1 : 0,
+          onsite: p.status === "on_site" ? 1 : 0,
+          badgeIconId: `${offline ? PARTNER_BADGE_INACTIVE_ICON_PREFIX : PARTNER_BADGE_ACTIVE_ICON_PREFIX}${liveMapTradeIconKey(
+            tradeFilter === "all" ? p.trade : tradeFilter,
+          )}`,
+        },
+      };
+    });
     const partnerCollection = {
       type: "FeatureCollection" as const,
       features: partnerFeatures,
@@ -466,7 +485,7 @@ export function ScheduleLiveMap({
         paint: {
           "circle-color": "#020040",
           "circle-radius": 20,
-          "circle-opacity": ["case", ["==", ["get", "inactive"], 1], 0.55, 1],
+          "circle-opacity": ["case", ["==", ["get", "offline"], 1], 0.55, 1],
           "circle-stroke-width": 2.5,
           "circle-stroke-color": "white",
         },
@@ -501,7 +520,16 @@ export function ScheduleLiveMap({
           "circle-color": "#FFFFFF",
           "circle-radius": PARTNER_BADGE_RADIUS,
           "circle-stroke-width": 2,
-          "circle-stroke-color": ["case", ["==", ["get", "inactive"], 1], "#9A9AA0", "#0F6E56"],
+          "circle-stroke-color": [
+            "match",
+            ["get", "status"],
+            "on_site", LIVE_MAP_PARTNER_STATUS_COLOR.on_site,
+            "in_job", LIVE_MAP_PARTNER_STATUS_COLOR.in_job,
+            "en_route", LIVE_MAP_PARTNER_STATUS_COLOR.en_route,
+            "available", LIVE_MAP_PARTNER_STATUS_COLOR.available,
+            "offline", LIVE_MAP_PARTNER_STATUS_COLOR.offline,
+            LIVE_MAP_PARTNER_STATUS_COLOR.available,
+          ],
           "circle-translate": PARTNER_BADGE_OFFSET,
           "circle-translate-anchor": "viewport",
         },
@@ -523,6 +551,24 @@ export function ScheduleLiveMap({
         paint: {
           "icon-translate": PARTNER_BADGE_OFFSET,
           "icon-translate-anchor": "viewport",
+        },
+      });
+    }
+    if (!map.getLayer(PARTNER_ONSITE_DOT_LAYER_ID)) {
+      // Small white dot at bottom-center of the navy circle — only renders for
+      // on-site partners, so dispatchers can tell "in job" from "actually there".
+      map.addLayer({
+        id: PARTNER_ONSITE_DOT_LAYER_ID,
+        type: "circle",
+        source: PARTNER_SOURCE_ID,
+        filter: ["==", ["get", "onsite"], 1],
+        paint: {
+          "circle-color": "#FFFFFF",
+          "circle-radius": 3,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": LIVE_MAP_PARTNER_STATUS_COLOR.on_site,
+          "circle-translate": [0, 12],
+          "circle-translate-anchor": "viewport",
         },
       });
     }
@@ -577,7 +623,7 @@ export function ScheduleLiveMap({
         .setHTML(
           buildLiveMapPopupHtml({
             name: point.name,
-            inactive: point.inactive,
+            status: point.status,
             lastUpdateIso: point.lastUpdateIso,
             trade: point.trade,
             trades: point.trades ?? null,
