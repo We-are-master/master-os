@@ -241,7 +241,7 @@ export async function fetchPayoutRange(
     let name = sb.partner_name ?? "—";
     let description: string | undefined;
     let bankLast4: string | null = null;
-    let linkHref = `/finance/selfbill?focus=${sb.id}`;
+    let linkHref = `/finance/billing/selfbill?open=${sb.id}`;
 
     if (isInternal && sb.internal_cost_id) {
       const row = internalsById.get(sb.internal_cost_id);

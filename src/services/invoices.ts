@@ -13,7 +13,7 @@ export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at"
  * Invoices list — fast path uses `get_invoices_list_bundle` RPC (migration 125),
  * which returns paged rows + per-invoice customer payment totals in a single
  * round-trip. The legacy chunked .in("job_reference", slice) loop fired by
- * /finance/invoices is now server-side. Falls back to direct queryList path
+ * /finance/billing/invoices is now server-side. Falls back to direct queryList path
  * on RPC failure.
  *
  * Note: the bundle RPC takes a single status string and does not yet support

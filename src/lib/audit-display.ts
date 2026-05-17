@@ -65,13 +65,13 @@ export function auditLogHref(log: AuditLog): string | null {
     case "request":
       return "/requests";
     case "invoice":
-      return "/finance/invoices";
+      return "/finance/billing/invoices";
     case "partner":
       return "/partners";
     case "account":
       return "/accounts";
     case "self_bill":
-      return "/finance/selfbill";
+      return "/finance/billing/selfbill";
     default:
       return null;
   }

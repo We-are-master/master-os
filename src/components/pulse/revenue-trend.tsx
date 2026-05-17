@@ -106,16 +106,19 @@ export function RevenueTrend() {
               </defs>
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 9, fill: "#6B6B85", fontFamily: "var(--font-mono)" }}
+                tick={{ fontSize: 9, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
                 tickLine={false}
                 axisLine={false}
               />
               <Tooltip
+                cursor={{ fill: "var(--chart-cursor-overlay)" }}
                 contentStyle={{
                   fontSize: 12,
                   borderRadius: 8,
                   border: "1px solid var(--color-fx-line)",
                   boxShadow: "var(--shadow-fx-2)",
+                  backgroundColor: "var(--card-bg)",
+                  color: "var(--text-primary)",
                 }}
                 formatter={(v) => formatGbp(Number(v) || 0)}
               />
@@ -123,10 +126,10 @@ export function RevenueTrend() {
               <Line
                 type="monotone"
                 dataKey="cost"
-                stroke="#020040"
+                stroke="var(--text-tertiary)"
                 strokeWidth={1.5}
                 strokeDasharray="3 3"
-                strokeOpacity={0.55}
+                strokeOpacity={0.85}
                 dot={false}
               />
             </ComposedChart>

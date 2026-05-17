@@ -6,7 +6,7 @@
  *
  * "pipeline" (legacy Active tab — still handled for older links) mirrors
  * `PIPELINE_STATUS_IN` in `quotes-client.tsx`
- * (bidding + awaiting_customer + awaiting_payment).
+ * (bidding + legacy in_survey + awaiting_customer + awaiting_payment).
  *
  * `closed` (dashboard tab): `converted_to_job` + `rejected`.
  * Legacy: `won` / `lost` still map to each DB status individually.
@@ -16,7 +16,7 @@ import type { Quote } from "@/types/database";
 import type { ListResult } from "@/services/base";
 
 /** Must match `PIPELINE_STATUS_IN` in `listQuotesForPage` (quotes-client). */
-const PIPELINE_STATUS = ["bidding", "awaiting_customer", "awaiting_payment"] as const;
+const PIPELINE_STATUS = ["bidding", "in_survey", "awaiting_customer", "awaiting_payment"] as const;
 
 interface FetchQuotesOptions {
   status?: string;

@@ -64,6 +64,24 @@ async function sitePhotoAttachments(photoUrls: string[]): Promise<SitePhotoAttac
   return results.filter((r): r is SitePhotoAttachment => r !== null);
 }
 
+async function renderQuotePdfToBuffer(
+  data: QuotePDFData,
+  branding: CompanyBranding,
+): Promise<Buffer> {
+  const el = React.createElement(QuotePDF, { data, branding }) as Parameters<typeof renderToBuffer>[0];
+  try {
+    return await renderToBuffer(el);
+  } catch (err) {
+    console.warn("[send-pdf] PDF render failed, retrying without logo:", err);
+    const brandingNoLogo = { ...branding, logoUrl: undefined };
+    return await renderToBuffer(
+      React.createElement(QuotePDF, { data, branding: brandingNoLogo }) as Parameters<
+        typeof renderToBuffer
+      >[0],
+    );
+  }
+}
+
 export async function POST(req: NextRequest) {
   const startedAt = nowMs();
   const marks: Array<[string, number]> = [];
@@ -175,7 +193,7 @@ export async function POST(req: NextRequest) {
         (docParty ? (docParty.documentEmail ?? qForBill.client_email) : qForBill.client_email) ?? "",
       );
 
-    const pdfData: QuotePDFData = {
+    const pdfDataRaw: QuotePDFData = {
       reference: quote.reference,
       title: quote.title,
       clientName: pdfClientName,
@@ -196,10 +214,22 @@ export async function POST(req: NextRequest) {
       vatPercent,
     };
 
+    const safePdfData: QuotePDFData = {
+      ...pdfDataRaw,
+      reference: String(pdfDataRaw.reference ?? ""),
+      title: pdfDataRaw.title != null ? String(pdfDataRaw.title) : "Quote",
+      clientName: String(pdfDataRaw.clientName ?? "").trim() || "Customer",
+      clientEmail: String(pdfDataRaw.clientEmail ?? "").trim(),
+      createdAt:
+        typeof pdfDataRaw.createdAt === "string" && pdfDataRaw.createdAt.trim().length > 0
+          ? pdfDataRaw.createdAt
+          : new Date().toISOString(),
+    };
+
+    const pdfAttachmentBase = String(quote.reference ?? "quote").replace(/\//g, "-");
+
     const tPdf = nowMs();
-    const pdfBuffer = await renderToBuffer(
-      React.createElement(QuotePDF, { data: pdfData, branding }) as Parameters<typeof renderToBuffer>[0],
-    );
+    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, branding);
     marks.push(["pdf_render", nowMs() - tPdf]);
 
     // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
@@ -240,7 +270,7 @@ export async function POST(req: NextRequest) {
           reference:       String(quote.reference ?? ""),
           title:           String(quote.title ?? "Quote"),
           propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
-          scope:           pdfData.scope ?? null,
+          scope:           safePdfData.scope ?? null,
           totalGbp:        Number(quote.total_value) || 0,
           expiresAt:       quote.expires_at ?? null,
           items:           lineItemsForPdf,
@@ -252,7 +282,7 @@ export async function POST(req: NextRequest) {
           customStatusId: ZD_STATUS_AWAITING_APPROVAL,
           htmlBody:       html,
           attachments: [{
-            filename:    `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+            filename:    `${pdfAttachmentBase}_quote.pdf`,
             content:     pdfBuffer,
             contentType: "application/pdf",
           }],
@@ -313,15 +343,26 @@ export async function POST(req: NextRequest) {
         emailSent:    true,
         channel:      "zendesk",
         ticketId:     zdTicketId,
+        sentTo:       recipientTrimmed || pdfClientEmail || "",
       }, 200, marks);
     }
 
     // ─── Resend path (no Zendesk linkage) ────────────────────────────────
-    const emailTo = recipientEmail ?? quote.client_email;
-    if (!emailTo) {
+    const emailCoerced =
+      recipientTrimmed ||
+      (typeof quote.client_email === "string" ? quote.client_email.trim() : "") ||
+      safePdfData.clientEmail.trim();
+    const emailTo = emailCoerced.trim();
+
+    if (!emailTo || !emailTo.includes("@")) {
       marks.push(["total", nowMs() - startedAt]);
       return withServerTiming(
-        { pdfGenerated: true, emailSent: false, reason: "No recipient email" },
+        {
+          pdfGenerated: true,
+          emailSent:    false,
+          reason:
+            "No valid recipient email — for “Bill to this account” quotes, ensure the account has a billing/finance email in Accounts.",
+        },
         200,
         marks,
       );
@@ -344,7 +385,7 @@ export async function POST(req: NextRequest) {
       typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
     const emailAttachments: { filename: string; content: Buffer; contentType?: string }[] = [
       {
-        filename: `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+        filename: `${pdfAttachmentBase}_quote.pdf`,
         content: pdfBuffer,
         contentType: "application/pdf",
       },
@@ -367,7 +408,7 @@ export async function POST(req: NextRequest) {
       from: fromEmail,
       to: [emailTo],
       subject: `Quote ${quote.reference} — ${quote.title}`,
-      html: buildQuoteEmailHTML(pdfData, branding, { acceptUrl, rejectUrl, customMessage }),
+      html: buildQuoteEmailHTML(safePdfData, branding, { acceptUrl, rejectUrl, customMessage }),
       attachments: emailAttachments,
     });
     marks.push(["email_send", nowMs() - tEmail]);
@@ -375,9 +416,13 @@ export async function POST(req: NextRequest) {
     if (emailError) {
       console.error("Resend error:", emailError);
       marks.push(["total", nowMs() - startedAt]);
+      const reason =
+        typeof emailError === "object" && emailError !== null && "message" in emailError
+          ? String((emailError as { message: unknown }).message)
+          : "Email delivery failed (Resend)";
       return withServerTiming(
-        { pdfGenerated: true, emailSent: false, error: "Email delivery failed" },
-        500,
+        { pdfGenerated: true, emailSent: false, reason },
+        200,
         marks,
       );
     }

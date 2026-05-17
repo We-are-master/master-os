@@ -117,6 +117,44 @@ type SoftDeleteJobExtraEntryInput = {
   reason?: string;
 };
 
+type UpdateJobExtraEntryInput = {
+  id: string;
+  amount?: number;
+  reason?: string;
+  extra_type?: string;
+};
+
+export async function updateJobExtraEntry(input: UpdateJobExtraEntryInput): Promise<JobExtraEntry> {
+  if (jobExtraEntriesTableAvailable === false) {
+    throw new Error("job_extra_entries table unavailable");
+  }
+  const id = input.id.trim();
+  if (!id) throw new Error("Missing extra entry id");
+  const patch: Record<string, unknown> = {};
+  if (input.amount != null) {
+    patch.amount = Math.round(Number(input.amount) * 100) / 100;
+  }
+  if (input.reason != null) patch.reason = input.reason.trim();
+  if (input.extra_type != null) patch.extra_type = input.extra_type.trim();
+  if (Object.keys(patch).length === 0) throw new Error("Nothing to update");
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("job_extra_entries")
+    .update(patch)
+    .eq("id", id)
+    .is("deleted_at", null)
+    .select("*")
+    .single();
+  if (error) {
+    if (isMissingJobExtraEntriesTableError(error)) {
+      jobExtraEntriesTableAvailable = false;
+    }
+    throw error;
+  }
+  jobExtraEntriesTableAvailable = true;
+  return data as JobExtraEntry;
+}
+
 export async function softDeleteJobExtraEntry(input: SoftDeleteJobExtraEntryInput): Promise<void> {
   if (jobExtraEntriesTableAvailable === false) return;
   const id = input.id.trim();

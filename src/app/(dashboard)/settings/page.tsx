@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -45,10 +46,12 @@ import { saveUserPermissions, resolvePermission } from "@/services/admin-config"
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
+import { ServiceCatalogTab } from "./service-catalog-tab";
 import { getAllConfigurableComplianceRequirementDefs } from "@/lib/partner-required-docs";
 
-const settingsTabs = [
-  { id: "profile", label: "My Profile" },
+const SERVICE_CATALOG_TAB_ID = "service-catalog";
+
+const settingsAdminTabs = [
   { id: "team", label: "Users Access" },
   { id: "tiers", label: "Dashboard" },
   { id: "ai-briefs", label: "AI & Daily brief" },
@@ -56,12 +59,55 @@ const settingsTabs = [
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
-];
+] as const;
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("profile");
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
+
+function SettingsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { profile } = useProfile();
+  const { can, loading: configLoading } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
+  const canCatalog = can("service_catalog");
+
+  const visibleTabs = useMemo(() => {
+    const tabs: { id: string; label: string }[] = [{ id: "profile", label: "My Profile" }];
+    if (canCatalog) tabs.push({ id: SERVICE_CATALOG_TAB_ID, label: "Service catalog" });
+    if (isAdmin) tabs.push(...settingsAdminTabs.map((t) => ({ id: t.id, label: t.label })));
+    return tabs;
+  }, [isAdmin, canCatalog]);
+
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState("profile");
+
+  useEffect(() => {
+    if (configLoading || visibleTabs.length === 0) return;
+    queueMicrotask(() => {
+      if (tabFromUrl && visibleTabs.some((t) => t.id === tabFromUrl)) {
+        setActiveTab(tabFromUrl);
+        return;
+      }
+      if (!visibleTabs.some((t) => t.id === activeTab)) {
+        setActiveTab(visibleTabs[0]!.id);
+      }
+    });
+  }, [tabFromUrl, visibleTabs, configLoading, activeTab]);
+
+  const handleTabChange = (id: string) => {
+    setActiveTab(id);
+    const params = new URLSearchParams(searchParams.toString());
+    if (id === "profile") params.delete("tab");
+    else params.set("tab", id);
+    const q = params.toString();
+    router.replace(q ? `/settings?${q}` : "/settings", { scroll: false });
+  };
 
   return (
     <PageTransition>
@@ -77,14 +123,11 @@ export default function SettingsPage() {
           )}
         </PageHeader>
 
-        <Tabs
-          tabs={isAdmin ? settingsTabs : [settingsTabs[0]]}
-          activeTab={activeTab}
-          onChange={setActiveTab}
-        />
+        <Tabs tabs={visibleTabs} activeTab={activeTab} onChange={handleTabChange} />
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
+          {activeTab === SERVICE_CATALOG_TAB_ID && canCatalog && <ServiceCatalogTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
           {activeTab === "tiers" && isAdmin && <DashboardTab />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}

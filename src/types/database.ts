@@ -27,6 +27,8 @@ export interface CatalogService {
   default_description?: string | null;
   sort_order: number;
   is_active: boolean;
+  /** Maps to Lucide in UI (Partners, catalogue). Null = heuristic from service name. */
+  display_icon_key?: string | null;
   /** Optional price bands (property size, bundles, etc.). See parsePricingPresets. */
   pricing_presets?: ServicePricingPreset[] | null;
   created_at: string;
@@ -990,6 +992,8 @@ export interface Bill {
   recurring_series_id?: string | null;
   /** When set, bill is archived (hidden from default list and pay-run aggregation). */
   archived_at?: string | null;
+  /** Last inclusive due date for the recurring series (same value on all rows in the batch). */
+  recurring_series_end_date?: string | null;
 }
 
 /** Commission run: period, tier calc, manager approves → feeds Pay Run */

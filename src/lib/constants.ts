@@ -48,8 +48,7 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
-      { label: "Self-Billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
+      { label: "Billing", href: "/finance/billing/invoices", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Payouts", href: "/payout", icon: "calendar-clock", permission: "finance" },
     ],
@@ -58,7 +57,6 @@ export const NAVIGATION: NavGroup[] = [
     label: "Admin",
     items: [
       { label: "Settings", href: "/settings", icon: "settings", permission: "settings" },
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
 ];

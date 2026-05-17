@@ -89,7 +89,7 @@ export function mergeTypeOfWorkOptions(values: Array<string | null | undefined>)
 /**
  * Labels for “type of work” pickers: **active Services catalog only**, plus any
  * `current` value so existing jobs/quotes with legacy titles still appear when editing.
- * Add or edit services under Admin → Services — there is no built-in static list anymore.
+ * Add or edit services in Settings (Service catalog tab) — there is no built-in static list anymore.
  */
 export function typeOfWorkLabelsFromCatalog(
   catalog: Pick<CatalogService, "name">[],

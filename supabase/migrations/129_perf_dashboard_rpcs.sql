@@ -423,7 +423,7 @@ GRANT EXECUTE ON FUNCTION public.get_requests_list_bundle TO authenticated;
 -- 6. RPC: get_invoices_list_bundle
 -- =============================================
 -- Invoices + per-row payment totals derived from job_payments.
--- Replaces the chunked .in("job_reference", slice) loop in /finance/invoices.
+-- Replaces the chunked .in("job_reference", slice) loop in /finance/billing/invoices.
 
 CREATE OR REPLACE FUNCTION public.get_invoices_list_bundle(
   p_period_start timestamptz DEFAULT NULL,

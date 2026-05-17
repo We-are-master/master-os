@@ -515,6 +515,7 @@ function KanbanCard({
   partnerAvatarUrl?: string | null;
   marginThresholds: MarginThresholds;
 }) {
+  const [nowMs] = useState(() => Date.now());
   // "Live" = work actually started. `late` here means "scheduled but past
   // arrival time, partner hasn't started yet" — that's NOT live, it's overdue.
   // Only `in_progress` zeroes the arrival SLA.
@@ -538,7 +539,7 @@ function KanbanCard({
   const arrivalEndMs = job.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : NaN;
   const isOverdueArrival =
     !Number.isNaN(arrivalEndMs) &&
-    arrivalEndMs < Date.now() &&
+    arrivalEndMs < nowMs &&
     (job.status === "unassigned" ||
       job.status === "auto_assigning" ||
       job.status === "scheduled" ||

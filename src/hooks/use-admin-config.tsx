@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
-import type { NavGroup } from "@/lib/constants";
+import type { NavGroup, NavItem } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 import { getAdminConfig, setAdminConfig as saveAdminConfig } from "@/services/admin-config";
 import { useProfile } from "@/hooks/use-profile";
@@ -92,17 +92,38 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
     const rolePerms = permissions[role];
     const overrides = profile.custom_permissions as UserPermissionOverride | null | undefined;
 
+    function itemAllowed(perm?: string): boolean {
+      if (!perm) return true;
+      const p = perm as PermissionKey;
+      if (overrides && p in overrides) return overrides[p] === true;
+      if (!rolePerms) return false;
+      return (rolePerms as Record<string, boolean>)[perm] === true;
+    }
+
+    function filterNestedItems(items: NavItem[]): NavItem[] {
+      const out: NavItem[] = [];
+      for (const item of items) {
+        const childList = item.children?.length ? filterNestedItems(item.children) : [];
+        const selfOk = itemAllowed(item.permission);
+        const hasKids = childList.length > 0;
+
+        if (!selfOk && hasKids) {
+          out.push(...childList);
+          continue;
+        }
+        if (!selfOk) continue;
+
+        const nextEntry: NavItem =
+          childList.length > 0 ? { ...item, children: childList } : { ...item, children: undefined };
+        out.push(nextEntry);
+      }
+      return out;
+    }
+
     return navigation
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => {
-          if (!item.permission) return true;
-          const perm = item.permission as PermissionKey;
-          // User override takes priority
-          if (overrides && perm in overrides) return overrides[perm] === true;
-          if (!rolePerms) return false;
-          return (rolePerms as Record<string, boolean>)[perm] === true;
-        }),
+        items: filterNestedItems(group.items),
       }))
       .filter((group) => group.items.length > 0);
   }, [navigation, permissions, profile]);

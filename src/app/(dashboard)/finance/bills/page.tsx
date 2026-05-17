@@ -51,7 +51,13 @@ import {
   formatFinancePeriodKpiDescription,
 } from "@/lib/finance-period";
 import { BILL_STANDARD_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
-import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
+import {
+  RECURRENCE_GENERATION_COUNTS,
+  generateRecurringDueDates,
+  recurrenceLabel,
+  recurringScheduleHintText,
+} from "@/lib/bill-recurrence";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
 type BillsPreset = "all" | "one_off" | "recurring" | "needs_attention" | "approved" | "archived";
@@ -91,7 +97,6 @@ export default function BillsPage() {
   /** All = one-off + recurring; default All */
   const [billKindTab, setBillKindTab] = useState<"all" | "one_off" | "recurring">("all");
   const [billsPreset, setBillsPreset] = useState<BillsPreset>("all");
-  const [showAllRows, setShowAllRows] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
@@ -137,7 +142,6 @@ export default function BillsPage() {
   }, [load]);
 
   useEffect(() => {
-    setShowAllRows(false);
     if (billsPreset === "all") {
       setBillKindTab("all");
       setStatusFilter("all");
@@ -344,8 +348,6 @@ export default function BillsPage() {
     });
     return rows.sort((a, b) => a.title.localeCompare(b.title));
   }, [displayList, expandedSeries]);
-
-  const visibleCompactRows = showAllRows ? compactRows : compactRows.slice(0, 4);
 
   const handleApproveAllInSeries = async (seriesKey: string) => {
     const submittedInSeries = scopedBills.filter(
@@ -840,7 +842,7 @@ export default function BillsPage() {
           </p>
         ) : (
           <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-            {visibleCompactRows.map((row, index) => (
+            {compactRows.map((row, index) => (
               <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7] dark:bg-white/[0.04]")}>
                 <div className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
                   <div className="min-w-0 flex items-start gap-2">
@@ -944,16 +946,6 @@ export default function BillsPage() {
                 ) : null}
               </div>
             ))}
-            <div className="px-4 py-2.5 text-center text-[11px] text-text-tertiary">
-              Showing {Math.min(visibleCompactRows.length, compactRows.length)} of {compactRows.length} ·{" "}
-              <button
-                type="button"
-                className="font-semibold text-primary hover:underline"
-                onClick={() => setShowAllRows((s) => !s)}
-              >
-                {showAllRows ? "Show less" : "View all"}
-              </button>
-            </div>
           </div>
         )}
 
@@ -1034,11 +1026,20 @@ export default function BillsPage() {
                 }
               } else {
                 const interval = form.recurrence_interval ?? "monthly";
-                const nScheduled =
+                const maxOccurrences =
                   form.is_recurring && interval
                     ? form.recurringOccurrenceCount != null && form.recurringOccurrenceCount > 0
                       ? Math.min(120, Math.max(1, Math.floor(form.recurringOccurrenceCount)))
                       : RECURRENCE_GENERATION_COUNTS[interval] ?? 12
+                    : 1;
+                const nScheduled =
+                  form.is_recurring && interval && form.due_date
+                    ? generateRecurringDueDates(
+                        form.due_date,
+                        interval,
+                        maxOccurrences,
+                        form.recurring_series_end_date,
+                      ).length
                     : 1;
                 await createBill({
                   description: form.description ?? "",
@@ -1051,6 +1052,7 @@ export default function BillsPage() {
                     form.is_recurring && form.category === "debit" && form.recurringOccurrenceCount != null
                       ? form.recurringOccurrenceCount
                       : undefined,
+                  recurring_series_end_date: form.recurring_series_end_date ?? null,
                   submitted_by_id: profile?.id,
                   submitted_by_name: profile?.full_name,
                   status: "submitted",
@@ -1088,6 +1090,8 @@ type BillModalSavePayload = Partial<Bill> & {
   installmentAmounts?: Record<string, number>;
   /** Debit recurring: how many installments to generate (1–120). */
   recurringOccurrenceCount?: number;
+  /** Last inclusive due date for a new recurring series. */
+  recurring_series_end_date?: string | null;
 };
 
 function BillModal({
@@ -1116,6 +1120,8 @@ function BillModal({
   const [billType, setBillType] = useState<"expense" | "debit">("expense");
   /** Remaining installments for debit + recurring (new bill only). */
   const [debitInstallments, setDebitInstallments] = useState("12");
+  const [hasRecurringEnd, setHasRecurringEnd] = useState(false);
+  const [recurringEndDate, setRecurringEndDate] = useState("");
   const [seriesSiblings, setSeriesSiblings] = useState<Bill[] | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [amountById, setAmountById] = useState<Record<string, string>>({});
@@ -1141,6 +1147,8 @@ function BillModal({
       setIsRecurring(initial?.is_recurring ?? false);
       setRecurrenceInterval((initial?.recurrence_interval as BillRecurrence) ?? "monthly");
       setDebitInstallments("12");
+      setHasRecurringEnd(false);
+      setRecurringEndDate("");
       setSeriesSiblings(null);
       setAmountById({});
     });
@@ -1222,6 +1230,16 @@ function BillModal({
       toast.error("Due date required");
       return;
     }
+    if (!initial && is_recurring && hasRecurringEnd) {
+      if (!recurringEndDate.trim()) {
+        toast.error("End date is required when the series has a finish date.");
+        return;
+      }
+      if (recurringEndDate < due_date) {
+        toast.error("End date must be on or after the first due date.");
+        return;
+      }
+    }
     if (!initial && billType === "debit" && is_recurring) {
       const inst = parseInt(String(debitInstallments).trim(), 10);
       if (!Number.isFinite(inst) || inst < 1 || inst > 120) {
@@ -1240,6 +1258,8 @@ function BillModal({
         !initial && billType === "debit" && is_recurring
           ? Math.min(120, Math.max(1, parseInt(String(debitInstallments).trim(), 10) || 0))
           : undefined,
+      recurring_series_end_date:
+        !initial && is_recurring && hasRecurringEnd ? recurringEndDate.trim() : null,
     });
   };
 
@@ -1356,27 +1376,28 @@ function BillModal({
             <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
           </div>
         ) : null}
-        <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
+        <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
               id="recurring"
               checked={is_recurring}
               disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
-              onChange={(e) => setIsRecurring(e.target.checked)}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setIsRecurring(on);
+                if (!on) {
+                  setHasRecurringEnd(false);
+                  setRecurringEndDate("");
+                }
+              }}
               className="rounded border-border"
             />
-            <label htmlFor="recurring" className="text-sm text-text-primary font-medium">
+            <label htmlFor="recurring" className="text-sm text-text-primary font-medium inline-flex items-center gap-1.5">
               Recurring schedule
+              <FixfyHintIcon text={recurringScheduleHintText()} placement="bottom-end" />
             </label>
           </div>
-          <p className="text-[11px] text-text-tertiary leading-snug">
-            Not tied to “mark paid”. We pre-create up to {RECURRENCE_GENERATION_COUNTS.weekly} weekly /{" "}
-            {RECURRENCE_GENERATION_COUNTS.monthly} monthly / {RECURRENCE_GENERATION_COUNTS.quarterly} quarterly /{" "}
-            {RECURRENCE_GENERATION_COUNTS.yearly} yearly lines ahead (no automatic extension after that — add a new bill if you need more
-            horizon). <span className="text-text-secondary">Approve once</span> to approve every occurrence still pending in this series;
-            pay each period when due, or skip/exclude in the pay run if you do not pay that month.
-          </p>
         </div>
         {is_recurring && (
           <Select
@@ -1394,6 +1415,42 @@ function BillModal({
             ]}
           />
         )}
+        {is_recurring && !initial ? (
+          <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="recurring-end"
+                checked={hasRecurringEnd}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setHasRecurringEnd(on);
+                  if (!on) setRecurringEndDate("");
+                }}
+                className="rounded border-border"
+              />
+              <label htmlFor="recurring-end" className="text-sm text-text-primary font-medium">
+                Series has an end date
+              </label>
+            </div>
+            {hasRecurringEnd ? (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">End date (last due)</label>
+                <Input
+                  type="date"
+                  value={recurringEndDate}
+                  min={due_date || undefined}
+                  onChange={(e) => setRecurringEndDate(e.target.value)}
+                  required
+                />
+                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
+                  No occurrences are scheduled after this date. Once the end date has passed, any remaining future lines in this
+                  series are archived automatically.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {billType === "debit" && is_recurring && !initial ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Remaining installments</label>

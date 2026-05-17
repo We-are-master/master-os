@@ -38,8 +38,8 @@ import type { JobStatus, QuoteStatus } from "@/types/database";
 export function quoteStatusToZendesk(status: QuoteStatus): number | null {
   switch (status) {
     case "draft":
-    case "in_survey":
       return ZD_STATUS_READY_TO_QUOTE;
+    case "in_survey":
     case "bidding":
       return ZD_STATUS_BIDDING;
     case "awaiting_customer":
