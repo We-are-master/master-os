@@ -19,8 +19,7 @@ export function ModalFooter({
 }: Props) {
   return (
     <div
-      className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end bg-white px-5 py-3.5 sm:px-6 sm:py-3.5"
-      style={{ borderTop: "0.5px solid var(--color-border-tertiary, #E4E4E7)" }}
+      className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end bg-card border-t border-fx-line px-5 py-3.5 sm:px-6 sm:py-3.5"
     >
       <button
         type="button"

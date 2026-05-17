@@ -618,6 +618,24 @@ export function ClientAddressPicker({
     });
   }, [onChange]);
 
+  /** Open create-client modal with the name already typed in the job/client search field. */
+  const openCreateClientModal = useCallback(() => {
+    setClientDropdownOpen(false);
+    const typedName = clientSearch.trim();
+    setCreateClientForm((p) => ({
+      ...p,
+      full_name: typedName,
+      source_account_id: restrictToSourceAccountId?.trim() || p.source_account_id,
+    }));
+    if (typedName) {
+      setNewSourceForm((prev) => ({
+        ...prev,
+        contact_name: prev.contact_name || typedName,
+      }));
+    }
+    setCreateClientOpen(true);
+  }, [clientSearch, restrictToSourceAccountId]);
+
   /**
    * When the user types a name but doesn’t click a row, `client_id` stays empty.
    * Resolve a real client: single search result, or exact name/email match (fresh fetch avoids debounce races).
@@ -724,10 +742,7 @@ export function ClientAddressPicker({
                   <>
                     <button
                       type="button"
-                      onClick={() => {
-                        setClientDropdownOpen(false);
-                        setCreateClientOpen(true);
-                      }}
+                      onClick={openCreateClientModal}
                       className="sticky top-0 z-[1] w-full text-left px-3 py-2.5 hover:bg-primary/10 text-primary text-sm font-medium flex items-center gap-2 border-b border-border bg-card"
                     >
                       <UserPlus className="h-4 w-4 shrink-0" /> Create new client
@@ -764,7 +779,7 @@ export function ClientAddressPicker({
                 <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                   <button
                     type="button"
-                    onClick={() => setCreateClientOpen(true)}
+                    onClick={openCreateClientModal}
                     className="sticky top-0 z-[1] flex w-full items-center gap-2 border-b border-border bg-card px-3 py-2.5 text-left text-sm font-medium text-primary hover:bg-primary/10"
                   >
                     <UserPlus className="h-4 w-4 shrink-0" /> Create new contact
@@ -1178,43 +1193,32 @@ export function ClientAddressPicker({
           </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Property address (optional)</label>
-            <p className="text-[10px] text-text-tertiary mb-2">Select an existing address or add a new one. For a new client there are no addresses yet.</p>
-            <select
-              disabled
-              className="w-full h-9 rounded-lg border border-border bg-surface-hover px-3 text-sm text-text-tertiary cursor-not-allowed"
-              title="No addresses yet for new client"
-            >
-              <option>— No addresses yet —</option>
-            </select>
-            <div className="mt-2">
-              <p className="text-[10px] font-medium text-text-secondary mb-1.5">Add new address</p>
-              <AddressAutocomplete
-                value={createClientAddressRaw}
-                onChange={(v) => {
-                  setCreateClientAddressRaw(v);
-                  setCreateAddressPending(null);
-                }}
-                onSelect={(parts) => {
-                  setCreateAddressPending({ parts, form: addressPartsToFormState(parts) });
-                  setCreateClientAddressRaw(parts.full_address);
-                }}
-                placeholder="Type address or postcode..."
+            <AddressAutocomplete
+              value={createClientAddressRaw}
+              onChange={(v) => {
+                setCreateClientAddressRaw(v);
+                setCreateAddressPending(null);
+              }}
+              onSelect={(parts) => {
+                setCreateAddressPending({ parts, form: addressPartsToFormState(parts) });
+                setCreateClientAddressRaw(parts.full_address);
+              }}
+              placeholder="Type address or postcode..."
+            />
+            {createAddressPending ? (
+              <UkAddressReviewFields
+                value={createAddressPending.form}
+                onChange={(form) => setCreateAddressPending((p) => (p ? { ...p, form } : null))}
+                disabled={creating}
               />
-              {createAddressPending ? (
-                <UkAddressReviewFields
-                  value={createAddressPending.form}
-                  onChange={(form) => setCreateAddressPending((p) => (p ? { ...p, form } : null))}
-                  disabled={creating}
-                />
-              ) : null}
-              {(createAddressPending || createClientAddressRaw.trim()) && (
-                <p className="text-[10px] text-primary mt-1">
-                  {createAddressPending
-                    ? "Adjust lines above if needed, then create the client to save this address."
-                    : "Typed text will be saved as one line when you create the client (no postcode split)."}
-                </p>
-              )}
-            </div>
+            ) : null}
+            {(createAddressPending || createClientAddressRaw.trim()) && (
+              <p className="text-[10px] text-primary mt-1">
+                {createAddressPending
+                  ? "Adjust lines above if needed, then create the client to save this address."
+                  : "Typed text will be saved as one line when you create the client (no postcode split)."}
+              </p>
+            )}
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setCreateClientOpen(false)}>Cancel</Button>

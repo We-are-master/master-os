@@ -46,7 +46,7 @@ export function LiveMapPartnersPanel({
   const listForSelected = selectedStatus ? grouped.get(selectedStatus) ?? [] : [];
 
   return (
-    <div className="w-[260px] max-w-[92vw] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2.5 shadow-md backdrop-blur-sm">
+    <div className="w-[260px] max-w-[92vw] rounded-xl border border-border bg-card/95 px-3 py-2.5 shadow-md backdrop-blur-sm dark:border-border dark:bg-card/95">
       <div className="flex items-center justify-between gap-2 pb-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
           Partners

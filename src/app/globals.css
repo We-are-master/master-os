@@ -218,6 +218,14 @@
   --color-fx-red-50: #281418;
   --color-fx-blue-50: #161f32;
 
+  /* Brand literals used in headers/icons — lighten for dark surfaces */
+  --color-fx-navy: #e8eaef;
+  --color-fx-navy-2: #d0d4e0;
+  --color-fx-navy-3: #b8bdd0;
+  --color-fx-ink: #e8eaef;
+  --color-primary-light: #2a1814;
+  --color-primary-50: #261c18;
+
   --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 1px rgba(0, 0, 0, 0.32);
   --shadow-fx-2: 0 12px 32px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
   --shadow-fx-3: 0 28px 56px rgba(0, 0, 0, 0.6);
@@ -370,4 +378,127 @@ body {
   border-radius: 9999px;
   border: 2px solid var(--color-fx-coral);
   animation: fx-pulse 1.6s ease-out infinite;
+}
+
+/* ── Dark mode: structural panels still using light-only utilities ─────── */
+.dark :is(div, section, article, aside, header, footer, main, form, nav, table, tbody, thead, tr, td, th, ul, ol, li).bg-white {
+  background-color: var(--card-bg) !important;
+}
+
+/* Toggle / knob dots stay white for contrast */
+.dark span.rounded-full.bg-white,
+.dark button.bg-white.text-\[\#020040\] {
+  background-color: #ffffff !important;
+}
+
+/* Common Fixfy marketing hex backgrounds → semantic surfaces */
+.dark .bg-\[\#F5F5F7\],
+.dark .bg-\[\#FAFAFB\],
+.dark .bg-\[\#F7F7FB\],
+.dark .bg-\[\#fdfdfd\] {
+  background-color: var(--surface-tertiary) !important;
+}
+
+.dark .bg-\[\#fafaf8\],
+.dark .bg-\[\#f4f2ef\],
+.dark .bg-\[\#ecfff6\] {
+  background-color: var(--surface-hover) !important;
+}
+
+.dark .bg-\[\#f5f3ff\] {
+  background-color: rgb(91 33 182 / 0.12) !important;
+}
+
+/* Common navy / ink text on panels */
+.dark .text-\[\#020040\],
+.dark .text-\[\#0A0A1F\],
+.dark .text-\[\#1a1a1a\],
+.dark .text-\[\#555\],
+.dark .text-\[\#888\],
+.dark .text-\[\#5b21b6\] {
+  color: var(--text-primary) !important;
+}
+
+.dark .text-\[\#6B6B70\],
+.dark .text-\[\#6B6B85\],
+.dark .text-\[\#9A9AA0\],
+.dark .text-\[\#92400e\] {
+  color: var(--text-tertiary) !important;
+}
+
+.dark .text-\[\#993C1D\],
+.dark .text-\[\#7A3D00\],
+.dark .text-\[\#C4461F\] {
+  color: rgb(251 146 60) !important;
+}
+
+/* Common borders */
+.dark .border-\[\#E4E4EC\],
+.dark .border-\[\#E4E4E8\],
+.dark .border-\[\#e0ddd8\],
+.dark .border-\[\#ddd\],
+.dark .border-\[\#D4D4D8\],
+.dark .border-\[\#D4D4DA\],
+.dark .border-\[\#333\],
+.dark .border-\[\#7c3aed\] {
+  border-color: var(--border-color) !important;
+}
+
+/* Inline styles in legacy modals (Final review, etc.) */
+.dark [style*="color: #020040"],
+.dark [style*="color:#020040"],
+.dark [style*="color: rgb(2, 0, 64)"] {
+  color: var(--text-primary) !important;
+}
+
+.dark [style*="color: #6B6B70"],
+.dark [style*="color: #6B6B85"],
+.dark [style*="color: #9A9AA0"] {
+  color: var(--text-tertiary) !important;
+}
+
+.dark [style*="background: #FAFAFB"],
+.dark [style*="background:#FAFAFB"],
+.dark [style*="background: #FFF8F3"],
+.dark [style*="background: #FFF1EB"] {
+  background-color: var(--surface-tertiary) !important;
+}
+
+.dark [style*="background: #ffffff"],
+.dark [style*="background: #FFFFFF"],
+.dark [style*="background: white"] {
+  background-color: var(--card-bg) !important;
+}
+
+.dark [style*="border: 0.5px solid #E4E4E7"],
+.dark [style*="border: 0.5px solid #D4D4D8"],
+.dark [style*="borderColor: #E4E4E7"],
+.dark [style*="borderColor: #D4D4D8"] {
+  border-color: var(--border-color) !important;
+}
+
+/* Final review modal shell */
+.dark .final-review-modal-panel {
+  background-color: var(--card-bg) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55) !important;
+}
+
+.dark .final-review-modal-overlay {
+  background: rgba(0, 0, 0, 0.62) !important;
+}
+
+/* Rich text / e-mail HTML inside modals */
+.dark .prose {
+  --tw-prose-body: var(--text-secondary);
+  --tw-prose-headings: var(--text-primary);
+  --tw-prose-bold: var(--text-primary);
+  --tw-prose-links: var(--color-fx-coral);
+  --tw-prose-bullets: var(--text-tertiary);
+  --tw-prose-counters: var(--text-tertiary);
+}
+
+.dark .prose :where(code):not(:where([class~="not-prose"] *)) {
+  background-color: var(--surface-tertiary);
+  color: var(--text-primary);
 }

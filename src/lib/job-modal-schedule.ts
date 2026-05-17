@@ -1,13 +1,22 @@
+import { canonicalArrivalSlotValues } from "@/lib/job-arrival-window";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
-import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+import { addMinutesUkWallClock, ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import type { JobKind, JobRecurrenceByday, JobRecurrencePattern } from "@/types/database";
 import { validateRule } from "@/lib/job-recurrence";
+
+/** Format HH:MM UK wall time for client-facing preview (stable across DST). */
+function formatUkWallClockHmAmPm(hm: string): string {
+  const iso = ukWallClockToUtcIso("2026-06-15", hm);
+  if (!iso) return hm;
+  return formatHourMinuteAmPm(new Date(iso));
+}
 
 /** Preview line for create-job modals (matches job detail copy). */
 export function jobModalClientArrivalPreview(
   scheduledDate: string,
   arrivalFromHm: string,
   windowMinutesStr: string,
+  opts?: { useArrivalSlots?: boolean },
 ): string | null {
   const d = scheduledDate.trim();
   const t = arrivalFromHm.trim();
@@ -15,6 +24,15 @@ export function jobModalClientArrivalPreview(
   if (!d || !t) return null;
   const windowMins = wmRaw ? Number(wmRaw) : NaN;
   const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
+
+  if (opts?.useArrivalSlots && hasWindow) {
+    const { from, mins } = canonicalArrivalSlotValues(t, wmRaw);
+    const end = addMinutesUkWallClock(d, from, Number(mins));
+    if (!end.hm) return null;
+    const range = `${formatUkWallClockHmAmPm(from)} – ${formatUkWallClockHmAmPm(end.hm)}`;
+    return `Client & partner will see: Arrival time (${range})`;
+  }
+
   // Form inputs are UK wall-clock — convert to a proper UTC ISO so the
   // UK-timezone formatters render the same hours back.
   const startIso = ukWallClockToUtcIso(d, t);

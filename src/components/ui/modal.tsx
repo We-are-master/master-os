@@ -53,7 +53,7 @@ export function Modal({
             animate="visible"
             exit="exit"
             onClick={onClose}
-            className="absolute inset-0 bg-black/30 glass"
+            className="absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
             variants={modalTransition}
@@ -71,7 +71,7 @@ export function Modal({
               <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-fx-coral" aria-hidden />
               <div className="flex min-w-0 flex-1 items-start gap-2.5 pl-1 pr-1">
                 {headerLeading ? (
-                  <span className="mt-0.5 shrink-0 text-fx-navy" aria-hidden>
+                  <span className="mt-0.5 shrink-0 text-fx-navy dark:text-primary" aria-hidden>
                     {headerLeading}
                   </span>
                 ) : null}

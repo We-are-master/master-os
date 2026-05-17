@@ -33,6 +33,17 @@ export function matchArrivalSlot(from: string, mins: string | number): ArrivalSl
   return slot?.id ?? null;
 }
 
+/** Canonical (from, mins) for a fixed slot — use when hydrating slot UI from stored timestamps. */
+export function canonicalArrivalSlotValues(
+  from: string,
+  mins: string | number,
+): { from: string; mins: string } {
+  const slotId = matchArrivalSlot(from, mins) ?? nearestArrivalSlot(from, mins);
+  const slot = ARRIVAL_SLOTS.find((s) => s.id === slotId);
+  if (!slot) return { from, mins: String(mins) };
+  return { from: slot.from, mins: String(slot.mins) };
+}
+
 /** Closest-fit slot for legacy values that don't exactly match an option. */
 export function nearestArrivalSlot(from: string, mins: string | number): ArrivalSlotId {
   const m = typeof mins === "string" ? Number(mins) || 0 : mins || 0;

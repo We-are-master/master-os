@@ -28,7 +28,7 @@ export function JobOwnerSelect({
   fallbackName,
   users,
   disabled,
-  emptyLabel = "No owner",
+  emptyLabel = "Unassigned",
   onChange,
   className,
 }: JobOwnerSelectProps) {

@@ -223,7 +223,7 @@ function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolea
 
 /** Shared with Schedule page for Refresh + map overlay buttons. */
 export const LIVE_MAP_TOOLBAR_BTN_CLASS =
-  "inline-flex items-center gap-1 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-[9px] py-[5px] text-[11px] font-medium text-[#020040] shadow-sm transition-colors hover:bg-[#FAFAFB]";
+  "inline-flex items-center gap-1 rounded-md border border-border bg-card px-[9px] py-[5px] text-[11px] font-medium text-text-primary shadow-sm transition-colors hover:bg-surface-hover dark:border-border dark:hover:bg-surface-tertiary";
 
 export function ScheduleLiveMap({
   points,

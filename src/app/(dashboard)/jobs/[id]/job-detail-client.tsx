@@ -72,6 +72,7 @@ import {
   Pencil,
   MoreVertical,
   XCircle,
+  UserX,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -175,7 +176,16 @@ import {
   partnerHourlyRateFromCatalogBundle,
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
-import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import {
+  ARRIVAL_SLOTS,
+  ARRIVAL_WINDOW_OPTIONS,
+  canonicalArrivalSlotValues,
+  matchArrivalSlot,
+  scheduledEndFromWindow,
+  snapArrivalWindowMinutes,
+} from "@/lib/job-arrival-window";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
+import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
@@ -247,7 +257,6 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
 
 /** Details tab — collapsed scope read view (~7 lines). */
 const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "10rem";
-const JOB_SCOPE_EXPAND_MS = 420;
 const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
 const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
 
@@ -1116,8 +1125,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [nextJobNavId, setNextJobNavId] = useState<string | null>(null);
   const [savingScope, setSavingScope] = useState(false);
   const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
+  const [additionalNotesEditing, setAdditionalNotesEditing] = useState(false);
   const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
   const [reportLinkDraft, setReportLinkDraft] = useState("");
+  const [reportLinkEditing, setReportLinkEditing] = useState(false);
   const [savingReportLink, setSavingReportLink] = useState(false);
   const [internalNoteDraft, setInternalNoteDraft] = useState("");
   const [savingInternalNote, setSavingInternalNote] = useState(false);
@@ -1140,6 +1151,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
+  /** User chose "Unassigned" for job owner — do not auto-fill with current profile. */
+  const ownerKeepUnassignedRef = useRef<Set<string>>(new Set());
   const autoInvoiceEnsureRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
@@ -1177,7 +1190,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       partnerHourlyRate: partnerRate,
     });
     setApprovalBilledHoursInput(String(preview.billedHours));
-  }, [validateCompleteOpen, job?.id, job?.job_type]);
+  }, [
+    validateCompleteOpen,
+    job?.id,
+    job?.job_type,
+    job?.billed_hours,
+    job?.timer_elapsed_seconds,
+    job?.timer_is_running,
+    job?.timer_last_started_at,
+    job?.client_price,
+    job?.partner_cost,
+    job?.hourly_client_rate,
+    job?.hourly_partner_rate,
+  ]);
 
   useEffect(() => {
     if (!validateCompleteOpen || !job?.client_id?.trim()) return;
@@ -1351,6 +1376,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setHourlyEditMinutes(String(totalMins % 60));
   }, [job?.id, job?.job_type, hourlyWorkDisplaySeconds]);
 
+  const openWorkTimeEditor = useCallback(() => {
+    if (!job) return;
+    const secs =
+      job.job_type === "hourly"
+        ? hourlyWorkDisplaySeconds
+        : officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
+    const totalMins = Math.floor(Math.max(0, secs) / 60);
+    setHourlyEditHours(String(Math.floor(totalMins / 60)));
+    setHourlyEditMinutes(String(totalMins % 60));
+    setHourlyTimeEditOpen(true);
+  }, [job, hourlyWorkDisplaySeconds, officeTimerDisplaySeconds]);
+
+  const canEditWorkTime =
+    job?.job_type === "hourly" ||
+    Number(job?.timer_elapsed_seconds ?? 0) > 0 ||
+    officeTimerDisplaySeconds != null ||
+    Boolean(job?.timer_is_running);
+
   useEffect(() => {
     if (!job || job.job_type !== "fixed") {
       setFixedRatesInlineOpen(false);
@@ -1372,11 +1415,39 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [job?.recurrence_series_id, job?.recurrence_detached_at],
   );
 
-  const scheduleFinishDateMin = useMemo(() => {
-    if (!isRecurringSeriesJob) return undefined;
-    const start = scheduleDate.trim();
-    return start || undefined;
-  }, [isRecurringSeriesJob, scheduleDate]);
+  /** One-off jobs: preset arrival slots (create-job modals); no expected-finish field. */
+  const isOneOffScheduleUi = useMemo(() => {
+    if (isRecurringSeriesJob) return false;
+    return (job?.job_kind ?? "one_off") === "one_off";
+  }, [isRecurringSeriesJob, job?.job_kind]);
+
+  const jobScheduleKindLabel = useMemo(() => {
+    if (isRecurringSeriesJob) return "Recurring";
+    const kind = job?.job_kind ?? "one_off";
+    if (kind === "recurring") return "Recurring";
+    if (kind === "multi_day") return "Multi-day";
+    return "One-off";
+  }, [isRecurringSeriesJob, job?.job_kind]);
+
+  const scheduleStartDisplayYmd =
+    scheduleDate.trim() || job?.scheduled_date?.slice(0, 10) || "";
+  const scheduleFinishDisplayYmd = useMemo(() => {
+    if (isOneOffScheduleUi) return scheduleStartDisplayYmd;
+    return (
+      scheduleExpectedFinishDate.trim() ||
+      job?.scheduled_finish_date?.slice(0, 10) ||
+      scheduleStartDisplayYmd ||
+      ""
+    );
+  }, [
+    isOneOffScheduleUi,
+    scheduleStartDisplayYmd,
+    scheduleExpectedFinishDate,
+    job?.scheduled_finish_date,
+  ]);
+
+  const canOpenQuickReschedule =
+    job != null && job.status !== "cancelled" && job.status !== "deleted";
 
   const cczEligibleAddress = useMemo(
     () => Boolean(job) && !isHousekeepJobDetail && isLikelyCczAddress(job!.property_address),
@@ -1741,27 +1812,58 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (job?.scheduled_start_at) {
       const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
       setScheduleDate(ymd);
-      setScheduleTime(hm);
+      let time = hm;
+      let wm = "";
       if (job.scheduled_end_at) {
         const startMs = new Date(job.scheduled_start_at).getTime();
         const endMs = new Date(job.scheduled_end_at).getTime();
-        setScheduleWindowMins(snapArrivalWindowMinutes(startMs, endMs));
-      } else {
-        setScheduleWindowMins("");
+        wm = snapArrivalWindowMinutes(startMs, endMs);
       }
+      const oneOffSlots =
+        !(job.recurrence_series_id && !job.recurrence_detached_at) &&
+        (job.job_kind ?? "one_off") === "one_off";
+      if (oneOffSlots && time && wm) {
+        const canon = canonicalArrivalSlotValues(time, wm);
+        time = canon.from;
+        wm = canon.mins;
+      }
+      setScheduleTime(time);
+      setScheduleWindowMins(wm);
     } else if (job?.scheduled_date) {
       setScheduleDate(job.scheduled_date);
-      setScheduleTime("");
-      setScheduleWindowMins("");
+      const oneOff =
+        !(job.recurrence_series_id && !job.recurrence_detached_at) &&
+        (job.job_kind ?? "one_off") === "one_off";
+      if (oneOff) {
+        setScheduleTime("09:00");
+        setScheduleWindowMins("180");
+      } else {
+        setScheduleTime("");
+        setScheduleWindowMins("");
+      }
     } else {
       setScheduleDate("");
       setScheduleTime("");
       setScheduleWindowMins("");
     }
+    const oneOffFinish =
+      !(job?.recurrence_series_id && !job?.recurrence_detached_at) &&
+      (job?.job_kind ?? "one_off") === "one_off";
     setScheduleExpectedFinishDate(
-      job?.scheduled_finish_date?.slice(0, 10) ?? job?.scheduled_date?.slice(0, 10) ?? "",
+      oneOffFinish
+        ? ""
+        : job?.scheduled_finish_date?.slice(0, 10) ?? job?.scheduled_date?.slice(0, 10) ?? "",
     );
-  }, [job?.id, job?.scheduled_start_at, job?.scheduled_end_at, job?.scheduled_date, job?.scheduled_finish_date]);
+  }, [
+    job?.id,
+    job?.job_kind,
+    job?.recurrence_series_id,
+    job?.recurrence_detached_at,
+    job?.scheduled_start_at,
+    job?.scheduled_end_at,
+    job?.scheduled_date,
+    job?.scheduled_finish_date,
+  ]);
 
   useEffect(() => {
     if (!job) {
@@ -2057,22 +2159,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const scopeReadText = (scopeDraft.trim() || job?.scope?.trim() || "").trim();
   const scopeIsLong = useMemo(() => scopeTextNeedsCollapse(scopeReadText), [scopeReadText]);
-  const scopeReadMeasureRef = useRef<HTMLDivElement>(null);
-  const [scopeFullHeightPx, setScopeFullHeightPx] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    const el = scopeReadMeasureRef.current;
-    if (!el || !scopeIsLong) {
-      setScopeFullHeightPx(null);
-      return;
-    }
-    const measure = () => setScopeFullHeightPx(el.scrollHeight);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scopeReadText, scopeIsLong]);
-
   useEffect(() => {
     if (!scopeIsLong) setScopeExpanded(false);
   }, [scopeIsLong]);
@@ -2106,6 +2192,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!job) return;
     setAdditionalNotesDraft(job.additional_notes ?? "");
+    setAdditionalNotesEditing(false);
   }, [job?.id, job?.additional_notes]);
 
   useEffect(() => {
@@ -2131,7 +2218,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!job) return;
     setReportLinkDraft(job.report_link ?? "");
+    setReportLinkEditing(false);
   }, [job?.id, job?.report_link]);
+
+  const additionalNotesReadText = (additionalNotesDraft.trim() || job?.additional_notes?.trim() || "").trim();
+  const reportLinkReadRaw = (reportLinkDraft.trim() || job?.report_link?.trim() || "").trim();
+  const reportLinkReadHref = jobReportLinkHref(reportLinkReadRaw || null);
 
   const handleJobUpdate = useCallback(async (
     jobId: string,
@@ -2265,7 +2357,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const handleQuickUnassignPartner = useCallback(async () => {
     if (!job?.partner_id?.trim()) return;
-    if (!JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status)) return;
+    if (!JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status)) {
+      toast.error(
+        "Can't remove the partner while the job is in this status. Use Assign → No partner when the job is Scheduled, Late, or Unassigned.",
+      );
+      setSelectedPartnerId("");
+      setPartnerModalOpen(true);
+      return;
+    }
     if (
       typeof window !== "undefined" &&
       !window.confirm("Remove this partner? The job will return to Unassigned.")
@@ -2440,36 +2539,51 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   ]);
 
   const handleSaveHourlyTimeEdit = useCallback(async () => {
-    if (!job || job.job_type !== "hourly") return;
+    if (!job) return;
     const hours = Math.max(0, Math.floor(Number(hourlyEditHours) || 0));
     const minsRaw = Math.max(0, Math.floor(Number(hourlyEditMinutes) || 0));
     const mins = Math.min(59, minsRaw);
     const elapsedSeconds = Math.max(0, hours * 3600 + mins * 60);
-    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
-    const totals = computeHourlyTotals({
-      elapsedSeconds,
-      clientHourlyRate: clientRate,
-      partnerHourlyRate: partnerRate,
-    });
-    const patch: Partial<Job> = {
-      timer_elapsed_seconds: elapsedSeconds,
-      timer_last_started_at: job.timer_is_running ? new Date().toISOString() : job.timer_last_started_at,
-      billed_hours: totals.billedHours,
-      client_price: totals.clientTotal,
-      partner_cost: totals.partnerTotal,
-      customer_final_payment: Math.round(
-        Math.max(0, totals.clientTotal + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
-      ) / 100,
-    };
+    let patch: Partial<Job>;
+    let billedHoursForApproval: number | null = null;
+    if (job.job_type === "hourly") {
+      const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+      const totals = computeHourlyTotals({
+        elapsedSeconds,
+        clientHourlyRate: clientRate,
+        partnerHourlyRate: partnerRate,
+      });
+      billedHoursForApproval = totals.billedHours;
+      patch = {
+        timer_elapsed_seconds: elapsedSeconds,
+        timer_last_started_at: job.timer_is_running ? new Date().toISOString() : job.timer_last_started_at,
+        billed_hours: totals.billedHours,
+        client_price: totals.clientTotal,
+        partner_cost: totals.partnerTotal,
+        customer_final_payment: Math.round(
+          Math.max(0, totals.clientTotal + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+        ) / 100,
+      };
+    } else {
+      patch = {
+        timer_elapsed_seconds: elapsedSeconds,
+        timer_last_started_at: job.timer_is_running ? new Date().toISOString() : job.timer_last_started_at,
+      };
+    }
     setSavingHourlyTimeEdit(true);
     try {
       const updated = await handleJobUpdate(job.id, patch, { silent: true });
       if (updated) {
-        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-        await syncSelfBillAfterJobChange(updated);
+        if (job.job_type === "hourly") {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+          await syncSelfBillAfterJobChange(updated);
+        }
         await refreshJobFinance();
+        if (billedHoursForApproval != null) {
+          setApprovalBilledHoursInput(String(billedHoursForApproval));
+        }
         setHourlyTimeEditOpen(false);
-        toast.success("Work time updated");
+        toast.success(job.job_type === "hourly" ? "Work time and pricing updated" : "Recorded time updated");
       }
     } finally {
       setSavingHourlyTimeEdit(false);
@@ -3170,7 +3284,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   /** Shared with Details schedule strip and the ⋮ “Reschedule & confirm” modal — no network. */
   const buildSchedulePatchForInputs = useCallback(
-    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string): Partial<Job> | null => {
+    (
+      j: Job,
+      startDate: string,
+      startTime: string,
+      windowMinsStr: string,
+      expectedFinishDate: string,
+      opts?: { oneOff?: boolean },
+    ): Partial<Job> | null => {
+      const oneOff = opts?.oneOff === true;
       const d = startDate.trim();
       const tFrom = startTime.trim();
       const expectedTrim = expectedFinishDate.trim();
@@ -3179,7 +3301,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
       const arrivalDayForCompare = d || (typeof j.scheduled_date === "string" ? j.scheduled_date.trim().slice(0, 10) : "");
 
-      if (expectedTrim && arrivalDayForCompare && expectedTrim < arrivalDayForCompare) {
+      if (!oneOff && expectedTrim && arrivalDayForCompare && expectedTrim < arrivalDayForCompare) {
         toast.error("Expected finish date must be on or after the arrival date.");
         return null;
       }
@@ -3193,17 +3315,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         } as unknown as Partial<Job>;
       }
 
-      if (!expectedTrim) {
+      if (!oneOff && !expectedTrim) {
         toast.error("Expected finish date is required when a start date is set.");
         return null;
       }
+
+      const finishForPatch = oneOff ? null : expectedTrim;
 
       if (!tFrom) {
         return {
           scheduled_date: d,
           scheduled_start_at: null,
           scheduled_end_at: null,
-          scheduled_finish_date: expectedTrim,
+          scheduled_finish_date: finishForPatch,
         } as unknown as Partial<Job>;
       }
 
@@ -3239,56 +3363,58 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         scheduled_date: d,
         scheduled_start_at,
         scheduled_end_at,
-        scheduled_finish_date: expectedTrim,
+        scheduled_finish_date: finishForPatch,
       } as Partial<Job>;
     },
     [],
   );
 
-  const handleScheduleChange = useCallback(
-    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
-      const patch = buildSchedulePatchForInputs(j, startDate, startTime, windowMinsStr, expectedFinishDate);
-      if (!patch) return;
-      const isClear =
-        (patch as { scheduled_date?: unknown }).scheduled_date == null &&
-        (patch as { scheduled_start_at?: unknown }).scheduled_start_at == null;
-      dispatchRecurrenceAware(j, patch, isClear ? "schedule clear" : "schedule change");
-    },
-    [buildSchedulePatchForInputs, dispatchRecurrenceAware],
-  );
-
   const openQuickReschedule = useCallback(() => {
     if (!job) return;
     setJobMoreMenuOpen(false);
+    const usesSlots = isOneOffScheduleUi;
     if (job.scheduled_start_at) {
-      const d = new Date(job.scheduled_start_at);
-      setQrDate(d.toISOString().slice(0, 10));
-      setQrTime(d.toTimeString().slice(0, 5));
+      const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
+      setQrDate(ymd);
+      let time = hm;
+      let wm = "";
       if (job.scheduled_end_at) {
         const startMs = new Date(job.scheduled_start_at).getTime();
         const endMs = new Date(job.scheduled_end_at).getTime();
-        setQrWindowMins(snapArrivalWindowMinutes(startMs, endMs));
+        wm = snapArrivalWindowMinutes(startMs, endMs);
+      }
+      if (usesSlots && time && wm) {
+        const canon = canonicalArrivalSlotValues(time, wm);
+        time = canon.from;
+        wm = canon.mins;
+      }
+      setQrTime(time);
+      setQrWindowMins(wm);
+    } else if (job.scheduled_date) {
+      setQrDate(job.scheduled_date.slice(0, 10));
+      if (usesSlots) {
+        setQrTime("09:00");
+        setQrWindowMins("180");
       } else {
+        setQrTime("");
         setQrWindowMins("");
       }
-    } else if (job.scheduled_date) {
-      setQrDate(job.scheduled_date);
-      setQrTime("");
-      setQrWindowMins("");
     } else {
       setQrDate("");
-      setQrTime("");
-      setQrWindowMins("");
+      setQrTime(usesSlots ? "09:00" : "");
+      setQrWindowMins(usesSlots ? "180" : "");
     }
     setQrExpectedFinish(
-      job.scheduled_finish_date?.slice(0, 10) ?? job.scheduled_date?.slice(0, 10) ?? "",
+      usesSlots
+        ? ""
+        : job.scheduled_finish_date?.slice(0, 10) ?? job.scheduled_date?.slice(0, 10) ?? "",
     );
     setQrPartnerId(job.partner_id ?? "");
     setQrCatalogServiceId(job.catalog_service_id ?? "");
     setQrClientPrice(String(job.client_price ?? 0));
     setQrPartnerCost(String(job.partner_cost ?? 0));
     setQuickRescheduleOpen(true);
-  }, [job]);
+  }, [job, isOneOffScheduleUi]);
 
   const confirmQuickReschedule = useCallback(async () => {
     if (!job) return;
@@ -3298,7 +3424,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       qrDate,
       qrTime,
       qrWindowMins,
-      qrExpectedFinish,
+      isOneOffScheduleUi ? "" : qrExpectedFinish,
+      { oneOff: isOneOffScheduleUi },
     );
     if (!schedulePatch) return;
 
@@ -3367,7 +3494,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setScheduleDate(qrDate.trim());
       setScheduleTime(qrTime.trim());
       setScheduleWindowMins(qrWindowMins.trim());
-      setScheduleExpectedFinishDate(qrExpectedFinish.trim());
+      setScheduleExpectedFinishDate(isOneOffScheduleUi ? "" : qrExpectedFinish.trim());
       setQuickRescheduleOpen(false);
       toast.success("Booking updated — partner notified when assigned.");
     } finally {
@@ -3386,6 +3513,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     partners,
     catalogServicesJobType,
     buildSchedulePatchForInputs,
+    isOneOffScheduleUi,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
@@ -3398,34 +3526,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const paid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
     return { depositScheduled: sched, depositRemaining: Math.max(0, sched - paid) };
   }, [job, customerPayments]);
-
-  const clientVisibleArrivalPreview = useMemo(() => {
-    const d = scheduleDate.trim();
-    const t = scheduleTime.trim();
-    const wm = scheduleWindowMins.trim();
-    if (!d || !t) return null;
-    const windowMins = wm ? Number(wm) : NaN;
-    const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
-    const startIso = ukWallClockToUtcIso(d, t);
-    if (!startIso) return null;
-    if (!hasWindow) {
-      return `Client & partner will see: Arrival time ${formatHourMinuteAmPm(new Date(startIso))} — add a window length (2–3h typical) for a clear range.`;
-    }
-    const endIso = new Date(new Date(startIso).getTime() + windowMins * 60_000).toISOString();
-    const range = formatArrivalTimeRange(startIso, endIso);
-    return range ? `Client & partner will see: Arrival time (${range})` : null;
-  }, [scheduleDate, scheduleTime, scheduleWindowMins]);
-
-  const SCHEDULE_HELP_TOOLTIP =
-    "Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.";
-
-  const arrivalFieldTooltipText = useMemo(
-    () =>
-      [clientVisibleArrivalPreview, SCHEDULE_HELP_TOOLTIP]
-        .filter((s): s is string => Boolean(s))
-        .join("\n\n"),
-    [clientVisibleArrivalPreview],
-  );
 
   const cczParkingFieldTooltipText = useMemo(() => {
     const lines = [
@@ -3943,6 +4043,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
     if (job.owner_id) return;
+    if (ownerKeepUnassignedRef.current.has(job.id)) return;
     if (autoOwnerFillRef.current.has(job.id)) return;
     autoOwnerFillRef.current.add(job.id);
     (async () => {
@@ -4939,19 +5040,35 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const primaryInvoiceForBadge = job.invoice_id
     ? jobInvoices.find((inv) => inv.id === job.invoice_id) ?? jobInvoices[0]
     : jobInvoices[0];
-  const invoiceLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = primaryInvoiceForBadge
-    ? primaryInvoiceForBadge.status === "draft"
-      ? { label: "Draft", className: "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300" }
-      : primaryInvoiceForBadge.status === "cancelled"
-        ? { label: "Cancelled", className: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300" }
-      : { label: "Sent", className: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" }
-    : null;
+  /** Invoice + self-bill stay “Draft” on this job until Review & approve (same gate as finalize in FinalReviewModal). */
+  const financeDocsAwaitingJobApproval = !job.internal_invoice_approved;
+  const financeDocDraftBadge = {
+    label: "Draft" as const,
+    className: "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  };
+  const financeDocSentBadge = {
+    label: "Sent" as const,
+    className: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  };
+  const financeDocCancelledBadge = {
+    label: "Cancelled" as const,
+    className: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  };
+  const selfBillDbDraftStatuses = new Set<SelfBill["status"]>(["draft", "accumulating", "pending_review"]);
+  const invoiceLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null =
+    primaryInvoiceForBadge
+      ? primaryInvoiceForBadge.status === "cancelled"
+        ? financeDocCancelledBadge
+        : financeDocsAwaitingJobApproval || primaryInvoiceForBadge.status === "draft"
+          ? financeDocDraftBadge
+          : financeDocSentBadge
+      : null;
   const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
-    ? ["accumulating", "pending_review", "draft"].includes(jobSelfBill.status)
-      ? { label: "Draft", className: "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300" }
-      : ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
-        ? { label: "Cancelled", className: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300" }
-      : { label: "Sent", className: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" }
+    ? ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
+      ? financeDocCancelledBadge
+      : financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
+        ? financeDocDraftBadge
+        : financeDocSentBadge
     : null;
   const flowStep = jobFlowActiveStepIndex(job.status);
   const previousStageStatus = getPreviousJobStatus(job);
@@ -5420,6 +5537,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <Timer className="h-3 w-3 shrink-0 text-text-tertiary" strokeWidth={2} aria-hidden />
                     <span className="truncate text-[10px] text-text-secondary">{progressTimerSubline}</span>
                     <span className="text-[11px] font-bold tabular-nums text-text-primary">{timeSpentLabel}</span>
+                    {canEditWorkTime ? (
+                      <button
+                        type="button"
+                        className="ml-0.5 shrink-0 rounded p-0.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-primary"
+                        onClick={openWorkTimeEditor}
+                        title={
+                          job.job_type === "hourly"
+                            ? "Edit work time (updates pricing)"
+                            : "Edit recorded time"
+                        }
+                        aria-label="Edit work time"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    ) : null}
                   </div>
                   {progressTimerPausedBadge ? (
                     <Badge variant="warning" size="sm" className="h-5 px-1 text-[9px]">
@@ -5677,6 +5809,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           )
                         : null;
                     const agreedArrivalRange = rangeFromStored || rangeFromUi;
+                    const slotId =
+                      scheduleTime.trim() && scheduleWindowMins.trim()
+                        ? matchArrivalSlot(scheduleTime.trim(), scheduleWindowMins)
+                        : null;
+                    const slotLabel = slotId ? ARRIVAL_SLOTS.find((s) => s.id === slotId)?.label : null;
+                    const arrivalDisplay = slotLabel ?? agreedArrivalRange;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
                         <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
@@ -5689,8 +5827,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
                           <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
                           <span>
-                            {agreedArrivalRange ? (
-                              <span className="font-medium">Arrival: {agreedArrivalRange}</span>
+                            {arrivalDisplay ? (
+                              <span className="font-medium">Arrival: {arrivalDisplay}</span>
                             ) : startIso ? (
                               <>
                                 {formatHourMinuteAmPm(new Date(startIso))}
@@ -5735,24 +5873,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
-                        {job.job_type === "hourly" ? (
-                          <>
-                            <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-[#333] tabular-nums dark:text-[#d8dee9]">
-                                {formatOfficeTimer(hourlyWorkDisplaySeconds)}
-                              </span>
-                              <button
-                                type="button"
-                                className="text-text-tertiary transition-colors hover:text-primary dark:text-[#8a93a5]"
-                                onClick={() => setHourlyTimeEditOpen((v) => !v)}
-                                title="Edit time"
-                              >
-                                <Pencil className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </>
-                        ) : null}
+                        <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            jobScheduleKindLabel === "Recurring"
+                              ? "border-primary/35 bg-primary/10 text-primary"
+                              : "border-border bg-surface-hover text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                          )}
+                        >
+                          {jobScheduleKindLabel}
+                        </span>
                       </div>
                       {job.job_type === "hourly" && hourlyTimeEditOpen ? (
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -5922,6 +6053,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className="p-[18px] space-y-[14px]"
                 style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
               >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p
+                    className="text-[10px] font-medium uppercase"
+                    style={{ color: "#020040", letterSpacing: "0.6px" }}
+                  >
+                    Schedule
+                  </p>
+                  {canOpenQuickReschedule ? (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      icon={<Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+                      className="w-full shrink-0 flex-nowrap [&>span]:whitespace-nowrap sm:w-auto"
+                      onClick={() => void openQuickReschedule()}
+                    >
+                      Reschedule
+                    </Button>
+                  ) : null}
+                </div>
                 <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
                   <div
                     className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
@@ -5933,87 +6084,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     >
                       Start date
                     </p>
-                    <Input
-                      type="date"
-                      value={scheduleDate}
-                      disabled={job.status === "cancelled"}
-                      className="mt-[6px] h-8 text-[13px]"
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setScheduleDate(v);
-                        if (!v.trim()) {
-                          setScheduleExpectedFinishDate("");
-                          handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, "");
-                          return;
-                        }
-                        let finish = scheduleExpectedFinishDate.trim();
-                        if (isRecurringSeriesJob && finish && finish < v) {
-                          finish = v;
-                          setScheduleExpectedFinishDate(v);
-                        }
-                        handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, finish || scheduleExpectedFinishDate);
-                      }}
-                    />
-                  </div>
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <div className="flex items-center gap-1">
-                      <p
-                        className="text-[10px] font-medium uppercase"
-                        style={{ color: "#020040", letterSpacing: "0.6px" }}
-                      >
-                        Arrival time
-                      </p>
-                      <span className="group relative shrink-0">
-                        <span
-                          tabIndex={0}
-                          className="inline-flex cursor-help rounded p-px outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-                          style={{ color: "#9A9AA0" }}
-                          aria-label="How arrival time is shown to clients and partners"
-                        >
-                          <Info className="h-3 w-3" aria-hidden />
-                        </span>
-                        <span
-                          role="tooltip"
-                          className="pointer-events-none invisible absolute bottom-full left-0 z-[60] mb-1 w-44 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-                        >
-                          {arrivalFieldTooltipText}
-                        </span>
-                      </span>
-                    </div>
-                    <TimeSelect
-                      value={scheduleTime}
-                      disabled={job.status === "cancelled"}
-                      className="mt-[6px] h-8 text-[13px]"
-                      onChange={(v) => {
-                        setScheduleTime(v);
-                        handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate);
-                      }}
-                    />
-                  </div>
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[10px] font-medium uppercase"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      Window
+                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
+                      {scheduleStartDisplayYmd ? formatDate(scheduleStartDisplayYmd) : "—"}
                     </p>
-                    <Select
-                      value={scheduleWindowMins}
-                      disabled={job.status === "cancelled"}
-                      className="mt-[6px] h-8 text-[13px]"
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setScheduleWindowMins(v);
-                        handleScheduleChange(job, scheduleDate, scheduleTime, v, scheduleExpectedFinishDate);
-                      }}
-                      options={[...ARRIVAL_WINDOW_OPTIONS]}
-                    />
                   </div>
                   <div
                     className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
@@ -6024,31 +6097,88 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       style={{ color: "#020040", letterSpacing: "0.6px" }}
                     >
                       Expected finish
-                      {scheduleDate.trim() ? (
-                        <span className="ml-[2px]" style={{ color: "#ED4B00" }}>*</span>
-                      ) : null}
                     </p>
-                    <Input
-                      type="date"
-                      value={scheduleExpectedFinishDate}
-                      min={scheduleFinishDateMin}
-                      disabled={job.status === "cancelled" || (isRecurringSeriesJob && !scheduleDate.trim())}
-                      title={
-                        isRecurringSeriesJob && !scheduleDate.trim()
-                          ? "Set the start date first"
-                          : scheduleFinishDateMin
-                            ? `On or after ${scheduleFinishDateMin}`
-                            : undefined
-                      }
-                      className="mt-[6px] h-8 text-[13px]"
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (scheduleFinishDateMin && v && v < scheduleFinishDateMin) return;
-                        setScheduleExpectedFinishDate(v);
-                        handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, v);
-                      }}
-                    />
+                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
+                      {scheduleFinishDisplayYmd ? formatDate(scheduleFinishDisplayYmd) : "—"}
+                    </p>
                   </div>
+                  {isOneOffScheduleUi ? (
+                    <div
+                      className="min-w-0 bg-white rounded-[10px] p-[12px_14px] sm:col-span-2"
+                      style={{ border: "0.5px solid #E4E4E8" }}
+                    >
+                      <p
+                        className="mb-2 text-[10px] font-medium uppercase"
+                        style={{ color: "#020040", letterSpacing: "0.6px" }}
+                      >
+                        Arrival time
+                      </p>
+                      <ArrivalSlotPicker
+                        readOnly
+                        hideLabel
+                        arrivalFrom={scheduleTime}
+                        arrivalWindowMins={scheduleWindowMins}
+                        onPick={() => {}}
+                      />
+                      {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
+                        useArrivalSlots: isOneOffScheduleUi,
+                      }) ? (
+                        <p className="mt-1.5 text-[10px] font-medium text-text-secondary">
+                          {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
+                            useArrivalSlots: isOneOffScheduleUi,
+                          })}
+                        </p>
+                      ) : (
+                        <p className="mt-1.5 text-[10px] text-text-tertiary">—</p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                        style={{ border: "0.5px solid #E4E4E8" }}
+                      >
+                        <p
+                          className="text-[10px] font-medium uppercase"
+                          style={{ color: "#020040", letterSpacing: "0.6px" }}
+                        >
+                          Arrival time
+                        </p>
+                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
+                          {scheduleTime.trim()
+                            ? (() => {
+                                const iso = scheduleStartDisplayYmd
+                                  ? ukWallClockToUtcIso(scheduleStartDisplayYmd, scheduleTime.trim())
+                                  : "";
+                                return iso ? formatHourMinuteAmPm(new Date(iso)) : scheduleTime.trim();
+                              })()
+                            : "—"}
+                        </p>
+                      </div>
+                      <div
+                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                        style={{ border: "0.5px solid #E4E4E8" }}
+                      >
+                        <p
+                          className="text-[10px] font-medium uppercase"
+                          style={{ color: "#020040", letterSpacing: "0.6px" }}
+                        >
+                          Window
+                        </p>
+                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
+                          {(() => {
+                            const wm = scheduleWindowMins.trim();
+                            const n = wm ? Number(wm) : NaN;
+                            if (!Number.isFinite(n) || n <= 0) return "—";
+                            return (
+                              ARRIVAL_WINDOW_OPTIONS.find((opt) => opt.value === wm)?.label ??
+                              `${Math.round(n / 60)}h`
+                            );
+                          })()}
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
                 {!isHousekeepJobDetail ? (
                   <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
@@ -6133,20 +6263,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   </div>
                 ) : null}
-                  {job.self_bill_id ? (
-                    <div
-                      className="flex flex-wrap gap-[6px] pt-[12px]"
-                      style={{ borderTop: "0.5px solid #E4E4E8" }}
-                    >
-                      <Link
-                        href="/finance/billing/selfbill"
-                        className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
-                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                      >
-                        Self-bill <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
-                      </Link>
-                    </div>
-                  ) : null}
               </div>
             </div>
 
@@ -6295,28 +6411,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="relative">
                       <div
                         className={cn(
-                          "overflow-hidden ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none",
-                          scopeIsLong && !scopeExpanded && "pb-10",
+                          "text-sm leading-relaxed text-text-primary whitespace-pre-wrap",
+                          scopeIsLong && !scopeExpanded && "overflow-hidden pb-10",
                         )}
                         style={
-                          scopeIsLong
-                            ? {
-                                maxHeight: scopeExpanded
-                                  ? scopeFullHeightPx != null
-                                    ? `${scopeFullHeightPx}px`
-                                    : JOB_SCOPE_COLLAPSED_MAX_HEIGHT
-                                  : JOB_SCOPE_COLLAPSED_MAX_HEIGHT,
-                                transition: `max-height ${JOB_SCOPE_EXPAND_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
-                              }
+                          scopeIsLong && !scopeExpanded
+                            ? { maxHeight: JOB_SCOPE_COLLAPSED_MAX_HEIGHT }
                             : undefined
                         }
                       >
-                        <div
-                          ref={scopeReadMeasureRef}
-                          className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap"
-                        >
-                          {scopeReadText}
-                        </div>
+                        {scopeReadText}
                       </div>
                       {scopeIsLong && !scopeExpanded ? (
                         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-card from-35% via-card/85 to-transparent pt-12 pb-0.5 dark:from-[#141922] dark:via-[#141922]/85">
@@ -6393,83 +6497,180 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
-                <JobCardTitleWithHint
-                  title="Additional notes"
-                  hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
-                  titleClassName="text-xs font-semibold text-text-primary"
-                />
-                <textarea
-                  value={additionalNotesDraft}
-                  onChange={(e) => setAdditionalNotesDraft(e.target.value)}
-                  rows={3}
-                  placeholder="Parking, entry, preferences…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  loading={savingAdditionalNotes}
-                  onClick={async () => {
-                    if (!job) return;
-                    setSavingAdditionalNotes(true);
-                    try {
-                      await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
-                    } finally {
-                      setSavingAdditionalNotes(false);
-                    }
-                  }}
-                >
-                  Save additional notes
-                </Button>
+                <div className="flex items-center justify-between gap-2">
+                  <JobCardTitleWithHint
+                    title="Additional notes"
+                    hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
+                    titleClassName="text-xs font-semibold text-text-primary"
+                  />
+                  {!additionalNotesEditing ? (
+                    <button
+                      type="button"
+                      onClick={() => setAdditionalNotesEditing(true)}
+                      className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
+                      title="Edit additional notes"
+                      aria-label="Edit additional notes"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  ) : null}
+                </div>
+                {!additionalNotesEditing ? (
+                  additionalNotesReadText ? (
+                    <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap">{additionalNotesReadText}</p>
+                  ) : (
+                    <p className="text-sm text-text-tertiary italic">No additional notes yet — use the pencil to add some.</p>
+                  )
+                ) : (
+                  <>
+                    <textarea
+                      value={additionalNotesDraft}
+                      onChange={(e) => setAdditionalNotesDraft(e.target.value)}
+                      rows={3}
+                      placeholder="Parking, entry, preferences…"
+                      className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
+                      autoFocus
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        loading={savingAdditionalNotes}
+                        onClick={async () => {
+                          if (!job) return;
+                          setSavingAdditionalNotes(true);
+                          try {
+                            await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
+                            setAdditionalNotesEditing(false);
+                          } finally {
+                            setSavingAdditionalNotes(false);
+                          }
+                        }}
+                      >
+                        Save additional notes
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={savingAdditionalNotes}
+                        onClick={() => {
+                          setAdditionalNotesDraft(job.additional_notes ?? "");
+                          setAdditionalNotesEditing(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
-                <JobCardTitleWithHint
-                  title="Report link (optional)"
-                  hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
-                  titleClassName="text-xs font-semibold text-text-primary"
-                />
-                <Input
-                  type="url"
-                  value={reportLinkDraft}
-                  onChange={(e) => setReportLinkDraft(e.target.value)}
-                  placeholder="https://…"
-                  className={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "h-auto min-h-0")}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    loading={savingReportLink}
-                    onClick={async () => {
-                      if (!job) return;
-                      setSavingReportLink(true);
-                      try {
-                        await handleJobUpdate(job.id, { report_link: reportLinkDraft.trim() || null });
-                      } finally {
-                        setSavingReportLink(false);
-                      }
-                    }}
-                  >
-                    Save report link
-                  </Button>
-                  {(() => {
-                    const href = jobReportLinkHref(reportLinkDraft || job.report_link);
-                    return href ? (
+                <div className="flex items-center justify-between gap-2">
+                  <JobCardTitleWithHint
+                    title="Report link (optional)"
+                    hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
+                    titleClassName="text-xs font-semibold text-text-primary"
+                  />
+                  <div className="flex items-center gap-2">
+                    {!reportLinkEditing && reportLinkReadHref ? (
                       <a
-                        href={href}
+                        href={reportLinkReadHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                       >
                         Open link
-                        <ExternalLink className="h-3.5 w-3.5" />
+                        <ExternalLink className="h-3 w-3" />
                       </a>
-                    ) : null;
-                  })()}
+                    ) : null}
+                    {!reportLinkEditing ? (
+                      <button
+                        type="button"
+                        onClick={() => setReportLinkEditing(true)}
+                        className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
+                        title="Edit report link"
+                        aria-label="Edit report link"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
+                {!reportLinkEditing ? (
+                  reportLinkReadRaw ? (
+                    reportLinkReadHref ? (
+                      <a
+                        href={reportLinkReadHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-sm text-primary break-all hover:underline"
+                      >
+                        {reportLinkReadRaw}
+                      </a>
+                    ) : (
+                      <p className="text-sm text-text-primary break-all">{reportLinkReadRaw}</p>
+                    )
+                  ) : (
+                    <p className="text-sm text-text-tertiary italic">No report link yet — use the pencil to add one.</p>
+                  )
+                ) : (
+                  <>
+                    <Input
+                      type="url"
+                      value={reportLinkDraft}
+                      onChange={(e) => setReportLinkDraft(e.target.value)}
+                      placeholder="https://…"
+                      className={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "h-auto min-h-0")}
+                      autoFocus
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        loading={savingReportLink}
+                        onClick={async () => {
+                          if (!job) return;
+                          setSavingReportLink(true);
+                          try {
+                            await handleJobUpdate(job.id, { report_link: reportLinkDraft.trim() || null });
+                            setReportLinkEditing(false);
+                          } finally {
+                            setSavingReportLink(false);
+                          }
+                        }}
+                      >
+                        Save report link
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={savingReportLink}
+                        onClick={() => {
+                          setReportLinkDraft(job.report_link ?? "");
+                          setReportLinkEditing(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      {jobReportLinkHref(reportLinkDraft) ? (
+                        <a
+                          href={jobReportLinkHref(reportLinkDraft)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                        >
+                          Open link
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      ) : null}
+                    </div>
+                  </>
+                )}
               </div>
               </div>
               ) : null}
@@ -7003,12 +7204,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <Avatar
-                    src={partners.find((p) => p.id === job.partner_id)?.avatar_url}
-                    name={job.partner_name || "Partner"}
-                    size="sm"
-                    className="h-8 w-8 border border-border-light ring-0"
-                  />
+                  {job.partner_id?.trim() ? (
+                    <Avatar
+                      src={partners.find((p) => p.id === job.partner_id)?.avatar_url}
+                      name={job.partner_name || "Partner"}
+                      size="sm"
+                      className="h-8 w-8 border border-border-light ring-0"
+                    />
+                  ) : (
+                    <div
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover"
+                      aria-hidden
+                    >
+                      <UserX className="h-4 w-4 text-text-tertiary" />
+                    </div>
+                  )}
                   {job.partner_name ? (
                     <div className="group/partner-name relative min-w-0">
                       <p className="truncate text-xs font-bold text-text-primary cursor-default">{job.partner_name}</p>
@@ -7026,8 +7236,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {job.partner_id?.trim() &&
-                  JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status) ? (
+                  {job.partner_id?.trim() ? (
                     <button
                       type="button"
                       aria-label="Unassign partner"
@@ -7035,13 +7244,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       disabled={signingOffPartner || savingPartner}
                       onClick={() => void handleQuickUnassignPartner()}
                       className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-full border border-red-200/90 bg-transparent text-red-500 transition-colors",
-                        "hover:border-red-300 hover:bg-red-50 hover:text-red-600",
-                        "dark:border-red-500/35 dark:text-red-400 dark:hover:border-red-500/50 dark:hover:bg-red-950/35",
+                        "flex h-7 w-7 items-center justify-center rounded-full border border-border-light bg-surface-hover text-text-tertiary transition-colors",
+                        "hover:border-primary/30 hover:bg-primary-light/80 hover:text-primary",
+                        "dark:hover:bg-primary/10",
                         "disabled:pointer-events-none disabled:opacity-45",
                       )}
                     >
-                      <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                      <UserX className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
                   <Button
@@ -7065,11 +7274,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   fallbackName={job.owner_name}
                   users={assignableUsers}
                   disabled={savingOwner}
+                  emptyLabel="Unassigned"
                   onChange={async (ownerId) => {
-                    const owner = assignableUsers.find((u) => u.id === ownerId);
+                    const owner = ownerId ? assignableUsers.find((u) => u.id === ownerId) : undefined;
+                    if (!ownerId && job.id) ownerKeepUnassignedRef.current.add(job.id);
+                    else if (job.id) ownerKeepUnassignedRef.current.delete(job.id);
                     setSavingOwner(true);
                     try {
-                      await handleJobUpdate(job.id, { owner_id: ownerId, owner_name: owner?.full_name });
+                      await handleJobUpdate(job.id, {
+                        owner_id: ownerId ?? null,
+                        owner_name: owner?.full_name ?? null,
+                      });
+                      if (!ownerId) toast.success("Job owner cleared");
                     } finally {
                       setSavingOwner(false);
                     }
@@ -7084,7 +7300,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </Badge>
                 </div>
               ) : (
-                <p className="text-sm text-text-tertiary italic">No owner</p>
+                <div className="flex items-center gap-2 text-text-tertiary">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover">
+                    <UserX className="h-3.5 w-3.5" aria-hidden />
+                  </div>
+                  <p className="text-sm italic">Unassigned</p>
+                </div>
               )}
             </div>
 
@@ -7260,11 +7481,31 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </span>
                   </div>
                 </div>
-                <div className="mt-2 grid w-full grid-cols-1">
+                <div className="mt-2 flex w-full flex-col gap-2">
+                  {isAdmin ? (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
+                      disabled={job.status === "cancelled" || job.status === "deleted"}
+                      icon={<Plus className="h-4 w-4 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType(undefined);
+                        setMoneyDrawerFlow("client_pay");
+                        setMoneyDrawerOpen(true);
+                      }}
+                      title="Records money received from the client. Reduces amount due only — use Charge or discount for line-item extras."
+                    >
+                      Record payment
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
-                    variant="primary"
-                    className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
+                    variant="outline"
+                    className={cn(
+                      "min-h-[2.75rem] w-full rounded-lg border-emerald-300/90 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45",
+                    )}
+                    disabled={job.status === "cancelled" || job.status === "deleted"}
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerInitialExtraType(undefined);
@@ -8786,7 +9027,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </span>
                 </>
               ) : (
-                <span className="flex-1 text-text-tertiary">No partner</span>
+                <>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover">
+                    <UserX className="h-4 w-4 text-text-tertiary" aria-hidden />
+                  </div>
+                  <span className="flex-1 text-text-tertiary">Unassigned</span>
+                </>
               )}
               <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform shrink-0 ${partnerPickerOpen ? "rotate-180" : ""}`} />
             </button>
@@ -8822,7 +9068,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       queueMicrotask(() => partnerCostSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
                     }}
                   >
-                    <span className="flex-1 text-text-secondary font-medium">No partner</span>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover">
+                      <UserX className="h-3.5 w-3.5 text-text-tertiary" aria-hidden />
+                    </div>
+                    <span className="flex-1 font-medium text-text-secondary">Unassigned</span>
                     {!selectedPartnerId && <Check className="h-4 w-4 text-primary shrink-0" />}
                   </button>
                   <div className="mx-2 h-px bg-border-light" />
@@ -9065,7 +9314,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </p>
           ) : null}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="sm:col-span-2">
+            <div className={cn(isOneOffScheduleUi && "sm:col-span-2")}>
               <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival date *</label>
               <Input
                 type="date"
@@ -9081,44 +9330,79 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 }}
               />
             </div>
-            <div>
-              <TimeSelect label="Arrival time" value={qrTime} disabled={quickRescheduleSaving} onChange={(v) => setQrTime(v)} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Window</label>
-              <Select
-                className="h-10"
-                value={qrWindowMins}
-                disabled={quickRescheduleSaving}
-                onChange={(e) => setQrWindowMins(e.target.value)}
-                options={[...ARRIVAL_WINDOW_OPTIONS]}
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs font-medium text-text-secondary">
-                Expected finish date{qrDate.trim() ? <span className="text-red-600"> *</span> : null}
-              </label>
-              <Input
-                type="date"
-                className="h-10"
-                value={qrExpectedFinish}
-                min={isRecurringSeriesJob && qrDate.trim() ? qrDate.trim() : undefined}
-                disabled={quickRescheduleSaving || (isRecurringSeriesJob && !qrDate.trim())}
-                title={
-                  isRecurringSeriesJob && !qrDate.trim()
-                    ? "Set the arrival date first"
-                    : isRecurringSeriesJob && qrDate.trim()
-                      ? `On or after ${qrDate.trim()}`
-                      : undefined
-                }
-                onChange={(e) => {
-                  const min = isRecurringSeriesJob ? qrDate.trim() : "";
-                  const v = e.target.value;
-                  if (min && v && v < min) return;
-                  setQrExpectedFinish(v);
-                }}
-              />
-            </div>
+            {isOneOffScheduleUi ? (
+              <div
+                className={cn(
+                  "sm:col-span-2",
+                  quickRescheduleSaving && "pointer-events-none opacity-60",
+                )}
+              >
+                <ArrivalSlotPicker
+                  arrivalFrom={qrTime}
+                  arrivalWindowMins={qrWindowMins}
+                  onPick={(from, mins) => {
+                    setQrTime(from);
+                    setQrWindowMins(mins);
+                  }}
+                />
+                {(() => {
+                  const preview = jobModalClientArrivalPreview(qrDate, qrTime, qrWindowMins, {
+                    useArrivalSlots: isOneOffScheduleUi,
+                  });
+                  return preview ? (
+                    <p className="mt-2 text-[11px] font-medium text-text-secondary">{preview}</p>
+                  ) : null;
+                })()}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <TimeSelect
+                    label="Arrival time"
+                    value={qrTime}
+                    disabled={quickRescheduleSaving}
+                    onChange={(v) => setQrTime(v)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-text-secondary">Window</label>
+                  <Select
+                    className="h-10"
+                    value={qrWindowMins}
+                    disabled={quickRescheduleSaving}
+                    onChange={(e) => setQrWindowMins(e.target.value)}
+                    options={[...ARRIVAL_WINDOW_OPTIONS]}
+                  />
+                </div>
+              </>
+            )}
+            {!isOneOffScheduleUi ? (
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-text-secondary">
+                  Expected finish date{qrDate.trim() ? <span className="text-red-600"> *</span> : null}
+                </label>
+                <Input
+                  type="date"
+                  className="h-10"
+                  value={qrExpectedFinish}
+                  min={isRecurringSeriesJob && qrDate.trim() ? qrDate.trim() : undefined}
+                  disabled={quickRescheduleSaving || (isRecurringSeriesJob && !qrDate.trim())}
+                  title={
+                    isRecurringSeriesJob && !qrDate.trim()
+                      ? "Set the arrival date first"
+                      : isRecurringSeriesJob && qrDate.trim()
+                        ? `On or after ${qrDate.trim()}`
+                        : undefined
+                  }
+                  onChange={(e) => {
+                    const min = isRecurringSeriesJob ? qrDate.trim() : "";
+                    const v = e.target.value;
+                    if (min && v && v < min) return;
+                    setQrExpectedFinish(v);
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-text-secondary">Partner</label>

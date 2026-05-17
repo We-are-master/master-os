@@ -3480,7 +3480,19 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 />
                 {form.job_type === "fixed" ? (
                   <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
+                    Margin:{" "}
+                    <span
+                      className={cn(
+                        "font-medium tabular-nums",
+                        estimatedMarginPct >= 20
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-amber-600 dark:text-amber-400",
+                      )}
+                    >
+                      {(Number(form.client_price) || 0) + accessSurchargePreview > 0
+                        ? `${estimatedMarginPct}%`
+                        : "—"}
+                    </span>
                   </p>
                 ) : null}
               </div>

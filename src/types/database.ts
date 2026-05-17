@@ -392,8 +392,9 @@ export interface Job {
   /** Access / logistics flags used for automatic surcharge. */
   in_ccz?: boolean | null;
   has_free_parking?: boolean | null;
-  owner_id?: string;
-  owner_name?: string;
+  /** Set to null in updates to clear job owner (undefined is omitted and leaves the old value). */
+  owner_id?: string | null;
+  owner_name?: string | null;
   status: JobStatus;
   progress: number;
   /** @deprecated mig 162 — phase system removed. Multi-step flows now via job_visits. Field kept for legacy reads only. */
