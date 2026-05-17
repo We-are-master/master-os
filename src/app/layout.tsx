@@ -27,8 +27,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Fixfy OS — Operations System",
   description: "Fixfy internal operations management system",
-  // Favicon picked up automatically by Next.js from src/app/icon.svg
-  // (App Router convention — overrides legacy /public/favicon.ico).
+  // Favicon: src/app/icon.png (+ apple-icon.png) via App Router metadata.
+  icons: {
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    apple: [{ url: "/fixfy-icon.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({
