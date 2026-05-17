@@ -34,8 +34,10 @@ export function QuoteBidLinksModal({ open, onClose, quoteId, quoteReference }: Q
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    queueMicrotask(() => {
+      setLoading(true);
+      setError(null);
+    });
     fetch(`/api/quotes/${quoteId}/invited-partners`)
       .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
       .then(({ ok, body }) => {

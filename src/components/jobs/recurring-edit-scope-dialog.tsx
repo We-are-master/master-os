@@ -29,7 +29,7 @@ type Props = {
  *
  *   • this_only          → detach the row, apply edits to it alone
  *   • this_and_following → apply to this + future, possibly forking a new series
- *   • entire_series      → update the series rule itself + regenerate future
+ *   • entire_series      → apply propagatable fields + slide calendar deltas
  *
  * Reused by both the edit flow and the cancel flow (parent passes a different
  * `actionLabel`).
@@ -79,7 +79,7 @@ export function RecurringEditScopeDialog({
         <ScopeButton
           icon={<Layers className="h-4 w-4" />}
           title="This and future visits"
-          description="Apply the change to this visit and every future occurrence in the series. Past completed visits are not affected."
+          description="Slides this visit and future ones on the calendar by the same reschedule delta; also applies partner/pricing/notes updates. Completed visits skip date moves only."
           busy={busyScope === "this_and_following"}
           disabled={busyScope !== null}
           onClick={() => handle("this_and_following")}
@@ -87,7 +87,7 @@ export function RecurringEditScopeDialog({
         <ScopeButton
           icon={<Repeat className="h-4 w-4" />}
           title="Entire series"
-          description="Apply to every active visit (past and future), and update the series template. Use carefully."
+          description="Apply partner/price/notes everywhere, and slide every visit’s calendar by the same amount as this one. Completed visits still get pricing updates but keep their historic dates unless detached."
           busy={busyScope === "entire_series"}
           disabled={busyScope !== null}
           onClick={() => handle("entire_series")}

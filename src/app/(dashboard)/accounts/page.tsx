@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -14,12 +14,12 @@ import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Building, DollarSign, Briefcase, TrendingUp, Mail, User, Calendar,
-  Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2, Archive,
-  Info,
+  Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar,
+  Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
+  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
@@ -44,6 +44,7 @@ import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/du
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { BusinessUnitSelect } from "@/components/ui/business-unit-select";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
 import { AccountServiceRatesTabSection } from "./service-rates-tab";
@@ -84,6 +85,12 @@ const ACCOUNT_STATUS_OPTIONS = [
   { value: "inactive", label: "Inactive" },
 ];
 
+const ACCOUNTS_VIEW_STORAGE_KEY = "master-os-accounts-view";
+
+const ACCOUNTS_LIST_PAGE_SIZE = 10;
+
+type AccountsDisplayMode = "list" | "grid";
+
 /** Display name for account owner: resolve `account_owner_id` → profiles list; optional legacy `owner_name` if present. */
 function accountOwnerLabel(
   accountOwnerId: string | null | undefined,
@@ -99,6 +106,19 @@ function accountOwnerLabel(
   const leg = legacyOwnerName?.trim();
   if (leg) return leg;
   return "—";
+}
+
+function renderAccountNextPayment(item: Account) {
+  if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
+  const iso = dueDateIsoFromPaymentTerms(new Date(), item.payment_terms);
+  const d = new Date(iso + "T12:00:00");
+  const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const isOverdue = d < new Date();
+  return (
+    <span className={cn("text-xs font-medium tabular-nums", isOverdue ? "text-red-500" : "text-text-primary")}>
+      {label}
+    </span>
+  );
 }
 
 function jobStatusBadge(status: string) {
@@ -161,6 +181,26 @@ export default function AccountsPage() {
   /** Resolve account_owner_id → name in the main table (same directory as job/account owner pickers). */
   const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [accountsDisplayMode, setAccountsDisplayMode] = useState<AccountsDisplayMode>("list");
+
+  /** Avoid SSR/localStorage mismatch — restore saved view after mount. */
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(ACCOUNTS_VIEW_STORAGE_KEY);
+      if (v === "grid" || v === "list") setAccountsDisplayMode(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACCOUNTS_VIEW_STORAGE_KEY, accountsDisplayMode);
+    } catch {
+      /* ignore */
+    }
+  }, [accountsDisplayMode]);
+
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
@@ -414,18 +454,7 @@ export default function AccountsPage() {
     {
       key: "next_payment",
       label: "Next payment",
-      render: (item) => {
-        if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
-        const iso = dueDateIsoFromPaymentTerms(new Date(), item.payment_terms);
-        const d = new Date(iso + "T12:00:00");
-        const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-        const isOverdue = d < new Date();
-        return (
-          <span className={cn("text-xs font-medium tabular-nums", isOverdue ? "text-red-500" : "text-text-primary")}>
-            {label}
-          </span>
-        );
-      },
+      render: (item) => renderAccountNextPayment(item),
     },
   ];
 
@@ -457,14 +486,51 @@ export default function AccountsPage() {
                 onChange={setStatus}
               />
             </div>
-            <SearchInput
-              placeholder="Search accounts..."
-              className="w-full min-w-[10rem] sm:w-56 shrink-0"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end shrink-0 w-full sm:w-auto min-w-0">
+              <div
+                className="inline-flex self-end sm:self-auto rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
+                role="group"
+                aria-label="Accounts view mode"
+              >
+                <button
+                  type="button"
+                  aria-pressed={accountsDisplayMode === "list"}
+                  onClick={() => setAccountsDisplayMode("list")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    accountsDisplayMode === "list"
+                      ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                  )}
+                  title="List view"
+                >
+                  <LayoutList className="h-4 w-4" aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={accountsDisplayMode === "grid"}
+                  onClick={() => setAccountsDisplayMode("grid")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    accountsDisplayMode === "grid"
+                      ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                  )}
+                  title="Grid view"
+                >
+                  <LayoutGrid className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
+              <SearchInput
+                placeholder="Search accounts..."
+                className="w-full min-w-0 sm:w-56 shrink-0"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
           </div>
 
+          {accountsDisplayMode === "list" ? (
           <DataTable
             columns={columns}
             data={data}
@@ -473,6 +539,7 @@ export default function AccountsPage() {
             page={page}
             totalPages={totalPages}
             totalItems={totalItems}
+            pageSize={ACCOUNTS_LIST_PAGE_SIZE}
             onPageChange={setPage}
             onRowClick={openAccountDetail}
             selectedId={selectedAccount?.id}
@@ -488,6 +555,28 @@ export default function AccountsPage() {
               </div>
             }
           />
+          ) : (
+            <AccountsGridView
+              data={data}
+              loading={loading}
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              onPageChange={setPage}
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              selectedDetailId={selectedAccount?.id}
+              onOpenAccount={openAccountDetail}
+              accountOwnerDirectory={accountOwnerDirectory}
+              bulkActionButtons={
+                <>
+                  <BulkBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
+                  <BulkBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                  <BulkBtn label="Onboarding" onClick={() => handleBulkStatusChange("onboarding")} variant="warning" />
+                </>
+              }
+            />
+          )}
         </motion.div>
       </div>
 
@@ -495,7 +584,6 @@ export default function AccountsPage() {
         account={selectedAccount}
         loading={detailLoading}
         onClose={() => setSelectedAccount(null)}
-        statusConfig={statusConfig}
         onAccountUpdated={(a) => {
           setSelectedAccount(a);
           refresh();
@@ -678,17 +766,292 @@ export default function AccountsPage() {
   );
 }
 
+function AccountsGridCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  className,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange();
+      }}
+      className={cn(
+        "h-[18px] w-[18px] rounded-md border-2 flex items-center justify-center transition-all shrink-0",
+        checked || indeterminate
+          ? "bg-primary border-primary text-white"
+          : "border-border hover:border-text-tertiary bg-card",
+        className,
+      )}
+    >
+      {checked && !indeterminate ? (
+        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" aria-hidden>
+          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+      {indeterminate && !checked ? <Minus className="h-3 w-3" aria-hidden /> : null}
+    </button>
+  );
+}
+
+function AccountsGridView({
+  data,
+  loading,
+  page,
+  totalPages,
+  totalItems,
+  onPageChange,
+  selectedIds,
+  onSelectionChange,
+  selectedDetailId,
+  onOpenAccount,
+  accountOwnerDirectory,
+  bulkActionButtons,
+}: {
+  data: Account[];
+  loading: boolean;
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (p: number) => void;
+  selectedIds: Set<string>;
+  onSelectionChange: (ids: Set<string>) => void;
+  selectedDetailId?: string | null;
+  onOpenAccount: (a: Account) => void;
+  accountOwnerDirectory: AssignableUser[];
+  bulkActionButtons: ReactNode;
+}) {
+  const allIds = data.map((a) => a.id);
+  const allSelected = data.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = allIds.some((id) => selectedIds.has(id));
+
+  const toggleAll = () => {
+    if (allSelected) {
+      const next = new Set(selectedIds);
+      for (const id of allIds) next.delete(id);
+      onSelectionChange(next);
+    } else {
+      const next = new Set(selectedIds);
+      for (const id of allIds) next.add(id);
+      onSelectionChange(next);
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onSelectionChange(next);
+  };
+
+  const selectionCount = selectedIds.size;
+
+  return (
+    <div className="bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative">
+      <AnimatePresence>
+        {selectionCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="sticky top-0 z-10 flex items-center gap-3 px-5 py-2.5 bg-primary/[0.04] border-b border-primary/10"
+          >
+            <div className="flex items-center gap-2">
+              <AccountsGridCheckbox
+                checked={allSelected}
+                indeterminate={someSelected && !allSelected}
+                onChange={toggleAll}
+              />
+              <span className="text-sm font-medium text-primary">{selectionCount} selected</span>
+            </div>
+            <div className="h-4 w-px bg-border" />
+            <div className="flex items-center gap-1.5 flex-wrap">{bulkActionButtons}</div>
+            <button
+              type="button"
+              onClick={() => onSelectionChange(new Set())}
+              className="ml-auto text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors"
+            >
+              Clear selection
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {loading ? (
+        <div className="p-5 grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[14.5rem] rounded-xl border border-border-light bg-surface-secondary animate-shimmer"
+            />
+          ))}
+        </div>
+      ) : data.length === 0 ? (
+        <div className="px-5 py-16 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <div className="h-12 w-12 rounded-xl bg-surface-tertiary flex items-center justify-center">
+              <Building className="h-6 w-6 text-text-tertiary" />
+            </div>
+            <p className="text-sm font-medium text-text-secondary">No accounts found</p>
+          </div>
+        </div>
+      ) : (
+        <div className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {data.map((item) => {
+            const id = item.id;
+            const isChecked = selectedIds.has(id);
+            const isOpen = selectedDetailId === id;
+            const cfg = statusConfig[item.status] ?? statusConfig.inactive;
+            const termsLabel = shortenPaymentTerms(item.payment_terms);
+            return (
+              <div
+                key={id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpenAccount(item)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenAccount(item);
+                  }
+                }}
+                className={cn(
+                  "relative rounded-xl border text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                  isChecked
+                    ? "border-primary bg-primary/[0.04]"
+                    : isOpen
+                      ? "border-primary/45 bg-primary/[0.02]"
+                      : "border-border-light hover:border-primary/30 hover:bg-surface-hover/70",
+                )}
+              >
+                <div
+                  className="absolute left-3 top-3 z-[1]"
+                  role="presentation"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <AccountsGridCheckbox checked={isChecked} onChange={() => toggleOne(id)} />
+                </div>
+
+                <div className="absolute right-3 top-3 flex items-center gap-2 max-w-[calc(100%-5.5rem)]">
+                  <Badge variant={cfg.variant} size="sm" dot className="shrink truncate max-w-full">
+                    {cfg.label}
+                  </Badge>
+                </div>
+
+                <div className="p-4 pt-11 sm:pr-4">
+                  <div className="flex gap-3 min-w-0">
+                    <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
+                    <div className="min-w-0 flex-1 pr-1">
+                      <p className="text-sm font-semibold text-text-primary leading-snug truncate">{item.company_name}</p>
+                      <p className="text-[11px] text-text-tertiary truncate mt-0.5">{item.contact_name}</p>
+                      <p className="text-[11px] text-text-secondary truncate mt-1">
+                        {accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory)} · {item.industry}
+                      </p>
+                    </div>
+                  </div>
+
+                  <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border-light/80 pt-4">
+                    <div>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Active jobs</dt>
+                      <dd className="text-lg font-semibold tabular-nums text-text-primary">{item.active_jobs}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total revenue</dt>
+                      <dd className="text-lg font-semibold tabular-nums text-text-primary">{formatCurrency(item.total_revenue)}</dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit limit</dt>
+                      <dd className="text-sm font-medium tabular-nums text-text-secondary">{formatCurrency(item.credit_limit)}</dd>
+                    </div>
+                  </dl>
+
+                  <div className="mt-4 pt-3 border-t border-border-light/80 flex flex-wrap items-start justify-between gap-2">
+                    <Badge variant="outline" size="sm" className="max-w-[65%] truncate">
+                      {termsLabel}
+                    </Badge>
+                    <div className="text-right min-w-0">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Next payment
+                      </span>
+                      <span className="inline-block mt-0.5">{renderAccountNextPayment(item)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {totalPages > 1 ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3 border-t border-border-light">
+          <p className="text-xs text-text-tertiary">
+            Showing {(page - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}-{Math.min(page * ACCOUNTS_LIST_PAGE_SIZE, totalItems)} of{" "}
+            {totalItems}
+          </p>
+          <div className="flex items-center gap-1 shrink-0 justify-end">
+            <button
+              type="button"
+              onClick={() => onPageChange(page - 1)}
+              disabled={page <= 1}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
+              const pageNum = i + 1;
+              return (
+                <button
+                  key={pageNum}
+                  type="button"
+                  onClick={() => onPageChange(pageNum)}
+                  className={cn(
+                    "h-8 w-8 rounded-lg text-xs font-medium transition-colors shrink-0",
+                    page === pageNum
+                      ? "bg-primary text-white"
+                      : "text-text-secondary hover:bg-surface-tertiary",
+                  )}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => onPageChange(page + 1)}
+              disabled={page >= totalPages}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AccountDetailDrawer({
   account,
   loading,
   onClose,
-  statusConfig: cfg,
   onAccountUpdated,
 }: {
   account: Account | null;
   loading: boolean;
   onClose: () => void;
-  statusConfig: typeof statusConfig;
   onAccountUpdated: (a: Account) => void;
 }) {
   const { profile } = useProfile();
@@ -861,7 +1224,6 @@ function AccountDetailDrawer({
     return null;
   }
 
-  const st = cfg[account.status] ?? cfg.onboarding;
   const outstandingInvoices = invoices
     .filter((i) => i.status !== "paid" && i.status !== "cancelled")
     .reduce((s, i) => s + Number(i.amount), 0);
@@ -993,7 +1355,7 @@ function AccountDetailDrawer({
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
       width="w-[min(580px,calc(100vw-1rem))]"
       footer={
-        isAdmin && tab === "overview" ? (
+        isAdmin && (tab === "overview" || tab === "finance") ? (
           <div className="flex items-center justify-between px-5 py-4">
             <button
               type="button"
@@ -1072,164 +1434,6 @@ function AccountDetailDrawer({
                   Total <strong className="text-text-primary">{formatCurrency(account.total_revenue)}</strong>
                 </span>
               </div>
-            </div>
-
-            {/* ── BILLING card ─────────────────────────────────────── */}
-            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Billing</p>
-                  <span title="Changes apply to new invoices only" className="text-text-tertiary cursor-help">
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-                <p className="text-[10px] text-text-tertiary">Changes apply to new invoices only</p>
-              </div>
-
-              {/* Bill invoices to */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
-                  Bill invoices to <span className="text-[#ED4B00]">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {(["end_client", "account"] as const).map((bt) => {
-                    const selected = billingType === bt;
-                    return (
-                      <button
-                        key={bt}
-                        type="button"
-                        onClick={() => setBillingType(bt)}
-                        className={cn(
-                          "rounded-xl border-2 p-3.5 text-left transition-all",
-                          selected ? "border-[#020040] bg-[#020040]/[0.04]" : "border-border-light bg-white hover:border-border",
-                        )}
-                      >
-                        <div className="flex items-start gap-2.5">
-                          <div className={cn(
-                            "mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0",
-                            selected ? "border-[#020040]" : "border-border",
-                          )}>
-                            {selected && <div className="h-2 w-2 rounded-full bg-[#020040]" />}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-text-primary leading-tight">
-                              {bt === "end_client" ? "End client" : "This account"}
-                            </p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary mt-0.5">
-                              {bt === "end_client" ? "B2C" : "B2B2C"}
-                            </p>
-                            <p className="text-[11px] text-text-secondary mt-1 leading-snug">
-                              {bt === "end_client"
-                                ? "Invoice goes to the final customer. Ex: Checkatrade"
-                                : "Invoice goes to this account. Ex: Housekeep"}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
-                  When a job is finalised (client email)
-                </label>
-                <p className="text-[11px] text-text-tertiary mb-2 leading-snug">
-                  Controls what the team can put in the completion email on the job. If you handle your own self-bill, you can turn off invoice lines but still receive final report PDFs.
-                </p>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeInvoiceOnFinal}
-                      onChange={(e) => setEmailIncludeInvoiceOnFinal(e.target.checked)}
-                    />
-                    <span>
-                      <span className="font-medium">Include invoice / payment in the email</span>
-                      <span className="block text-[11px] text-text-tertiary font-normal">Uncheck if you generate your own self-bill and do not want our invoice copy in the message.</span>
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeReportOnFinal}
-                      onChange={(e) => setEmailIncludeReportOnFinal(e.target.checked)}
-                    />
-                    <span>
-                      <span className="font-medium">Attach final report PDFs</span>
-                      <span className="block text-[11px] text-text-tertiary font-normal">Uncheck to send a notice without report attachments (rare).</span>
-                    </span>
-                  </label>
-                </div>
-                {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
-                  <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">
-                    With both off, final review can only move the job internally (no client email until you re-enable at least one).
-                  </p>
-                ) : null}
-              </div>
-
-              {/* Payment Terms + Billing Email */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
-                    Payment Terms <span className="text-[#ED4B00]">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setTermsModalOpen(true)}
-                    className="w-full flex items-center justify-between rounded-xl border border-border-light bg-surface-hover px-3 py-2.5 hover:bg-surface-tertiary transition-colors text-left"
-                  >
-                    <span className="text-sm font-medium text-text-primary">
-                      {edit.payment_terms ? shortenPaymentTerms(edit.payment_terms) : <span className="text-text-tertiary">Set payment terms…</span>}
-                    </span>
-                    <span className="text-[10px] font-semibold text-primary uppercase tracking-wide">Edit</span>
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
-                    Billing Email <span className="text-[#ED4B00]">*</span>
-                  </label>
-                  <Input
-                    type="email"
-                    value={edit.finance_email}
-                    onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))}
-                    placeholder="billing@company.com"
-                  />
-                  <p className="text-[10px] text-text-tertiary mt-1">
-                    {billingType === "account"
-                      ? 'Required for account-direct billing; also used for customer sends when "This account" is selected.'
-                      : 'Optional for some invoice outputs. With "End client", job completion emails go to each contact\'s email on the client record — not this field.'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Next payment cycle preview */}
-              {(() => {
-                const terms = edit.payment_terms;
-                if (!terms) return null;
-                const iso = dueDateIsoFromPaymentTerms(new Date(), terms);
-                const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
-                  weekday: "long", day: "numeric", month: "long", year: "numeric",
-                });
-                const isDor = /due\s+on\s+receipt/i.test(terms);
-                return (
-                  <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
-                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
-                        Next payment date
-                      </p>
-                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
-                      {isDor && (
-                        <p className="text-[10px] text-text-tertiary mt-0.5">Due on receipt — same day as job completion</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
 
             {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
@@ -1571,6 +1775,183 @@ function AccountDetailDrawer({
         {/* ── Finance tab ──────────────────────────────────────────── */}
         {tab === "finance" && (
           <div className="space-y-4">
+            <div className="rounded-2xl border border-border-light bg-card p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-text-primary">Billing</p>
+                <FixfyHintIcon text="Changes apply to new invoices only." placement="bottom-end" />
+              </div>
+
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                    Bill invoices to
+                  </span>
+                  <span className="text-[#ED4B00]" aria-hidden>*</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {(["end_client", "account"] as const).map((bt) => {
+                    const selected = billingType === bt;
+                    return (
+                      <button
+                        key={bt}
+                        type="button"
+                        onClick={() => setBillingType(bt)}
+                        className={cn(
+                          "rounded-xl border-2 p-3.5 text-left transition-all bg-card",
+                          selected ? "border-[#020040] bg-[#020040]/[0.04]" : "border-border-light hover:border-border",
+                        )}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div
+                            className={cn(
+                              "mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0",
+                              selected ? "border-[#020040]" : "border-border",
+                            )}
+                          >
+                            {selected ? <div className="h-2 w-2 rounded-full bg-[#020040]" /> : null}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm font-semibold text-text-primary leading-tight">
+                                {bt === "end_client" ? "End client" : "This account"}
+                              </p>
+                              <FixfyHintIcon
+                                placement="bottom-end"
+                                label={bt === "end_client" ? "B2C" : "B2B2C"}
+                                text={
+                                  bt === "end_client"
+                                    ? "Invoice goes to the final customer. Example: Checkatrade."
+                                    : "Invoice goes to this account. Example: Housekeep."
+                                }
+                              />
+                            </div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary mt-1">
+                              {bt === "end_client" ? "B2C" : "B2B2C"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                    When a job is finalised (client email)
+                  </span>
+                  <FixfyHintIcon
+                    text="Controls what the team can put in the completion email on the job. If you handle your own self-bill, you can turn off invoice lines but still receive final report PDFs."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded border-border"
+                      checked={emailIncludeInvoiceOnFinal}
+                      onChange={(e) => setEmailIncludeInvoiceOnFinal(e.target.checked)}
+                    />
+                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
+                      Include invoice / payment in the email
+                      <FixfyHintIcon text="Uncheck if you generate your own self-bill and do not want our invoice copy in the message." />
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded border-border"
+                      checked={emailIncludeReportOnFinal}
+                      onChange={(e) => setEmailIncludeReportOnFinal(e.target.checked)}
+                    />
+                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
+                      Attach final report PDFs
+                      <FixfyHintIcon text="Uncheck to send a notice without report attachments (rare)." />
+                    </span>
+                  </label>
+                </div>
+                {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
+                  <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">
+                    With both off, final review can only move the job internally (no client email until you re-enable at least one).
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
+                    Payment Terms
+                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setTermsModalOpen(true)}
+                    className="w-full flex items-center justify-between rounded-xl border border-border-light bg-surface-hover px-3 py-2.5 hover:bg-surface-tertiary transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium text-text-primary">
+                      {edit.payment_terms ? (
+                        shortenPaymentTerms(edit.payment_terms)
+                      ) : (
+                        <span className="text-text-tertiary">Set payment terms…</span>
+                      )}
+                    </span>
+                    <span className="text-[10px] font-semibold text-primary uppercase tracking-wide">Edit</span>
+                  </button>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                      Billing Email
+                    </span>
+                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                    <FixfyHintIcon
+                      text={
+                        billingType === "account"
+                          ? "Required for account-direct billing; also used for customer sends when \"This account\" is selected."
+                          : "Optional for some invoice outputs. With \"End client\", job completion emails go to each contact's email on the client record — not this field."
+                      }
+                    />
+                  </div>
+                  <Input
+                    type="email"
+                    value={edit.finance_email}
+                    onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))}
+                    placeholder="billing@company.com"
+                  />
+                </div>
+              </div>
+
+              {(() => {
+                const terms = edit.payment_terms;
+                if (!terms) return null;
+                const iso = dueDateIsoFromPaymentTerms(new Date(), terms);
+                const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                });
+                const isDor = /due\s+on\s+receipt/i.test(terms);
+                return (
+                  <div className="flex items-start gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
+                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
+                          Next payment date
+                        </p>
+                        {isDor ? (
+                          <FixfyHintIcon text="Due on receipt — same day as job completion." placement="bottom-start" />
+                        ) : null}
+                      </div>
+                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase">Credit limit</p>
@@ -1608,7 +1989,7 @@ function AccountDetailDrawer({
                     {syncingAccount ? "Syncing…" : "Sync due dates"}
                   </button>
                 )}
-                <Link href="/finance/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                <Link href="/finance/billing/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
                   All invoices <ExternalLink className="h-3 w-3" />
                 </Link>
               </div>

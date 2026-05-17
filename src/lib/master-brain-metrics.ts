@@ -105,7 +105,7 @@ export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<s
   const { data: biddingSlaRows } = await admin
     .from("quotes")
     .select("bidding_started_at, updated_at, created_at, status")
-    .eq("status", "bidding")
+    .in("status", ["bidding", "in_survey"])
     .is("deleted_at", null)
     .limit(5000);
   const biddingSla = computeBiddingSlaRollup(

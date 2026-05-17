@@ -1,7 +1,7 @@
 "use client";
 
 import type { ListResult } from "@/services/base";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -13,9 +13,10 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Tabs } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   UserPlus, Filter, Users, Star, Briefcase, ShieldCheck, MapPin,
@@ -23,7 +24,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Sparkles, Link2, Info,
+  Home, Link2, Info, LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -107,6 +108,326 @@ import {
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { PartnerServiceRatesTabSection } from "./service-rates-tab";
+import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
+
+const PARTNERS_PAGE_SIZE = 10;
+const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
+
+/** Directory stage filters — same pill pattern as People → Workforce sub-filters */
+const PARTNER_DIRECTORY_STAGE_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "onboarding", label: "Onboarding" },
+  { id: "active", label: "Active" },
+  { id: "needs_attention", label: "Needs attention" },
+  { id: "inactive", label: "Inactive" },
+] as const;
+
+type PartnersDirectoryDisplayMode = "list" | "grid";
+
+function PartnersDirectoryGridCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  className,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange();
+      }}
+      className={cn(
+        "h-[18px] w-[18px] rounded-md border-2 flex items-center justify-center transition-all shrink-0",
+        checked || indeterminate
+          ? "bg-primary border-primary text-white"
+          : "border-border hover:border-text-tertiary bg-card",
+        className,
+      )}
+    >
+      {checked && !indeterminate ? (
+        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" aria-hidden>
+          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : null}
+      {indeterminate && !checked ? <Minus className="h-3 w-3" aria-hidden /> : null}
+    </button>
+  );
+}
+
+function PartnersDirectoryGridView({
+  data,
+  loading,
+  page,
+  totalPages,
+  totalItems,
+  onPageChange,
+  selectedIds,
+  onSelectionChange,
+  selectedPartnerId,
+  onOpenPartner,
+  isAdmin,
+  bulkActionsSlot,
+  catalogServices,
+}: {
+  data: Partner[];
+  loading: boolean;
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (p: number) => void;
+  selectedIds: Set<string>;
+  onSelectionChange: (ids: Set<string>) => void;
+  selectedPartnerId?: string | null;
+  onOpenPartner: (p: Partner) => void;
+  isAdmin: boolean;
+  bulkActionsSlot: ReactNode;
+  catalogServices: readonly CatalogService[];
+}) {
+  const allIds = data.map((p) => p.id);
+  const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = isAdmin && allIds.some((id) => selectedIds.has(id));
+  const selectionCount = selectedIds.size;
+
+  const toggleAll = () => {
+    if (!isAdmin || !onSelectionChange) return;
+    if (allSelected) {
+      const next = new Set(selectedIds);
+      for (const id of allIds) next.delete(id);
+      onSelectionChange(next);
+    } else {
+      const next = new Set(selectedIds);
+      for (const id of allIds) next.add(id);
+      onSelectionChange(next);
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    if (!isAdmin || !onSelectionChange) return;
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onSelectionChange(next);
+  };
+
+  return (
+    <div className="relative overflow-hidden">
+      {isAdmin ? (
+        <AnimatePresence>
+          {selectionCount > 0 ? (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.15 }}
+              className="sticky top-0 z-10 flex flex-wrap items-center gap-3 px-4 sm:px-6 py-2.5 bg-primary/[0.04] border-b border-border-light"
+            >
+              <div className="flex items-center gap-2">
+                <PartnersDirectoryGridCheckbox
+                  checked={!!allSelected}
+                  indeterminate={someSelected && !allSelected}
+                  onChange={toggleAll}
+                />
+                <span className="text-sm font-medium text-primary">{selectionCount} selected</span>
+              </div>
+              <div className="h-4 w-px bg-border shrink-0" />
+              <div className="flex items-center gap-1.5 flex-wrap">{bulkActionsSlot}</div>
+              <button
+                type="button"
+                onClick={() => onSelectionChange(new Set())}
+                className="ml-auto text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors"
+              >
+                Clear selection
+              </button>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      ) : null}
+
+      {loading ? (
+        <div className="p-4 sm:p-6 grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[12.5rem] rounded-2xl border border-border-light bg-surface-secondary animate-shimmer"
+            />
+          ))}
+        </div>
+      ) : data.length === 0 ? (
+        <motion.div
+          variants={fadeInUp}
+          initial="hidden"
+          animate="visible"
+          className="text-center px-6 py-16 space-y-2"
+        >
+          <div className="inline-flex items-center justify-center rounded-full bg-surface-hover p-3 mb-2">
+            <Users className="h-8 w-8 text-text-tertiary" aria-hidden />
+          </div>
+          <p className="text-sm font-medium text-text-secondary">No partners found.</p>
+          <p className="text-xs text-text-tertiary max-w-xs mx-auto">Try another stage filter or clear search.</p>
+        </motion.div>
+      ) : (
+        <StaggerContainer className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {data.map((item) => {
+            const id = item.id;
+            const isChecked = selectedIds.has(id);
+            const isOpen = selectedPartnerId === id;
+            const cfg = statusConfig[item.status] ?? statusConfig.active;
+            const raw = item.compliance_score;
+            const comp =
+              typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
+            const compClass =
+              comp >= 97 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+            const tradesShown = partnerTradesForDisplay(item);
+            return (
+              <motion.div
+                key={id}
+                role="button"
+                tabIndex={0}
+                variants={staggerItem}
+                onClick={() => onOpenPartner(item)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenPartner(item);
+                  }
+                }}
+                className={cn(
+                  "relative cursor-pointer text-left rounded-2xl border border-border-light bg-surface-hover/20 shadow-sm outline-none transition-all",
+                  "hover:bg-surface-hover/50 hover:border-primary/20 focus-visible:ring-2 focus-visible:ring-primary/35 flex flex-col gap-3",
+                  isChecked ? "border-primary bg-primary/[0.06]" : "",
+                  isOpen ? "border-primary/40 bg-primary/[0.04]" : "",
+                )}
+              >
+                {isAdmin ? (
+                  <div
+                    className="absolute left-3 top-3 z-[1]"
+                    role="presentation"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <PartnersDirectoryGridCheckbox checked={isChecked} onChange={() => toggleOne(id)} />
+                  </div>
+                ) : null}
+
+                <div className={cn("p-4 flex flex-col gap-3", isAdmin && "pt-11")}>
+                  <div className="flex gap-3 min-w-0">
+                    <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-sm font-semibold text-text-primary truncate">{item.company_name}</p>
+                        {item.verified ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> : null}
+                      </div>
+                      <p className="text-[11px] text-text-tertiary truncate">{item.contact_name}</p>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <Badge variant={cfg.variant} size="sm" dot>
+                          {item.status === "on_break" ? "Inactive" : cfg.label}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Trades</p>
+                    <PartnerTradesIconStrip trades={tradesShown} catalogServices={catalogServices} />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-xs text-text-secondary min-w-0">
+                    <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                    <span className="truncate" title={formatUkCoverageLabel(item.uk_coverage_regions, item.location)}>
+                      {formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}
+                    </span>
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-3 text-xs border-t border-border-light pt-3">
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Compliance</dt>
+                      <dd className={cn("font-semibold tabular-nums text-sm", compClass)}>
+                        {Math.round(comp)}
+                        <span className="text-[10px] ml-px">%</span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Rating</dt>
+                      <dd className="flex items-center gap-1 font-semibold text-sm text-text-primary">
+                        <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" aria-hidden />
+                        {item.rating}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Jobs</dt>
+                      <dd className="font-semibold text-sm text-text-primary tabular-nums">{item.jobs_completed}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Earnings</dt>
+                      <dd className="font-semibold text-sm text-text-primary tabular-nums truncate">{formatCurrency(item.total_earnings)}</dd>
+                    </div>
+                  </dl>
+
+                  <div className="flex items-center justify-end text-sm text-text-tertiary pt-1">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-text-secondary">
+                      Open partner
+                      <ArrowRight className="h-4 w-4" aria-hidden />
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </StaggerContainer>
+      )}
+
+      {totalPages > 1 ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-6 py-3 border-t border-border-light">
+          <p className="text-xs text-text-tertiary">
+            Showing {(page - 1) * PARTNERS_PAGE_SIZE + 1}-{Math.min(page * PARTNERS_PAGE_SIZE, totalItems)} of {totalItems}
+          </p>
+          <div className="flex items-center gap-1 shrink-0 justify-end">
+            <button
+              type="button"
+              onClick={() => onPageChange(page - 1)}
+              disabled={page <= 1}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
+              const pageNum = i + 1;
+              return (
+                <button
+                  key={pageNum}
+                  type="button"
+                  onClick={() => onPageChange(pageNum)}
+                  className={cn(
+                    "h-8 w-8 rounded-lg text-xs font-medium transition-colors shrink-0",
+                    page === pageNum ? "bg-primary text-white" : "text-text-secondary hover:bg-surface-tertiary",
+                  )}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => onPageChange(page + 1)}
+              disabled={page >= totalPages}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -116,13 +437,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   /** @deprecated DB value — shown as Inactive + “On break” badge */
   on_break: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
 };
-
-const PARTNER_STAGE_PILLS: { id: string; label: string; icon: typeof Clock }[] = [
-  { id: "onboarding", label: "Onboarding", icon: Clock },
-  { id: "active", label: "Active", icon: CheckCircle2 },
-  { id: "needs_attention", label: "Needs Attention", icon: AlertTriangle },
-  { id: "inactive", label: "Inactive", icon: XCircle },
-];
 
 const tradeColors: Record<string, string> = {
   HVAC: "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
@@ -335,6 +649,25 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(PARTNERS_DIR_VIEW_STORAGE_KEY);
+      if (v === "grid" || v === "list") setDirectoryDisplayMode(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PARTNERS_DIR_VIEW_STORAGE_KEY, directoryDisplayMode);
+    } catch {
+      /* ignore */
+    }
+  }, [directoryDisplayMode]);
+
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const { profile } = useProfile();
@@ -381,7 +714,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   );
 
   const { data: partners, loading, page, totalPages, totalItems, setPage, search, setSearch, status: statusFilter, setStatus: setStatusFilter, refresh } =
-    useSupabaseList<Partner>({ fetcher, realtimeTable: "partners", initialData });
+    useSupabaseList<Partner>({
+      fetcher,
+      pageSize: PARTNERS_PAGE_SIZE,
+      realtimeTable: "partners",
+      initialStatus: "active",
+      initialData,
+    });
 
   const loadCounts = useCallback(async () => {
     try {
@@ -466,8 +805,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
-  const onboardingCount = statusCounts["onboarding"] ?? 0;
-  const needsAttentionCount = statusCounts["needs_attention"] ?? 0;
   const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
 
   async function handleCreate() {
@@ -486,7 +823,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       }
     }
     if (!form.trades?.length) {
-      toast.error("Select at least one trade (services are managed under Admin → Services).");
+      toast.error("Select at least one trade (catalog is in Settings → Service catalog tab).");
       return;
     }
     const dupP = await findDuplicatePartners({
@@ -689,13 +1026,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "trade", label: "Trade",
       render: (item) => (
-        <div className="flex flex-wrap gap-1">
-          {partnerTradesForDisplay(item).map((t) => (
-            <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
-              {t}
-            </span>
-          ))}
-        </div>
+        <PartnerTradesIconStrip trades={partnerTradesForDisplay(item)} catalogServices={partnerCatalogServices} />
       ),
     },
     {
@@ -787,17 +1118,22 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     },
   ];
 
-  const selectClasses = "h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15";
+  const tradeCatalogSelectOptions = useMemo(
+    () => [{ value: "all", label: "All trades" }, ...tradePickOptions.map((t) => ({ value: t, label: t }))],
+    [tradePickOptions],
+  );
 
   return (
     <PageTransition>
-      <div className="space-y-5">
+      <div className="space-y-6">
         <PageHeader title="Partners" subtitle="Manage your partner network and performance.">
-          <div className="flex min-w-0 flex-nowrap items-center gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <Tabs
+              variant="pills"
+              className="max-w-full"
               tabs={[
-                { id: "directory", label: "Directory" },
-                { id: "team", label: "Team (App)" },
+                { id: "directory", label: "Directory", count: totalPartners },
+                { id: "team", label: "Team (App)", count: teamMembers.length },
               ]}
               activeTab={viewMode}
               onChange={(id) => {
@@ -809,7 +1145,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             />
             <Button
               size="sm"
-              className="shrink-0 whitespace-nowrap"
+              className="shrink-0 whitespace-nowrap w-full sm:w-auto"
               icon={<UserPlus className="h-3.5 w-3.5 shrink-0" />}
               onClick={() => setCreateOpen(true)}
             >
@@ -845,153 +1181,179 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </div>
             )}
             {!teamLoading && teamMembers.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {teamMembers.map((member) => (
-                  <button
+                  <motion.button
                     key={member.id}
                     type="button"
+                    variants={staggerItem}
                     onClick={() => setSelectedTeamMember(member)}
-                    className="flex items-center gap-4 p-4 rounded-xl border border-border-light hover:border-primary/30 hover:bg-surface-hover text-left transition-all"
+                    className="text-left rounded-2xl border border-border-light bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-primary/20 transition-all p-4 flex flex-col gap-3 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                   >
-                    <Avatar name={member.full_name} size="lg" src={member.avatar_url} />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-text-primary truncate">{member.full_name}</p>
-                      <p className="text-xs text-text-tertiary truncate">{member.email}</p>
-                      <div className="flex items-center gap-3 mt-1.5 text-xs">
-                        <span className="text-text-secondary">{member.jobs_count} jobs</span>
-                        <span className="font-medium text-emerald-600">{formatCurrency(member.total_earnings)}</span>
+                    <div className="flex items-start gap-3">
+                      <Avatar name={member.full_name} size="lg" src={member.avatar_url} />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-text-primary truncate">{member.full_name}</p>
+                        <p className="text-xs text-text-tertiary truncate">{member.email}</p>
+                        <div className="flex items-center gap-3 mt-2 text-xs text-text-secondary">
+                          <span>{member.jobs_count} jobs</span>
+                          <span className="font-medium text-emerald-600">{formatCurrency(member.total_earnings)}</span>
+                        </div>
                       </div>
+                      <ArrowRight className="h-4 w-4 text-text-tertiary shrink-0 mt-1" aria-hidden />
                     </div>
-                    <ArrowRight className="h-4 w-4 text-text-tertiary shrink-0" />
-                  </button>
+                  </motion.button>
                 ))}
-              </div>
+              </StaggerContainer>
             )}
           </motion.div>
         )}
 
         {viewMode === "directory" && (
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="rounded-2xl border border-border-light bg-card/70 p-4 mb-4 space-y-3">
-            <div className="flex items-start gap-2">
-              <Sparkles className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-text-primary">Pick a stage to focus the list</p>
-                <p className="text-[11px] text-text-tertiary mt-0.5">
-                  Only <strong className="text-text-secondary">Active</strong> partners can be invited or assigned on jobs and quotes.
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {PARTNER_STAGE_PILLS.map((s) => {
-                const c =
-                  s.id === "onboarding"
-                    ? onboardingCount
-                    : s.id === "needs_attention"
-                      ? needsAttentionCount
-                      : s.id === "active"
-                        ? activeCount
-                        : inactiveStageCount;
-                const active = statusFilter === s.id;
-                const Icon = s.icon;
-                const selectedRing =
-                  s.id === "onboarding"
-                    ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-200"
-                    : s.id === "needs_attention"
-                      ? "border-red-500 bg-red-500/10 text-red-800 dark:text-red-200"
-                      : s.id === "active"
-                        ? "border-emerald-500 bg-emerald-500/12 text-emerald-800 dark:text-emerald-200"
-                        : "border-stone-700 bg-stone-800/20 text-stone-900 dark:text-stone-100";
-                return (
+          <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
+            <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end w-full lg:max-w-3xl lg:ml-auto">
+                <div
+                  className={cn(
+                    "inline-flex self-end sm:self-auto rounded-xl border border-primary/25 bg-gradient-to-b from-card to-primary/[0.06]",
+                    "p-[3px] gap-0.5 shadow-inner dark:border-primary/35 dark:to-primary/[0.08] shrink-0",
+                  )}
+                  role="group"
+                  aria-label="Partners directory layout"
+                >
                   <button
-                    key={s.id}
                     type="button"
-                    onClick={() => {
-                      setStatusFilter(s.id);
-                      setPage(1);
-                    }}
+                    aria-pressed={directoryDisplayMode === "list"}
+                    onClick={() => setDirectoryDisplayMode("list")}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
-                      active
-                        ? selectedRing
-                        : "border-border-light bg-card hover:border-primary/30 text-text-secondary",
+                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+                      directoryDisplayMode === "list"
+                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
+                        : "font-medium text-text-primary/72 hover:text-text-primary",
                     )}
+                    title="List view"
                   >
-                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                    <span className="text-xs font-semibold truncate">{s.label}</span>
-                    <span
-                      className={cn(
-                        "ml-auto text-[11px] font-bold tabular-nums",
-                        active ? "opacity-90" : "text-text-tertiary",
-                      )}
-                    >
-                      {c}
-                    </span>
+                    <LayoutList className="h-4 w-4" aria-hidden />
                   </button>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1 border-t border-border-light/80">
-              <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setStatusFilter("all");
-                  setPage(1);
-                }}
-                className={cn(
-                  "text-xs font-medium rounded-lg px-2 py-1 transition-colors",
-                  statusFilter === "all" ? "bg-surface-tertiary text-text-primary" : "text-text-tertiary hover:text-primary",
-                )}
-              >
-                All partners
-                <span className="text-[10px] text-text-tertiary ml-1 tabular-nums">({totalPartners})</span>
-              </button>
-              <div className="ml-auto flex items-center gap-2">
-                <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
-                  <option value="all">All Trades</option>
-                  {tradePickOptions.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-                <SearchInput placeholder="Search partners..." className="w-48" value={search} onChange={(e) => setSearch(e.target.value)} />
-                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>
+                  <button
+                    type="button"
+                    aria-pressed={directoryDisplayMode === "grid"}
+                    onClick={() => setDirectoryDisplayMode("grid")}
+                    className={cn(
+                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+                      directoryDisplayMode === "grid"
+                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
+                        : "font-medium text-text-primary/72 hover:text-text-primary",
+                    )}
+                    title="Grid view"
+                  >
+                    <LayoutGrid className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+                <Select
+                  value={tradeFilter}
+                  onChange={(e) => {
+                    setTradeFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  options={tradeCatalogSelectOptions}
+                  className="min-w-[160px] shrink-0 w-full sm:w-auto"
+                />
+                <SearchInput
+                  placeholder="Search partners…"
+                  className="flex-1 w-full min-w-0 sm:min-w-[200px]"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} className="shrink-0 w-full sm:w-auto">
                   Filter
                 </Button>
               </div>
+              <div className="flex flex-wrap gap-1.5">
+                {PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setStatusFilter(s.id)}
+                    className={cn(
+                      "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                      statusFilter === s.id
+                        ? "bg-primary text-white"
+                        : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
+                    )}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <DataTable
-            columns={columns}
-            data={partners}
-            getRowId={(item) => item.id}
-            selectedId={selectedPartner?.id}
-            onRowClick={(p) => {
-              setPartnerDrawerInitialTab(undefined);
-              setSelectedPartner(p);
-            }}
-            page={page}
-            totalPages={totalPages}
-            totalItems={totalItems}
-            onPageChange={setPage}
-            loading={loading}
-            selectable={isAdmin}
-            selectedIds={selectedIds}
-            onSelectionChange={setSelectedIds}
-            bulkActions={
-              <>
-                <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
-                <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
-                <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
-                <div className="h-4 w-px bg-border" />
-                <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
-                <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
-                <div className="h-4 w-px bg-border" />
-                <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
-              </>
-            }
-          />
+            {directoryDisplayMode === "list" ? (
+              <DataTable
+                columns={columns}
+                data={partners}
+                getRowId={(item) => item.id}
+                selectedId={selectedPartner?.id}
+                onRowClick={(p) => {
+                  setPartnerDrawerInitialTab(undefined);
+                  setSelectedPartner(p);
+                }}
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={PARTNERS_PAGE_SIZE}
+                onPageChange={setPage}
+                loading={loading}
+                selectable={isAdmin}
+                selectedIds={selectedIds}
+                onSelectionChange={setSelectedIds}
+                className="rounded-none rounded-b-2xl border-0 border-t border-border-light shadow-none bg-transparent"
+                bulkActions={
+                  <>
+                    <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
+                    <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
+                    <div className="h-4 w-px bg-border" />
+                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
+                    <div className="h-4 w-px bg-border" />
+                    <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
+                  </>
+                }
+              />
+            ) : (
+              <PartnersDirectoryGridView
+                data={partners}
+                loading={loading}
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                onPageChange={setPage}
+                selectedIds={selectedIds}
+                onSelectionChange={setSelectedIds}
+                selectedPartnerId={selectedPartner?.id}
+                onOpenPartner={(p) => {
+                  setPartnerDrawerInitialTab(undefined);
+                  setSelectedPartner(p);
+                }}
+                isAdmin={isAdmin}
+                bulkActionsSlot={
+                  <>
+                    <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
+                    <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
+                    <div className="h-4 w-px bg-border" />
+                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
+                    <div className="h-4 w-px bg-border" />
+                    <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
+                  </>
+                }
+                catalogServices={partnerCatalogServices}
+              />
+            )}
+          </div>
         </motion.div>
         )}
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import type { JobDetailBundle } from "@/services/jobs";
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
@@ -33,12 +33,12 @@ import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
 import {
-  ArrowLeft,
   Building2,
   Calendar,
   Check,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   ChevronDown,
   ClipboardCheck,
   Search,
@@ -75,6 +75,7 @@ import {
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
+import { getAdjacentJobId } from "@/lib/jobs-nav-queue";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { toast } from "sonner";
 import { getJob, getJobDetailBundle, updateJob } from "@/services/jobs";
@@ -212,8 +213,8 @@ import {
   partnerDiscountAllocationFromExtraType,
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
-import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry } from "@/services/job-extra-entries";
-import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
+import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
+import { JOB_STATUS_BADGE_VARIANT, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
@@ -243,6 +244,18 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
 /** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
 const JOB_DETAIL_MULTILINE_FIELD_CLASS =
   "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
+
+/** Details tab — collapsed scope read view (~7 lines). */
+const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "10rem";
+const JOB_SCOPE_EXPAND_MS = 420;
+const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
+const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
+
+function scopeTextNeedsCollapse(text: string): boolean {
+  if (!text) return false;
+  if (text.length >= JOB_SCOPE_COLLAPSE_MIN_CHARS) return true;
+  return text.split(/\n/).length >= JOB_SCOPE_COLLAPSE_MIN_LINES;
+}
 
 const JOB_DETAIL_INLINE_INPUT_FIELD_CLASS =
   "rounded-lg border border-border bg-card py-2 text-sm text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:ring-primary/35";
@@ -320,6 +333,126 @@ function getStatusColors(status: string): {
     topBadgeClass: "",
     completedAllSteps: false,
   };
+}
+
+type JobDetailStatusContext = {
+  chipClass: string;
+  primary: string;
+  secondary?: string;
+  title: string;
+};
+
+function formatJobStatusContextTimestamp(iso: string | null | undefined): string | null {
+  if (!iso?.trim()) return null;
+  try {
+    const t = parseISO(iso);
+    if (Number.isNaN(t.getTime())) return null;
+    return t.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return null;
+  }
+}
+
+function buildJobDetailStatusContext(
+  job: Job,
+  opts?: { forcedPaidBySystemOwner?: boolean },
+): JobDetailStatusContext | null {
+  if (job.status === "on_hold") {
+    const reason = job.on_hold_reason?.trim() || "No reason recorded";
+    const since = formatJobStatusContextTimestamp(job.on_hold_at);
+    const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
+    const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
+    return {
+      chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
+      primary: reason,
+      secondary: since ?? undefined,
+      title,
+    };
+  }
+
+  if (job.status === "cancelled") {
+    if (job.partner_cancelled_at) {
+      const reason = job.partner_cancellation_reason?.trim() || "Partner cancelled";
+      const fee = Number(job.partner_cancellation_fee ?? 0).toFixed(2);
+      return {
+        chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
+        primary: reason,
+        secondary: `Fee £${fee}`,
+        title: `${reason} · Fee £${fee}`,
+      };
+    }
+    const reason = job.cancellation_reason?.trim();
+    const when = formatJobStatusContextTimestamp(job.cancelled_at);
+    if (reason) {
+      return {
+        chipClass: "border-red-500/35 bg-red-500/10 text-red-900 dark:text-red-100",
+        primary: reason,
+        secondary: when ?? undefined,
+        title: [reason, when ? `Recorded ${when}` : null].filter(Boolean).join(" · "),
+      };
+    }
+    return {
+      chipClass: "border-red-500/35 bg-red-500/10 text-red-900 dark:text-red-100",
+      primary: "Lost",
+      title: when ? `Lost · ${when}` : "Lost — no reason recorded",
+    };
+  }
+
+  if (job.status === "completed") {
+    if (opts?.forcedPaidBySystemOwner) {
+      return {
+        chipClass: "border-red-500/35 bg-red-500/10 text-red-800 dark:text-red-200",
+        primary: "Force paid",
+        title: "Forced and guaranteed by system owner",
+      };
+    }
+    if (job.finance_status === "paid") {
+      const approved = job.owner_name?.trim();
+      return {
+        chipClass: "border-emerald-500/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100",
+        primary: "Paid",
+        secondary: approved ? approved : undefined,
+        title: approved ? `Paid · Approved by ${approved}` : "Customer paid in full",
+      };
+    }
+    if (job.finance_status === "partial") {
+      return {
+        chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
+        primary: "Partially paid",
+        title: "Partial customer payment recorded",
+      };
+    }
+    return null;
+  }
+
+  if (job.status === "deleted") {
+    return {
+      chipClass: "border-border bg-muted/50 text-text-secondary",
+      primary: "Deleted",
+      title: "Job archived",
+    };
+  }
+
+  return null;
+}
+
+function JobDetailStatusContextChip({ ctx }: { ctx: JobDetailStatusContext }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex min-w-0 max-w-[10rem] items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-snug sm:max-w-[13rem] md:max-w-[16rem]",
+        ctx.chipClass,
+      )}
+      title={ctx.title}
+    >
+      <span className="truncate">{ctx.primary}</span>
+      {ctx.secondary ? (
+        <span className="hidden shrink-0 truncate text-[9px] font-normal opacity-75 sm:inline max-w-[5.5rem] md:max-w-[8rem]">
+          · {ctx.secondary}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function getJobTypeIcon(jobType: string): LucideIcon {
@@ -635,6 +768,129 @@ function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string
     .join("\n\n");
 }
 
+const JOB_CARD_HINT_BTN_CLASS =
+  "inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-border-light text-[9px] font-bold text-text-tertiary transition-colors hover:border-text-primary hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/30";
+
+function JobCardHint({
+  title,
+  ariaLabel,
+  onClick,
+  className,
+}: {
+  title: string;
+  ariaLabel?: string;
+  onClick?: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={ariaLabel ?? title}
+      onClick={onClick}
+      className={cn(JOB_CARD_HINT_BTN_CLASS, className)}
+    >
+      !
+    </button>
+  );
+}
+
+/** Hint icon immediately before the section/field title (same row). */
+function JobCardTitleWithHint({
+  title,
+  hint,
+  titleClassName = "text-[11px] font-semibold uppercase tracking-wide text-text-secondary",
+  className,
+  hintAriaLabel,
+  onHintClick,
+  hintClassName,
+}: {
+  title: React.ReactNode;
+  hint?: string;
+  titleClassName?: string;
+  className?: string;
+  hintAriaLabel?: string;
+  onHintClick?: () => void;
+  hintClassName?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      {hint ? (
+        <JobCardHint
+          title={hint}
+          ariaLabel={hintAriaLabel ?? (typeof title === "string" ? `${title}: ${hint}` : hint)}
+          onClick={onHintClick}
+          className={hintClassName}
+        />
+      ) : null}
+      <span className={titleClassName}>{title}</span>
+    </div>
+  );
+}
+
+function FinSetupSectionTitle({ children, hint }: { children: React.ReactNode; hint: string }) {
+  return <JobCardTitleWithHint title={children} hint={hint} />;
+}
+
+function FinSetupFieldLabel({
+  label,
+  hint,
+  htmlFor,
+}: {
+  label: string;
+  hint?: string;
+  htmlFor?: string;
+}) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5">
+      {hint ? <JobCardHint title={hint} ariaLabel={`${label}: ${hint}`} /> : null}
+      <label htmlFor={htmlFor} className="text-xs font-medium text-text-secondary">
+        {label}
+      </label>
+    </div>
+  );
+}
+
+/** Schedule tab — CCZ / Parking toggles share the same off-state (light gray container + track). */
+function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
+  return cn(
+    "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
+    active
+      ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
+      : "border-[#E4E4E8] bg-[#F5F5F7] hover:border-[#D4D4DA] dark:border-[#2f3440] dark:bg-[#1e2430] dark:hover:border-[#3a4252]",
+    disabled && "cursor-not-allowed opacity-50",
+  );
+}
+
+function accessFeeToggleTrackClass(active: boolean) {
+  return cn(
+    "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
+    active ? "bg-emerald-600" : "bg-[#D4D4DA] dark:bg-stone-600",
+  );
+}
+
+function accessFeeToggleThumbClass(active: boolean) {
+  return cn(
+    "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
+    active ? "translate-x-[14px]" : "translate-x-[2px]",
+  );
+}
+
+function accessFeeToggleLabelClass(active: boolean) {
+  return cn("text-[10px] font-medium", active ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary");
+}
+
+function accessFeeCardClass(active: boolean) {
+  return cn(
+    "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
+    active ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-white",
+  );
+}
+
+function accessFeeCardBorderStyle(active: boolean): React.CSSProperties {
+  return { border: active ? "0.5px solid #10B981" : "0.5px solid #E4E4E8" };
+}
+
 export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const params = useParams();
   const router = useRouter();
@@ -684,6 +940,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
   const [moneyDrawerInitialExtraType, setMoneyDrawerInitialExtraType] = useState<string | undefined>(undefined);
   const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
+  const [extraManagerFocusBucket, setExtraManagerFocusBucket] = useState<ExtraHistoryBucket | null>(null);
+  const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
+  const [editExtraAmount, setEditExtraAmount] = useState("");
+  const [editExtraReason, setEditExtraReason] = useState("");
+  const [editExtraClientConfirmed, setEditExtraClientConfirmed] = useState(true);
+  const [savingExtraEdit, setSavingExtraEdit] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
@@ -801,8 +1063,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     partner_agreed_value: "",
     customer_deposit: "",
     customer_final_payment: "",
-    /** Mirrors `jobs.external_ref` (e.g. Zendesk ticket no.). */
-    ticket_id: "",
   });
   const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
   const jobMoreMenuRef = useRef<HTMLDivElement>(null);
@@ -850,6 +1110,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [openingReportId, setOpeningReportId] = useState<string | null>(null);
   const [openingReportImageKey, setOpeningReportImageKey] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState("");
+  const [scopeEditing, setScopeEditing] = useState(false);
+  const [scopeExpanded, setScopeExpanded] = useState(false);
+  const [prevJobNavId, setPrevJobNavId] = useState<string | null>(null);
+  const [nextJobNavId, setNextJobNavId] = useState<string | null>(null);
   const [savingScope, setSavingScope] = useState(false);
   const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
   const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
@@ -1101,6 +1365,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const v = (job.title ?? "").trim().toLowerCase();
     return v.includes("housekeep") || v.includes("house keep");
   }, [job]);
+
+  /** Active recurring series member — finish date must not precede start date. */
+  const isRecurringSeriesJob = useMemo(
+    () => Boolean(job?.recurrence_series_id && !job?.recurrence_detached_at),
+    [job?.recurrence_series_id, job?.recurrence_detached_at],
+  );
+
+  const scheduleFinishDateMin = useMemo(() => {
+    if (!isRecurringSeriesJob) return undefined;
+    const start = scheduleDate.trim();
+    return start || undefined;
+  }, [isRecurringSeriesJob, scheduleDate]);
 
   const cczEligibleAddress = useMemo(
     () => Boolean(job) && !isHousekeepJobDetail && isLikelyCczAddress(job!.property_address),
@@ -1769,14 +2045,63 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       partner_agreed_value: r2(job.partner_agreed_value),
       customer_deposit: r2(job.customer_deposit),
       customer_final_payment: r2(job.customer_final_payment),
-      ticket_id: job.external_ref?.trim() ?? "",
     });
   }, [job?.id, job?.updated_at]);
 
   useEffect(() => {
     if (!job) return;
     setScopeDraft(job.scope ?? "");
+    setScopeEditing(false);
+    setScopeExpanded(false);
   }, [job?.id, job?.scope]);
+
+  const scopeReadText = (scopeDraft.trim() || job?.scope?.trim() || "").trim();
+  const scopeIsLong = useMemo(() => scopeTextNeedsCollapse(scopeReadText), [scopeReadText]);
+  const scopeReadMeasureRef = useRef<HTMLDivElement>(null);
+  const [scopeFullHeightPx, setScopeFullHeightPx] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = scopeReadMeasureRef.current;
+    if (!el || !scopeIsLong) {
+      setScopeFullHeightPx(null);
+      return;
+    }
+    const measure = () => setScopeFullHeightPx(el.scrollHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [scopeReadText, scopeIsLong]);
+
+  useEffect(() => {
+    if (!scopeIsLong) setScopeExpanded(false);
+  }, [scopeIsLong]);
+
+  useEffect(() => {
+    if (!job?.id) {
+      setPrevJobNavId(null);
+      setNextJobNavId(null);
+      return;
+    }
+    setPrevJobNavId(getAdjacentJobId(job.id, "prev"));
+    setNextJobNavId(getAdjacentJobId(job.id, "next"));
+  }, [job?.id]);
+
+  const goToPreviousJob = useCallback(() => {
+    if (!prevJobNavId) {
+      toast.message("Open jobs from the Jobs list to jump to the previous one.");
+      return;
+    }
+    router.push(`/jobs/${prevJobNavId}`);
+  }, [prevJobNavId, router]);
+
+  const goToNextJob = useCallback(() => {
+    if (!nextJobNavId) {
+      toast.message("Open jobs from the Jobs list to jump to the next one.");
+      return;
+    }
+    router.push(`/jobs/${nextJobNavId}`);
+  }, [nextJobNavId, router]);
 
   useEffect(() => {
     if (!job) return;
@@ -2337,7 +2662,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         partner_agreed_value,
         customer_deposit,
         customer_final_payment,
-        external_ref: finForm.ticket_id.trim() || null,
         ...(billed_hours != null ? { billed_hours } : {}),
       };
       const updated = await handleJobUpdate(job.id, newFields);
@@ -3332,6 +3656,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
 
+  const openExtraManager = useCallback((side: "client" | "partner", focus?: ExtraHistoryBucket) => {
+    setExtraManagerSide(side);
+    setExtraManagerFocusBucket(focus ?? null);
+  }, []);
+
+  const bucketHasLedgerEntries = useCallback(
+    (side: "client" | "partner", bucket: ExtraHistoryBucket) =>
+      extraHistory
+        .filter((row) => row.side === side)
+        .some((row) => extraHistoryBucket(row.extraType) === bucket),
+    [extraHistory],
+  );
+
+  const handleOpenEditExtra = useCallback((entry: ExtraHistoryEntry) => {
+    if (isFallbackExtraEntry(entry)) return;
+    setEditExtraTarget(entry);
+    setEditExtraAmount(String(Math.round(Math.abs(Number(entry.amount)) * 100) / 100));
+    setEditExtraReason(entry.reason);
+    setEditExtraClientConfirmed(entry.clientConfirmed ?? true);
+  }, []);
+
   const handleDeleteExtraEntry = useCallback(
     (entry: ExtraHistoryEntry) => {
       if (isFallbackExtraEntry(entry)) return;
@@ -3450,6 +3795,146 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job,
     deleteLinkedPartnerAlso,
     extraHistory,
+    profile?.id,
+    profile?.full_name,
+    refreshJobFinance,
+  ]);
+
+  const confirmEditExtraEntry = useCallback(async () => {
+    if (!editExtraTarget || !job) return;
+    const newMag = Math.round((parseFloat(editExtraAmount) || 0) * 100) / 100;
+    if (newMag <= 0) {
+      toast.error("Enter an amount greater than zero, or remove the extra instead.");
+      return;
+    }
+    const reasonTrim = editExtraReason.trim();
+    if (!reasonTrim) {
+      toast.error("Add a reason for this extra.");
+      return;
+    }
+    const oldMag = Math.round(Math.abs(Number(editExtraTarget.amount)) * 100) / 100;
+    const reasonChanged =
+      editExtraTarget.side === "client"
+        ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed) !==
+          encodeClientExtraReason(editExtraTarget.reason, editExtraTarget.clientConfirmed ?? true)
+        : reasonTrim !== editExtraTarget.reason.trim();
+    if (Math.abs(newMag - oldMag) < 0.009 && !reasonChanged) {
+      setEditExtraTarget(null);
+      return;
+    }
+
+    setSavingExtraEdit(true);
+    setDeletingExtraId(editExtraTarget.idRaw);
+    try {
+      let workingJob: Job = job;
+      const discount = isJobExtraDiscountExtraType(editExtraTarget.extraType);
+
+      if (Math.abs(newMag - oldMag) >= 0.009) {
+        if (editExtraTarget.side === "client") {
+          const allocation =
+            editExtraTarget.allocation === "materials"
+              ? "materials"
+              : editExtraTarget.allocation === "labour"
+                ? "labour"
+                : customerExtraLedgerAllocation(editExtraTarget.extraType);
+          const reversePatch = discount
+            ? applyCustomerExtraPatch(workingJob, oldMag, allocation)
+            : reverseCustomerExtraPatch(workingJob, oldMag, allocation);
+          if (Object.keys(reversePatch).length > 0) {
+            workingJob = await updateJob(workingJob.id, reversePatch);
+          }
+          const applyPatch = discount
+            ? reverseCustomerExtraPatch(workingJob, newMag, allocation)
+            : applyCustomerExtraPatch(workingJob, newMag, allocation);
+          if (Object.keys(applyPatch).length > 0) {
+            workingJob = await updateJob(workingJob.id, applyPatch);
+            await bumpLinkedInvoiceAmountsToJobSchedule(workingJob);
+            await syncSelfBillAfterJobChange(workingJob);
+            await reconcileJobCustomerPaymentFlags(getSupabase(), workingJob.id);
+          }
+        } else {
+          const allocation =
+            editExtraTarget.allocation === "materials"
+              ? "materials"
+              : isJobExtraDiscountExtraType(editExtraTarget.extraType)
+                ? partnerDiscountAllocationFromExtraType(editExtraTarget.extraType)
+                : "partner_cost";
+          const reversePatch = discount
+            ? applyPartnerExtraPatch(workingJob, oldMag, allocation)
+            : reversePartnerExtraPatch(workingJob, oldMag, allocation);
+          if (Object.keys(reversePatch).length > 0) {
+            workingJob = await updateJob(workingJob.id, reversePatch);
+          }
+          const applyPatch = discount
+            ? reversePartnerExtraPatch(workingJob, newMag, allocation)
+            : applyPartnerExtraPatch(workingJob, newMag, allocation);
+          if (Object.keys(applyPatch).length > 0) {
+            workingJob = await updateJob(workingJob.id, applyPatch);
+            await syncSelfBillAfterJobChange(workingJob);
+          }
+        }
+        setJob(workingJob);
+      }
+
+      if (!editExtraTarget.idRaw.startsWith("local-")) {
+        const storedReason =
+          editExtraTarget.side === "client"
+            ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed)
+            : reasonTrim;
+        await updateJobExtraEntry({
+          id: editExtraTarget.idRaw,
+          amount: newMag,
+          reason: storedReason,
+        });
+      }
+
+      setExtraHistory((prev) =>
+        prev.map((row) =>
+          row.idRaw === editExtraTarget.idRaw
+            ? {
+                ...row,
+                amount: newMag,
+                reason: reasonTrim,
+                clientConfirmed: editExtraTarget.side === "client" ? editExtraClientConfirmed : row.clientConfirmed,
+              }
+            : row,
+        ),
+      );
+
+      await logAudit({
+        entityType: "job",
+        entityId: job.id,
+        entityRef: job.reference,
+        action: "updated",
+        fieldName: editExtraTarget.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
+        oldValue: formatCurrency(oldMag),
+        newValue: formatCurrency(newMag),
+        userId: profile?.id,
+        userName: profile?.full_name,
+        metadata: {
+          extra_entry_id: editExtraTarget.idRaw,
+          extra_type: editExtraTarget.extraType,
+          extra_reason: reasonTrim,
+        },
+      });
+
+      await refreshJobFinance();
+      toast.success("Extra updated");
+      setEditExtraTarget(null);
+      setExtraManagerSide(null);
+      setExtraManagerFocusBucket(null);
+    } catch {
+      toast.error("Could not update extra");
+    } finally {
+      setSavingExtraEdit(false);
+      setDeletingExtraId(null);
+    }
+  }, [
+    editExtraTarget,
+    editExtraAmount,
+    editExtraReason,
+    editExtraClientConfirmed,
+    job,
     profile?.id,
     profile?.full_name,
     refreshJobFinance,
@@ -4398,7 +4883,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const g = extraManagerGroups.find((row) => row.key === bucket);
     if (g) g.entries.push(entry);
   }
-  const isEditableExtraBucket = (b: ExtraHistoryBucket) => b === "extra" || b === "materials";
+  const renderExtraCategoryPencil = (
+    side: "client" | "partner",
+    bucket: ExtraHistoryBucket,
+    visible: boolean,
+  ) => {
+    if (!visible) return null;
+    return (
+      <button
+        type="button"
+        className="text-text-tertiary transition-colors hover:text-text-primary"
+        title="Edit or remove"
+        aria-label="Edit or remove extras in this category"
+        onClick={() => openExtraManager(side, bucketHasLedgerEntries(side, bucket) ? bucket : undefined)}
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+    );
+  };
+
   let finalSplitRemain = finalBalanceTotal;
   const finalExtraCharges = Math.min(extrasNetOfAccess, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
@@ -4498,6 +5001,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
+  const jobStatusContext = buildJobDetailStatusContext(job, { forcedPaidBySystemOwner });
   const mandatoryChecksOk =
     reportsUploaded && reportsApproved && ownerApprovalChecked && sentToAccountsChecked;
   /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 10 chars). */
@@ -4685,7 +5189,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       {customerScheduleMismatch ? (
         <p className="text-xs text-amber-700 dark:text-amber-300">
           Scheduled deposit + final ({formatCurrency(scheduledCustomerTotal)}) differs from billable total (
-          {formatCurrency(billableRevenue)}). Adjust deposit/final on the Financial setup tab if needed.
+          {formatCurrency(billableRevenue)}). Adjust deposit/final on the Setup tab if needed.
         </p>
       ) : null}
     </div>
@@ -4702,14 +5206,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
-                  className="h-auto shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
-                  icon={<ArrowLeft className="h-3.5 w-3.5" />}
-                  onClick={() => router.push("/jobs")}
-                >
-                  Back
-                </Button>
+                  className="h-8 w-8 shrink-0 p-0"
+                  aria-label="Previous job"
+                  title={prevJobNavId ? "Previous job in list" : "No previous job — open from Jobs list"}
+                  disabled={!prevJobNavId}
+                  onClick={() => goToPreviousJob()}
+                  icon={<ChevronLeft className="h-3.5 w-3.5" />}
+                />
                 <Button
                   type="button"
                   variant="outline"
@@ -4728,9 +5234,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   jobId={job.id}
                   zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
                 />
-                <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
-                  {config.label}
-                </Badge>
+                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                  <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
+                    {config.label}
+                  </Badge>
+                  {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
+                </div>
                 <JobOverdueBadge job={job} size="sm" />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -4837,7 +5346,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           onClick={() => void openQuickReschedule()}
                         >
                           <Calendar className="h-3.5 w-3.5 shrink-0" />
-                          Reschedule &amp; confirm…
+                          Reschedule
                         </button>
                       ) : null}
                       {showCancelInJobMoreMenu ? (
@@ -4857,57 +5366,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   ) : null}
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 shrink-0 p-0"
+                  aria-label="Next job"
+                  title={nextJobNavId ? "Next job in list" : "No next job — open from Jobs list"}
+                  disabled={!nextJobNavId}
+                  onClick={() => goToNextJob()}
+                  icon={<ChevronRight className="h-3.5 w-3.5" />}
+                />
               </div>
             </div>
           </div>
 
         <div className="space-y-0">
-        {job.status === "cancelled" && job.partner_cancelled_at ? (
-          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary mx-3 mt-3">
-            <p className="font-semibold text-text-primary">Partner cancellation</p>
-            <p>
-              Fee recorded: £{Number(job.partner_cancellation_fee ?? 0).toFixed(2)}
-              {job.partner_cancellation_reason?.trim()
-                ? ` · Reason: ${job.partner_cancellation_reason.trim()}`
-                : ""}
-            </p>
-          </div>
-        ) : null}
-        {job.status === "cancelled" && !job.partner_cancelled_at && job.cancellation_reason?.trim() ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs text-text-secondary">
-            <p className="font-semibold text-text-primary">Office cancellation</p>
-            <p className="text-text-secondary mt-0.5">{job.cancellation_reason.trim()}</p>
-            {job.cancelled_at ? (
-              <p className="text-[10px] text-text-tertiary mt-1">
-                Recorded {new Date(job.cancelled_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {/* Zendesk delivery status moved into the ZendeskTicketBadge hover popover (header) */}
-        {job.status === "completed" ? (
-          <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary">
-            <p className="font-semibold text-text-primary">Job approval</p>
-            <p>
-              Approved by:{" "}
-              <span className="font-medium text-text-primary">
-                {(job.owner_name?.trim() || "Job owner")}
-              </span>
-            </p>
-            <p className="text-[10px] text-text-tertiary mt-1">
-              Recorded{" "}
-              {new Date(job.report_submitted_at ?? job.updated_at ?? new Date().toISOString()).toLocaleString(
-                undefined,
-                { dateStyle: "medium", timeStyle: "short" },
-              )}
-            </p>
-            {forcedPaidBySystemOwner ? (
-              <p className="mt-1 text-[11px] font-semibold text-red-600">
-                Forced and guaranteed by system owner.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {/* Status context (on hold reason, cancellation, paid, lost) — compact chip in header next to badge */}
 
         {job.status !== "cancelled" && job.status !== "deleted" ? (
           <section className="border-b border-border-light bg-card/30" aria-label="Work time and job progress">
@@ -5466,8 +5941,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleDate(v);
-                        if (!v.trim()) setScheduleExpectedFinishDate("");
-                        handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, v.trim() ? scheduleExpectedFinishDate : "");
+                        if (!v.trim()) {
+                          setScheduleExpectedFinishDate("");
+                          handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, "");
+                          return;
+                        }
+                        let finish = scheduleExpectedFinishDate.trim();
+                        if (isRecurringSeriesJob && finish && finish < v) {
+                          finish = v;
+                          setScheduleExpectedFinishDate(v);
+                        }
+                        handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, finish || scheduleExpectedFinishDate);
                       }}
                     />
                   </div>
@@ -5547,11 +6031,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <Input
                       type="date"
                       value={scheduleExpectedFinishDate}
-                      disabled={job.status === "cancelled"}
+                      min={scheduleFinishDateMin}
+                      disabled={job.status === "cancelled" || (isRecurringSeriesJob && !scheduleDate.trim())}
+                      title={
+                        isRecurringSeriesJob && !scheduleDate.trim()
+                          ? "Set the start date first"
+                          : scheduleFinishDateMin
+                            ? `On or after ${scheduleFinishDateMin}`
+                            : undefined
+                      }
                       className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
-                        setScheduleExpectedFinishDate(e.target.value);
-                        handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value);
+                        const v = e.target.value;
+                        if (scheduleFinishDateMin && v && v < scheduleFinishDateMin) return;
+                        setScheduleExpectedFinishDate(v);
+                        handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, v);
                       }}
                     />
                   </div>
@@ -5559,17 +6053,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {!isHousekeepJobDetail ? (
                   <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
                     <div
-                      className={cn(
-                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
-                        effectiveCustomerInCcz
-                          ? "bg-emerald-50 dark:bg-emerald-950/30"
-                          : "bg-white",
-                      )}
-                      style={{
-                        border: effectiveCustomerInCcz
-                          ? "0.5px solid #10B981"
-                          : "0.5px solid #E4E4E8",
-                      }}
+                      className={accessFeeCardClass(effectiveCustomerInCcz)}
+                      style={accessFeeCardBorderStyle(effectiveCustomerInCcz)}
                     >
                       <div className="flex items-center gap-1">
                         <p
@@ -5606,45 +6091,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
                             else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
                           }}
-                      className={cn(
-                            "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
-                            effectiveCustomerInCcz
-                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
-                              : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
-                            !cczEligibleAddress && !job.in_ccz && "cursor-not-allowed opacity-50",
+                      className={accessFeeToggleButtonClass(
+                            effectiveCustomerInCcz,
+                            !cczEligibleAddress && !job.in_ccz,
                           )}
                       >
-                          <span
-                            className={cn(
-                              "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-                              effectiveCustomerInCcz ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
-                                effectiveCustomerInCcz ? "translate-x-[14px]" : "translate-x-[2px]",
-                              )}
-                            />
+                          <span className={accessFeeToggleTrackClass(effectiveCustomerInCcz)}>
+                            <span className={accessFeeToggleThumbClass(effectiveCustomerInCcz)} />
                           </span>
-                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary")}>
+                          <span className={accessFeeToggleLabelClass(effectiveCustomerInCcz)}>
                             {effectiveCustomerInCcz ? `+£${ACCESS_CCZ_FEE_GBP}` : "No fee"}
                           </span>
                       </button>
                     </div>
                     <div
-                      className={cn(
-                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
-                        job.has_free_parking === false
-                          ? "bg-emerald-50 dark:bg-emerald-950/30"
-                          : "bg-white",
-                      )}
-                      style={{
-                        border:
-                          job.has_free_parking === false
-                            ? "0.5px solid #10B981"
-                            : "0.5px solid #E4E4E8",
-                      }}
+                      className={accessFeeCardClass(job.has_free_parking === false)}
+                      style={accessFeeCardBorderStyle(job.has_free_parking === false)}
                     >
                       <p
                         className="text-[10px] font-medium uppercase"
@@ -5659,70 +6121,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           type="button"
                           disabled={job.status === "cancelled" || savingAccessFees}
                           onClick={() => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) })}
-                          className={cn(
-                            "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
-                            job.has_free_parking === false
-                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
-                              : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
-                          )}
+                          className={accessFeeToggleButtonClass(job.has_free_parking === false)}
                       >
-                          <span
-                            className={cn(
-                              "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-                              job.has_free_parking === false ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
-                                job.has_free_parking === false ? "translate-x-[14px]" : "translate-x-[2px]",
-                              )}
-                            />
+                          <span className={accessFeeToggleTrackClass(job.has_free_parking === false)}>
+                            <span className={accessFeeToggleThumbClass(job.has_free_parking === false)} />
                           </span>
-                          <span
-                            className={cn(
-                              "text-[10px] font-medium",
-                              job.has_free_parking === false ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary",
-                            )}
-                          >
+                          <span className={accessFeeToggleLabelClass(job.has_free_parking === false)}>
                             {job.has_free_parking === false ? `+£${ACCESS_PARKING_FEE_GBP}` : "No fee"}
                           </span>
                       </button>
                     </div>
                   </div>
                 ) : null}
-                  {(job.quote_id || job.self_bill_id || job.invoice_id) ? (
+                  {job.self_bill_id ? (
                     <div
                       className="flex flex-wrap gap-[6px] pt-[12px]"
                       style={{ borderTop: "0.5px solid #E4E4E8" }}
                     >
-                      {job.quote_id && (
-                        <Link
-                          href="/quotes"
-                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
-                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                        >
-                          Quote <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
-                        </Link>
-                      )}
-                      {job.self_bill_id && (
-                        <Link
-                          href="/finance/selfbill"
-                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
-                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                        >
-                          Self-bill <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
-                        </Link>
-                      )}
-                      {job.invoice_id && (
-                        <Link
-                          href="/finance/invoices"
-                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
-                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                        >
-                          Invoice <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
-                        </Link>
-                      )}
+                      <Link
+                        href="/finance/billing/selfbill"
+                        className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                      >
+                        Self-bill <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                      </Link>
                     </div>
                   ) : null}
               </div>
@@ -5739,7 +6161,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     { label: "Notes", index: 4 as const },
-                    ...(isAdmin ? [{ label: "Financial Setup", index: 5 as const }] : []),
+                    ...(isAdmin ? [{ label: "Setup", index: 5 as const }] : []),
                   ] as const
                 ).map((tab) => (
                   <button
@@ -5849,41 +6271,133 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {detailTab === 0 ? (
               <div className="space-y-3">
-              <p className="text-[11px] text-text-secondary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
-
-              <JobZendeskLinkCard
-                jobId={job.id}
-                externalSource={job.external_source}
-                externalRef={job.external_ref}
-                zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
-                onChanged={() => router.refresh()}
-              />
-
               <div className="space-y-1.5 border-t border-border pt-2">
-                <p className="text-xs font-semibold text-text-primary">Scope</p>
-                <textarea
-                  value={scopeDraft}
-                  onChange={(e) => setScopeDraft(e.target.value)}
-                  rows={4}
-                  placeholder="Describe what the partner is expected to do…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[120px]")}
-                />
-                <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
-                  if (!job) return;
-                  setSavingScope(true);
-                  try {
-                    await handleJobUpdate(job.id, { scope: scopeDraft.trim() || undefined });
-                  } finally {
-                    setSavingScope(false);
-                  }
-                }}>
-                  Save scope
-                </Button>
+                <div className="flex items-center justify-between gap-2">
+                  <JobCardTitleWithHint
+                    title="Scope"
+                    hint="Scope is required before assigning a partner. Site photos are on the Site photos tab."
+                    titleClassName="text-xs font-semibold text-text-primary"
+                  />
+                  {!scopeEditing ? (
+                    <button
+                      type="button"
+                      onClick={() => setScopeEditing(true)}
+                      className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
+                      title="Edit scope"
+                      aria-label="Edit scope"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  ) : null}
+                </div>
+                {!scopeEditing ? (
+                  scopeReadText ? (
+                    <div className="relative">
+                      <div
+                        className={cn(
+                          "overflow-hidden ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none",
+                          scopeIsLong && !scopeExpanded && "pb-10",
+                        )}
+                        style={
+                          scopeIsLong
+                            ? {
+                                maxHeight: scopeExpanded
+                                  ? scopeFullHeightPx != null
+                                    ? `${scopeFullHeightPx}px`
+                                    : JOB_SCOPE_COLLAPSED_MAX_HEIGHT
+                                  : JOB_SCOPE_COLLAPSED_MAX_HEIGHT,
+                                transition: `max-height ${JOB_SCOPE_EXPAND_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+                              }
+                            : undefined
+                        }
+                      >
+                        <div
+                          ref={scopeReadMeasureRef}
+                          className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap"
+                        >
+                          {scopeReadText}
+                        </div>
+                      </div>
+                      {scopeIsLong && !scopeExpanded ? (
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-card from-35% via-card/85 to-transparent pt-12 pb-0.5 dark:from-[#141922] dark:via-[#141922]/85">
+                          <button
+                            type="button"
+                            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-card px-4 py-1.5 text-xs font-semibold text-primary shadow-md ring-1 ring-primary/10 transition-colors hover:border-primary/50 hover:bg-primary-light/60 dark:border-primary/40 dark:bg-[#1a202a] dark:hover:bg-primary/15"
+                            onClick={() => setScopeExpanded(true)}
+                          >
+                            See more
+                            <ChevronDown className="h-4 w-4 shrink-0 animate-bounce" aria-hidden />
+                          </button>
+                        </div>
+                      ) : null}
+                      {scopeIsLong && scopeExpanded ? (
+                        <div className="mt-2 flex justify-center">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-hover px-4 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:border-border hover:bg-muted/80 hover:text-text-primary dark:border-[#2f3440] dark:bg-[#1a202a]"
+                            onClick={() => setScopeExpanded(false)}
+                          >
+                            See less
+                            <ChevronDown className="h-4 w-4 shrink-0 rotate-180" aria-hidden />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-text-tertiary italic">No scope yet — use the pencil to add one.</p>
+                  )
+                ) : (
+                  <>
+                    <textarea
+                      value={scopeDraft}
+                      onChange={(e) => setScopeDraft(e.target.value)}
+                      rows={6}
+                      placeholder="Describe what the partner is expected to do…"
+                      className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[140px]")}
+                      autoFocus
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        loading={savingScope}
+                        onClick={async () => {
+                          if (!job) return;
+                          setSavingScope(true);
+                          try {
+                            await handleJobUpdate(job.id, { scope: scopeDraft.trim() || undefined });
+                            setScopeEditing(false);
+                          } finally {
+                            setSavingScope(false);
+                          }
+                        }}
+                      >
+                        Save scope
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={savingScope}
+                        onClick={() => {
+                          setScopeDraft(job.scope ?? "");
+                          setScopeEditing(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
-                <p className="text-xs font-semibold text-text-primary">Additional notes</p>
-                <p className="text-[11px] text-text-secondary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
+                <JobCardTitleWithHint
+                  title="Additional notes"
+                  hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
+                  titleClassName="text-xs font-semibold text-text-primary"
+                />
                 <textarea
                   value={additionalNotesDraft}
                   onChange={(e) => setAdditionalNotesDraft(e.target.value)}
@@ -5911,8 +6425,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
-                <p className="text-xs font-semibold text-text-primary">Report link (optional)</p>
-                <p className="text-[11px] text-text-secondary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
+                <JobCardTitleWithHint
+                  title="Report link (optional)"
+                  hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
+                  titleClassName="text-xs font-semibold text-text-primary"
+                />
                 <Input
                   type="url"
                   value={reportLinkDraft}
@@ -6271,60 +6788,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
 
             {isAdmin && detailTab === 5 ? (
-            <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
+            <div className="space-y-3">
+            <details className="group rounded-xl border border-border-light bg-card overflow-hidden" open>
+              <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Zendesk ticket</p>
+                <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="px-3 pb-3 space-y-4 border-t border-border-light pt-3">
+                <JobZendeskLinkCard
+                  embedded
+                  jobId={job.id}
+                  externalSource={job.external_source}
+                  externalRef={job.external_ref}
+                  zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+                  onChanged={() => router.refresh()}
+                />
+                <JobZendeskStatus
+                  jobId={job.id}
+                  zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+                />
+              </div>
+            </details>
+
+            <details className="group rounded-xl border border-border-light bg-card overflow-hidden" open>
               <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
                 <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
               </summary>
               <div className="px-3 pb-3 space-y-3 border-t border-border-light pt-3">
-                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">How this maps in code</p>
-                  <ul className="text-[11px] text-text-tertiary leading-relaxed space-y-1.5 list-disc pl-4">
-                    <li>
-                      <span className="font-medium text-text-secondary">Client billable</span> —{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">client_price</span> +{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">extras_amount</span>
-                      {" "}(same as <span className="font-mono text-[10px] text-text-secondary">jobBillableRevenue</span>). Drives invoices, collections, and the customer “amount due” on this job.
-                    </li>
-                    <li>
-                      <span className="font-medium text-text-secondary">Your direct cost</span> —{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">partner_cost</span> +{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">materials_cost</span>
-                      {" "}(same as <span className="font-mono text-[10px] text-text-secondary">jobDirectCost</span>). Subtracted from client billable for margin; both lines roll into the weekly self-bill (labour + materials).
-                    </li>
-                    <li>
-                      <span className="font-medium text-text-secondary">Partner labour cap (cash out / self-bill labour)</span> —{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">partner_agreed_value</span> if &gt; 0, otherwise{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">partner_cost</span>
-                      {" "}(<span className="font-mono text-[10px] text-text-secondary">partnerPaymentCap</span>). Materials are separate on the self-bill.
-                    </li>
-                    <li>
-                      <span className="font-medium text-text-secondary">Deposit / final</span> —{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">customer_deposit</span> +{" "}
-                      <span className="font-mono text-[10px] text-text-secondary">customer_final_payment</span>
-                      {" "}should match client billable for a clean payment schedule.
-                    </li>
-                  </ul>
-                </div>
                 {customerScheduleMismatch && (
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-xs text-amber-900 dark:text-amber-100">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     Deposit + final ({formatCurrency(scheduledCustomerTotal)}) ≠ billable total ({formatCurrency(billableRevenue)}). Align below.
                   </div>
                 )}
-                <div className="rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2.5 space-y-1.5">
-                  <label className="block text-xs font-medium text-text-secondary">Ticket ID</label>
-                  <Input
-                    type="text"
-                    value={finForm.ticket_id}
-                    onChange={(e) => setFinForm((f) => ({ ...f, ticket_id: e.target.value }))}
-                    placeholder="e.g. Zendesk ticket number"
-                    className="h-9 text-sm"
-                  />
-                  <p className="text-[10px] text-text-tertiary leading-relaxed">
-                    Stored as <span className="font-mono text-[10px]">external_ref</span> on this job (support / billing reference). Saved with <span className="font-medium">Save pricing</span> below.
-                  </p>
-                </div>
                 {hourlyAutoBilling && (
                   <div className="rounded-xl border border-sky-500/35 bg-sky-500/10 p-3 text-xs text-sky-900 dark:text-sky-100 space-y-1">
                     <p className="font-semibold">Hourly auto-billing active</p>
@@ -6337,50 +6834,114 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </p>
                   </div>
                 )}
-                <div className="space-y-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">1 · Client billing (what we invoice / collect)</p>
-                  <p className="text-[10px] text-text-tertiary">Not paid to the partner directly — this is revenue from the customer.</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-3 space-y-3 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
+                  <FinSetupSectionTitle hint="Amounts billed to the client — not paid directly to the partner. Use Charge or discount in Finance summary for line-item extras.">
+                    Cash in — client
+                  </FinSetupSectionTitle>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Core ticket — client_price</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
-                        const price = parseFloat(e.target.value) || 0;
-                        const extras = parseFloat(finForm.extras_amount) || 0;
-                        const dep = parseFloat(finForm.customer_deposit) || 0;
-                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                        setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
-                      }} />
-                      <p className="text-[10px] text-text-tertiary mt-1">Main labour / sell price before add-ons (field <span className="font-mono text-[10px]">client_price</span>).</p>
+                      <FinSetupFieldLabel
+                        label="Job price"
+                        hint="Main price for the job before any add-ons (same as Initial balance in Finance summary)."
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={finForm.client_price}
+                        onChange={(e) => {
+                          const price = parseFloat(e.target.value) || 0;
+                          const extras = parseFloat(finForm.extras_amount) || 0;
+                          const dep = parseFloat(finForm.customer_deposit) || 0;
+                          const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                          setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
+                        }}
+                      />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Add-ons — extras_amount</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
-                        const price = parseFloat(finForm.client_price) || 0;
-                        const extras = parseFloat(e.target.value) || 0;
-                        const dep = parseFloat(finForm.customer_deposit) || 0;
-                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                        setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
-                      }} />
-                      <p className="text-[10px] text-text-tertiary mt-1">Surcharges / upsells billed to the client (field <span className="font-mono text-[10px]">extras_amount</span>; CCZ/parking may also sit here).</p>
+                      <FinSetupFieldLabel
+                        label="Add-ons & extras"
+                        hint="Extra charges for the client (e.g. parking, CCZ). Matches Total Extras on Finance summary."
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={finForm.extras_amount}
+                        onChange={(e) => {
+                          const price = parseFloat(finForm.client_price) || 0;
+                          const extras = parseFloat(e.target.value) || 0;
+                          const dep = parseFloat(finForm.customer_deposit) || 0;
+                          const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                          setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-3 border-t border-emerald-200/60 pt-3 dark:border-emerald-500/20">
+                    <FinSetupSectionTitle hint="Deposit and final payment should add up to the total charged to the customer.">
+                      Payment schedule
+                    </FinSetupSectionTitle>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <FinSetupFieldLabel label="Deposit" hint="Amount the customer pays upfront." />
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={finForm.customer_deposit}
+                          onChange={(e) => {
+                            const price = parseFloat(finForm.client_price) || 0;
+                            const extras = parseFloat(finForm.extras_amount) || 0;
+                            const dep = parseFloat(e.target.value) || 0;
+                            const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                            setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <FinSetupFieldLabel
+                          label="Final payment"
+                          hint="Usually auto from job price + add-ons minus deposit. Change only for a custom split."
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={finForm.customer_final_payment}
+                          onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-2 pt-1 border-t border-border-light/80">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">2 · Internal cost (margin)</p>
-                  <p className="text-[10px] text-text-tertiary">What the job costs you — subtracted from client billable for margin. Feeds self-bill lines (partner labour + materials).</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-3 space-y-3 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
+                  <FinSetupSectionTitle hint="What this job costs you — partner labour and materials. Feeds Cash out — partner and self-bill.">
+                    Cash out — partner
+                  </FinSetupSectionTitle>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                      <FinSetupFieldLabel
+                        label="Partner payout"
+                        hint="Amount owed to the partner for their work. Extra payouts in Finance summary add on top of this."
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={finForm.partner_cost}
+                        onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))}
+                      />
                       {suggestedPartnerCost40ForFinForm != null && (
-                        <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                        <p className="mt-1.5 text-[10px] leading-snug text-text-tertiary">
                           ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
-                          <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerCost40ForFinForm)}</span>
-                          {" "}(billable ticket + add-ons − materials).{" "}
+                          <span className="font-semibold tabular-nums text-text-secondary">
+                            {formatCurrency(suggestedPartnerCost40ForFinForm)}
+                          </span>{" "}
                           <button
                             type="button"
-                            className="text-primary hover:underline font-medium"
+                            className="font-medium text-primary hover:underline"
                             onClick={() =>
                               setFinForm((f) => ({ ...f, partner_cost: String(suggestedPartnerCost40ForFinForm) }))
                             }
@@ -6389,54 +6950,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           </button>
                         </p>
                       )}
-                      <p className="text-[10px] text-text-tertiary mt-1">Amount owed to the partner for work (field <span className="font-mono text-[10px]">partner_cost</span>). “Add extra payout” in Cash Out increases this and <span className="font-mono text-[10px]">partner_extras_amount</span>.</p>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Your materials spend — materials_cost</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} />
-                      <p className="text-[10px] text-text-tertiary mt-1">Materials you pay for (field <span className="font-mono text-[10px]">materials_cost</span>). Included in self-bill gross; not client revenue unless you also add to client side.</p>
+                      <FinSetupFieldLabel
+                        label="Materials cost"
+                        hint="Materials you pay for on this job. Included on the partner self-bill."
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={finForm.materials_cost}
+                        onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))}
+                      />
                     </div>
+                  </div>
+                  <div className="border-t border-rose-200/60 pt-3 dark:border-rose-500/20">
+                    <FinSetupFieldLabel
+                      label="Agreed partner payout (optional)"
+                      hint="Leave at 0 to use Partner payout above. Set only if you agreed a different fixed amount with the partner."
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={finForm.partner_agreed_value}
+                      onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))}
+                    />
                   </div>
                 </div>
 
-                <div className="space-y-2 pt-1 border-t border-border-light/80">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">3 · Partner labour cap (Cash Out / self-bill labour line)</p>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Optional override — partner_agreed_value</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">
-                      Leave <span className="font-semibold text-text-secondary">0</span> so <span className="font-mono text-[10px]">partnerPaymentCap</span> = <span className="font-mono text-[10px]">partner_cost</span>. If &gt; 0, Cash Out and self-bill use this number for labour instead (still add <span className="font-mono text-[10px]">materials_cost</span> on the bill).
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2 pt-1 border-t border-border-light/80">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">4 · Client payment schedule</p>
-                  <p className="text-[10px] text-text-tertiary">How the customer pays over time (deposit vs final) — must line up with client billable above.</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Deposit — customer_deposit</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
-                        const price = parseFloat(finForm.client_price) || 0;
-                        const extras = parseFloat(finForm.extras_amount) || 0;
-                        const dep = parseFloat(e.target.value) || 0;
-                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                        setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
-                      }} />
-                      <p className="text-[10px] text-text-tertiary mt-1">Upfront portion; maps to deposit payments and invoice stages.</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Final balance — customer_final_payment</label>
-                      <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
-                      <p className="text-[10px] text-text-tertiary mt-1">
-                        Auto from (client_price + extras_amount) − deposit; maps to final-balance collections. Adjust only if you need a manual split.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
+                                <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save</Button>
               </div>
             </details>
+            </div>
             ) : null}
               </div>
             </div>
@@ -6463,9 +7010,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className="h-8 w-8 border border-border-light ring-0"
                   />
                   {job.partner_name ? (
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-bold text-text-primary">{job.partner_name}</p>
-                      <p className="text-[10px] text-text-tertiary">{job.partner_id ? `ID: ${job.partner_id.slice(0, 8)}…` : "No partner ID"}</p>
+                    <div className="group/partner-name relative min-w-0">
+                      <p className="truncate text-xs font-bold text-text-primary cursor-default">{job.partner_name}</p>
+                      {job.partner_id ? (
+                        <span
+                          role="tooltip"
+                          className="pointer-events-none invisible absolute left-0 top-full z-10 mt-0.5 whitespace-nowrap rounded bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-normal leading-snug text-white opacity-0 shadow-md transition-opacity group-hover/partner-name:visible group-hover/partner-name:opacity-100"
+                        >
+                          ID: {job.partner_id}
+                        </span>
+                      ) : null}
                     </div>
                   ) : (
                     <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
@@ -6481,11 +7035,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       disabled={signingOffPartner || savingPartner}
                       onClick={() => void handleQuickUnassignPartner()}
                       className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white shadow-sm transition-colors",
-                        "hover:bg-red-700 disabled:pointer-events-none disabled:opacity-45",
+                        "flex h-7 w-7 items-center justify-center rounded-full border border-red-200/90 bg-transparent text-red-500 transition-colors",
+                        "hover:border-red-300 hover:bg-red-50 hover:text-red-600",
+                        "dark:border-red-500/35 dark:text-red-400 dark:hover:border-red-500/50 dark:hover:bg-red-950/35",
+                        "disabled:pointer-events-none disabled:opacity-45",
                       )}
                     >
-                      <X className="h-[15px] w-[15px]" strokeWidth={2.5} aria-hidden />
+                      <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
                   <Button
@@ -6578,16 +7134,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   )}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                      <button
-                        type="button"
-                        onClick={() => setExtraManagerSide("client")}
+                      <JobCardHint
                         title="View all client extras"
-                        aria-label="View all client extras"
-                        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border-light text-[9px] font-bold text-text-tertiary transition-colors hover:border-text-primary hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                      >
-                        !
-                      </button>
+                        onClick={() => openExtraManager("client")}
+                        className="focus:ring-emerald-400"
+                      />
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     </div>
                     <div className="py-1">
                       <div className="flex items-center justify-between gap-2 text-xs">
@@ -6599,10 +7151,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <button
                             type="button"
                             className="text-text-tertiary transition-colors hover:text-text-primary"
-                            title="Edit Labour / Materials extras"
-                            onClick={() => {
-                              setExtraManagerSide("client");
-                            }}
+                            title="Edit or remove extras"
+                            aria-label="Edit or remove client extras"
+                            onClick={() => openExtraManager("client")}
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
@@ -6615,6 +7166,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
                           {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("client", "extra", clientExtraPlainDisplay > 0.02 || bucketHasLedgerEntries("client", "extra"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6623,6 +7175,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
                           {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("client", "ccz", clientExtraCczDisplay > 0.02 || bucketHasLedgerEntries("client", "ccz"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6631,6 +7184,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
                           {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("client", "parking", clientExtraParkingDisplay > 0.02 || bucketHasLedgerEntries("client", "parking"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6639,6 +7193,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
                           {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("client", "materials", clientExtraMaterialsDisplay > 0.02 || bucketHasLedgerEntries("client", "materials"))}
                       </div>
                     </div>
                   </div>
@@ -6777,16 +7332,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                      <button
-                        type="button"
-                        onClick={() => setExtraManagerSide("partner")}
+                      <JobCardHint
                         title="View all partner extras"
-                        aria-label="View all partner extras"
-                        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border-light text-[9px] font-bold text-text-tertiary transition-colors hover:border-text-primary hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-rose-400"
-                      >
-                        !
-                      </button>
+                        onClick={() => openExtraManager("partner")}
+                        className="focus:ring-rose-400"
+                      />
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     </div>
                     <div className="py-1">
                       <div className="flex items-center justify-between gap-2 text-xs">
@@ -6798,10 +7349,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <button
                             type="button"
                             className="text-text-tertiary transition-colors hover:text-text-primary"
-                            onClick={() => {
-                              setExtraManagerSide("partner");
-                            }}
-                            title="Edit Labour / Materials extras"
+                            onClick={() => openExtraManager("partner")}
+                            title="Edit or remove extras"
+                            aria-label="Edit or remove partner extras"
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
@@ -6814,6 +7364,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
                           {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("partner", "extra", partnerExtraPlainDisplay > 0.02 || bucketHasLedgerEntries("partner", "extra"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6822,6 +7373,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
                           {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("partner", "ccz", partnerExtraCczDisplay > 0.02 || bucketHasLedgerEntries("partner", "ccz"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6830,6 +7382,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
                           {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("partner", "parking", partnerExtraParkingDisplay > 0.02 || bucketHasLedgerEntries("partner", "parking"))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
@@ -6838,6 +7391,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
                           {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
                         </span>
+                        {renderExtraCategoryPencil("partner", "materials", partnerMaterialsLine > 0.02 || bucketHasLedgerEntries("partner", "materials"))}
                       </div>
                     </div>
                   </div>
@@ -7100,10 +7654,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
-                  <Link href="/finance/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
+                  <Link href="/finance/billing/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
                     All invoices <ExternalLink className="h-3 w-3" />
                   </Link>
-                  <Link href="/finance/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
+                  <Link href="/finance/billing/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
                     All self bills <ExternalLink className="h-3 w-3" />
                   </Link>
                 </div>
@@ -7574,7 +8128,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
-                  <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
+                  <Input
+                    type="date"
+                    value={resumeArrivalDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setResumeArrivalDate(v);
+                      if (isRecurringSeriesJob && resumeExpectedFinishDate.trim() && v && resumeExpectedFinishDate < v) {
+                        setResumeExpectedFinishDate(v);
+                      }
+                    }}
+                    className="h-10"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
@@ -7585,7 +8150,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <Input
                     type="date"
                     value={resumeExpectedFinishDate}
-                    onChange={(e) => setResumeExpectedFinishDate(e.target.value)}
+                    min={isRecurringSeriesJob && resumeArrivalDate.trim() ? resumeArrivalDate.trim() : undefined}
+                    disabled={isRecurringSeriesJob && !resumeArrivalDate.trim()}
+                    title={
+                      isRecurringSeriesJob && !resumeArrivalDate.trim()
+                        ? "Set the arrival date first"
+                        : undefined
+                    }
+                    onChange={(e) => {
+                      const min = isRecurringSeriesJob ? resumeArrivalDate.trim() : "";
+                      const v = e.target.value;
+                      if (min && v && v < min) return;
+                      setResumeExpectedFinishDate(v);
+                    }}
                     className="h-10"
                   />
                 </div>
@@ -7840,13 +8417,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       <Modal
         open={extraManagerSide != null}
-        onClose={() => setExtraManagerSide(null)}
+        onClose={() => {
+          setExtraManagerSide(null);
+          setExtraManagerFocusBucket(null);
+        }}
         title={extraManagerTitle}
       >
         <div className="p-4 space-y-4">
           <div className="flex items-start justify-between gap-2">
             <p className="text-xs text-text-tertiary leading-snug max-w-[60%]">
-              Review all extras grouped by category. Only <span className="font-medium text-text-secondary">Labour</span> and <span className="font-medium text-text-secondary">Materials</span> can be edited here.
+              Tap edit or remove on any listed extra. Use the pencil on Finance Summary to open this list.
             </p>
             <Button
               size="sm"
@@ -7876,14 +8456,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   .filter((group) => group.entries.length > 0)
                   .map((group) => {
                     const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
-                    const editable = isEditableExtraBucket(group.key);
+                    const groupHasEditableEntries = group.entries.some((row) => !isFallbackExtraEntry(row));
+                    const groupFocused = extraManagerFocusBucket === group.key;
                     return (
-                      <div key={group.key} className="rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]">
+                      <div
+                        key={group.key}
+                        className={cn(
+                          "rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]",
+                          groupFocused && "ring-2 ring-primary/35",
+                        )}
+                      >
                         <div className="flex items-center justify-between gap-2 pb-1">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
-                            {!editable ? (
-                              <Badge variant="outline" size="sm" className="h-4 text-[9px]">Read-only</Badge>
+                            {!groupHasEditableEntries ? (
+                              <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
                             ) : null}
                           </div>
                           <span
@@ -7937,16 +8524,29 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 >
                                   {formatSignedCurrency(extraHistorySignedAmount(entry))}
                                 </span>
-                                {editable && !isFallbackExtraEntry(entry) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleDeleteExtraEntry(entry)}
-                                    disabled={deletingExtraId === entry.idRaw}
-                                    className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
-                                    title="Delete this extra entry"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
+                                {!isFallbackExtraEntry(entry) ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditExtra(entry)}
+                                      disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
+                                      className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
+                                      title="Edit amount or reason"
+                                      aria-label="Edit extra"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteExtraEntry(entry)}
+                                      disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
+                                      className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
+                                      title="Remove this extra"
+                                      aria-label="Remove extra"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </>
                                 ) : null}
                               </div>
                             </div>
@@ -7958,6 +8558,84 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               : null}
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={editExtraTarget != null}
+        onClose={() => {
+          if (savingExtraEdit) return;
+          setEditExtraTarget(null);
+        }}
+        title="Edit extra"
+      >
+        {editExtraTarget ? (
+          <div className="p-4 space-y-4">
+            <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{editExtraTarget.extraType}</p>
+              <p className="text-xs text-text-secondary">
+                {editExtraTarget.side === "client" ? "Client charge or discount" : "Partner payout or discount"}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={editExtraAmount}
+                onChange={(e) => setEditExtraAmount(e.target.value)}
+                className="h-9 text-sm"
+                autoFocus
+              />
+              {isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
+                <p className="text-[10px] text-text-tertiary mt-1">Stored as a discount — enter the positive amount to reduce the bill.</p>
+              ) : null}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
+              <textarea
+                value={editExtraReason}
+                onChange={(e) => setEditExtraReason(e.target.value)}
+                rows={3}
+                className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[80px]")}
+              />
+            </div>
+            {editExtraTarget.side === "client" && !isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
+              <label className="inline-flex items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={editExtraClientConfirmed}
+                  onChange={(e) => setEditExtraClientConfirmed(e.target.checked)}
+                />
+                Client confirmed this extra
+              </label>
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={savingExtraEdit}
+                onClick={() => setEditExtraTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={savingExtraEdit}
+                onClick={() => {
+                  handleDeleteExtraEntry(editExtraTarget);
+                  setEditExtraTarget(null);
+                }}
+              >
+                Remove
+              </Button>
+              <Button size="sm" loading={savingExtraEdit} onClick={() => void confirmEditExtraEntry()}>
+                Save changes
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
 
       <Modal
@@ -8373,7 +9051,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onClose={() => {
           if (!quickRescheduleSaving) setQuickRescheduleOpen(false);
         }}
-        title="Reschedule &amp; confirm"
+        title="Reschedule"
         subtitle={job.reference}
         size="md"
       >
@@ -8394,7 +9072,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className="h-10"
                 value={qrDate}
                 disabled={quickRescheduleSaving}
-                onChange={(e) => setQrDate(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setQrDate(v);
+                  if (isRecurringSeriesJob && qrExpectedFinish.trim() && v && qrExpectedFinish < v) {
+                    setQrExpectedFinish(v);
+                  }
+                }}
               />
             </div>
             <div>
@@ -8418,8 +9102,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 type="date"
                 className="h-10"
                 value={qrExpectedFinish}
-                disabled={quickRescheduleSaving}
-                onChange={(e) => setQrExpectedFinish(e.target.value)}
+                min={isRecurringSeriesJob && qrDate.trim() ? qrDate.trim() : undefined}
+                disabled={quickRescheduleSaving || (isRecurringSeriesJob && !qrDate.trim())}
+                title={
+                  isRecurringSeriesJob && !qrDate.trim()
+                    ? "Set the arrival date first"
+                    : isRecurringSeriesJob && qrDate.trim()
+                      ? `On or after ${qrDate.trim()}`
+                      : undefined
+                }
+                onChange={(e) => {
+                  const min = isRecurringSeriesJob ? qrDate.trim() : "";
+                  const v = e.target.value;
+                  if (min && v && v < min) return;
+                  setQrExpectedFinish(v);
+                }}
               />
             </div>
           </div>

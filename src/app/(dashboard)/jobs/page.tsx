@@ -73,6 +73,7 @@ import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compa
 import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
 import {
   formatArrivalTimeRange,
   formatJobScheduleLine,
@@ -945,6 +946,14 @@ function JobsPageContent() {
     return defs.map((c) => ({ ...c }));
   }, [scheduleSortedData]);
 
+  const openJobDetail = useCallback(
+    (job: Job) => {
+      setJobsNavQueue(scheduleSortedData.map((j) => j.id));
+      router.push(`/jobs/${job.id}`);
+    },
+    [router, scheduleSortedData],
+  );
+
   const jobIdFromUrl = searchParams.get("jobId");
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
 
@@ -1217,7 +1226,10 @@ function JobsPageContent() {
         setCreateOpen(false);
         toast.success(`Series created with ${seriesResult.jobs.length} occurrences`);
         const firstJob = seriesResult.jobs[0];
-        if (firstJob) router.push(`/jobs/${firstJob.id}`);
+        if (firstJob) {
+          setJobsNavQueue(seriesResult.jobs.map((j) => j.id));
+          router.push(`/jobs/${firstJob.id}`);
+        }
         void loadDashboardStats();
         void Promise.resolve().then(() => refreshSilent());
         return;
@@ -1277,6 +1289,7 @@ function JobsPageContent() {
       });
       setCreateOpen(false);
       toast.success("Job created");
+      setJobsNavQueue([result.id]);
       router.push(`/jobs/${result.id}`);
       void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       void loadDashboardStats();
@@ -2346,7 +2359,7 @@ function JobsPageContent() {
               columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}
-              onRowClick={(job) => router.push(`/jobs/${job.id}`)}
+              onRowClick={openJobDetail}
               page={page}
               totalPages={totalPages}
               totalItems={totalItems}
@@ -2392,7 +2405,7 @@ function JobsPageContent() {
                 <KanbanBoard
                   columns={kanbanColumns}
                   getCardId={(j) => j.id}
-                  onCardClick={(j) => router.push(`/jobs/${j.id}`)}
+                  onCardClick={openJobDetail}
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
                     const statusCaption =
@@ -2477,8 +2490,8 @@ function JobsPageContent() {
               )}
             </div>
           )}
-          {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
-          {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
+          {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={openJobDetail} />}
+          {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={openJobDetail} />}
         </motion.div>
       </div>
 

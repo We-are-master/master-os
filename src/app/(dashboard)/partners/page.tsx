@@ -1,7 +1,7 @@
 /**
  * Server Component shell for the Partners page.
  *
- * Pre-fetches the first page (default tab = "all", trade = "all") via the
+ * Pre-fetches the first page (default stage = "active", trade = "all") via the
  * consolidated `get_partners_list_bundle` RPC. The 5k-line client component
  * (`partners-client.tsx`) hydrates from this payload — its first paint is
  * a fully populated table instead of a loading skeleton waiting on a
@@ -13,6 +13,6 @@ import { PartnersClient } from "./partners-client";
 export const dynamic = "force-dynamic";
 
 export default async function PartnersPage() {
-  const initialData = await fetchInitialPartners({ pageSize: 10 });
+  const initialData = await fetchInitialPartners({ pageSize: 10, status: "active" });
   return <PartnersClient initialData={initialData} />;
 }

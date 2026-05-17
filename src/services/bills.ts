@@ -4,7 +4,29 @@ import { recurringGroupKey } from "@/lib/bill-groups";
 import { markPayRunItemsPaid, removeBillIdsFromPayRunItems } from "./pay-runs";
 import { generateRecurringDueDates, RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
 
+/** Archive recurring rows past their series end date once the end date is before today. */
+async function applyRecurringSeriesEndPause(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("bills")
+    .select("id, due_date, recurring_series_end_date")
+    .not("recurring_series_end_date", "is", null)
+    .lt("recurring_series_end_date", today)
+    .is("archived_at", null);
+  if (error) throw error;
+  const ids = (data ?? [])
+    .filter((row) => {
+      const end = String((row as { recurring_series_end_date: string }).recurring_series_end_date ?? "").trim();
+      const due = String((row as { due_date: string }).due_date ?? "").trim();
+      return end && due && due > end;
+    })
+    .map((row) => (row as { id: string }).id);
+  if (ids.length > 0) await archiveBillsByIds(ids);
+}
+
 export async function listBills(params?: { status?: string; from?: string; to?: string }): Promise<Bill[]> {
+  await applyRecurringSeriesEndPause();
   let q = getSupabase().from("bills").select("*").order("due_date", { ascending: true });
   if (params?.status && params.status !== "all") q = q.eq("status", params.status);
   if (params?.from) q = q.gte("due_date", params.from);
@@ -44,6 +66,8 @@ export async function listBillsInSameSeries(bill: Bill): Promise<Bill[]> {
 export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at"> & {
   /** Override default horizon (e.g. debit with 23 months left). Clamped 1–120. */
   recurringOccurrenceCount?: number | null;
+  /** Last inclusive due date; caps generated occurrences and enables auto-archive after this date. */
+  recurring_series_end_date?: string | null;
 };
 
 function resolveRecurringOccurrenceCount(interval: BillRecurrence, payload: CreateBillPayload): number {
@@ -59,7 +83,11 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
   if (payload.is_recurring && payload.recurrence_interval && payload.due_date) {
     const interval = payload.recurrence_interval;
     const n = resolveRecurringOccurrenceCount(interval, payload);
-    const dueDates = generateRecurringDueDates(payload.due_date, interval, n);
+    const seriesEnd = payload.recurring_series_end_date?.trim() || null;
+    const dueDates = generateRecurringDueDates(payload.due_date, interval, n, seriesEnd);
+    if (dueDates.length === 0) {
+      throw new Error("End date must be on or after the first due date.");
+    }
     const recurringSeriesId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -72,6 +100,7 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
       is_recurring: true,
       recurrence_interval: interval,
       recurring_series_id: recurringSeriesId,
+      recurring_series_end_date: seriesEnd,
       submitted_by_id: payload.submitted_by_id ?? null,
       submitted_by_name: payload.submitted_by_name ?? null,
       status: (payload.status ?? "submitted") as BillStatus,

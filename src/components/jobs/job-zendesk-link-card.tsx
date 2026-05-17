@@ -11,6 +11,8 @@ interface JobZendeskLinkCardProps {
   zendeskSubdomain?:  string | null;
   /** Called after a successful link/unlink so the parent can refresh job state. */
   onChanged?:         () => void;
+  /** Omit outer card chrome when nested inside a parent collapsible (e.g. job Setup tab). */
+  embedded?:          boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export function JobZendeskLinkCard({
   externalRef,
   zendeskSubdomain,
   onChanged,
+  embedded = false,
 }: JobZendeskLinkCardProps) {
   const isLinked = externalSource === "zendesk" && !!externalRef?.trim();
   const [editing, setEditing] = useState(false);
@@ -100,9 +103,10 @@ export function JobZendeskLinkCard({
 
   return (
     <div
-      className="rounded-[10px] p-[14px] space-y-2"
-      style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+      className={embedded ? "space-y-2" : "rounded-[10px] p-[14px] space-y-2"}
+      style={embedded ? undefined : { background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
     >
+      {!embedded ? (
       <div className="flex items-center gap-2">
         <Link2 className="h-4 w-4 shrink-0" style={{ color: "#020040" }} />
         <p className="text-[13px] font-semibold" style={{ color: "#020040" }}>
@@ -117,6 +121,14 @@ export function JobZendeskLinkCard({
           </span>
         ) : null}
       </div>
+      ) : isLinked && !editing ? (
+        <span
+          className="inline-flex text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wide"
+          style={{ background: "#E4F5EE", color: "#0F6E56" }}
+        >
+          Linked
+        </span>
+      ) : null}
 
       {!editing && isLinked ? (
         <div className="flex items-center gap-2 flex-wrap">
@@ -195,7 +207,9 @@ export function JobZendeskLinkCard({
             autoFocus
           />
           <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-            Stored as <code className="font-mono">external_source=&apos;zendesk&apos;</code> + <code className="font-mono">external_ref</code>. Existing status sync + partner side conversation flows pick this up automatically.
+            {embedded
+              ? "Links this job to Zendesk for status updates and partner messages."
+              : <>Stored as <code className="font-mono">external_source=&apos;zendesk&apos;</code> + <code className="font-mono">external_ref</code>. Existing status sync + partner side conversation flows pick this up automatically.</>}
           </p>
           <div className="flex gap-2 flex-wrap">
             <button

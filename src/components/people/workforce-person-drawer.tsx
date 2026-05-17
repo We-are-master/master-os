@@ -1078,7 +1078,7 @@ export function WorkforcePersonDrawer({
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-semibold text-text-primary">Linked internal self-bills</p>
                 <Link
-                  href="/finance/selfbill"
+                  href="/finance/billing/selfbill"
                   className={cn(
                     "inline-flex h-8 px-3 text-xs font-semibold rounded-lg items-center gap-1",
                     "bg-card text-text-primary border border-border hover:bg-surface-tertiary hover:border-border shadow-sm",

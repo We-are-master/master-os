@@ -96,33 +96,46 @@ const navLogoComponents: Record<string, (props: { className?: string }) => React
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
 const SIDEBAR_HIDDEN_HREFS = new Set(["/clients", "/requests", "/compliance", "/ppm"]);
 
-function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function pathMatchesHref(pathname: string, href: string): boolean {
+  return pathname === href || (href !== "/" && pathname.startsWith(href));
+}
+
+function NavLink({ item, collapsed, nested = false }: { item: NavItem; collapsed: boolean; nested?: boolean }) {
   const pathname = usePathname();
-  const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+  const childActive = item.children?.some((c) => pathMatchesHref(pathname, c.href)) ?? false;
+  const selfActive = pathMatchesHref(pathname, item.href);
+  const isParentOfActive = !nested && Boolean(item.children?.length) && childActive && !selfActive;
+  const rowHighlight = nested ? selfActive : selfActive || isParentOfActive;
+  const showStripe = selfActive;
+
   const Icon = iconMap[item.icon] || LayoutGrid;
   const LogoComponent = navLogoComponents[item.href];
   const iconClassName = cn(
     "h-4 w-4 shrink-0 transition-colors",
-    isActive ? "text-fx-coral opacity-100" : "text-white/60 opacity-85 group-hover:text-white"
+    rowHighlight ? "text-fx-coral opacity-100" : "text-white/60 opacity-85 group-hover:text-white"
   );
 
   return (
     <Link href={item.href}>
       <motion.div
-        whileHover={{ x: 2 }}
+        whileHover={{ x: nested ? 0 : 2 }}
         whileTap={{ scale: 0.98 }}
         className={cn(
-          "group relative flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13.5px] font-medium transition-colors duration-200",
+          "group relative flex items-center gap-2.5 rounded-md text-[13.5px] font-medium transition-colors duration-200",
+          nested ? "pl-6 pr-2.5 py-1.5 ml-2 border-l border-white/10" : "px-2.5 py-2",
           collapsed && "justify-center px-2",
-          isActive
+          rowHighlight
             ? "text-white bg-fx-coral/10"
             : "text-white/60 hover:text-white/90 hover:bg-white/[0.04]"
         )}
       >
-        {isActive && (
+        {showStripe && (
           <motion.div
-            layoutId="sidebar-active"
-            className="absolute -left-3 top-1.5 bottom-1.5 w-[3px] bg-fx-coral rounded-r"
+            layoutId={nested ? `sidebar-active-${item.href}` : "sidebar-active"}
+            className={cn(
+              "absolute w-[3px] bg-fx-coral rounded-r",
+              nested ? "-left-2 top-1.5 bottom-1.5" : "-left-3 top-1.5 bottom-1.5"
+            )}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           />
         )}
@@ -137,7 +150,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
               initial={{ opacity: 0, width: 0 }}
               animate={{ opacity: 1, width: "auto" }}
               exit={{ opacity: 0, width: 0 }}
-              className="truncate whitespace-nowrap"
+              className={cn("truncate whitespace-nowrap", nested && "text-[13px] font-medium")}
             >
               {item.label}
             </motion.span>
@@ -207,29 +220,58 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+function markItemHrefsDeep(item: NavItem, sink: Set<string>): void {
+  sink.add(item.href);
+  item.children?.forEach((c) => markItemHrefsDeep(c, sink));
+}
+
 /**
  * Merge new items from the canonical NAVIGATION into the admin-filtered
- * list. When a nav group in NAVIGATION has items that don't exist in the
- * filtered version (e.g. "Tickets" was added after the admin saved their
- * nav config), append them so new features are visible without requiring
- * admins to re-save the config.
+ * list (including nested `children`).
  */
 function mergeNewNavItems(
   filtered: typeof NAVIGATION,
   canonical: typeof NAVIGATION,
 ): typeof NAVIGATION {
-  const filteredHrefs = new Set(filtered.flatMap((g) => g.items.map((i) => i.href)));
-  const result = filtered.map((g) => ({ ...g, items: [...g.items] }));
+  const filteredHrefs = new Set<string>();
+  filtered.forEach((g) => g.items.forEach((i) => markItemHrefsDeep(i, filteredHrefs)));
+
+  const result = filtered.map((g) => ({
+    ...g,
+    items: g.items.map((item) => ({
+      ...item,
+      children: item.children?.length ? item.children.map((c) => ({ ...c })) : undefined,
+    })),
+  }));
+
+  const findGroup = (label: string) => result.find((g) => g.label === label);
+
   for (const cGroup of canonical) {
-    const match = result.find((g) => g.label === cGroup.label);
-    for (const item of cGroup.items) {
-      if (filteredHrefs.has(item.href)) continue;
-      if (match) {
-        match.items.push(item);
-      } else {
-        result.push({ label: cGroup.label, items: [item] });
+    let match = findGroup(cGroup.label);
+    if (!match) {
+      match = { label: cGroup.label, items: [] };
+      result.push(match);
+    }
+    for (const cItem of cGroup.items) {
+      const local = match!.items.find((i) => i.href === cItem.href);
+      if (!local) {
+        match!.items.push({
+          ...cItem,
+          children: cItem.children?.map((ch) => ({ ...ch })),
+        });
+        markItemHrefsDeep(cItem, filteredHrefs);
+        continue;
       }
-      filteredHrefs.add(item.href);
+
+      filteredHrefs.add(cItem.href);
+      if (cItem.children?.length) {
+        const kids = [...(local.children ?? [])];
+        for (const ch of cItem.children) {
+          if (!kids.some((k) => k.href === ch.href)) kids.push({ ...ch });
+          filteredHrefs.add(ch.href);
+        }
+        local.children = kids.length > 0 ? kids : undefined;
+      }
     }
   }
   return result;
@@ -308,7 +350,13 @@ export function Sidebar() {
                 {group.items
                   .filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href))
                   .map((item) => (
-                    <NavLink key={item.href} item={item} collapsed={collapsed} />
+                    <div key={item.href} className="space-y-0.5">
+                      <NavLink item={item} collapsed={collapsed} />
+                      {!collapsed &&
+                        item.children
+                          ?.filter((ch) => !SIDEBAR_HIDDEN_HREFS.has(ch.href))
+                          .map((ch) => <NavLink key={ch.href} item={ch} collapsed={collapsed} nested />)}
+                    </div>
                   ))}
               </div>
             )}

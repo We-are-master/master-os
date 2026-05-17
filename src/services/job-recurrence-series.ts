@@ -405,11 +405,120 @@ export async function detachOccurrence(jobId: string): Promise<Job> {
   return data as Job;
 }
 
+/** Calendar / timing fields propagated to siblings via the same delta as the anchor occurrence. */
+const SCHEDULE_DELTA_FIELDS = [
+  "scheduled_date",
+  "scheduled_start_at",
+  "scheduled_end_at",
+  "scheduled_finish_date",
+  "expected_finish_at",
+] as const satisfies ReadonlyArray<keyof Job>;
+
+type SchedulePropagationSnap = Pick<
+  Job,
+  | "id"
+  | "recurrence_series_id"
+  | "recurrence_sequence_index"
+  | "status"
+  | "scheduled_date"
+  | "scheduled_start_at"
+  | "scheduled_end_at"
+  | "scheduled_finish_date"
+  | "expected_finish_at"
+>;
+
+function patchTouchesSchedule(patch: Partial<Job>): boolean {
+  for (const k of SCHEDULE_DELTA_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) return true;
+  }
+  return false;
+}
+
+/** Merge schedule keys from patch over the anchor row snapshot (sparse patch). */
+function overlaySchedule(prev: SchedulePropagationSnap, patch: Partial<Job>): SchedulePropagationSnap {
+  return {
+    ...prev,
+    ...Object.fromEntries(
+      SCHEDULE_DELTA_FIELDS.filter((k) => Object.prototype.hasOwnProperty.call(patch, k)).map((k) => [k, (patch as Record<string, unknown>)[String(k)]]),
+    ) as Partial<Pick<Job, typeof SCHEDULE_DELTA_FIELDS[number]>>,
+  };
+}
+
+/** Millisecond shift inferred from anchor before→after reschedule (timezone-safe if ISO fully specified). */
+function computeAnchorScheduleDeltaMs(prev: SchedulePropagationSnap, patch: Partial<Job>): number {
+  const merged = overlaySchedule(prev, patch);
+  const pStartStr = typeof prev.scheduled_start_at === "string" ? prev.scheduled_start_at.trim() : "";
+  const mStartStr = typeof merged.scheduled_start_at === "string" ? merged.scheduled_start_at.trim() : "";
+  if (pStartStr.length > 10 && mStartStr.length > 10) {
+    const pMs = Date.parse(pStartStr);
+    const mMs = Date.parse(mStartStr);
+    if (Number.isFinite(pMs) && Number.isFinite(mMs)) return mMs - pMs;
+  }
+  /** Fall back to civil-day delta at fixed noon — matches expandSeries SAFE_HOUR style. */
+  const py = sliceYmd(prev.scheduled_date);
+  const ny = sliceYmd(merged.scheduled_date ?? prev.scheduled_date);
+  if (py && ny) {
+    const a = dateAtNoonUtc(py).getTime();
+    const b = dateAtNoonUtc(ny).getTime();
+    if (Number.isFinite(a) && Number.isFinite(b)) return b - a;
+  }
+  return 0;
+}
+
+function sliceYmd(raw: unknown): string | null {
+  const s = typeof raw === "string" ? raw.trim().slice(0, 10) : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return s;
+}
+
+function dateAtNoonUtc(ymd: string): Date {
+  return new Date(`${ymd}T12:00:00Z`);
+}
+
+function shiftIso(ms: unknown, deltaMs: number): string | undefined {
+  if (deltaMs === 0 || typeof ms !== "string") return undefined;
+  const trimmed = ms.trim();
+  const t = Date.parse(trimmed);
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t + deltaMs).toISOString();
+}
+
+function shiftYmd(ymd: unknown, deltaMs: number): string | undefined {
+  if (deltaMs === 0) return undefined;
+  const slice = sliceYmd(ymd);
+  if (!slice) return undefined;
+  const t = dateAtNoonUtc(slice).getTime() + deltaMs;
+  const d = new Date(t);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Build `{ scheduled_* }` patch for another occurrence by applying the anchor's delta.
+ */
+function shiftedSchedulePatchForSibling(sibling: SchedulePropagationSnap, deltaMs: number): Partial<Job> {
+  if (deltaMs === 0) return {};
+  const out: Partial<Job> = {};
+  const su = shiftYmd(sibling.scheduled_date, deltaMs);
+  if (su !== undefined && sibling.scheduled_date) out.scheduled_date = su;
+  const sfu = shiftYmd(sibling.scheduled_finish_date ?? sibling.scheduled_date, deltaMs);
+  if (sfu !== undefined) out.scheduled_finish_date = sfu;
+  const ss = shiftIso(sibling.scheduled_start_at, deltaMs);
+  if (ss !== undefined) out.scheduled_start_at = ss;
+  const se = shiftIso(sibling.scheduled_end_at, deltaMs);
+  if (se !== undefined) out.scheduled_end_at = se;
+  const ex = shiftIso(sibling.expected_finish_at, deltaMs);
+  if (ex !== undefined) out.expected_finish_at = ex;
+  return out;
+}
+
 /**
  * Patch shape that survives propagation across occurrences. Only fields that
  * make sense series-wide are propagated when scope = 'this_and_following' or
- * 'entire_series'. Date-only fields (scheduled_date, scheduled_finish_date)
- * are NEVER propagated — each occurrence keeps its own date.
+ * `entire_series`. Scheduling is propagated separately: see
+ * computeAnchorScheduleDeltaMs + shiftedSchedulePatchForSibling.
  */
 const PROPAGATABLE_FIELDS: ReadonlyArray<keyof Job> = [
   "partner_id",
@@ -428,16 +537,15 @@ const PROPAGATABLE_FIELDS: ReadonlyArray<keyof Job> = [
 /**
  * Apply an edit to a recurring occurrence with the chosen scope.
  *
- *   • this_only          → detach + apply patch to this row.
- *   • this_and_following → apply patch to this row AND every non-detached
- *                          occurrence with sequence_index >= this. Date-only
- *                          fields (scheduled_date, scheduled_finish_date) are
- *                          NOT propagated — they remain per-occurrence.
- *   • entire_series      → apply patch to every non-detached occurrence in
- *                          the series (past + future), again excluding
- *                          date-only fields.
+ *   • `this_only` — detach row, apply full patch to it only.
  *
- * Returns the count of rows updated.
+ *   • `this_and_following` / `entire_series` — apply full patch to this row.
+ *     Siblings in scope receive propagatable fields (partner/pricing/…) plus
+ *     the same schedule **delta** inferred from this row before→after, so
+ *     “reschedule forward 3 days” shifts future visits similarly. Completed
+ *     occurrences still receive propagatable fields but skip calendar shifts.
+ *
+ * Returns the count of rows updated (including the originating job).
  */
 export async function applyEditScope(
   jobId: string,
@@ -446,57 +554,73 @@ export async function applyEditScope(
 ): Promise<{ updated: number; detached: boolean }> {
   const supabase = getSupabase();
 
-  // Always update the target row first.
-  const { data: targetRow, error: tErr } = await supabase
-    .from("jobs")
-    .select("id, recurrence_series_id, recurrence_sequence_index")
-    .eq("id", jobId)
-    .maybeSingle();
+  const scheduleSelect =
+    "id, recurrence_series_id, recurrence_sequence_index, status, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, expected_finish_at";
+
+  const { data: targetRow, error: tErr } = await supabase.from("jobs").select(scheduleSelect).eq("id", jobId).maybeSingle();
   if (tErr) throw tErr;
   if (!targetRow) throw new Error("Job not found");
 
-  const seriesId = (targetRow as { recurrence_series_id: string | null }).recurrence_series_id;
-  const seqIndex = (targetRow as { recurrence_sequence_index: number | null }).recurrence_sequence_index ?? 0;
+  const anchorSnap = targetRow as SchedulePropagationSnap;
+  const seriesId = anchorSnap.recurrence_series_id;
+  const seqIndex = anchorSnap.recurrence_sequence_index ?? 0;
 
   if (!seriesId || scope === "this_only") {
     const detachPatch = scope === "this_only"
       ? { ...patch, recurrence_detached_at: new Date().toISOString() }
       : patch;
-    const { error: updErr } = await supabase
-      .from("jobs")
-      .update(detachPatch)
-      .eq("id", jobId);
+    const { error: updErr } = await supabase.from("jobs").update(detachPatch).eq("id", jobId);
     if (updErr) throw updErr;
     return { updated: 1, detached: scope === "this_only" };
   }
 
-  // Strip date-only fields from the patch when propagating across occurrences.
   const propagatable: Partial<Job> = {};
   for (const k of PROPAGATABLE_FIELDS) {
-    if (k in patch) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (propagatable as any)[k] = (patch as any)[k];
     }
   }
-  // Apply the FULL patch (including date) to the originating row…
+
+  const propagateSchedule = patchTouchesSchedule(patch);
+  const scheduleDeltaMs = propagateSchedule ? computeAnchorScheduleDeltaMs(anchorSnap, patch) : 0;
+
   const { error: selfErr } = await supabase.from("jobs").update(patch).eq("id", jobId);
   if (selfErr) throw selfErr;
 
-  // …then the propagatable subset to siblings.
-  let q = supabase
+  const { data: familyRows, error: famErr } = await supabase
     .from("jobs")
-    .update(propagatable)
+    .select(scheduleSelect)
     .eq("recurrence_series_id", seriesId)
     .is("recurrence_detached_at", null)
-    .neq("id", jobId);
+    .is("deleted_at", null);
+  if (famErr) throw famErr;
 
-  if (scope === "this_and_following") {
-    q = q.gte("recurrence_sequence_index", seqIndex);
+  const siblingRows = (familyRows ?? []).filter((raw) => {
+    const row = raw as SchedulePropagationSnap;
+    if (row.id === jobId) return false;
+    if (scope === "this_and_following") {
+      const s = row.recurrence_sequence_index ?? 0;
+      return s >= seqIndex;
+    }
+    return true;
+  });
+
+  let updated = 1;
+  for (const raw of siblingRows) {
+    const sibling = raw as SchedulePropagationSnap;
+    const scheduleExtras =
+      propagateSchedule && scheduleDeltaMs !== 0 && sibling.status !== "completed"
+        ? shiftedSchedulePatchForSibling(sibling, scheduleDeltaMs)
+        : {};
+    const combined: Partial<Job> = { ...propagatable, ...scheduleExtras };
+    if (Object.keys(combined).length === 0) continue;
+    const { error: sErr } = await supabase.from("jobs").update(combined).eq("id", sibling.id);
+    if (sErr) throw sErr;
+    updated += 1;
   }
 
-  const { data: bulkRows, error: bulkErr } = await q.select("id");
-  if (bulkErr) throw bulkErr;
-  return { updated: 1 + (bulkRows?.length ?? 0), detached: false };
+  return { updated, detached: false };
 }
 
 /** Cancel a series — soft-delete the series + soft-delete future non-detached occurrences. */

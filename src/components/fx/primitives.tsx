@@ -40,7 +40,7 @@ const PILL_TONE: Record<PillTone, string> = {
   bad: "bg-fx-red-50 text-fx-red",
   coral: "bg-fx-coral-50 text-fx-coral-p",
   info: "bg-fx-blue-50 text-fx-blue",
-  violet: "bg-[#EDE7F6] text-[#5B21B6]",
+  violet: "bg-[#EDE7F6] text-[#5B21B6] dark:bg-violet-950/60 dark:text-violet-100",
   ghost: "bg-transparent border border-fx-line text-fx-slate",
 };
 
@@ -133,9 +133,9 @@ export function KpiCard({
         "relative overflow-hidden rounded-xl border bg-card px-4 py-4 transition-colors",
         variant === "default" && "border-fx-line hover:border-fx-line-2",
         variant === "coral" &&
-          "border-fx-coral/25 bg-gradient-to-b from-card to-fx-coral-50/30",
+          "border-fx-coral/25 bg-gradient-to-b from-card to-fx-coral-50/30 dark:border-fx-coral/38 dark:bg-fx-coral-50 dark:[background-image:none]",
         variant === "alert" &&
-          "border-fx-red/25 bg-gradient-to-b from-card to-fx-red-50/40",
+          "border-fx-red/25 bg-gradient-to-b from-card to-fx-red-50/40 dark:border-fx-red/40 dark:bg-fx-red-50 dark:[background-image:none]",
       )}
     >
       <div className="flex items-start justify-between gap-2">

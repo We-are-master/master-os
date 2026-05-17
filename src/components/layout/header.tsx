@@ -10,6 +10,8 @@ import {
   Search, X, History,
 } from "lucide-react";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
+import { Badge } from "@/components/ui/badge";
+import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import Link from "next/link";
 import { useTheme } from "@/hooks/use-theme";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -24,6 +26,8 @@ type SearchResult = {
   title: string;
   subtitle: string;
   href: string;
+  /** Raw status for jobs — shown as a badge on the result row. */
+  status?: string;
 };
 
 function GlobalSearch() {
@@ -82,10 +86,12 @@ function GlobalSearch() {
       };
       const mapped: SearchResult[] = [
         ...((jobs ?? []) as JobRow[]).map((j) => ({
-          id: j.id, type: "job" as const,
+          id: j.id,
+          type: "job" as const,
           title: `${j.reference} – ${j.title}`,
-          subtitle: [j.client_name, addrLine(j.property_address, null) || null, j.status].filter(Boolean).join(" · "),
+          subtitle: [j.client_name, addrLine(j.property_address, null) || null].filter(Boolean).join(" · "),
           href: `/jobs/${j.id}`,
+          status: j.status,
         })),
         ...((quotes ?? []) as QuoteRow[]).map((q2) => ({
           id: q2.id, type: "quote" as const,
@@ -212,11 +218,20 @@ function GlobalSearch() {
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-text-primary truncate">{r.title}</p>
-                      <p className="text-[11px] text-text-tertiary truncate">{r.subtitle}</p>
+                      {r.subtitle ? (
+                        <p className="text-[11px] text-text-tertiary truncate">{r.subtitle}</p>
+                      ) : null}
                     </div>
-                    <span className="text-[10px] text-text-tertiary bg-surface-hover px-1.5 py-0.5 rounded shrink-0">
-                      {typeLabel(r.type)}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {r.type === "job" && r.status ? (
+                        <Badge variant={jobStatusBadgeVariant(r.status)} size="sm" className="h-5 text-[10px]">
+                          {jobStatusLabel(r.status)}
+                        </Badge>
+                      ) : null}
+                      <span className="text-[10px] text-text-tertiary bg-surface-hover px-1.5 py-0.5 rounded">
+                        {typeLabel(r.type)}
+                      </span>
+                    </div>
                   </button>
                 </li>
               ))}

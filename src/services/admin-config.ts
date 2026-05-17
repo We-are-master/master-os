@@ -3,11 +3,11 @@ import { getSupabase } from "./base";
 import type { NavGroup, NavItem } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
-const SERVICES_NAV_ITEM = {
-  label: "Services",
-  href: "/services",
-  icon: "wrench",
-  permission: "service_catalog" as const,
+const SETTINGS_NAV_ITEM = {
+  label: "Settings",
+  href: "/settings",
+  icon: "settings",
+  permission: "settings" as const,
 };
 
 const PEOPLE_DIRECTORY_ITEM = {
@@ -26,13 +26,6 @@ const TEAM_CORE_ITEM = {
 
 const PEOPLE_GROUP_LABEL = "People";
 const LEGACY_TEAM_GROUP_LABEL = "Team";
-
-const SETTINGS_NAV_ITEM = {
-  label: "Settings",
-  href: "/settings",
-  icon: "settings",
-  permission: "settings" as const,
-};
 
 const INBOX_GROUP_LABEL = "Inbox";
 const INBOX_HREFS = ["/tickets", "/outreach"] as const;
@@ -76,25 +69,49 @@ function removeActivitySidebarNav(nav: NavGroup[]): NavGroup[] {
     .filter((g) => g.items.length > 0);
 }
 
+/** Applies canonical labels/icons (+ nested children) onto stored rows; keeps orphan links at the end of the group. */
+function syncNavItemAgainstCanonical(canonicalItem: NavItem, storedOpt?: NavItem): NavItem {
+  const stored = storedOpt ?? { ...canonicalItem, children: undefined };
+  let childrenOut: NavItem[] | undefined;
+  if (canonicalItem.children?.length) {
+    childrenOut = canonicalItem.children.map((ch) => {
+      const prev = stored.children?.find((x) => x.href === ch.href);
+      const base = prev ?? ch;
+      return {
+        ...base,
+        label: ch.label,
+        icon: ch.icon,
+        permission: ch.permission ?? base.permission,
+      };
+    });
+  } else if (stored.children?.length) {
+    childrenOut = stored.children;
+  }
+
+  return {
+    ...stored,
+    label: canonicalItem.label,
+    icon: canonicalItem.icon,
+    permission: canonicalItem.permission ?? stored.permission,
+    ...(childrenOut !== undefined ? { children: childrenOut } : {}),
+  };
+}
+
 /** Sync item labels/icons AND order from DEFAULT_NAVIGATION so code-side changes propagate on next load. */
 function syncItemLabels(nav: NavGroup[]): NavGroup[] {
-  const byHref = new Map<string, NavItem>(
-    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i) => [i.href, i]))
-  );
-  const canonicalOrder = new Map<string, number>(
-    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i, idx) => [i.href, idx]))
-  );
   return nav.map((g) => {
-    const synced = g.items.map((item) => {
-      const canonical = byHref.get(item.href);
-      return canonical ? { ...item, label: canonical.label, icon: canonical.icon } : item;
+    const canonical = DEFAULT_NAVIGATION.find((c) => c.label === g.label);
+    if (!canonical) return g;
+    const order = new Map(canonical.items.map((i, idx) => [i.href, idx]));
+    const canonTopHrefs = new Set(canonical.items.map((i) => i.href));
+    const merged = canonical.items.map((cItem) => {
+      const stored = g.items.find((x) => x.href === cItem.href);
+      return syncNavItemAgainstCanonical(cItem, stored);
     });
-    synced.sort((a, b) => {
-      const ia = canonicalOrder.get(a.href) ?? 999;
-      const ib = canonicalOrder.get(b.href) ?? 999;
-      return ia - ib;
-    });
-    return { ...g, items: synced };
+    const orphans = g.items.filter((x) => !canonTopHrefs.has(x.href));
+    const combined = [...merged, ...orphans];
+    combined.sort((a, b) => (order.get(a.href) ?? 999) - (order.get(b.href) ?? 999));
+    return { ...g, items: combined };
   });
 }
 
@@ -122,6 +139,22 @@ function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
   return out;
 }
 
+/** Drop legacy top-level Service catalog link — catalog is a tab inside Settings. */
+function stripLegacyServicesNavItem(group: NavGroup): NavGroup {
+  if (group.label !== "Admin") return group;
+  const items = group.items
+    .filter((i) => i.href !== "/services")
+    .map((i) => {
+      if (i.href !== "/settings") return i;
+      const children = i.children?.filter((c) => c.href !== "/services");
+      return { ...i, children: children?.length ? children : undefined };
+    });
+  if (!items.some((i) => i.href === "/settings")) {
+    items.unshift({ ...SETTINGS_NAV_ITEM });
+  }
+  return { ...group, items };
+}
+
 /**
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
@@ -133,7 +166,8 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     "/finance/payroll",
     "/finance/pay-run",
     "/finance/dashboard",
-    "/services",
+    "/finance/invoices",
+    "/finance/selfbill",
     "/team",
     "/requests",
     "/compliance",
@@ -164,18 +198,29 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
   const adminIdx = next.findIndex((g) => g.label === "Admin");
   if (adminIdx >= 0) {
     const items = [...next[adminIdx].items];
-    if (!items.some((i) => i.href === "/services")) items.push({ ...SERVICES_NAV_ITEM });
-    if (!items.some((i) => i.href === "/settings")) items.unshift({ ...SETTINGS_NAV_ITEM });
-    next[adminIdx] = { ...next[adminIdx], items };
+    if (!items.some((i) => i.href === "/settings")) items.unshift({ ...SETTINGS_NAV_ITEM, children: [] });
+    next[adminIdx] = stripLegacyServicesNavItem({ ...next[adminIdx], items });
   } else {
     next.push({
       label: "Admin",
-      items: [{ ...SETTINGS_NAV_ITEM }, { ...SERVICES_NAV_ITEM }],
+      items: [{ ...SETTINGS_NAV_ITEM }],
     });
   }
 
   const financeIdx = next.findIndex((g) => g.label === "Finance");
   const peopleNavIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
+  const canonicalFinance = DEFAULT_NAVIGATION.find((g) => g.label === "Finance");
+  if (financeIdx >= 0 && canonicalFinance) {
+    const seen = new Set(next[financeIdx].items.map((i) => i.href));
+    const merged = [...next[financeIdx].items];
+    for (const item of canonicalFinance.items) {
+      if (!seen.has(item.href)) {
+        merged.push({ ...item });
+        seen.add(item.href);
+      }
+    }
+    next[financeIdx] = { ...next[financeIdx], items: merged };
+  }
   if (peopleNavIdx >= 0 && financeIdx >= 0 && peopleNavIdx > financeIdx) {
     const [peopleGroup] = next.splice(peopleNavIdx, 1);
     next.splice(financeIdx, 0, peopleGroup);
@@ -233,18 +278,14 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
-      { label: "Self-Billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
+      { label: "Billing", href: "/finance/billing/invoices", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Payouts", href: "/payout", icon: "calendar-clock", permission: "finance" },
     ],
   },
   {
     label: "Admin",
-    items: [
-      { label: "Settings", href: "/settings", icon: "settings", permission: "settings" },
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
-    ],
+    items: [{ ...SETTINGS_NAV_ITEM }],
   },
 ];
 

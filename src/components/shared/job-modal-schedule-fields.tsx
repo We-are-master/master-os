@@ -171,7 +171,11 @@ export function JobModalScheduleFields({
               <Input
                 type="date"
                 value={scheduledDate}
-                onChange={(e) => onChange("scheduled_date", e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onChange("scheduled_date", v);
+                  if (v && endDate && endDate < v) onChange("end_date", v);
+                }}
                 className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
@@ -189,7 +193,15 @@ export function JobModalScheduleFields({
               <Input
                 type="date"
                 value={endDate}
-                onChange={(e) => onChange("end_date", e.target.value)}
+                min={scheduledDate.trim() || undefined}
+                disabled={!scheduledDate.trim()}
+                title={scheduledDate.trim() ? `On or after ${scheduledDate.trim()}` : "Set the start date first"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const min = scheduledDate.trim();
+                  if (min && v && v < min) return;
+                  onChange("end_date", v);
+                }}
                 className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
               />
             </div>
@@ -267,7 +279,18 @@ function RecurringFormFields({
           <Input
             type="date"
             value={scheduledDate}
-            onChange={(e) => onChange("scheduled_date", e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              onChange("scheduled_date", v);
+              if (
+                v &&
+                recurrence.end_mode === "until" &&
+                recurrence.end_date.trim() &&
+                recurrence.end_date < v
+              ) {
+                onRecurrenceChange({ end_date: v });
+              }
+            }}
             className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
           />
           {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
@@ -392,8 +415,21 @@ function RecurringFormFields({
             <Input
               type="date"
               value={recurrence.end_date}
-              onChange={(e) => onRecurrenceChange({ end_date: e.target.value })}
-              disabled={recurrence.end_mode !== "until"}
+              min={scheduledDate.trim() || undefined}
+              disabled={recurrence.end_mode !== "until" || !scheduledDate.trim()}
+              title={
+                recurrence.end_mode !== "until"
+                  ? undefined
+                  : scheduledDate.trim()
+                    ? `On or after ${scheduledDate.trim()}`
+                    : "Set the start date first"
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                const min = scheduledDate.trim();
+                if (min && v && v < min) return;
+                onRecurrenceChange({ end_date: v });
+              }}
               className="h-8"
             />
           </label>

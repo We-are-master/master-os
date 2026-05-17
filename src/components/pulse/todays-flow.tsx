@@ -176,17 +176,19 @@ export function TodaysFlow() {
               <XAxis
                 dataKey="label"
                 interval={0}
-                tick={{ fontSize: 9.5, fill: "#6B6B85", fontFamily: "var(--font-mono)" }}
+                tick={{ fontSize: 9.5, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
                 tickLine={false}
                 axisLine={false}
               />
               <Tooltip
-                cursor={{ fill: "rgba(2,0,64,0.04)" }}
+                cursor={{ fill: "var(--chart-cursor-overlay)" }}
                 contentStyle={{
                   fontSize: 12,
                   borderRadius: 8,
                   border: "1px solid var(--color-fx-line)",
                   boxShadow: "var(--shadow-fx-2)",
+                  backgroundColor: "var(--card-bg)",
+                  color: "var(--text-primary)",
                 }}
                 labelFormatter={(_v, payload) => {
                   const entry = payload?.[0]?.payload as DayBucket | undefined;
@@ -199,7 +201,7 @@ export function TodaysFlow() {
               />
               <Legend wrapperStyle={{ display: "none" }} />
               {firstDay ? (
-                <ReferenceLine x={firstDay.label} stroke="#0A0A1F" strokeDasharray="2 3" />
+                <ReferenceLine x={firstDay.label} stroke="var(--chart-reference-dash)" strokeDasharray="2 3" />
               ) : null}
               <Bar dataKey="unassigned" stackId="a" fill={COLORS.unassigned} radius={[0, 0, 0, 0]} />
               <Bar dataKey="scheduled" stackId="a" fill={COLORS.scheduled} radius={[0, 0, 0, 0]} />

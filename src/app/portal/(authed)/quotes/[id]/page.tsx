@@ -14,7 +14,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:          "Declined",
   converted_to_job:  "Converted to job",
   draft:             "New",
-  in_survey:         "In survey",
+  in_survey:         "Bidding",
   bidding:           "Bidding",
 };
 
