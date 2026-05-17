@@ -73,22 +73,15 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
             animate="visible"
             exit="exit"
             onClick={submitting ? undefined : onClose}
-            className="absolute inset-0"
-            style={{ background: "rgba(15,15,20,0.08)", backdropFilter: "blur(4px)" }}
+            className="final-review-modal-overlay absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
             variants={modalTransition}
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="relative w-full h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-white overflow-hidden my-auto"
-            style={{
-              maxWidth: "620px",
-              borderRadius: "16px",
-              border: "0.5px solid var(--color-border-tertiary, #E4E4E7)",
-              boxShadow:
-                "0 20px 50px -20px rgba(2,0,64,0.12), 0 4px 12px -4px rgba(0,0,0,0.04)",
-            }}
+            className="final-review-modal-panel relative w-full h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card border border-fx-line overflow-hidden my-auto rounded-2xl shadow-modal"
+            style={{ maxWidth: "620px" }}
           >
             <ModalHeader
               jobId={jobId}

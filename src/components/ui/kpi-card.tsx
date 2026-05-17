@@ -33,11 +33,11 @@ interface KpiCardProps {
 }
 
 const accentStyles = {
-  primary: "bg-primary/5 text-primary",
-  emerald: "bg-emerald-50 text-emerald-600",
-  blue: "bg-blue-50 text-blue-600",
-  amber: "bg-amber-50 text-amber-600",
-  purple: "bg-purple-50 text-purple-600",
+  primary: "bg-primary/5 text-primary dark:bg-primary/15",
+  emerald: "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/35 dark:text-emerald-400",
+  blue: "bg-blue-50 text-blue-600 dark:bg-blue-950/35 dark:text-blue-400",
+  amber: "bg-amber-50 text-amber-600 dark:bg-amber-950/35 dark:text-amber-400",
+  purple: "bg-purple-50 text-purple-600 dark:bg-purple-950/35 dark:text-purple-400",
   stone: "bg-stone-100 text-stone-600 dark:bg-stone-900/50 dark:text-stone-400",
 };
 

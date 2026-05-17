@@ -93,7 +93,7 @@ export function JobDocumentsPanel({
 
   return (
     <div
-      className="rounded-[12px] overflow-hidden bg-white"
+      className="rounded-[12px] overflow-hidden bg-card border border-border-light"
       style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
     >
       <div
@@ -164,7 +164,7 @@ export function JobDocumentsPanel({
                     "flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-2 py-3 text-center transition-colors",
                     busy
                       ? "opacity-60 pointer-events-none border-border"
-                      : "border-border cursor-pointer hover:border-primary/40 bg-white/50",
+                      : "border-border cursor-pointer hover:border-primary/40 bg-surface-hover/50 dark:bg-surface-tertiary/40",
                   )}
                 >
                   <input

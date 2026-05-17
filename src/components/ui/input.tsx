@@ -28,7 +28,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             "hover:border-border",
             isDateOrTime && "h-10 rounded-xl bg-surface-hover/40 border-border-light font-medium",
             icon && "pl-9",
-            error && "border-red-300 focus:ring-red-100 focus:border-red-400",
+            error && "border-red-300 focus:ring-red-100 focus:border-red-400 dark:border-red-500/50 dark:focus:ring-red-950/40 dark:focus:border-red-400",
             className
           )}
           {...props}

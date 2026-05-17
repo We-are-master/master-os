@@ -89,9 +89,9 @@ export function HistoryDetailModal({ open, onClose, campaignId }: HistoryDetailM
                 {showBody ? "Ocultar corpo do e-mail" : "Ver corpo do e-mail"}
               </button>
               {showBody && (
-                <div className="mt-2 rounded-lg border border-border-light bg-white text-stone-900 overflow-hidden">
+                <div className="mt-2 rounded-lg border border-border-light bg-card text-text-primary overflow-hidden">
                   <div
-                    className="prose prose-sm max-w-none p-4"
+                    className="prose prose-sm max-w-none p-4 dark:prose-invert"
                     dangerouslySetInnerHTML={{ __html: campaign.body_html }}
                   />
                 </div>

@@ -43,7 +43,7 @@ export function Drawer({
             animate="visible"
             exit="exit"
             onClick={onClose}
-            className="fixed inset-0 bg-black/20 z-40 glass"
+            className="fixed inset-0 bg-black/20 dark:bg-black/60 z-40 glass"
           />
           <motion.div
             variants={drawerTransition}

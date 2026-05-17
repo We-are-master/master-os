@@ -25,7 +25,7 @@ const TIMEZONES = [
 function formatSettingsSaveError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/column|does not exist|42703/i.test(msg)) {
-    return "Database is missing AI columns. Run supabase/migrations/043_master_brain_daily_brief.sql then 044_master_brain_manager_operator.sql in the Supabase SQL Editor, then Settings → API → Reload schema.";
+    return "Database is missing AI columns. Run supabase/migrations/187_company_settings_master_brain_daily_brief.sql and 188_company_settings_master_brain_roles.sql in the Supabase SQL Editor, then Settings → API → Reload schema.";
   }
   if (/permission denied|RLS|42501/i.test(msg)) {
     return "No permission to update company settings. You must be signed in as an admin.";

@@ -39,7 +39,7 @@ export function DateWindowToolbar({
     <div className="flex flex-col gap-3 min-[480px]:flex-row min-[480px]:items-stretch min-[480px]:gap-3">
       <div
         className={cn(
-          "flex min-w-0 flex-1 flex-col gap-3 rounded-[6px] border-[0.5px] border-[#E4E4E8] bg-white p-2.5 shadow-[0_2px_14px_rgba(2,0,64,0.06)] sm:flex-row sm:items-center sm:gap-3 sm:p-3",
+          "flex min-w-0 flex-1 flex-col gap-3 rounded-[6px] border border-border bg-card p-2.5 shadow-soft sm:flex-row sm:items-center sm:gap-3 sm:p-3 dark:border-border dark:shadow-fx-1",
         )}
       >
         <div className="flex items-center gap-2.5 shrink-0 sm:border-r sm:border-[#ECECEE] sm:pr-3 md:pr-4">

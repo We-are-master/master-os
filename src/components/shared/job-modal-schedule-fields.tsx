@@ -74,7 +74,9 @@ export function JobModalScheduleFields({
   requiredFieldClassName,
   hideArrivalSlot = false,
 }: Props) {
-  const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
+  const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins, {
+    useArrivalSlots: isOneOff && !hideArrivalSlot,
+  });
   const isOneOff = jobKind === "one_off";
   const isMultiDay = jobKind === "multi_day";
   const isRecurring = jobKind === "recurring";

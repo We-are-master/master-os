@@ -61,7 +61,7 @@ export function FinalReviewSummaryModal({ isOpen, onClose, summary }: Props) {
         onClick={onClose}
       />
       <div
-        className="relative w-full max-w-[min(100%,400px)] rounded-[14px] bg-white shadow-xl border border-zinc-200/90 max-h-[min(85dvh,480px)] overflow-y-auto"
+        className="relative w-full max-w-[min(100%,400px)] rounded-[14px] bg-card shadow-xl border border-border max-h-[min(85dvh,480px)] overflow-y-auto dark:border-border"
         style={{ boxShadow: "0 20px 50px -20px rgba(2,0,64,0.2)" }}
         onClick={(e) => e.stopPropagation()}
       >
