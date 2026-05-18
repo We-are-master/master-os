@@ -259,6 +259,10 @@ export interface PartnerServicePrice {
   hourly_partner_rate?: number | null;
   default_hours?: number | null;
   notes?: string | null;
+  /** Per base-preset id partner pay when use_standard = false (mig 193). */
+  preset_overrides?: CatalogPresetOverridesMap | null;
+  /** Per add-on id partner pay when use_standard = false (mig 193). */
+  addon_overrides?: CatalogAddonOverridesMap | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -759,6 +763,8 @@ export interface Account {
   active_jobs: number;
   /** Default client cancellation fee (£) for jobs under this account — office may override each cancel. */
   default_client_cancel_fee_gbp?: number | null;
+  /** Subset of `service_catalog` rows this account may use (Service rates, job scope). */
+  catalog_service_ids?: string[] | null;
   created_at: string;
 }
 

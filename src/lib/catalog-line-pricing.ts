@@ -88,6 +88,7 @@ function pickClientBase(
 function pickAddonLine(
   addon: ServicePricingAddon,
   account: AccountServicePrice | null,
+  partnerPrice?: PartnerServicePrice | null,
 ): { client: number; partner: number; clientSource: "standard" | "custom"; partnerSource: "standard" | "custom" } {
   let client = Number(addon.fixed_price) || 0;
   let partner = addon.partner_cost != null ? Number(addon.partner_cost) || 0 : 0;
@@ -106,12 +107,22 @@ function pickAddonLine(
     }
   }
 
+  if (partnerPrice && !partnerPrice.use_standard) {
+    const partnerAddonOvr = parseOverridesMap<CatalogAddonOverridesMap>(partnerPrice.addon_overrides)[addon.id];
+    if (partnerAddonOvr?.partner_cost != null) {
+      partner = Number(partnerAddonOvr.partner_cost) || 0;
+      partnerSource = "custom";
+    }
+  }
+
   return { client, partner, clientSource, partnerSource };
 }
 
 /**
  * Resolve stacked catalog pricing: one base preset + optional add-ons.
- * Account maps override per preset/addon id; partner override replaces base partner pay when set.
+ * Account maps override per preset/addon id for client (and account partner where set).
+ * Partner maps preset_overrides / addon_overrides partner_cost when use_standard is false;
+ * otherwise legacy fixed_partner_cost replaces the base partner amount when set.
  */
 export function resolveCatalogLinePricing(input: {
   catalog: CatalogService;
@@ -132,9 +143,18 @@ export function resolveCatalogLinePricing(input: {
 
   const base = pickClientBase(input.catalog, presetId, input.accountPrice ?? null);
   let basePartner = base.partner;
+  let basePartnerSource = base.partnerSource;
 
-  if (input.partnerPrice && !input.partnerPrice.use_standard && input.partnerPrice.fixed_partner_cost != null) {
-    basePartner = Number(input.partnerPrice.fixed_partner_cost) || 0;
+  const pp = input.partnerPrice;
+  if (pp && !pp.use_standard) {
+    const partnerPresetOvr = parseOverridesMap<CatalogPresetOverridesMap>(pp.preset_overrides)[presetId];
+    if (partnerPresetOvr?.partner_cost != null) {
+      basePartner = Number(partnerPresetOvr.partner_cost) || 0;
+      basePartnerSource = "custom";
+    } else if (pp.fixed_partner_cost != null) {
+      basePartner = Number(pp.fixed_partner_cost) || 0;
+      basePartnerSource = "custom";
+    }
   }
 
   const lines: CatalogPricingLine[] = [
@@ -145,16 +165,13 @@ export function resolveCatalogLinePricing(input: {
       clientAmount: base.client,
       partnerAmount: basePartner,
       clientSource: base.clientSource,
-      partnerSource:
-        input.partnerPrice && !input.partnerPrice.use_standard && input.partnerPrice.fixed_partner_cost != null
-          ? "custom"
-          : base.partnerSource,
+      partnerSource: basePartnerSource,
     },
   ];
 
   for (const addon of addons) {
     if (!addonIdSet.has(addon.id)) continue;
-    const row = pickAddonLine(addon, input.accountPrice ?? null);
+    const row = pickAddonLine(addon, input.accountPrice ?? null, input.partnerPrice ?? null);
     lines.push({
       id: addon.id,
       label: addon.label,
@@ -179,14 +196,15 @@ export type CatalogAddonChargeOption = {
   partnerAmount: number;
 };
 
-/** Catalog stackable additionals with client/partner amounts (account overrides when set). */
+/** Catalog stackable additionals with client/partner amounts (account + optional partner overrides). */
 export function resolveCatalogAddonChargeOptions(
   catalog: CatalogService,
   accountPrice?: AccountServicePrice | null,
+  partnerPrice?: PartnerServicePrice | null,
 ): CatalogAddonChargeOption[] {
   if (!catalogHasStackableAddons(catalog)) return [];
   return sortPricingAddonsDisplay(parsePricingAddons(catalog.pricing_addons)).map((addon) => {
-    const row = pickAddonLine(addon, accountPrice ?? null);
+    const row = pickAddonLine(addon, accountPrice ?? null, partnerPrice ?? null);
     return {
       id: addon.id,
       label: addon.label,

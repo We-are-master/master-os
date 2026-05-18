@@ -15,11 +15,13 @@ import {
   deleteAccountServicePrice,
 } from "@/services/account-service-prices";
 import type {
+  Account,
   AccountServicePrice,
   CatalogAddonOverridesMap,
   CatalogPresetOverridesMap,
   CatalogService,
 } from "@/types/database";
+import { filterCatalogServicesForAccount } from "@/lib/catalog-trade-ids";
 import {
   parsePricingAddons,
   parsePricingPresets,
@@ -34,7 +36,13 @@ import { catalogHasStackableAddons } from "@/lib/catalog-line-pricing";
  * One row per service with toggle "Use standard". When custom, exposes
  * the appropriate fields based on the catalog's pricing_mode.
  */
-export function AccountServiceRatesTabSection({ accountId }: { accountId: string }) {
+export function AccountServiceRatesTabSection({
+  accountId,
+  account,
+}: {
+  accountId: string;
+  account: Pick<Account, "catalog_service_ids">;
+}) {
   const [services, setServices] = useState<CatalogService[]>([]);
   const [overrides, setOverrides] = useState<Map<string, AccountServicePrice>>(() => new Map());
   const [loading, setLoading] = useState(true);
@@ -53,13 +61,13 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
     ])
       .then(([cat, ovr]) => {
         if (cancelled) return;
-        setServices(cat);
+        const offered = filterCatalogServicesForAccount(cat, account);
+        setServices(offered);
         const m = new Map<string, AccountServicePrice>();
         for (const o of ovr) m.set(o.catalog_service_id, o);
         setOverrides(m);
-        // Hydrate drafts from existing overrides.
         const initial: Record<string, RowDraft> = {};
-        for (const s of cat) {
+        for (const s of offered) {
           const o = m.get(s.id);
           initial[s.id] = draftFromServiceAndOverride(s, o ?? null);
         }
@@ -68,7 +76,7 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
       .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to load service rates"))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [accountId, account.catalog_service_ids]);
 
   async function persistRow(service: CatalogService) {
     const draft = drafts[service.id];
@@ -138,7 +146,17 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
   if (services.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border-light p-8 text-center text-sm text-text-tertiary">
-        No catalog services. Add services in <strong>/services</strong> first.
+        {(account.catalog_service_ids?.filter(Boolean).length ?? 0) === 0 ? (
+          <>
+            No services selected for this account. Open <strong>Overview</strong> and choose which catalogue
+            services you offer them — only those appear here for pricing.
+          </>
+        ) : (
+          <>
+            No catalogue rows match the selected services. Check <strong>Settings → Services</strong>, then save
+            Overview again.
+          </>
+        )}
       </div>
     );
   }
@@ -151,7 +169,8 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
           Service rates
         </h4>
         <p className="text-xs text-text-tertiary mt-0.5">
-          What THIS account pays per service. Toggle &quot;Custom&quot; to override the catalog default — affects only NEW jobs from now on.
+          What THIS account pays per service they are offered (from Overview). Toggle &quot;Custom&quot; to override
+          the catalog default — base options and additionals when defined. Affects only NEW jobs from now on.
         </p>
       </div>
 

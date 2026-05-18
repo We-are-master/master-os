@@ -9,6 +9,8 @@ const ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT =
   "This database is missing the finance email column — run migration 121 (supabase/migrations/121_accounts_finance_email.sql), or clear Finance email and save.";
 const ACCOUNT_BILLING_TYPE_MIGRATION_HINT =
   "This database is missing the billing_type column — run migration 152 (supabase/migrations/152_accounts_billing_type.sql), or set Bill invoices to End client in the database.";
+const ACCOUNT_CATALOG_SERVICES_MIGRATION_HINT =
+  "This database is missing catalog_service_ids — run migration 194 (supabase/migrations/194_accounts_catalog_service_ids.sql).";
 
 const VALID_BILLING_TYPE = new Set<NonNullable<Account["billing_type"]>>(["end_client", "account"]);
 
@@ -96,6 +98,13 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
     const v = Number(next.default_client_cancel_fee_gbp);
     next.default_client_cancel_fee_gbp =
       Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null;
+  }
+  if (next.catalog_service_ids !== undefined) {
+    next.catalog_service_ids = [
+      ...new Set(
+        (next.catalog_service_ids ?? []).map((id) => String(id).trim()).filter(Boolean),
+      ),
+    ];
   }
   return next;
 }
@@ -207,6 +216,20 @@ export async function createAccount(input: AccountInsert): Promise<Account> {
     return retry.data as Account;
   }
 
+  if (
+    isSupabaseMissingColumnError(first.error, "catalog_service_ids") &&
+    Object.prototype.hasOwnProperty.call(payload, "catalog_service_ids")
+  ) {
+    const ids = payload.catalog_service_ids;
+    if (Array.isArray(ids) && ids.length > 0) {
+      throw new Error(ACCOUNT_CATALOG_SERVICES_MIGRATION_HINT);
+    }
+    const { catalog_service_ids: _c, ...rest } = payload;
+    const retry = await supabase.from("accounts").insert(rest).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
   throw formatAccountDbError(first.error);
 }
 
@@ -250,6 +273,20 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
       throw new Error(ACCOUNT_BILLING_TYPE_MIGRATION_HINT);
     }
     const { billing_type: _b, ...rest } = payload;
+    const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  if (
+    isSupabaseMissingColumnError(first.error, "catalog_service_ids") &&
+    Object.prototype.hasOwnProperty.call(payload, "catalog_service_ids")
+  ) {
+    const ids = payload.catalog_service_ids;
+    if (Array.isArray(ids) && ids.length > 0) {
+      throw new Error(ACCOUNT_CATALOG_SERVICES_MIGRATION_HINT);
+    }
+    const { catalog_service_ids: _c, ...rest } = payload;
     const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
     if (retry.error) throw formatAccountDbError(retry.error);
     return retry.data as Account;
