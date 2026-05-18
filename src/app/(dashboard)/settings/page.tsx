@@ -79,7 +79,7 @@ function SettingsPageInner() {
 
   const visibleTabs = useMemo(() => {
     const tabs: { id: string; label: string }[] = [{ id: "profile", label: "My Profile" }];
-    if (canCatalog) tabs.push({ id: SERVICE_CATALOG_TAB_ID, label: "Service catalog" });
+    if (canCatalog) tabs.push({ id: SERVICE_CATALOG_TAB_ID, label: "Services" });
     if (isAdmin) tabs.push(...settingsAdminTabs.map((t) => ({ id: t.id, label: t.label })));
     return tabs;
   }, [isAdmin, canCatalog]);
