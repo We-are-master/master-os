@@ -14,14 +14,35 @@ import {
   upsertAccountServicePrice,
   deleteAccountServicePrice,
 } from "@/services/account-service-prices";
-import type { AccountServicePrice, CatalogService } from "@/types/database";
+import type {
+  Account,
+  AccountServicePrice,
+  CatalogAddonOverridesMap,
+  CatalogPresetOverridesMap,
+  CatalogService,
+} from "@/types/database";
+import { filterCatalogServicesForAccount } from "@/lib/catalog-trade-ids";
+import {
+  parsePricingAddons,
+  parsePricingPresets,
+  presetPricingMode,
+  sortPricingAddonsDisplay,
+  sortPricingPresetsDisplay,
+} from "@/lib/catalog-pricing-presets";
+import { catalogHasStackableAddons } from "@/lib/catalog-line-pricing";
 
 /**
  * Per-account override of what THIS account pays for each catalog service.
  * One row per service with toggle "Use standard". When custom, exposes
  * the appropriate fields based on the catalog's pricing_mode.
  */
-export function AccountServiceRatesTabSection({ accountId }: { accountId: string }) {
+export function AccountServiceRatesTabSection({
+  accountId,
+  account,
+}: {
+  accountId: string;
+  account: Pick<Account, "catalog_service_ids">;
+}) {
   const [services, setServices] = useState<CatalogService[]>([]);
   const [overrides, setOverrides] = useState<Map<string, AccountServicePrice>>(() => new Map());
   const [loading, setLoading] = useState(true);
@@ -40,28 +61,22 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
     ])
       .then(([cat, ovr]) => {
         if (cancelled) return;
-        setServices(cat);
+        const offered = filterCatalogServicesForAccount(cat, account);
+        setServices(offered);
         const m = new Map<string, AccountServicePrice>();
         for (const o of ovr) m.set(o.catalog_service_id, o);
         setOverrides(m);
-        // Hydrate drafts from existing overrides.
         const initial: Record<string, RowDraft> = {};
-        for (const s of cat) {
+        for (const s of offered) {
           const o = m.get(s.id);
-          initial[s.id] = {
-            use_standard: o ? o.use_standard : true,
-            fixed_price: o?.fixed_price?.toString() ?? "",
-            hourly_rate: o?.hourly_rate?.toString() ?? "",
-            default_hours: o?.default_hours?.toString() ?? "",
-            notes: o?.notes ?? "",
-          };
+          initial[s.id] = draftFromServiceAndOverride(s, o ?? null);
         }
         setDrafts(initial);
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Failed to load service rates"))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [accountId, account.catalog_service_ids]);
 
   async function persistRow(service: CatalogService) {
     const draft = drafts[service.id];
@@ -74,6 +89,8 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
       hourly_rate: parseNumOrNull(draft.hourly_rate),
       default_hours: parseNumOrNull(draft.default_hours),
       notes: draft.notes.trim() || null,
+      preset_overrides: draft.use_standard ? {} : serializeItemOverrides(draft.preset_overrides),
+      addon_overrides: draft.use_standard ? {} : serializeItemOverrides(draft.addon_overrides),
     };
     try {
       const saved = await upsertAccountServicePrice(payload);
@@ -105,13 +122,7 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
     }
     setDrafts((prev) => ({
       ...prev,
-      [service.id]: {
-        use_standard: true,
-        fixed_price: "",
-        hourly_rate: "",
-        default_hours: "",
-        notes: "",
-      },
+      [service.id]: draftFromServiceAndOverride(service, null),
     }));
   }
 
@@ -135,7 +146,17 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
   if (services.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border-light p-8 text-center text-sm text-text-tertiary">
-        No catalog services. Add services in <strong>/services</strong> first.
+        {(account.catalog_service_ids?.filter(Boolean).length ?? 0) === 0 ? (
+          <>
+            No services selected for this account. Open <strong>Overview</strong> and choose which catalogue
+            services you offer them — only those appear here for pricing.
+          </>
+        ) : (
+          <>
+            No catalogue rows match the selected services. Check <strong>Settings → Services</strong>, then save
+            Overview again.
+          </>
+        )}
       </div>
     );
   }
@@ -148,7 +169,8 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
           Service rates
         </h4>
         <p className="text-xs text-text-tertiary mt-0.5">
-          What THIS account pays per service. Toggle &quot;Custom&quot; to override the catalog default — affects only NEW jobs from now on.
+          What THIS account pays per service they are offered (from Overview). Toggle &quot;Custom&quot; to override
+          the catalog default — base options and additionals when defined. Affects only NEW jobs from now on.
         </p>
       </div>
 
@@ -172,16 +194,74 @@ export function AccountServiceRatesTabSection({ accountId }: { accountId: string
   );
 }
 
+type ItemOverrideDraft = { fixed_price: string; partner_cost: string };
+
 interface RowDraft {
   use_standard: boolean;
   fixed_price: string;
   hourly_rate: string;
   default_hours: string;
   notes: string;
+  preset_overrides: Record<string, ItemOverrideDraft>;
+  addon_overrides: Record<string, ItemOverrideDraft>;
 }
 
 function defaultDraft(): RowDraft {
-  return { use_standard: true, fixed_price: "", hourly_rate: "", default_hours: "", notes: "" };
+  return {
+    use_standard: true,
+    fixed_price: "",
+    hourly_rate: "",
+    default_hours: "",
+    notes: "",
+    preset_overrides: {},
+    addon_overrides: {},
+  };
+}
+
+function itemDraftFromMap(
+  map: CatalogPresetOverridesMap | CatalogAddonOverridesMap | null | undefined,
+  id: string,
+): ItemOverrideDraft {
+  const o = map?.[id];
+  return {
+    fixed_price: o?.fixed_price != null ? String(o.fixed_price) : "",
+    partner_cost: o?.partner_cost != null ? String(o.partner_cost) : "",
+  };
+}
+
+function draftFromServiceAndOverride(service: CatalogService, override: AccountServicePrice | null): RowDraft {
+  const preset_overrides: Record<string, ItemOverrideDraft> = {};
+  for (const p of sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets))) {
+    preset_overrides[p.id] = itemDraftFromMap(override?.preset_overrides, p.id);
+  }
+  const addon_overrides: Record<string, ItemOverrideDraft> = {};
+  for (const a of sortPricingAddonsDisplay(parsePricingAddons(service.pricing_addons))) {
+    addon_overrides[a.id] = itemDraftFromMap(override?.addon_overrides, a.id);
+  }
+  return {
+    use_standard: override ? override.use_standard : true,
+    fixed_price: override?.fixed_price?.toString() ?? "",
+    hourly_rate: override?.hourly_rate?.toString() ?? "",
+    default_hours: override?.default_hours?.toString() ?? "",
+    notes: override?.notes ?? "",
+    preset_overrides,
+    addon_overrides,
+  };
+}
+
+function serializeItemOverrides(
+  drafts: Record<string, ItemOverrideDraft>,
+): CatalogPresetOverridesMap {
+  const out: CatalogPresetOverridesMap = {};
+  for (const [id, d] of Object.entries(drafts)) {
+    const fixed_price = parseNumOrNull(d.fixed_price);
+    const partner_cost = parseNumOrNull(d.partner_cost);
+    if (fixed_price == null && partner_cost == null) continue;
+    out[id] = {};
+    if (fixed_price != null) out[id].fixed_price = fixed_price;
+    if (partner_cost != null) out[id].partner_cost = partner_cost;
+  }
+  return out;
 }
 
 function parseNumOrNull(s: string): number | null {
@@ -201,6 +281,9 @@ function ServiceRateRow({
   onCommit: () => void;
   onResetToStandard: () => void;
 }) {
+  const stackable = catalogHasStackableAddons(service);
+  const presets = sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets));
+  const addons = sortPricingAddonsDisplay(parsePricingAddons(service.pricing_addons));
   const isHourly = service.pricing_mode === "hourly";
   const isCustom = !draft.use_standard;
   const hasPersistedOverride = !!override && !override.use_standard;
@@ -263,7 +346,139 @@ function ServiceRateRow({
         </div>
       </div>
 
-      {isCustom ? (
+      {isCustom && stackable ? (
+        <div className="mt-3 space-y-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-text-tertiary mb-1.5">Base options</p>
+            <div className="rounded-lg border border-border-light overflow-hidden text-xs">
+              <div className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-2 bg-surface-hover/50 px-2 py-1.5 font-medium text-text-tertiary">
+                <span>Option</span>
+                <span>Client £</span>
+                <span>Partner £</span>
+              </div>
+              {presets.map((p) => {
+                const mode = presetPricingMode(p);
+                const catClient =
+                  mode === "fixed" ? Number(p.fixed_price) || 0 : (Number(p.hourly_rate) || 0) * (p.default_hours ?? 1);
+                const catPartner = Number(p.partner_cost) || 0;
+                const d = draft.preset_overrides[p.id] ?? { fixed_price: "", partner_cost: "" };
+                return (
+                  <div key={p.id} className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-2 px-2 py-2 border-t border-border-light items-center">
+                    <div>
+                      <p className="font-medium text-text-primary">{p.label}</p>
+                      <p className="text-[10px] text-text-tertiary">
+                        Catalog {formatCurrency(catClient)} · partner {formatCurrency(catPartner)}
+                      </p>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={d.fixed_price}
+                      onChange={(e) =>
+                        onDraftChange({
+                          preset_overrides: {
+                            ...draft.preset_overrides,
+                            [p.id]: { ...d, fixed_price: e.target.value },
+                          },
+                        })
+                      }
+                      onBlur={onCommit}
+                      placeholder={String(catClient)}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={d.partner_cost}
+                      onChange={(e) =>
+                        onDraftChange({
+                          preset_overrides: {
+                            ...draft.preset_overrides,
+                            [p.id]: { ...d, partner_cost: e.target.value },
+                          },
+                        })
+                      }
+                      onBlur={onCommit}
+                      placeholder={String(catPartner)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {addons.length > 0 ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-text-tertiary mb-1.5">Additionals</p>
+              <div className="rounded-lg border border-border-light overflow-hidden text-xs">
+                <div className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-2 bg-surface-hover/50 px-2 py-1.5 font-medium text-text-tertiary">
+                  <span>Additional</span>
+                  <span>Client £</span>
+                  <span>Partner £</span>
+                </div>
+                {addons.map((a) => {
+                  const d = draft.addon_overrides[a.id] ?? { fixed_price: "", partner_cost: "" };
+                  return (
+                    <div key={a.id} className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-2 px-2 py-2 border-t border-border-light items-center">
+                      <div>
+                        <p className="font-medium text-text-primary">{a.label}</p>
+                        <p className="text-[10px] text-text-tertiary">
+                          Catalog {formatCurrency(a.fixed_price)} · partner {formatCurrency(Number(a.partner_cost) || 0)}
+                        </p>
+                      </div>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={d.fixed_price}
+                        onChange={(e) =>
+                          onDraftChange({
+                            addon_overrides: {
+                              ...draft.addon_overrides,
+                              [a.id]: { ...d, fixed_price: e.target.value },
+                            },
+                          })
+                        }
+                        onBlur={onCommit}
+                        placeholder={String(a.fixed_price)}
+                        className="h-8 text-xs"
+                      />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={d.partner_cost}
+                        onChange={(e) =>
+                          onDraftChange({
+                            addon_overrides: {
+                              ...draft.addon_overrides,
+                              [a.id]: { ...d, partner_cost: e.target.value },
+                            },
+                          })
+                        }
+                        onBlur={onCommit}
+                        placeholder={String(a.partner_cost ?? 0)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          <div>
+            <label className="block text-[10px] font-semibold text-text-tertiary uppercase mb-1">Notes (optional)</label>
+            <Input
+              value={draft.notes}
+              onChange={(e) => onDraftChange({ notes: e.target.value })}
+              onBlur={onCommit}
+              placeholder="e.g. agreed in May 2026"
+            />
+          </div>
+        </div>
+      ) : isCustom ? (
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           {isHourly ? (
             <>

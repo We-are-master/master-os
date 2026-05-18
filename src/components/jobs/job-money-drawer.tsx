@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CatalogAddonChargeOption } from "@/lib/catalog-line-pricing";
 import { Drawer } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { Invoice, JobPaymentMethod } from "@/types/database";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
@@ -59,6 +60,8 @@ type Props = {
   submitting: boolean;
   stripeInvoices: Invoice[];
   clientCashContext?: JobMoneyDrawerClientCashContext;
+  /** Stackable catalog additionals for this job's service — quick-pick on extra flows. */
+  catalogAddonOptions?: CatalogAddonChargeOption[];
 };
 
 const CLIENT_METHODS: { value: JobPaymentMethod; label: string }[] = [
@@ -201,6 +204,27 @@ function isPayFlow(flow: JobMoneyDrawerFlow): boolean {
   return flow === "client_pay" || flow === "partner_pay";
 }
 
+function buildExtraTypeOptions(
+  flow: JobMoneyDrawerFlow,
+  catalogAddons?: CatalogAddonChargeOption[],
+): { value: string; label: string }[] {
+  const base = flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS;
+  if (!catalogAddons?.length) return base;
+  const seen = new Set(base.map((o) => o.value.trim().toUpperCase()));
+  const catalogOpts: { value: string; label: string }[] = [];
+  for (const addon of catalogAddons) {
+    const label = addon.label.trim();
+    const key = label.toUpperCase();
+    if (!label || seen.has(key)) continue;
+    seen.add(key);
+    catalogOpts.push({ value: label, label });
+  }
+  if (catalogOpts.length === 0) return base;
+  const otherIdx = base.findIndex((o) => o.value === "Other");
+  if (otherIdx === -1) return [...catalogOpts, ...base];
+  return [...base.slice(0, otherIdx), ...catalogOpts, ...base.slice(otherIdx)];
+}
+
 export function JobMoneyDrawer({
   open,
   flow,
@@ -210,6 +234,7 @@ export function JobMoneyDrawer({
   submitting,
   stripeInvoices,
   clientCashContext,
+  catalogAddonOptions = [],
 }: Props) {
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -267,7 +292,32 @@ export function JobMoneyDrawer({
     return () => cancelAnimationFrame(id);
   }, [method, open, flow]);
 
+  const isExtraFlowUi = flow === "client_extra" || flow === "partner_extra";
+  const extraTypeOptions = useMemo(
+    () => (flow && isExtraFlowUi ? buildExtraTypeOptions(flow, catalogAddonOptions) : []),
+    [flow, isExtraFlowUi, catalogAddonOptions],
+  );
+
   if (!flow) return null;
+
+  const catalogAddonsForFlow = isExtraFlowUi && catalogAddonOptions.length > 0 ? catalogAddonOptions : [];
+
+  const applyCatalogAddon = (addon: CatalogAddonChargeOption) => {
+    const label = addon.label.trim();
+    const amt = flow === "client_extra" ? addon.clientAmount : addon.partnerAmount;
+    setExtraType(label);
+    setAmount(amt > 0 ? String(Math.round(amt * 100) / 100) : "");
+    setExtraReason(`Service catalog additional — ${label}`);
+    setExtraReasonPreset("");
+    if (flow === "client_extra" && addon.partnerAmount > 0) {
+      setAddLinkedPartnerExtra(true);
+      setLinkedPartnerType(label);
+      setLinkedPartnerAmount(
+        addon.partnerAmount > 0 ? String(Math.round(addon.partnerAmount * 100) / 100) : "",
+      );
+      setLinkedPartnerReason(`Service catalog additional — ${label}`);
+    }
+  };
 
   const isClientStripe = flow === "client_pay" && method === "stripe";
   const n = Number(amount);
@@ -527,6 +577,33 @@ export function JobMoneyDrawer({
         ) : (
           <>
             {!isPayFlow(flow) ? helpExtra : null}
+            {catalogAddonsForFlow.length > 0 ? (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-text-secondary">Service additionals</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {catalogAddonsForFlow.map((addon) => {
+                    const amt = flow === "client_extra" ? addon.clientAmount : addon.partnerAmount;
+                    const selected = extraType.trim().toLowerCase() === addon.label.trim().toLowerCase();
+                    return (
+                      <button
+                        key={addon.id}
+                        type="button"
+                        onClick={() => applyCatalogAddon(addon)}
+                        className={cn(
+                          "rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
+                          selected
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                        )}
+                      >
+                        <span className="font-medium">{addon.label}</span>
+                        <span className="block text-[10px] tabular-nums opacity-80">{formatCurrency(amt)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             {!isPayFlow(flow) ? (
               <div>
                 <Select
@@ -543,7 +620,7 @@ export function JobMoneyDrawer({
                       isJobExtraDiscountExtraType(next);
                     if (!usePresetRow) setExtraReasonPreset("");
                   }}
-                  options={flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS}
+                  options={extraTypeOptions}
                   className="h-10"
                 />
               </div>

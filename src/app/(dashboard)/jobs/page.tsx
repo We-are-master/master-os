@@ -58,6 +58,7 @@ import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
@@ -93,7 +94,7 @@ import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-f
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
-import type { Job, JobKind } from "@/types/database";
+import type { AccountServicePrice, Job, JobKind } from "@/types/database";
 import { TimeSelect } from "@/components/ui/time-select";
 import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
 import {
@@ -114,9 +115,18 @@ import {
 import {
   defaultPricingPresetId,
   mergeCatalogWithPricingPreset,
+  parsePricingAddons,
   parsePricingPresets,
+  sortPricingAddonsDisplay,
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
+import {
+  catalogHasStackableAddons,
+  resolveCatalogLinePricing,
+  type ResolvedCatalogLinePricing,
+} from "@/lib/catalog-line-pricing";
+import { getAccountServicePrice } from "@/services/account-service-prices";
+import { getPartnerServicePrice } from "@/services/partner-service-prices";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
@@ -1171,6 +1181,7 @@ function JobsPageContent() {
           title: formData.title ?? "",
           catalog_service_id: formData.catalog_service_id ?? null,
           catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
+          catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? null,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           client_name: formData.client_name ?? "",
@@ -1239,6 +1250,7 @@ function JobsPageContent() {
         title: formData.title ?? "",
         catalog_service_id: formData.catalog_service_id ?? null,
         catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
+        catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? null,
         client_id: formData.client_id,
         client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
@@ -2680,6 +2692,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     title: "",
     catalog_service_id: "",
     catalog_pricing_preset_id: "",
+    catalog_pricing_addon_ids: [] as string[],
     partner_id: "",
     partner_ids: [] as string[],
     client_price: "",
@@ -2740,12 +2753,90 @@ function CreateJobModal({ open, onClose, onCreate }: {
     return () => { cancelled = true; };
   }, [clientAddress.client_id]);
 
-  const { pricing } = useResolvedJobPricing({
+  const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const isStackablePricing = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
+  const catalogAddonOptions = useMemo(() => {
+    if (!selectedCatalogService) return [];
+    return sortPricingAddonsDisplay(parsePricingAddons(selectedCatalogService.pricing_addons));
+  }, [selectedCatalogService]);
+
+  const { pricing, loading: pricingResolving } = useResolvedJobPricing({
     accountId: effectiveAccountId,
-    partnerId: form.partner_id,
-    catalogServiceId: form.catalog_service_id,
-    pricingPresetId: form.catalog_pricing_preset_id,
+    partnerId: form.assignment_mode === "manual" ? form.partner_id : null,
+    catalogServiceId: isStackablePricing ? null : form.catalog_service_id,
+    pricingPresetId: isStackablePricing ? null : form.catalog_pricing_preset_id,
   });
+
+  const [accountPriceRow, setAccountPriceRow] = useState<AccountServicePrice | null>(null);
+  const [stackableLinePricing, setStackableLinePricing] = useState<ResolvedCatalogLinePricing | null>(null);
+  const [stackablePricingLoading, setStackablePricingLoading] = useState(false);
+
+  useEffect(() => {
+    const sid = form.catalog_service_id?.trim();
+    const aid = effectiveAccountId?.trim();
+    if (!sid || !aid) {
+      queueMicrotask(() => setAccountPriceRow(null));
+      return;
+    }
+    let cancelled = false;
+    getAccountServicePrice(aid, sid)
+      .then((row) => { if (!cancelled) setAccountPriceRow(row); })
+      .catch(() => { if (!cancelled) setAccountPriceRow(null); });
+    return () => { cancelled = true; };
+  }, [form.catalog_service_id, effectiveAccountId]);
+
+  useEffect(() => {
+    if (!isStackablePricing || !selectedCatalogService || !form.catalog_pricing_preset_id.trim()) {
+      queueMicrotask(() => {
+        setStackableLinePricing(null);
+        setStackablePricingLoading(false);
+      });
+      return;
+    }
+    let cancelled = false;
+    setStackablePricingLoading(true);
+    (async () => {
+      const partnerId =
+        form.assignment_mode === "manual" && form.partner_id.trim() ? form.partner_id.trim() : null;
+      const partnerPrice =
+        partnerId
+          ? await getPartnerServicePrice(partnerId, selectedCatalogService.id).catch(() => null)
+          : null;
+      if (cancelled) return;
+      const resolved = resolveCatalogLinePricing({
+        catalog: selectedCatalogService,
+        presetId: form.catalog_pricing_preset_id,
+        addonIds: form.catalog_pricing_addon_ids,
+        accountPrice: accountPriceRow,
+        partnerPrice,
+      });
+      if (cancelled) return;
+      setStackableLinePricing(resolved);
+      setStackablePricingLoading(false);
+      if (!resolved) return;
+      lastAutoPartnerCost.current = null;
+      setForm((prev) => ({
+        ...prev,
+        job_type: "fixed",
+        client_price: String(resolved.clientTotal),
+        partner_cost: String(resolved.partnerTotal),
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, [
+    isStackablePricing,
+    selectedCatalogService,
+    form.catalog_pricing_preset_id,
+    form.catalog_pricing_addon_ids,
+    form.partner_id,
+    form.assignment_mode,
+    accountPriceRow,
+  ]);
+
+  const applyPartnerPricing = (partnerId: string) => {
+    lastAutoPartnerCost.current = null;
+    setForm((prev) => ({ ...prev, partner_id: partnerId }));
+  };
 
   // Auto-fill prices whenever the resolver returns a fresh `pricing` object.
   // The hook memoises pricing in its own state — it only changes after a fetch
@@ -2753,7 +2844,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
   // sole dep gives correct behaviour without needing a ref guard (which used
   // to misfire when pricing lagged behind a triple change).
   useEffect(() => {
+    if (isStackablePricing) return;
     if (!pricing) return;
+    lastAutoPartnerCost.current = null;
     queueMicrotask(() =>
       setForm((prev) => ({
         ...prev,
@@ -2765,8 +2858,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
         partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
       })),
     );
-  }, [pricing]);
-  const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  }, [pricing, isStackablePricing]);
   const catalogPricingPresetOptions = useMemo(() => {
     if (!selectedCatalogService) return [];
     return sortPricingPresetsDisplay(parsePricingPresets(selectedCatalogService.pricing_presets));
@@ -2879,6 +2971,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
       return;
     }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
+    if (isStackablePricing && !form.catalog_pricing_preset_id.trim()) {
+      toast.error("Select a property size for this service");
+      return;
+    }
+    if (isStackablePricing && !effectiveAccountId) {
+      toast.error("Select a client linked to an account for account-specific rates");
+      return;
+    }
     const isAutoAssign = form.assignment_mode === "auto";
     const hasPartner = !isAutoAssign && !!form.partner_id;
     const schedV2 = resolveJobModalScheduleV2({
@@ -2940,6 +3040,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
         form.catalog_service_id?.trim() && form.catalog_pricing_preset_id?.trim()
           ? form.catalog_pricing_preset_id.trim()
           : null,
+      catalog_pricing_addon_ids:
+        isStackablePricing && form.catalog_pricing_addon_ids.length > 0
+          ? form.catalog_pricing_addon_ids
+          : null,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
@@ -2977,6 +3081,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       title: "",
       catalog_service_id: "",
       catalog_pricing_preset_id: "",
+      catalog_pricing_addon_ids: [],
       partner_id: "",
       partner_ids: [],
       client_price: "",
@@ -3033,7 +3138,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
   ]);
 
   useEffect(() => {
+    if (isStackablePricing) {
+      lastAutoPartnerCost.current = null;
+      return;
+    }
     if (form.job_type === "hourly") {
+      lastAutoPartnerCost.current = null;
+      return;
+    }
+    if (form.assignment_mode === "manual" && form.partner_id.trim()) {
       lastAutoPartnerCost.current = null;
       return;
     }
@@ -3055,7 +3168,18 @@ function CreateJobModal({ open, onClose, onCreate }: {
     // Guarded by `empty / unchangedFromAuto` so user-edited values are never overwritten.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm((prev) => ({ ...prev, partner_cost: next }));
-  }, [form.job_type, form.client_price, form.materials_cost, form.partner_cost, accessSurchargePreview]);
+  }, [form.job_type, isStackablePricing, form.assignment_mode, form.partner_id, form.client_price, form.materials_cost, form.partner_cost, accessSurchargePreview]);
+
+  const toggleStackableAddon = (addonId: string) => {
+    setForm((prev) => {
+      const cur = prev.catalog_pricing_addon_ids;
+      const has = cur.includes(addonId);
+      return {
+        ...prev,
+        catalog_pricing_addon_ids: has ? cur.filter((id) => id !== addonId) : [...cur, addonId],
+      };
+    });
+  };
 
   return (
     <Modal
@@ -3064,60 +3188,52 @@ function CreateJobModal({ open, onClose, onCreate }: {
       title="New Job"
       subtitle="Create a new job"
       size="lg"
-      className="max-w-[580px]"
+      className="max-w-[min(100%,36rem)]"
     >
-      <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
-        <div className="max-h-[85vh] overflow-y-auto px-4 py-4 sm:px-6 space-y-3.5">
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
-            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rate type</p>
+      <form onSubmit={handleSubmit} className="@container flex min-h-0 flex-col">
+        <div className="max-h-[85vh] overflow-y-auto overflow-x-hidden px-3 py-3 @sm:px-5 space-y-2.5 min-w-0">
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2">
+            <p className="text-[11px] font-semibold text-text-tertiary">Rate Type</p>
+            <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
+              <button
+                type="button"
+                title="Set prices on this job"
+                onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
+                className={cn(
+                  "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
+                  form.job_type === "fixed"
+                    ? "bg-[#1DB87A] text-white shadow-sm"
+                    : "text-text-secondary hover:bg-surface-hover",
+                )}
+              >
+                <Lock className="h-3 w-3 shrink-0" />
+                <span className="truncate">{pricingModeLabel("fixed")}</span>
+              </button>
+              <button
+                type="button"
+                title="From services, accounts and partners"
+                onClick={() => update("job_type", "hourly")}
+                className={cn(
+                  "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
+                  form.job_type === "hourly"
+                    ? "bg-[#7c3aed] text-white shadow-sm"
+                    : "text-text-secondary hover:bg-surface-hover",
+                )}
+              >
+                <Clock3 className="h-3 w-3 shrink-0" />
+                <span className="truncate">{pricingModeLabel("hourly")}</span>
+              </button>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,260px)_minmax(0,1fr)]">
-              <div className="grid grid-cols-2 gap-1.5 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
-                    className={cn(
-                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
-                      form.job_type === "fixed"
-                        ? "bg-[#1DB87A] text-white border-[#1DB87A] shadow-[0_6px_18px_rgba(29,184,122,0.25)]"
-                        : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
-                    )}
-                  >
-                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
-                      <Lock className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{pricingModeLabel("fixed")}</span>
-                    </span>
-                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "fixed" ? "text-white/75" : "text-[#888]")}>
-                      Set prices on this job
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => update("job_type", "hourly")}
-                    className={cn(
-                      "min-w-0 rounded-lg px-2.5 py-1.5 text-left transition-all border shadow-sm",
-                      form.job_type === "hourly"
-                        ? "bg-[#7c3aed] text-white border-[#7c3aed] shadow-[0_6px_18px_rgba(124,58,237,0.25)]"
-                        : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
-                    )}
-                  >
-                    <span className="flex items-center gap-1 text-[11px] font-bold leading-tight">
-                      <Clock3 className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{pricingModeLabel("hourly")}</span>
-                    </span>
-                    <span className={cn("mt-0.5 block text-[9.5px] leading-tight truncate", form.job_type === "hourly" ? "text-white/75" : "text-[#888]")}>
-                      From Services, accounts &amp; partners
-                    </span>
-                  </button>
-              </div>
-              <div className="space-y-1.5">
+            <div
+              className={cn(
+                "grid gap-2 min-w-0",
+                catalogPricingPresetOptions.length > 0 ? "grid-cols-1 @md:grid-cols-2" : "grid-cols-1",
+              )}
+            >
+              <div className="min-w-0 space-y-1">
                 {form.job_type === "hourly" ? (
                   <>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary inline-flex items-center gap-1.5">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      Type of work rate *
-                    </p>
+                    <p className="text-[11px] font-medium text-text-secondary">Type of Work Rate *</p>
                     <ServiceCatalogSelect
                       label=""
                       emptyOptionLabel="Select rate…"
@@ -3160,13 +3276,13 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </>
                 ) : (
                   <>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Type of work *</p>
+                    <p className="text-[11px] font-medium text-text-secondary">Type of Work *</p>
                     <div className="relative">
                       <button
                         type="button"
                         onClick={() => setWorkTypeOpen((v) => !v)}
                         className={cn(
-                          "h-10 w-full rounded-lg border bg-card px-3 text-left text-sm flex items-center justify-between",
+                          "h-9 w-full rounded-lg border bg-card px-3 text-left text-sm flex items-center justify-between",
                           !form.title && "text-text-tertiary",
                           form.title ? "border-border text-text-primary" : requiredFieldClass,
                         )}
@@ -3204,6 +3320,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                                       title: name,
                                       catalog_service_id: catId,
                                       catalog_pricing_preset_id: presetId,
+                                      catalog_pricing_addon_ids: [],
                                     }));
                                     setWorkTypeOpen(false);
                                     setWorkTypeSearch("");
@@ -3228,36 +3345,34 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     </div>
                   </>
                 )}
-                {catalogPricingPresetOptions.length > 0 ? (
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-text-tertiary">Price band</label>
-                    <select
-                      value={form.catalog_pricing_preset_id}
-                      onChange={(e) => setForm((p) => ({ ...p, catalog_pricing_preset_id: e.target.value }))}
-                      className={cn(
-                        "w-full h-9 rounded-lg border bg-card px-2.5 text-sm text-text-primary",
-                        requiredFieldClass,
-                      )}
-                    >
-                      {catalogPricingPresetOptions.map((opt) => (
-                        <option key={opt.id} value={opt.id}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-text-tertiary">
-                      Overrides base catalogue prices before account or partner overrides.
-                    </p>
-                  </div>
-                ) : null}
               </div>
+              {catalogPricingPresetOptions.length > 0 && !isStackablePricing ? (
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-1">
+                    <label className="block text-[11px] font-medium text-text-secondary">Price Band</label>
+                    <FixfyHintIcon text="Overrides base catalogue prices before account or partner overrides." />
+                  </div>
+                  <select
+                    value={form.catalog_pricing_preset_id}
+                    onChange={(e) => setForm((p) => ({ ...p, catalog_pricing_preset_id: e.target.value }))}
+                    className={cn(
+                      "w-full h-9 rounded-lg border bg-card px-2.5 text-sm text-text-primary",
+                      requiredFieldClass,
+                    )}
+                  >
+                    {catalogPricingPresetOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
           </section>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
-            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Client & schedule</p>
-            </div>
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
+            <p className="text-[11px] font-semibold text-text-tertiary">Client & Schedule</p>
             <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
             <JobModalScheduleFields
               jobKind={form.job_kind}
@@ -3274,18 +3389,16 @@ function CreateJobModal({ open, onClose, onCreate }: {
             />
           </section>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Access & charges</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
+            <p className="text-[11px] font-semibold text-text-tertiary">Access & Charges</p>
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
               <button
                 type="button"
                 disabled={isHousekeepJob || !cczEligible}
                 onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
                 className={cn(
-                  "rounded-lg border px-3 py-2 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-3",
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
                   (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
                   form.in_ccz && cczEligible
                     ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
@@ -3293,10 +3406,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 )}
               >
                 <div>
-                  <p className="text-sm font-medium text-text-primary">
+                  <p className="text-xs font-medium text-text-primary leading-snug">
                     {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
                   </p>
-                  <p className="text-[11px] text-text-tertiary">
+                  <p className="text-[10px] text-text-tertiary leading-snug">
                     {!cczEligible && !isHousekeepJob ? "Only EC/WC/W/SW1/SE1 postcodes" : inCczPreview ? "+£15 applied" : "No charge applied"}
                   </p>
                 </div>
@@ -3309,8 +3422,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 disabled={isHousekeepJob}
                 onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
                 className={cn(
-                  "rounded-lg border px-3 py-2 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-3",
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
                   isHousekeepJob && "opacity-50 cursor-not-allowed",
                   !form.has_free_parking
                     ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
@@ -3318,26 +3431,25 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 )}
               >
                 <div>
-                  <p className="text-sm font-medium text-text-primary">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-[11px] text-text-tertiary">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
+                  <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
                 </div>
                 <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
                   <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
                 </span>
               </button>
             </div>
-            <p className="text-xs text-text-tertiary">
-              If the customer doesn&apos;t have free parking, click here to charge:{" "}
-              <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
+            <p className="text-[10px] text-text-tertiary leading-snug">
+              Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
             </p>
           </section>
 
-          <details className="rounded-xl border border-border-light bg-surface-hover/20 p-3" open>
+          <details className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 min-w-0" open>
             <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-primary">
               Scope & notes
               <span className="text-[11px] font-normal text-text-tertiary">required ▾</span>
             </summary>
-            <div className="mt-3 space-y-3">
+            <div className="mt-2.5 space-y-2.5 min-w-0">
               <div>
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
                 <textarea
@@ -3345,7 +3457,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   onChange={(e) => update("scope", e.target.value)}
                   rows={3}
                   placeholder="Describe exactly what should be done on this job."
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y h-[60px]"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[52px]"
                 />
               </div>
               <div>
@@ -3355,7 +3467,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   onChange={(e) => update("additional_notes", e.target.value)}
                   rows={2}
                   placeholder="Internal only — parking, keys, client preferences, things not in scope…"
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y h-[44px]"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[40px]"
                 />
               </div>
               <div>
@@ -3428,111 +3540,87 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </details>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
-            <div className="flex items-center justify-between gap-2 border-b border-border-light/70 pb-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
-              <span className="text-[10px] font-medium text-text-tertiary">
-                {form.job_type === "hourly" ? "Auto from rates × hours" : "Manual entry"}
-              </span>
-            </div>
-            {/* Single Client/Partner/Materials row — readonly in Smart Pricing, editable in Custom Price. */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Client price £
-                  {pricing ? (
-                    <span className="ml-1.5">
-                      <PricingSourceChip
-                        source={form.job_type === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
-                      />
-                    </span>
-                  ) : null}
-                </label>
-                <Input
-                  type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
-                  onChange={form.job_type === "hourly" ? undefined : (e) => update("client_price", e.target.value)}
-                  readOnly={form.job_type === "hourly"}
-                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
-                  min="0"
-                  step="0.01"
-                />
+          {isStackablePricing ? (
+            <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
+              <p className="text-[11px] font-semibold text-text-tertiary">Package &amp; additionals</p>
+              {!effectiveAccountId ? (
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+                  Select a client linked to an account — account-specific cleaning rates apply.
+                </p>
+              ) : null}
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-text-secondary">Property size *</p>
+                <div className="grid grid-cols-1 @sm:grid-cols-2 gap-1.5">
+                  {catalogPricingPresetOptions.map((opt) => {
+                    const selected = form.catalog_pricing_preset_id === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() =>
+                          setForm((p) => ({
+                            ...p,
+                            catalog_pricing_preset_id: opt.id,
+                            catalog_pricing_addon_ids: p.catalog_pricing_addon_ids,
+                          }))
+                        }
+                        className={cn(
+                          "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
+                          selected
+                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
+                            : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                        )}
+                      >
+                        <span className="font-semibold block">{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Partner cost £
-                  {pricing ? (
-                    <span className="ml-1.5">
-                      <PricingSourceChip
-                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
-                      />
-                    </span>
-                  ) : null}
-                </label>
-                <Input
-                  type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
-                  onChange={form.job_type === "hourly" ? undefined : (e) => update("partner_cost", e.target.value)}
-                  readOnly={form.job_type === "hourly"}
-                  className={cn(form.job_type === "hourly" && "bg-surface-hover/40 cursor-not-allowed")}
-                  min="0"
-                  step="0.01"
-                />
-                {form.job_type === "fixed" ? (
-                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Margin:{" "}
-                    <span
-                      className={cn(
-                        "font-medium tabular-nums",
-                        estimatedMarginPct >= 20
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-amber-600 dark:text-amber-400",
-                      )}
-                    >
-                      {(Number(form.client_price) || 0) + accessSurchargePreview > 0
-                        ? `${estimatedMarginPct}%`
-                        : "—"}
-                    </span>
-                  </p>
-                ) : null}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label>
-                <Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" />
-              </div>
-            </div>
-            {/* Rate + hours row only for Smart Pricing — drives the totals above. */}
-            {form.job_type === "hourly" ? (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-border-light/50">
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label>
-                    <Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
+              {catalogAddonOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-text-secondary">Additionals (optional)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {catalogAddonOptions.map((addon) => {
+                      const checked = form.catalog_pricing_addon_ids.includes(addon.id);
+                      return (
+                        <button
+                          key={addon.id}
+                          type="button"
+                          onClick={() => toggleStackableAddon(addon.id)}
+                          className={cn(
+                            "rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
+                            checked
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                          )}
+                        >
+                          <span className="font-medium">{addon.label}</span>
+                          <span className="block text-[10px] tabular-nums opacity-80">
+                            +{formatCurrency(addon.fixed_price)}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <p className="text-[11px] text-text-tertiary">
-                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
-                </p>
-              </>
-            ) : null}
-          </section>
+              ) : null}
+            </section>
+          ) : null}
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner allocation</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
+            <p className="text-[11px] font-semibold text-text-tertiary">Partner Allocation</p>
+            {!form.catalog_service_id ? (
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+                Select type of work above first — partner-specific prices load in Pricing below.
+              </p>
+            ) : null}
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
                 className={cn(
-                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "manual"
                     ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
                     : "border-border bg-card text-text-secondary",
@@ -3543,9 +3631,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
               </button>
               <button
                 type="button"
-                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
+                onClick={() => {
+                  lastAutoPartnerCost.current = null;
+                  setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }));
+                }}
                 className={cn(
-                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "auto"
                     ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
                     : "border-border bg-card text-text-secondary",
@@ -3578,7 +3669,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                       name="partner-select"
                       className="h-4 w-4"
                       checked={!form.partner_id}
-                      onChange={() => update("partner_id", "")}
+                      onChange={() => applyPartnerPricing("")}
                     />
                   </label>
                   {filteredPartners.map((p) => {
@@ -3617,7 +3708,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                             name="partner-select"
                             className="h-4 w-4"
                             checked={selected}
-                            onChange={() => update("partner_id", pid)}
+                            onChange={() => applyPartnerPricing(pid)}
                           />
                         </div>
                       </label>
@@ -3631,13 +3722,137 @@ function CreateJobModal({ open, onClose, onCreate }: {
             )}
           </section>
 
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-text-tertiary">Pricing</p>
+              <span className="text-[10px] font-medium text-text-tertiary shrink-0">
+                {stackablePricingLoading || pricingResolving
+                  ? "Loading…"
+                  : isStackablePricing
+                    ? "Auto from package"
+                    : form.job_type === "hourly"
+                      ? "Auto from rates × hours"
+                      : form.partner_id && form.assignment_mode === "manual"
+                        ? "From partner rates"
+                        : form.catalog_service_id
+                          ? "From catalogue"
+                          : "Manual entry"}
+              </span>
+            </div>
+            {isStackablePricing && stackableLinePricing ? (
+              <div className="rounded-lg border border-border-light bg-card p-2 space-y-1 text-[11px]">
+                {stackableLinePricing.lines.map((line) => (
+                  <div key={line.id} className="flex justify-between gap-2 tabular-nums">
+                    <span className="text-text-secondary truncate">
+                      {line.kind === "base" ? "Base" : "+"} {line.label}
+                    </span>
+                    <span className="text-text-primary shrink-0">
+                      {formatCurrency(line.clientAmount)} / {formatCurrency(line.partnerAmount)}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between gap-2 border-t border-border-light pt-1 font-semibold tabular-nums">
+                  <span>Total</span>
+                  <span>
+                    {formatCurrency(stackableLinePricing.clientTotal)} / {formatCurrency(stackableLinePricing.partnerTotal)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2 min-w-0">
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Client price £
+                  {!isStackablePricing && pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
+                  onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("client_price", e.target.value)}
+                  readOnly={form.job_type === "hourly" || isStackablePricing}
+                  className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Partner cost £
+                  {!isStackablePricing && pricing ? (
+                    <span className="ml-1.5">
+                      <PricingSourceChip
+                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
+                      />
+                    </span>
+                  ) : null}
+                </label>
+                <Input
+                  type="number"
+                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
+                  onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("partner_cost", e.target.value)}
+                  readOnly={form.job_type === "hourly" || isStackablePricing}
+                  className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
+                  min="0"
+                  step="0.01"
+                />
+                {form.job_type === "fixed" ? (
+                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                    Margin:{" "}
+                    <span
+                      className={cn(
+                        "font-medium tabular-nums",
+                        estimatedMarginPct >= 20
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-amber-600 dark:text-amber-400",
+                      )}
+                    >
+                      {(Number(form.client_price) || 0) + accessSurchargePreview > 0
+                        ? `${estimatedMarginPct}%`
+                        : "—"}
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            {/* Rate + hours row only for Smart Pricing — drives the totals above. */}
+            {form.job_type === "hourly" ? (
+              <>
+                <div className="grid grid-cols-2 @lg:grid-cols-3 gap-2 pt-1 border-t border-border-light/50 min-w-0">
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
+                    <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
+                  </div>
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
+                    <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
+                  </div>
+                  <div className="col-span-2 @lg:col-span-1 min-w-0 max-w-full @lg:max-w-[10rem]">
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label>
+                    <Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-text-tertiary leading-snug">
+                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
+                </p>
+              </>
+            ) : null}
+          </section>
+
+
         </div>
 
-        <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-border-light bg-card/95 px-4 py-3 backdrop-blur sm:px-6">
-          <p className="text-xs text-text-secondary">
+        <div className="sticky bottom-0 z-10 flex flex-col gap-2 border-t border-border-light bg-card/95 px-3 py-2.5 backdrop-blur @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
+          <p className="text-xs text-text-secondary shrink-0">
             Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2 min-w-0">
             <Button variant="outline" onClick={onClose} type="button" disabled={uploadingPhotos}>Cancel</Button>
             <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos} className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]">Create Job</Button>
           </div>

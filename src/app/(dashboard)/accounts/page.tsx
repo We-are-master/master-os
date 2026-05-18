@@ -24,7 +24,10 @@ import {
 import { formatCurrency, cn } from "@/lib/utils";
 import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
 import { toast } from "sonner";
-import type { Account, Client, Job, Invoice } from "@/types/database";
+import type { Account, CatalogService, Client, Job, Invoice } from "@/types/database";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { catalogServiceLabelsForIds } from "@/lib/catalog-trade-ids";
+import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
 import {
@@ -1043,6 +1046,60 @@ function AccountsGridView({
   );
 }
 
+function AccountServicesOfferedPicker({
+  catalogServices,
+  selectedIds,
+  onToggle,
+  readOnlyLabels,
+  isAdmin,
+  saving,
+}: {
+  catalogServices: CatalogService[];
+  selectedIds: string[];
+  onToggle: (serviceId: string) => void;
+  readOnlyLabels: string[];
+  isAdmin: boolean;
+  saving: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
+        Services we offer this account
+      </p>
+      <p className="text-[10px] text-text-tertiary mb-2">
+        Select all catalogue services this account can use. Service rates and new jobs only include these.
+      </p>
+      {isAdmin ? (
+        <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto [scrollbar-width:thin]">
+          {catalogServices.map((s) => {
+            const active = selectedIds.includes(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                disabled={saving}
+                onClick={() => onToggle(s.id)}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-xs font-medium border transition-all text-left",
+                  active
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border-light bg-card text-text-secondary hover:border-border",
+                )}
+              >
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+      ) : readOnlyLabels.length > 0 ? (
+        <PartnerTradesIconStrip trades={readOnlyLabels} catalogServices={catalogServices} />
+      ) : (
+        <p className="text-xs text-text-tertiary">—</p>
+      )}
+    </div>
+  );
+}
+
 function AccountDetailDrawer({
   account,
   loading,
@@ -1074,6 +1131,8 @@ function AccountDetailDrawer({
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  const [editCatalogServiceIds, setEditCatalogServiceIds] = useState<string[]>([]);
   const logoFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
   const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
@@ -1124,12 +1183,32 @@ function AccountDetailDrawer({
           ? String(account.default_client_cancel_fee_gbp)
           : "",
     });
+    setEditCatalogServiceIds(account.catalog_service_ids ?? []);
   }, [account]);
 
   useEffect(() => {
     if (!account) return;
     void listActiveAssignableUsers().then(setDrawerAssignableUsers).catch(() => setDrawerAssignableUsers([]));
   }, [account?.id]);
+
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then(setCatalogServices)
+      .catch(() => setCatalogServices([]));
+  }, []);
+
+  const accountServiceLabels = useMemo(
+    () => catalogServiceLabelsForIds(editCatalogServiceIds, catalogServices),
+    [editCatalogServiceIds, catalogServices],
+  );
+
+  const toggleAccountCatalogService = (serviceId: string) => {
+    setEditCatalogServiceIds((prev) => {
+      const has = prev.includes(serviceId);
+      if (has) return prev.filter((id) => id !== serviceId);
+      return [...prev, serviceId];
+    });
+  };
 
   const editOwnerLabel = useMemo(
     () => accountOwnerLabel(edit.account_owner_id, account?.owner_name, drawerAssignableUsers),
@@ -1299,6 +1378,10 @@ function AccountDetailDrawer({
       toast.error("Company, contact and email are required.");
       return;
     }
+    if (editCatalogServiceIds.length === 0) {
+      toast.error("Select at least one service this account is offered.");
+      return;
+    }
     setSaving(true);
     try {
       const updated = await updateAccount(account.id, {
@@ -1323,6 +1406,7 @@ function AccountDetailDrawer({
           Number(edit.default_client_cancel_fee_gbp) > 0
             ? Math.round(Number(edit.default_client_cancel_fee_gbp) * 100) / 100
             : null,
+        catalog_service_ids: editCatalogServiceIds,
       });
       const fresh = await getAccount(account.id);
       const next = fresh ?? updated;
@@ -1353,6 +1437,17 @@ function AccountDetailDrawer({
       onClose={onClose}
       title={account.company_name}
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
+      headerExtra={
+        accountServiceLabels.length > 0 ? (
+          <PartnerTradesIconStrip
+            trades={accountServiceLabels}
+            catalogServices={catalogServices}
+            className="max-w-full min-w-0"
+          />
+        ) : (
+          <p className="text-xs text-text-tertiary">No services selected — choose them in Overview.</p>
+        )
+      }
       width="w-[min(580px,calc(100vw-1rem))]"
       footer={
         isAdmin && (tab === "overview" || tab === "finance") ? (
@@ -1503,6 +1598,15 @@ function AccountDetailDrawer({
                 />
                 <p className="text-[10px] text-text-tertiary mt-1">Suggested in Cancel job for clients linked to this account.</p>
               </div>
+
+              <AccountServicesOfferedPicker
+                catalogServices={catalogServices}
+                selectedIds={editCatalogServiceIds}
+                onToggle={toggleAccountCatalogService}
+                readOnlyLabels={accountServiceLabels}
+                isAdmin={isAdmin}
+                saving={saving}
+              />
 
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Address</label>
@@ -2020,7 +2124,10 @@ function AccountDetailDrawer({
 
         {/* ── Service rates tab ────────────────────────────────────── */}
         {tab === "rates" && account && (
-          <AccountServiceRatesTabSection accountId={account.id} />
+          <AccountServiceRatesTabSection
+            accountId={account.id}
+            account={{ catalog_service_ids: editCatalogServiceIds }}
+          />
         )}
 
         {/* ── Portal users tab ─────────────────────────────────────── */}

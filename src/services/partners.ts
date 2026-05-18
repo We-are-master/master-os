@@ -263,6 +263,19 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     data = fallback.data;
     error = fallback.error;
   }
+  if (error && "catalog_service_ids" in input) {
+    const { catalog_service_ids: _csi, ...legacyInput } = input as Partial<Partner> & {
+      catalog_service_ids?: unknown;
+    };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (
     error &&
     ("bank_sort_code" in input ||

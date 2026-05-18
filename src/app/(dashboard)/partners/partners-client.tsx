@@ -283,7 +283,7 @@ function PartnersDirectoryGridView({
               typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
             const compClass =
               comp >= 97 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
-            const tradesShown = partnerTradesForDisplay(item);
+            const tradesShown = partnerTradesForDisplay(item, catalogServices);
             return (
               <motion.div
                 key={id}
@@ -438,20 +438,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   on_break: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
 };
 
-const tradeColors: Record<string, string> = {
-  HVAC: "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
-  Electrical: "bg-purple-50 dark:bg-purple-950/30 text-purple-700 ring-purple-200/50",
-  Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
-  Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
-  Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
-  "General Maintenance": "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
-  Cleaning: "bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 ring-cyan-200/50",
-  Gardener: "bg-green-50 dark:bg-green-950/30 text-green-800 ring-green-200/50",
-  "Boiler Service": "bg-rose-50 dark:bg-rose-950/30 text-rose-800 ring-rose-200/50",
-  Builder: "bg-stone-50 dark:bg-stone-950/30 text-stone-700 ring-stone-200/50",
-  Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
-};
-
 let partnersActiveTradeLabels: readonly string[] = [];
 
 function syncPartnersTradePickLabels(labels: readonly string[]): void {
@@ -492,17 +478,35 @@ function normalizeTradeName(value?: string | null): string | null {
 }
 
 function normalizeTrades(values: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>();
+  const byLower = new Map<string, string>();
   for (const value of values) {
-    const normalized = normalizeTradeName(value);
-    if (normalized) seen.add(normalized);
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) continue;
+    const normalized = normalizeTradeName(trimmed);
+    const label = normalized ?? trimmed;
+    const key = label.toLowerCase();
+    if (!byLower.has(key)) byLower.set(key, label);
   }
   const fallback = partnersActiveTradeLabels[0] ?? GENERAL_MAINTENANCE_LABEL;
-  return seen.size > 0 ? Array.from(seen) : [fallback];
+  return byLower.size > 0 ? Array.from(byLower.values()) : [fallback];
 }
 
-function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] {
-  return normalizeTrades(partner.trades?.length ? partner.trades : [partner.trade]);
+function getPartnerTrades(
+  partner: Pick<Partner, "trade" | "trades" | "catalog_service_ids">,
+  catalog?: readonly CatalogService[],
+): string[] {
+  const ids = partner.catalog_service_ids?.filter(Boolean) ?? [];
+  if (ids.length && catalog?.length) {
+    const byId = new Map(catalog.map((c) => [c.id, c]));
+    const names: string[] = [];
+    for (const id of ids) {
+      const n = byId.get(id)?.name?.trim();
+      if (n) names.push(n);
+    }
+    if (names.length) return normalizeTrades(names);
+  }
+  const tradeList = partner.trades?.length ? partner.trades : [partner.trade];
+  return normalizeTrades(tradeList);
 }
 
 /** Legacy `partner.trade` / DB may still say "HVAC"; never show that label in UI. */
@@ -510,19 +514,22 @@ function isHiddenTradeLabel(t: string): boolean {
   return String(t).trim().toLowerCase() === "hvac";
 }
 
-/** Normalized trades for chips / subtitles (drops HVAC). */
-function partnerTradesForDisplay(partner: Pick<Partner, "trade" | "trades">): string[] {
-  return getPartnerTrades(partner).filter((t) => !isHiddenTradeLabel(t));
+/** Trades for UI (drops HVAC). Prefer `catalog_service_ids` names when catalogue is loaded. */
+function partnerTradesForDisplay(
+  partner: Pick<Partner, "trade" | "trades" | "catalog_service_ids">,
+  catalog?: readonly CatalogService[],
+): string[] {
+  return getPartnerTrades(partner, catalog).filter((t) => !isHiddenTradeLabel(t));
 }
 
 function overviewTradesForDisplay(
-  partner: Pick<Partner, "trade" | "trades">,
+  partner: Pick<Partner, "trade" | "trades" | "catalog_service_ids">,
   editing: boolean,
   overviewTrades: string[],
+  catalog?: readonly CatalogService[],
 ): string[] {
-  const raw = editing ? overviewTrades : partner.trades?.length ? partner.trades : [partner.trade];
-  const normalized = normalizeTrades(raw);
-  return normalized.filter((t) => !isHiddenTradeLabel(t));
+  if (!editing) return partnerTradesForDisplay(partner, catalog);
+  return normalizeTrades(overviewTrades).filter((t) => !isHiddenTradeLabel(t));
 }
 
 /** `https://wa.me/{digits}` — best-effort intl digits (e.g. UK 07… → 44…). */
@@ -1026,7 +1033,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "trade", label: "Trade",
       render: (item) => (
-        <PartnerTradesIconStrip trades={partnerTradesForDisplay(item)} catalogServices={partnerCatalogServices} />
+        <PartnerTradesIconStrip trades={partnerTradesForDisplay(item, partnerCatalogServices)} catalogServices={partnerCatalogServices} />
       ),
     },
     {
@@ -2012,6 +2019,13 @@ function inferVatRegisteredForForm(partner: Partner): boolean | null {
   if (inferPartnerLegal(partner) !== "limited_company") return null;
   if (partner.vat_registered === true || partner.vat_registered === false) return partner.vat_registered;
   return partner.vat_number?.trim() ? true : null;
+}
+
+/** Trim and fix common typos (e.g. trailing dot after TLD) so Postgres / validators accept the email. */
+function normalizePartnerOverviewEmail(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  if (!t) return "";
+  return t.replace(/\.+$/g, "");
 }
 
 function partnerOverviewFormFromPartner(partner: Partner) {
@@ -3012,6 +3026,15 @@ function PartnerDetailDrawer({
       toast.error("Company name, contact name and email are required.");
       return;
     }
+    const emailNorm = normalizePartnerOverviewEmail(overviewForm.email);
+    if (!emailNorm || !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*$/.test(emailNorm)) {
+      toast.error("Enter a valid email address.");
+      return;
+    }
+    if (overviewForm.trades.length === 0) {
+      toast.error("Select at least one trade.");
+      return;
+    }
     const rating = Number(overviewForm.rating || "0");
     if (Number.isNaN(rating) || rating < 0 || rating > 5) {
       toast.error("Rating must be between 0 and 5.");
@@ -3030,6 +3053,8 @@ function PartnerDetailDrawer({
     try {
       const primaryTrade = overviewForm.trades[0] ?? (tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL);
       const regions = normalizeUkCoverageRegions(overviewForm.uk_coverage_regions);
+      const tradesOut = overviewForm.trades.length > 0 ? overviewForm.trades : [primaryTrade];
+      const catalogIds = catalogServiceIdsForTradeLabels(tradesOut, partnerCatalogForIds);
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number:
@@ -3050,11 +3075,11 @@ function PartnerDetailDrawer({
             ? (overviewForm.utr.trim() || null)
             : null,
         contact_name: overviewForm.contact_name.trim(),
-        email: overviewForm.email.trim(),
+        email: emailNorm,
         phone: overviewForm.phone.trim() || undefined,
         trade: primaryTrade,
-        trades: overviewForm.trades,
-        catalog_service_ids: catalogServiceIdsForTradeLabels(overviewForm.trades, partnerCatalogForIds),
+        trades: tradesOut,
+        catalog_service_ids: catalogIds,
         location: formatUkCoverageLabel(regions, null),
         uk_coverage_regions: regions,
         partner_address: overviewForm.partner_address.trim() || null,
@@ -3063,8 +3088,10 @@ function PartnerDetailDrawer({
       onPartnerUpdate?.(updated);
       setEditingOverview(false);
       toast.success("Partner updated");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } catch (err: unknown) {
+      const e = err as { message?: string; details?: string; hint?: string };
+      const parts = [e.message, e.details, e.hint].filter(Boolean);
+      toast.error(parts.length ? parts.join(" — ") : "Failed to update");
     }
   }, [partner, overviewForm, onPartnerUpdate, partnerCatalogForIds, tradePickOptions]);
 
@@ -3143,8 +3170,8 @@ function PartnerDetailDrawer({
   };
 
   const partnerTradesForCompliance = useMemo(
-    () => (partner ? partnerTradesForDisplay(partner) : []),
-    [partner],
+    () => (partner ? partnerTradesForDisplay(partner, partnerCatalogForIds) : []),
+    [partner, partnerCatalogForIds],
   );
   const mandatoryDocsForScore = partner ? buildMandatoryDocsForComplianceScore(partner) : [];
   const tradeCertificateDocs = partner ? buildTradeCertificateRequirements(partnerTradesForCompliance) : [];
@@ -3619,12 +3646,15 @@ function PartnerDetailDrawer({
       open={!!partner}
       onClose={onClose}
       title={partner.company_name}
-      subtitle={
-        (partnerTradesForDisplay(partner).join(" · ") || "Trade TBC") +
-        " · " +
-        (formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "Coverage TBC")
+      subtitle={formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "Coverage TBC"}
+      headerExtra={
+        <PartnerTradesIconStrip
+          trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
+          catalogServices={partnerCatalogForIds}
+          className="max-w-full min-w-0"
+        />
       }
-      width="w-[min(100vw-1rem,580px)]"
+      width="w-[min(100vw-1rem,40rem)]"
     >
       <div className="px-6 pt-3 pb-0 border-b border-border-light">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
@@ -3772,11 +3802,13 @@ function PartnerDetailDrawer({
                       </span>
                     ));
                   })()}
-                  {overviewTradesForDisplay(partner, editingOverview, overviewForm.trades).map((t) => (
-                    <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
-                      {t}
-                    </span>
-                  ))}
+                  {!editingOverview ? (
+                    <PartnerTradesIconStrip
+                      trades={overviewTradesForDisplay(partner, false, overviewForm.trades, partnerCatalogForIds)}
+                      catalogServices={partnerCatalogForIds}
+                      className="max-w-[min(100%,20rem)]"
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -4074,118 +4106,20 @@ function PartnerDetailDrawer({
               </div>
             </div>
             {isAdmin && editingOverview && (
-              <div className="flex gap-2">
-                <Button size="sm" className="flex-1" onClick={handleSaveOverview}>Save changes</Button>
+              <div className="flex flex-col @sm:flex-row gap-2">
+                <Button size="sm" className="flex-1 min-h-10" onClick={handleSaveOverview}>
+                  Save changes
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="flex-1"
+                  className="flex-1 min-h-10"
                   onClick={() => {
                     setEditingOverview(false);
                     setOverviewForm(partnerOverviewFormFromPartner(partner));
                   }}
                 >
                   Discard
-                </Button>
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-border-light bg-white p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Verification Status</p>
-                  <p className="text-sm text-text-secondary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
-                </div>
-                <Button size="sm" variant={partner.verified ? "outline" : "primary"} icon={partner.verified ? <XCircle className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />} onClick={() => onVerify(partner)}>
-                  {partner.verified ? "Revoke" : "Verify"}
-                </Button>
-              </div>
-            </div>
-
-            {isAdmin && (
-              <div className="rounded-2xl border border-border-light bg-white p-4 space-y-3">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Mobile app account</p>
-                  <span title="Link this partner to their Fixfy app login so they show under Team (App) even before their first job" className="text-text-tertiary cursor-help">
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-                {partner.auth_user_id ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-text-secondary">
-                      Linked to{" "}
-                      <span className="font-semibold text-text-primary">
-                        {linkedAppProfile?.full_name ?? "App user"}
-                      </span>
-                      {linkedAppProfile?.email && (
-                        <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>
-                      )}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={linkBusy}
-                        onClick={() => {
-                          void (async () => {
-                            if (!partner.auth_user_id) return;
-                            setLinkBusy(true);
-                            try {
-                              await syncAppUserRow(partner.auth_user_id, partner.id);
-                              toast.success("App profile row updated in public.users.");
-                            } catch (e) {
-                              toast.error(e instanceof Error ? e.message : "Sync failed");
-                            } finally {
-                              setLinkBusy(false);
-                            }
-                          })();
-                        }}
-                      >
-                        Sync app profile
-                      </Button>
-                      <span title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking." className="text-text-tertiary cursor-help">
-                        <Info className="h-3.5 w-3.5" />
-                      </span>
-                      <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
-                        Remove app link
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Input
-                      type="email"
-                      value={linkEmail}
-                      onChange={(e) => setLinkEmail(e.target.value)}
-                      placeholder="Email they use in the app"
-                      className="flex-1 min-w-0"
-                    />
-                    <Button size="sm" disabled={linkBusy || !linkEmail.trim()} onClick={() => void handleLinkAppUser()}>
-                      {linkBusy ? "Linking…" : "Link account"}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {isAdmin && (
-              <div className="rounded-2xl border border-border-light bg-white p-4 space-y-3">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Partner upload portal</p>
-                  <span title="Generate a secure link so this partner can upload only the documents you choose — public page, no login required" className="text-text-tertiary cursor-help">
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon={<Link2 className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    setPortalLinkResult(null);
-                    setPortalLinkModalOpen(true);
-                  }}
-                >
-                  Generate upload link…
                 </Button>
               </div>
             )}
@@ -4877,7 +4811,14 @@ function PartnerDetailDrawer({
         {/* ========== SERVICE RATES (mig 160) ========== */}
         {tab === "rates" && (
           <div className="p-6">
-            <PartnerServiceRatesTabSection partnerId={partner.id} />
+            <PartnerServiceRatesTabSection
+              partnerId={partner.id}
+              partner={{
+                catalog_service_ids: partner.catalog_service_ids,
+                trades: partner.trades,
+                trade: partner.trade,
+              }}
+            />
           </div>
         )}
 
@@ -4889,6 +4830,118 @@ function PartnerDetailDrawer({
         {/* ========== PRIVACY & PERMISSIONS ========== */}
         {tab === "actions" && (
           <div className="p-6 space-y-5">
+            <div className="rounded-xl border border-border-light bg-card p-4">
+              <div className="flex flex-col @sm:flex-row @sm:items-center @sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Verification status</p>
+                  <p className="text-sm text-text-secondary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant={partner.verified ? "outline" : "primary"}
+                  className="shrink-0 self-start @sm:self-auto"
+                  icon={partner.verified ? <XCircle className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                  onClick={() => onVerify(partner)}
+                >
+                  {partner.verified ? "Revoke" : "Verify"}
+                </Button>
+              </div>
+            </div>
+
+            {isAdmin && (
+              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mobile app account</p>
+                  <span
+                    title="Link this partner to their Fixfy app login so they show under Team (App) even before their first job"
+                    className="text-text-tertiary cursor-help"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+                {partner.auth_user_id ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-text-secondary">
+                      Linked to{" "}
+                      <span className="font-semibold text-text-primary">{linkedAppProfile?.full_name ?? "App user"}</span>
+                      {linkedAppProfile?.email && <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={linkBusy}
+                        onClick={() => {
+                          void (async () => {
+                            if (!partner.auth_user_id) return;
+                            setLinkBusy(true);
+                            try {
+                              await syncAppUserRow(partner.auth_user_id, partner.id);
+                              toast.success("App profile row updated in public.users.");
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : "Sync failed");
+                            } finally {
+                              setLinkBusy(false);
+                            }
+                          })();
+                        }}
+                      >
+                        Sync app profile
+                      </Button>
+                      <span
+                        title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking."
+                        className="text-text-tertiary cursor-help"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </span>
+                      <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
+                        Remove app link
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col @sm:flex-row gap-2">
+                    <Input
+                      type="email"
+                      value={linkEmail}
+                      onChange={(e) => setLinkEmail(e.target.value)}
+                      placeholder="Email they use in the app"
+                      className="flex-1 min-w-0"
+                    />
+                    <Button size="sm" className="shrink-0" disabled={linkBusy || !linkEmail.trim()} onClick={() => void handleLinkAppUser()}>
+                      {linkBusy ? "Linking…" : "Link account"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partner upload portal</p>
+                  <span
+                    title="Generate a secure link so this partner can upload only the documents you choose — public page, no login required"
+                    className="text-text-tertiary cursor-help"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Link2 className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setPortalLinkResult(null);
+                    setPortalLinkModalOpen(true);
+                  }}
+                >
+                  Generate upload link…
+                </Button>
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-border-light space-y-4">
             <InternalProfileTab
               partner={partner}
               onUpdate={async (updates) => {
@@ -4996,6 +5049,7 @@ function PartnerDetailDrawer({
             {!partner.auth_user_id && (
               <p className="text-xs text-text-tertiary">No linked app user yet — admin account actions are unavailable.</p>
             )}
+            </div>
           </div>
         )}
 

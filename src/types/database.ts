@@ -8,11 +8,31 @@ export interface ServicePricingPreset {
   id: string;
   label: string;
   sort_order?: number;
+  /** When set, overrides catalog `pricing_mode` when this preset is selected. */
+  pricing_mode?: CatalogPricingMode;
   fixed_price?: number;
   hourly_rate?: number;
   default_hours?: number;
   partner_cost?: number;
 }
+
+/** Stackable extra on top of a selected base preset (cleaning add-ons, etc.). */
+export interface ServicePricingAddon {
+  id: string;
+  label: string;
+  sort_order?: number;
+  fixed_price: number;
+  partner_cost?: number | null;
+}
+
+/** Per-item account override for a base preset or stackable addon. */
+export interface CatalogPriceItemOverride {
+  fixed_price?: number | null;
+  partner_cost?: number | null;
+}
+
+export type CatalogPresetOverridesMap = Record<string, CatalogPriceItemOverride>;
+export type CatalogAddonOverridesMap = Record<string, CatalogPriceItemOverride>;
 
 /** Price book row: defaults for requests/quotes (always editable per record). */
 export interface CatalogService {
@@ -31,6 +51,8 @@ export interface CatalogService {
   display_icon_key?: string | null;
   /** Optional price bands (property size, bundles, etc.). See parsePricingPresets. */
   pricing_presets?: ServicePricingPreset[] | null;
+  /** Stackable add-ons summed on top of selected base preset. See parsePricingAddons. */
+  pricing_addons?: ServicePricingAddon[] | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -215,6 +237,10 @@ export interface AccountServicePrice {
   hourly_rate?: number | null;
   default_hours?: number | null;
   notes?: string | null;
+  /** Per base-preset id overrides when use_standard = false. */
+  preset_overrides?: CatalogPresetOverridesMap | null;
+  /** Per addon id overrides when use_standard = false. */
+  addon_overrides?: CatalogAddonOverridesMap | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -233,6 +259,10 @@ export interface PartnerServicePrice {
   hourly_partner_rate?: number | null;
   default_hours?: number | null;
   notes?: string | null;
+  /** Per base-preset id partner pay when use_standard = false (mig 193). */
+  preset_overrides?: CatalogPresetOverridesMap | null;
+  /** Per add-on id partner pay when use_standard = false (mig 193). */
+  addon_overrides?: CatalogAddonOverridesMap | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -389,6 +419,8 @@ export interface Job {
   catalog_service_id?: string | null;
   /** When set with catalog_service_id, preset id inside service_catalog.pricing_presets. */
   catalog_pricing_preset_id?: string | null;
+  /** Ids from service_catalog.pricing_addons selected at creation (stacked). */
+  catalog_pricing_addon_ids?: string[] | null;
   /** Access / logistics flags used for automatic surcharge. */
   in_ccz?: boolean | null;
   has_free_parking?: boolean | null;
@@ -731,6 +763,8 @@ export interface Account {
   active_jobs: number;
   /** Default client cancellation fee (£) for jobs under this account — office may override each cancel. */
   default_client_cancel_fee_gbp?: number | null;
+  /** Subset of `service_catalog` rows this account may use (Service rates, job scope). */
+  catalog_service_ids?: string[] | null;
   created_at: string;
 }
 

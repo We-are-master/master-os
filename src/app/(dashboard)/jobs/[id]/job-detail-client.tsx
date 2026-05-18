@@ -109,7 +109,18 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { CatalogService, Invoice, Job, JobExtraEntry, JobPayment, JobPaymentMethod, Partner, QuoteLineItem, SelfBill } from "@/types/database";
+import type {
+  AccountServicePrice,
+  CatalogService,
+  Invoice,
+  Job,
+  JobExtraEntry,
+  JobPayment,
+  JobPaymentMethod,
+  Partner,
+  QuoteLineItem,
+  SelfBill,
+} from "@/types/database";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
@@ -192,6 +203,8 @@ import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-pa
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { getAccountServicePrice } from "@/services/account-service-prices";
+import { resolveCatalogAddonChargeOptions } from "@/lib/catalog-line-pricing";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
@@ -948,6 +961,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerOpen, setMoneyDrawerOpen] = useState(false);
   const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
   const [moneyDrawerInitialExtraType, setMoneyDrawerInitialExtraType] = useState<string | undefined>(undefined);
+  const [moneyDrawerAccountPrice, setMoneyDrawerAccountPrice] = useState<AccountServicePrice | null>(null);
   const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
   const [extraManagerFocusBucket, setExtraManagerFocusBucket] = useState<ExtraHistoryBucket | null>(null);
   const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
@@ -3526,6 +3540,71 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const paid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
     return { depositScheduled: sched, depositRemaining: Math.max(0, sched - paid) };
   }, [job, customerPayments]);
+
+  const jobCatalogService = useMemo(() => {
+    if (!job || catalogServicesJobType.length === 0) return null;
+    const byId = job.catalog_service_id?.trim();
+    if (byId) {
+      const hit = catalogServicesJobType.find((s) => s.id === byId);
+      if (hit) return hit;
+    }
+    const titleOut = normalizeTypeOfWork(job.title || job.job_type || "") || job.job_type || job.title || "";
+    const key = titleOut.trim().toLowerCase();
+    if (!key) return null;
+    return (
+      catalogServicesJobType.find((s) => {
+        const a = (normalizeTypeOfWork(s.name) || s.name || "").trim().toLowerCase();
+        return a === key || a.includes(key) || key.includes(a);
+      }) ?? null
+    );
+  }, [job, catalogServicesJobType]);
+
+  const moneyDrawerCatalogAddonOptions = useMemo(() => {
+    if (!jobCatalogService) return [];
+    return resolveCatalogAddonChargeOptions(jobCatalogService, moneyDrawerAccountPrice);
+  }, [jobCatalogService, moneyDrawerAccountPrice]);
+
+  useEffect(() => {
+    if (!moneyDrawerOpen) return;
+    if (catalogServicesJobType.length > 0) return;
+    let cancelled = false;
+    listCatalogServicesForPicker()
+      .then((rows) => {
+        if (!cancelled) setCatalogServicesJobType(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogServicesJobType([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [moneyDrawerOpen, catalogServicesJobType.length]);
+
+  useEffect(() => {
+    const serviceId = jobCatalogService?.id?.trim();
+    if (!moneyDrawerOpen || !serviceId || !job?.client_id?.trim()) {
+      queueMicrotask(() => setMoneyDrawerAccountPrice(null));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const c = await getClient(job.client_id!.trim());
+        const aid = c?.source_account_id?.trim();
+        if (!aid) {
+          if (!cancelled) setMoneyDrawerAccountPrice(null);
+          return;
+        }
+        const row = await getAccountServicePrice(aid, serviceId).catch(() => null);
+        if (!cancelled) setMoneyDrawerAccountPrice(row);
+      } catch {
+        if (!cancelled) setMoneyDrawerAccountPrice(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [moneyDrawerOpen, jobCatalogService?.id, job?.client_id]);
 
   const cczParkingFieldTooltipText = useMemo(() => {
     const lines = [
@@ -8991,6 +9070,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         stripeInvoices={jobInvoices}
         clientCashContext={jobMoneyClientCashContext}
         initialExtraType={moneyDrawerInitialExtraType}
+        catalogAddonOptions={moneyDrawerCatalogAddonOptions}
       />
 
       <Modal

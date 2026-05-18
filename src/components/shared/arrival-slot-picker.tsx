@@ -49,16 +49,17 @@ export function ArrivalSlotPicker({
       )}
       <div
         className={cn(
-          compact ? "grid grid-cols-2 gap-1" : "flex min-w-0 flex-nowrap gap-1 overflow-x-auto sm:gap-1.5",
+          "grid min-w-0 gap-1.5",
+          compact ? "grid-cols-2" : "grid-cols-2 @md:grid-cols-4",
         )}
       >
         {ARRIVAL_SLOTS.map((slot) => {
           const active = activeSlotId === slot.id;
           const className = cn(
-            "rounded-md border font-semibold tabular-nums text-center whitespace-nowrap",
+            "w-full rounded-md border font-semibold tabular-nums text-center",
             compact
-              ? "px-1.5 py-1 text-[11px]"
-              : "min-w-0 flex-1 px-1 py-2 text-[10px] leading-tight sm:px-2 sm:py-2 sm:text-xs",
+              ? "px-1.5 py-1 text-[11px] leading-tight"
+              : "px-1.5 py-2 text-[10px] leading-tight sm:px-2 sm:text-xs",
             active
               ? "border-primary bg-primary/10 text-primary shadow-[0_0_0_1px_var(--color-primary)_inset]"
               : "border-border-light bg-card text-text-secondary",

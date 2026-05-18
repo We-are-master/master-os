@@ -87,7 +87,7 @@ export function JobModalScheduleFields({
   return (
     <>
       {/* Primary toggle: One-Off / Recurring */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-stretch gap-1.5 min-w-0">
         <KindTab
           label="One-Off"
           description="One day only"
@@ -107,7 +107,7 @@ export function JobModalScheduleFields({
 
       {/* Secondary toggle (only when Multiple is active) */}
       {isMultiple ? (
-        <div className="flex flex-wrap items-center gap-1.5 -mt-1 pl-3 border-l-2 border-primary/30">
+        <div className="flex flex-wrap items-stretch gap-1.5 -mt-1 pl-3 border-l-2 border-primary/30 min-w-0">
           <SubKindTab
             label="Spans days"
             description="Mon → Fri (continuous)"
@@ -128,11 +128,8 @@ export function JobModalScheduleFields({
         <>
           <div
             className={cn(
-              "grid grid-cols-1 gap-4",
-              // Date input is narrow; arrival picker needs more room. Give the
-              // arrival column ~1.6× the date column so 4 chips fit in one row
-              // on wider viewports without stretching the date field.
-              !hideArrivalSlot && "sm:grid-cols-[180px_minmax(0,1fr)]",
+              "grid grid-cols-1 gap-2 min-w-0",
+              !hideArrivalSlot && "@lg:grid-cols-[minmax(7.5rem,9rem)_minmax(0,1fr)] @lg:gap-3",
             )}
           >
             <div>
@@ -469,7 +466,7 @@ function KindTab({
       disabled={disabled}
       aria-pressed={active}
       className={cn(
-        "rounded-lg border px-3 py-1.5 text-left transition-colors min-w-[140px]",
+        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-lg border px-2.5 py-1.5 text-left transition-colors",
         active
           ? "border-primary bg-primary/10 text-primary"
           : disabled
@@ -497,7 +494,7 @@ function SubKindTab({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-md border px-2.5 py-1 text-left transition-colors",
+        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2 py-1 text-left transition-colors",
         active
           ? "border-primary bg-primary/10 text-primary"
           : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
