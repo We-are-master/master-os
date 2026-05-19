@@ -70,6 +70,7 @@ import {
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState, type JobScheduleV2SeriesPayload } from "@/lib/job-modal-schedule";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
@@ -149,6 +150,7 @@ interface RequestsClientProps {
 }
 
 export function RequestsClient({ initialData }: RequestsClientProps = {}) {
+  const { accessFees } = useFrontendSetup();
   const router = useRouter();
   const anchorDayKey = ukTodayYmd(new Date());
   const [scheduleDatePreset, setScheduleDatePreset] = useState<ScheduleDatePreset>("all");
@@ -1773,6 +1775,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             const accessSurcharge = computeAccessSurcharge({
               inCcz: inCczEff,
               hasFreeParking: data.has_free_parking,
+              cczFeeGbp: accessFees.cczFeeGbp,
+              parkingFeeGbp: accessFees.parkingFeeGbp,
             });
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
             const hasPartner = !isAutoAssign && !!(data.partner_id?.trim() || data.partner_name?.trim());
@@ -2697,6 +2701,7 @@ function ConvertToJobModal({
     series?: JobScheduleV2SeriesPayload;
   }) => void;
 }) {
+  const { accessFees } = useFrontendSetup();
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
     catalog_service_id: "", catalog_pricing_preset_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
@@ -2964,7 +2969,12 @@ function ConvertToJobModal({
   const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
   const cczEligibleConvert = isLikelyCczAddress(clientAddress.property_address);
   const inCczPreviewConvert = cczEligibleConvert && form.in_ccz;
-  const accessSurchargePreview = computeAccessSurcharge({ inCcz: inCczPreviewConvert, hasFreeParking: form.has_free_parking });
+  const accessSurchargePreview = computeAccessSurcharge({
+    inCcz: inCczPreviewConvert,
+    hasFreeParking: form.has_free_parking,
+    cczFeeGbp: accessFees.cczFeeGbp,
+    parkingFeeGbp: accessFees.parkingFeeGbp,
+  });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -3146,7 +3156,7 @@ function ConvertToJobModal({
                   }
                 >
                   <p className="font-medium text-[12px]">
-                    {inCczPreviewConvert ? "CCZ applied · +£15" : "Apply CCZ"}
+                    {inCczPreviewConvert ? `CCZ applied · +${formatCurrency(accessFees.cczFeeGbp)}` : "Apply CCZ"}
                   </p>
                 </button>
                 <button
@@ -3160,7 +3170,7 @@ function ConvertToJobModal({
                   }
                 >
                   <p className="font-medium text-[12px]">
-                    {form.has_free_parking ? "Add parking fee" : "Parking fee applied · +£15"}
+                    {form.has_free_parking ? "Add parking fee" : `Parking fee applied · +${formatCurrency(accessFees.parkingFeeGbp)}`}
                   </p>
                 </button>
               </div>

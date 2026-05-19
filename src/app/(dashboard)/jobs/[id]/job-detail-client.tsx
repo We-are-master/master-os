@@ -152,12 +152,7 @@ import {
   suggestedPartnerCostForTargetMargin,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
-import {
-  ACCESS_CCZ_FEE_GBP,
-  ACCESS_PARKING_FEE_GBP,
-  effectiveInCczForAddress,
-  isLikelyCczAddress,
-} from "@/lib/ccz";
+import { effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { patchJobFinancialsForAccessTransition } from "@/lib/job-access-fee-financials";
 import { jobPaymentNoteWithoutLedgerPrefix, parseJobPaymentLedgerLabel } from "@/lib/job-payment-history-label";
 import { isLegacyMisclassifiedPartnerPayment, sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
@@ -918,7 +913,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const router = useRouter();
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
-  const { jobOnHoldPresets, officeCancellationPresets } = useFrontendSetup();
+  const { jobOnHoldPresets, officeCancellationPresets, accessFees } = useFrontendSetup();
   const cancelJob = useCancelJob();
   const putOnHoldReasonOptions = useMemo(
     () => jobOnHoldPresetSelectOptions(jobOnHoldPresets),
@@ -2637,10 +2632,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       try {
         const nextInCcz = patch.in_ccz !== undefined ? patch.in_ccz : job.in_ccz;
         const nextHasFreeParking = patch.has_free_parking !== undefined ? patch.has_free_parking : job.has_free_parking;
-        const accessFin = patchJobFinancialsForAccessTransition(job, {
-          in_ccz: nextInCcz,
-          has_free_parking: nextHasFreeParking,
-        });
+        const accessFin = patchJobFinancialsForAccessTransition(
+          job,
+          {
+            in_ccz: nextInCcz,
+            has_free_parking: nextHasFreeParking,
+          },
+          accessFees,
+        );
         const updated = await handleJobUpdate(job.id, {
           ...patch,
           extras_amount: accessFin.extras_amount,
@@ -2660,7 +2659,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         setSavingAccessFees(false);
       }
     },
-    [job, handleJobUpdate, refreshJobFinance],
+    [job, handleJobUpdate, refreshJobFinance, accessFees],
   );
 
   const reportByPhase = useMemo(() => {
@@ -2824,10 +2823,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     const trimmed = propertyEdit.property_address.trim();
     const mergedInCcz = effectiveInCczForAddress(job.in_ccz, trimmed);
-    const accessFin = patchJobFinancialsForAccessTransition(job, {
-      property_address: trimmed,
-      in_ccz: mergedInCcz,
-    });
+    const accessFin = patchJobFinancialsForAccessTransition(
+      job,
+      {
+        property_address: trimmed,
+        in_ccz: mergedInCcz,
+      },
+      accessFees,
+    );
     setSavingProperty(true);
     try {
       const updated = await handleJobUpdate(job.id, {
@@ -2851,7 +2854,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setSavingProperty(false);
     }
-  }, [job, propertyEdit, handleJobUpdate, refreshJobFinance]);
+  }, [job, propertyEdit, handleJobUpdate, refreshJobFinance, accessFees]);
 
   const handleSaveUnlinkedProperty = useCallback(async () => {
     if (!job || !unlinkedAddressDraft.trim()) {
@@ -2860,10 +2863,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     const trimmed = unlinkedAddressDraft.trim();
     const mergedInCcz = effectiveInCczForAddress(job.in_ccz, trimmed);
-    const accessFin = patchJobFinancialsForAccessTransition(job, {
-      property_address: trimmed,
-      in_ccz: mergedInCcz,
-    });
+    const accessFin = patchJobFinancialsForAccessTransition(
+      job,
+      {
+        property_address: trimmed,
+        in_ccz: mergedInCcz,
+      },
+      accessFees,
+    );
     setSavingUnlinkedAddress(true);
     try {
       const updated = await handleJobUpdate(job.id, {
@@ -2884,7 +2891,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setSavingUnlinkedAddress(false);
     }
-  }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance]);
+  }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance, accessFees]);
 
   useEffect(() => {
     if (!resumeJobOpen || resumeAction !== "cancel") return;
@@ -3608,7 +3615,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const cczParkingFieldTooltipText = useMemo(() => {
     const lines = [
-      "CCZ is only available for central London postcodes (TfL Congestion Charge / Zone 1 core: EC1–4, WC1–2, W1, SW1, SE1). Outside that list the control stays off. Inside the list you still choose whether to apply the +£15 fee — it is not turned on automatically.",
+      `CCZ is only available for central London postcodes (TfL Congestion Charge / Zone 1 core: EC1–4, WC1–2, W1, SW1, SE1). Outside that list the control stays off. Inside the list you still choose whether to apply the ${formatCurrency(accessFees.cczFeeGbp)} fee — it is not turned on automatically.`,
     ];
     if (!cczEligibleAddress && job?.in_ccz) {
       lines.push(
@@ -3616,7 +3623,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       );
     }
     return lines.join("\n\n");
-  }, [cczEligibleAddress, job?.in_ccz]);
+  }, [cczEligibleAddress, job?.in_ccz, accessFees.cczFeeGbp]);
 
   const handleMoneyDrawerSubmit = useCallback(
     async (payload: JobMoneySubmitPayload) => {
@@ -4910,8 +4917,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** `extras_amount` includes manual extras and access fees folded in by CCZ/parking toggles — split display so CCZ/parking stay positive lines, not double-counted under “Extra charges”. */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
   const effectiveExtrasAmountForDisplay = Math.max(explicitExtras, clientExtrasUiValue);
-  const cczFeeNominal = effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0;
-  const parkingFeeNominal = job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0;
+  const cczFeeNominal = effectiveCustomerInCcz ? accessFees.cczFeeGbp : 0;
+  const parkingFeeNominal = job.has_free_parking === false ? accessFees.parkingFeeGbp : 0;
   const attributedAccessNominal = cczFeeNominal + parkingFeeNominal;
   const attributedAccessForExtrasLine = Math.min(attributedAccessNominal, effectiveExtrasAmountForDisplay);
   const extrasNetOfAccess = Math.max(0, Math.round((effectiveExtrasAmountForDisplay - attributedAccessForExtrasLine) * 100) / 100);
@@ -4940,11 +4947,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     { extra: 0, ccz: 0, parking: 0, materials: 0 },
   );
   const clientExtraCczDisplay = Math.max(
-    effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0,
+    effectiveCustomerInCcz ? accessFees.cczFeeGbp : 0,
     Math.round(clientExtraTypeTotals.ccz * 100) / 100,
   );
   const clientExtraParkingDisplay = Math.max(
-    job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0,
+    job.has_free_parking === false ? accessFees.parkingFeeGbp : 0,
     Math.round(clientExtraTypeTotals.parking * 100) / 100,
   );
   const clientExtraMaterialsDisplay = clientItemizedExtras
@@ -6309,7 +6316,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className={accessFeeToggleThumbClass(effectiveCustomerInCcz)} />
                           </span>
                           <span className={accessFeeToggleLabelClass(effectiveCustomerInCcz)}>
-                            {effectiveCustomerInCcz ? `+£${ACCESS_CCZ_FEE_GBP}` : "No fee"}
+                            {effectiveCustomerInCcz ? `+${formatCurrency(accessFees.cczFeeGbp)}` : "No fee"}
                           </span>
                       </button>
                     </div>
@@ -6336,7 +6343,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className={accessFeeToggleThumbClass(job.has_free_parking === false)} />
                           </span>
                           <span className={accessFeeToggleLabelClass(job.has_free_parking === false)}>
-                            {job.has_free_parking === false ? `+£${ACCESS_PARKING_FEE_GBP}` : "No fee"}
+                            {job.has_free_parking === false ? `+${formatCurrency(accessFees.parkingFeeGbp)}` : "No fee"}
                           </span>
                       </button>
                     </div>

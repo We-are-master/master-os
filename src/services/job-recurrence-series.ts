@@ -18,6 +18,7 @@ import {
   type ExpandedOccurrence,
   type SeriesPayload,
 } from "@/lib/job-recurrence";
+import { applyOfficeRescheduleStatus } from "@/lib/job-phases";
 import type { Job, JobRecurrenceSeries } from "@/types/database";
 
 export interface CreateSeriesInput {
@@ -569,7 +570,11 @@ export async function applyEditScope(
     const detachPatch = scope === "this_only"
       ? { ...patch, recurrence_detached_at: new Date().toISOString() }
       : patch;
-    const { error: updErr } = await supabase.from("jobs").update(detachPatch).eq("id", jobId);
+    const patchForRow = applyOfficeRescheduleStatus(
+      anchorSnap.status as Job["status"],
+      detachPatch as Record<string, unknown>,
+    ) as Partial<Job>;
+    const { error: updErr } = await supabase.from("jobs").update(patchForRow).eq("id", jobId);
     if (updErr) throw updErr;
     return { updated: 1, detached: scope === "this_only" };
   }
@@ -585,7 +590,11 @@ export async function applyEditScope(
   const propagateSchedule = patchTouchesSchedule(patch);
   const scheduleDeltaMs = propagateSchedule ? computeAnchorScheduleDeltaMs(anchorSnap, patch) : 0;
 
-  const { error: selfErr } = await supabase.from("jobs").update(patch).eq("id", jobId);
+  const anchorPatch = applyOfficeRescheduleStatus(
+    anchorSnap.status as Job["status"],
+    patch as Record<string, unknown>,
+  ) as Partial<Job>;
+  const { error: selfErr } = await supabase.from("jobs").update(anchorPatch).eq("id", jobId);
   if (selfErr) throw selfErr;
 
   const { data: familyRows, error: famErr } = await supabase
@@ -613,8 +622,14 @@ export async function applyEditScope(
       propagateSchedule && scheduleDeltaMs !== 0 && sibling.status !== "completed"
         ? shiftedSchedulePatchForSibling(sibling, scheduleDeltaMs)
         : {};
-    const combined: Partial<Job> = { ...propagatable, ...scheduleExtras };
+    let combined: Partial<Job> = { ...propagatable, ...scheduleExtras };
     if (Object.keys(combined).length === 0) continue;
+    if (Object.keys(scheduleExtras).length > 0) {
+      combined = applyOfficeRescheduleStatus(
+        sibling.status as Job["status"],
+        combined as Record<string, unknown>,
+      ) as Partial<Job>;
+    }
     const { error: sErr } = await supabase.from("jobs").update(combined).eq("id", sibling.id);
     if (sErr) throw sErr;
     updated += 1;

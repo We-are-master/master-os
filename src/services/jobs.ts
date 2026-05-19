@@ -11,7 +11,7 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
-import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
+import { applyOfficeRescheduleStatus, JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
   applyJobDbCompat,
   isLegacyJobSchema,
@@ -937,17 +937,6 @@ export async function createJob(
   return job;
 }
 
-const JOB_SCHEDULE_PATCH_KEYS = [
-  "scheduled_date",
-  "scheduled_start_at",
-  "scheduled_end_at",
-  "scheduled_finish_date",
-] as const;
-
-function jobPatchTouchesSchedule(patch: Record<string, unknown>): boolean {
-  return JOB_SCHEDULE_PATCH_KEYS.some((k) => Object.prototype.hasOwnProperty.call(patch, k));
-}
-
 /** Slim read for `updateJob` gates — avoids loading the full jobs row before PATCH. */
 const JOB_UPDATE_GATE_COLUMNS =
   "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date";
@@ -997,11 +986,11 @@ export async function updateJob(
   if (!beforeGates) throw new Error("Job not found");
 
   const basePatch = input as Record<string, unknown>;
-  /** Reschedule clears `late`: late = missed start on the previous slot; new date/time is a new booking. */
-  const effectivePatch: Record<string, unknown> = { ...basePatch };
-  if (beforeGates.status === "late" && jobPatchTouchesSchedule(basePatch)) {
-    effectivePatch.status = "scheduled";
-  }
+  /** Reschedule (date/window change) moves post-visit statuses back to Booked (`scheduled`). */
+  const effectivePatch = applyOfficeRescheduleStatus(
+    beforeGates.status as Job["status"],
+    { ...basePatch },
+  );
   const partnerFieldsTouched =
     "partner_id" in basePatch || "partner_ids" in basePatch || "partner_name" in basePatch;
   if (partnerFieldsTouched) {

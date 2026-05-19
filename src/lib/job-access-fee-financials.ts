@@ -1,5 +1,5 @@
 import type { Job } from "@/types/database";
-import { computeAccessSurcharge, effectiveInCczForAddress } from "@/lib/ccz";
+import { computeAccessSurcharge, effectiveInCczForAddress, type AccessFeeRates } from "@/lib/ccz";
 
 type JobAccessFinancialSlice = Pick<
   Job,
@@ -13,15 +13,24 @@ type JobAccessFinancialSlice = Pick<
 export function patchJobFinancialsForAccessTransition(
   job: JobAccessFinancialSlice,
   next: Partial<Pick<Job, "in_ccz" | "has_free_parking" | "property_address">>,
+  fees?: AccessFeeRates,
 ): { extras_amount: number; customer_final_payment: number } {
   const oldEffCcz = effectiveInCczForAddress(job.in_ccz, job.property_address);
-  const oldSur = computeAccessSurcharge({ inCcz: oldEffCcz, hasFreeParking: job.has_free_parking });
+  const oldSur = computeAccessSurcharge({
+    inCcz: oldEffCcz,
+    hasFreeParking: job.has_free_parking,
+    ...fees,
+  });
 
   const nextInCcz = next.in_ccz !== undefined ? next.in_ccz : job.in_ccz;
   const nextAddr = next.property_address !== undefined ? next.property_address : job.property_address;
   const nextParking = next.has_free_parking !== undefined ? next.has_free_parking : job.has_free_parking;
   const nextEffCcz = effectiveInCczForAddress(nextInCcz, nextAddr);
-  const newSur = computeAccessSurcharge({ inCcz: nextEffCcz, hasFreeParking: nextParking });
+  const newSur = computeAccessSurcharge({
+    inCcz: nextEffCcz,
+    hasFreeParking: nextParking,
+    ...fees,
+  });
 
   const delta = Math.round((newSur - oldSur) * 100) / 100;
   const extras = Math.max(0, Math.round((Number(job.extras_amount ?? 0) + delta) * 100) / 100);

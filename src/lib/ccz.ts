@@ -29,9 +29,21 @@ export function effectiveInCczForAddress(wantsCcz: boolean | null | undefined, p
 export const ACCESS_CCZ_FEE_GBP = 15;
 export const ACCESS_PARKING_FEE_GBP = 15;
 
-export function computeAccessSurcharge(params: { inCcz?: boolean | null; hasFreeParking?: boolean | null }): number {
-  const ccz = params.inCcz === true ? ACCESS_CCZ_FEE_GBP : 0;
-  const parking = params.hasFreeParking === false ? ACCESS_PARKING_FEE_GBP : 0;
+export type AccessFeeRates = {
+  cczFeeGbp?: number;
+  parkingFeeGbp?: number;
+};
+
+export function computeAccessSurcharge(params: {
+  inCcz?: boolean | null;
+  hasFreeParking?: boolean | null;
+  cczFeeGbp?: number;
+  parkingFeeGbp?: number;
+}): number {
+  const cczFee = params.cczFeeGbp ?? ACCESS_CCZ_FEE_GBP;
+  const parkingFee = params.parkingFeeGbp ?? ACCESS_PARKING_FEE_GBP;
+  const ccz = params.inCcz === true ? cczFee : 0;
+  const parking = params.hasFreeParking === false ? parkingFee : 0;
   return ccz + parking;
 }
 

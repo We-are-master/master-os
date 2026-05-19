@@ -4,15 +4,19 @@ import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AlarmClock, CalendarClock, ChevronDown, ChevronUp, Loader2, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import { AlarmClock, CalendarClock, Car, ChevronDown, ChevronUp, Loader2, MapPin, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import {
+  DEFAULT_ACCESS_CCZ_FEE_GBP,
+  DEFAULT_ACCESS_PARKING_FEE_GBP,
   DEFAULT_JOB_ON_HOLD_PRESETS,
   DEFAULT_PULSE_LOW_MARGIN_PCT,
+  MAX_ACCESS_FEE_GBP,
+  MIN_ACCESS_FEE_GBP,
   DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
   DEFAULT_SLA_FINAL_CHECKS_HOURS,
   DEFAULT_SLA_QUOTE_SEND_HOURS,
@@ -78,6 +82,8 @@ export function SetupTab() {
   const [lowMarginPctStr, setLowMarginPctStr] = useState(String(DEFAULT_PULSE_LOW_MARGIN_PCT));
 
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
+  const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
+  const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
 
   useEffect(() => {
     let alive = true;
@@ -100,6 +106,8 @@ export function SetupTab() {
       setTargetMarginPctStr(String(parsed.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(parsed.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
+      setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
+      setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setLoading(false);
     })();
     return () => {
@@ -141,6 +149,18 @@ export function SetupTab() {
         setSaving(false);
         return;
       }
+      const accessCczFee = Number(accessCczFeeStr);
+      const accessParkingFee = Number(accessParkingFeeStr);
+      for (const [label, v] of [
+        ["CCZ fee", accessCczFee],
+        ["Parking fee", accessParkingFee],
+      ] as const) {
+        if (!Number.isFinite(v) || v < MIN_ACCESS_FEE_GBP || v > MAX_ACCESS_FEE_GBP) {
+          toast.error(`${label} must be between £${MIN_ACCESS_FEE_GBP} and £${MAX_ACCESS_FEE_GBP}.`);
+          setSaving(false);
+          return;
+        }
+      }
       const next = mergeFrontendSetup(rawSetup, {
         bidding_sla_hours: hours,
         job_on_hold_presets: onHoldPresets,
@@ -153,6 +173,8 @@ export function SetupTab() {
         target_margin_pct: targetMargin,
         pulse_low_margin_pct: lowMargin,
         zendesk_subdomain: zendeskSubdomain,
+        access_ccz_fee_gbp: accessCczFee,
+        access_parking_fee_gbp: accessParkingFee,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -187,6 +209,8 @@ export function SetupTab() {
       setTargetMarginPctStr(String(next.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(next.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
+      setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
+      setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (e) {
@@ -352,6 +376,62 @@ export function SetupTab() {
                 />
               </div>
             </div>
+          </div>
+        </Card>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <Car className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Jobs · Access Fees</CardTitle>
+              <FixfyHintIcon text="Customer surcharges when CCZ or paid parking is applied on a job (create job, request convert, job detail). Stored in company settings — no migration needed." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  CCZ fee (£)
+                  <FixfyHintIcon text="Congestion Charge surcharge when CCZ is applied on an eligible central London job." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_ACCESS_FEE_GBP}
+                  max={MAX_ACCESS_FEE_GBP}
+                  step={0.01}
+                  value={accessCczFeeStr}
+                  onChange={(e) => setAccessCczFeeStr(e.target.value)}
+                  disabled={!canEditConfig}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">Default £{DEFAULT_ACCESS_CCZ_FEE_GBP.toFixed(2)}.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  <Car className="h-3.5 w-3.5" />
+                  Parking fee (£)
+                  <FixfyHintIcon text="Surcharge when the customer does not offer free parking on site." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_ACCESS_FEE_GBP}
+                  max={MAX_ACCESS_FEE_GBP}
+                  step={0.01}
+                  value={accessParkingFeeStr}
+                  onChange={(e) => setAccessParkingFeeStr(e.target.value)}
+                  disabled={!canEditConfig}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">Default £{DEFAULT_ACCESS_PARKING_FEE_GBP.toFixed(2)}.</p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canEditConfig || saving}
+              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            >
+              {saving ? "Saving…" : "Save Setup"}
+            </Button>
           </div>
         </Card>
 

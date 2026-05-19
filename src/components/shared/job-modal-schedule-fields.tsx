@@ -8,7 +8,15 @@ import { cn } from "@/lib/utils";
 import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import type { RecurrenceFormState } from "@/lib/job-modal-schedule";
-import { BYDAY_LABELS, BYDAY_ORDER, seriesPreview } from "@/lib/job-recurrence";
+import {
+  BYDAY_LABELS,
+  BYDAY_ORDER,
+  RECURRENCE_PRESET_OPTIONS,
+  recurrencePresetFromRule,
+  ruleFromRecurrencePreset,
+  seriesPreview,
+  type RecurrencePresetId,
+} from "@/lib/job-recurrence";
 import type {
   JobKind,
   JobRecurrenceByday,
@@ -254,6 +262,9 @@ function RecurringFormFields({
     );
   }
 
+  const presetId = recurrencePresetFromRule(recurrence.pattern, recurrence.interval);
+  const isCustomInterval = presetId === "custom";
+
   const previewLine = scheduledDate
     ? seriesPreview({
         pattern: recurrence.pattern,
@@ -296,37 +307,68 @@ function RecurringFormFields({
         </div>
         <Select
           label="Repeats"
-          value={recurrence.pattern}
-          onChange={(e) => onRecurrenceChange({ pattern: e.target.value as JobRecurrencePattern })}
-          options={[
-            { value: "daily", label: "Daily" },
-            { value: "weekly", label: "Weekly" },
-            { value: "monthly", label: "Monthly" },
-          ]}
+          value={presetId}
+          onChange={(e) => {
+            const id = e.target.value as RecurrencePresetId;
+            if (id === "custom") {
+              onRecurrenceChange({ pattern: recurrence.pattern, interval: recurrence.interval });
+              return;
+            }
+            const { pattern, interval } = ruleFromRecurrencePreset(id);
+            onRecurrenceChange({ pattern, interval });
+          }}
+          options={RECURRENCE_PRESET_OPTIONS.map((p) => ({ value: p.id, label: p.label }))}
         />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Every
-          </label>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              min={1}
-              max={365}
-              value={String(recurrence.interval)}
-              onChange={(e) => {
-                const n = Math.max(1, Number(e.target.value) || 1);
-                onRecurrenceChange({ interval: n });
-              }}
-              className={`h-10 w-20 ${requiredFieldClassName ?? ""}`.trim()}
+        {isCustomInterval ? (
+          <>
+            <Select
+              label="Unit"
+              value={recurrence.pattern}
+              onChange={(e) =>
+                onRecurrenceChange({ pattern: e.target.value as JobRecurrencePattern })
+              }
+              options={[
+                { value: "daily", label: "Day(s)" },
+                { value: "weekly", label: "Week(s)" },
+                { value: "monthly", label: "Month(s)" },
+              ]}
             />
-            <span className="text-xs text-text-secondary">
-              {recurrence.pattern === "daily" && (recurrence.interval === 1 ? "day" : "days")}
-              {recurrence.pattern === "weekly" && (recurrence.interval === 1 ? "week" : "weeks")}
-              {recurrence.pattern === "monthly" && (recurrence.interval === 1 ? "month" : "months")}
-            </span>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Every
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={String(recurrence.interval)}
+                  onChange={(e) => {
+                    const n = Math.max(1, Number(e.target.value) || 1);
+                    onRecurrenceChange({ interval: n });
+                  }}
+                  className={`h-10 w-20 ${requiredFieldClassName ?? ""}`.trim()}
+                />
+                <span className="text-xs text-text-secondary">
+                  {recurrence.pattern === "daily" && (recurrence.interval === 1 ? "day" : "days")}
+                  {recurrence.pattern === "weekly" && (recurrence.interval === 1 ? "week" : "weeks")}
+                  {recurrence.pattern === "monthly" && (recurrence.interval === 1 ? "month" : "months")}
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="md:col-span-2">
+            <p className="text-[11px] text-text-tertiary rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2">
+              Repeats{" "}
+              <span className="font-medium text-text-secondary">
+                {RECURRENCE_PRESET_OPTIONS.find((p) => p.id === presetId)?.label ?? "—"}
+              </span>
+              . Choose <span className="font-medium">Custom interval…</span> for any frequency (e.g. every 4 weeks or 6
+              months).
+            </p>
           </div>
-        </div>
+        )}
         {recurrence.pattern === "weekly" ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">

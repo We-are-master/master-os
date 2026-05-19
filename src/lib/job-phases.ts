@@ -409,6 +409,36 @@ export function isJobOnSiteWorkStatus(status: Job["status"]): boolean {
   return status === "in_progress";
 }
 
+const JOB_SCHEDULE_PATCH_KEYS = [
+  "scheduled_date",
+  "scheduled_start_at",
+  "scheduled_end_at",
+  "scheduled_finish_date",
+] as const;
+
+export function jobPatchTouchesSchedule(patch: Record<string, unknown>): boolean {
+  return JOB_SCHEDULE_PATCH_KEYS.some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+}
+
+/** Office reschedule: move post-visit pipeline steps back to Booked (`scheduled`). */
+const STATUSES_RESET_TO_SCHEDULED_ON_RESCHEDULE = new Set<Job["status"]>([
+  "late",
+  "in_progress",
+  "final_check",
+  "awaiting_payment",
+  "need_attention",
+]);
+
+/** Merge `status: scheduled` when the patch changes schedule and the job was past Booked. */
+export function applyOfficeRescheduleStatus(
+  beforeStatus: Job["status"],
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!jobPatchTouchesSchedule(patch)) return patch;
+  if (!STATUSES_RESET_TO_SCHEDULED_ON_RESCHEDULE.has(beforeStatus)) return patch;
+  return { ...patch, status: "scheduled" };
+}
+
 /** After on hold, restore the step the job was on (scheduled/late vs on-site phases). */
 export function jobStatusAfterResumeFromOnHold(
   previous: Job["status"] | string | null | undefined,
