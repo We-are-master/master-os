@@ -9353,6 +9353,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) {
                     partnerPatch.status = "unassigned";
                   }
+                  const prevPartnerId = job.partner_id ?? null;
                   await handleJobUpdate(job.id, partnerPatch);
                   if (selectedPartnerId) {
                     setPartnerExtrasUiValue(extrasCombined);
@@ -9362,6 +9363,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       parking: partnerAssignExtraBreakdown.parking,
                     });
                     toast.success(`${selected?.company_name?.trim() || selected?.contact_name || "Partner"} assigned · ${formatCurrency(partnerAssignTotal)} partner cost`);
+                    // Explicit Zendesk fire on fresh assignment — belt and
+                    // suspenders next to handleJobUpdate's internal notify
+                    // path, which can be skipped when `current` (the cached
+                    // job state) drifts mid-mutation or shouldNotifyPartnerForJobPatch
+                    // misses a partner key.
+                    if (selectedPartnerId !== prevPartnerId) {
+                      void notifyPartnerJobChange({
+                        jobId: job.id,
+                        jobReference: job.reference,
+                        kind: "assigned",
+                        skipPush: true,
+                        silent: true,
+                      });
+                    }
                   }
                   setPartnerModalOpen(false);
                 } finally {
