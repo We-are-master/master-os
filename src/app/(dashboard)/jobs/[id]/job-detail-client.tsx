@@ -9353,6 +9353,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) {
                     partnerPatch.status = "unassigned";
                   }
+                  const prevPartnerId = job.partner_id ?? null;
                   await handleJobUpdate(job.id, partnerPatch);
                   if (selectedPartnerId) {
                     setPartnerExtrasUiValue(extrasCombined);
@@ -9362,6 +9363,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       parking: partnerAssignExtraBreakdown.parking,
                     });
                     toast.success(`${selected?.company_name?.trim() || selected?.contact_name || "Partner"} assigned · ${formatCurrency(partnerAssignTotal)} partner cost`);
+                    // Always fire Zendesk notify on Assign & confirm — clicking
+                    // the button is an explicit intent to notify, even when
+                    // the partner didn't change (e.g. operator wants to
+                    // re-deliver the Job booked side conv). The notify route
+                    // is idempotent: side conv reuses the saved thread id,
+                    // and status sync is a no-op when the ticket already
+                    // matches. Logs the fire so we can confirm in console
+                    // when triaging "notify didn't reach Zendesk".
+                    console.log(
+                      "[change-partner] firing notifyPartnerJobChange",
+                      { jobId: job.id, selectedPartnerId, prevPartnerId },
+                    );
+                    void notifyPartnerJobChange({
+                      jobId: job.id,
+                      jobReference: job.reference,
+                      kind: "assigned",
+                      skipPush: true,
+                      silent: true,
+                    }).then((r) => {
+                      console.log("[change-partner] notify result", r);
+                    });
                   }
                   setPartnerModalOpen(false);
                 } finally {

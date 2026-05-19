@@ -33,6 +33,7 @@ import {
 } from "@/lib/zendesk-lifecycle-templates";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ export async function dispatchJobCreatedZendesk(args: {
       // primary CTA so the partner can submit the report without waiting
       // for a separate email or having the app installed.
       const reportToken = createPartnerReportToken(String(job.id), String(job.partner_id));
-      const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+      const base = appBaseUrl();
       const reportTargetPath = `/job/report?token=${encodeURIComponent(reportToken)}`;
       let reportShortPath = reportTargetPath;
       try {

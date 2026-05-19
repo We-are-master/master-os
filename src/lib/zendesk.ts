@@ -40,6 +40,107 @@ export function getZendeskTicketId(entity: {
   return ref ? ref : null;
 }
 
+export interface CreateTicketArgs {
+  subject:        string;
+  /** Plain text comment body. Either commentBody or htmlBody is required. */
+  commentBody?:   string;
+  /** HTML comment body — rendered in the requester email. */
+  htmlBody?:      string;
+  /** Comment visibility — defaults to true (customer can see). */
+  publicComment?: boolean;
+  /** Required by Zendesk — `name` is optional but `email` must be present. */
+  requesterEmail: string;
+  requesterName?: string | null;
+  /** Optional custom status id (e.g. ZD_STATUS_SCHEDULED). When set, the
+   *  base status is inferred from baseStatusForCustomStatusId. */
+  customStatusId?: number;
+  /** Optional tags to attach. */
+  tags?:          string[];
+  /** Optional external link back to the OS job/quote for support agents. */
+  externalId?:    string;
+}
+
+export interface CreateTicketResult {
+  ok:      boolean;
+  /** Numeric ticket id when ok=true. */
+  id?:     number;
+  /** HTTP status from Zendesk (when reached). */
+  status?: number;
+  /** Error detail when ok=false. */
+  error?:  string;
+}
+
+/**
+ * Create a new Zendesk ticket. Used when the OS needs a parent ticket to
+ * thread side conversations under but no ticket is linked yet (e.g. job
+ * created directly without a Zendesk-originated quote).
+ *
+ * Returns ok=false (no throw) on any failure so the caller can decide
+ * whether to fall back to a direct email or surface the error.
+ */
+export async function createTicket(args: CreateTicketArgs): Promise<CreateTicketResult> {
+  if (!isZendeskConfigured()) {
+    return { ok: false, error: "Zendesk not configured (set ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN)" };
+  }
+  if (!args.requesterEmail?.trim()) {
+    return { ok: false, error: "requesterEmail is required" };
+  }
+  if (!args.commentBody && !args.htmlBody) {
+    return { ok: false, error: "commentBody or htmlBody is required" };
+  }
+
+  const comment: Record<string, unknown> = {
+    public: args.publicComment ?? true,
+  };
+  if (args.htmlBody) comment.html_body = args.htmlBody;
+  else comment.body = args.commentBody ?? "";
+
+  const ticket: Record<string, unknown> = {
+    subject: args.subject,
+    comment,
+    requester: args.requesterName
+      ? { name: args.requesterName.trim(), email: args.requesterEmail.trim() }
+      : { email: args.requesterEmail.trim() },
+  };
+  if (args.tags && args.tags.length > 0) ticket.tags = args.tags;
+  if (args.externalId) ticket.external_id = args.externalId;
+  if (args.customStatusId != null) {
+    ticket.custom_status_id = args.customStatusId;
+    const baseStatus = baseStatusForCustomStatusId(args.customStatusId);
+    if (baseStatus) ticket.status = baseStatus;
+  }
+
+  const url = `${baseUrl()}/tickets.json`;
+  const bodyPayload = JSON.stringify({ ticket });
+  console.log(`[zendesk.createTicket] POST ${url} body=${bodyPayload.length > 500 ? bodyPayload.slice(0, 500) + "…" : bodyPayload}`);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": authHeader(),
+        "Content-Type":  "application/json",
+        Accept:          "application/json",
+      },
+      body: bodyPayload,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`[zendesk.createTicket] failed (${res.status}):`, text.slice(0, 500));
+      return { ok: false, status: res.status, error: text.slice(0, 500) };
+    }
+    const json = (await res.json().catch(() => ({}))) as { ticket?: { id?: number } };
+    const id = json.ticket?.id;
+    if (!id) {
+      return { ok: false, status: res.status, error: "Zendesk response missing ticket.id" };
+    }
+    return { ok: true, id, status: res.status };
+  } catch (err) {
+    console.error("[zendesk.createTicket] network error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
 /**
  * Upload one or more attachments and post a public comment. Used by
  * customer-facing routes (quote sent, job final review, …) when the

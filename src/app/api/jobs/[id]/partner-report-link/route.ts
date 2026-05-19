@@ -4,6 +4,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -78,7 +79,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const token = createPartnerReportToken(String(job.id), String(job.partner_id));
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  const base = appBaseUrl();
   // Semantic path for partner work-report links. Next.js rewrites this to
   // /quote/respond internally so the same page handles all token kinds,
   // but the URL the partner sees is /job/report — not the legacy

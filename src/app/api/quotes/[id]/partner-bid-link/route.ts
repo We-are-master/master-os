@@ -4,6 +4,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!partner) return NextResponse.json({ error: "Partner not found" }, { status: 404 });
 
   const token = createPartnerBidToken(quote.id, partner.id);
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  const base = appBaseUrl();
   // Semantic /quote/bid path for partner bid submission (rewrites to the
   // same /quote/respond page internally).
   const targetPath = `/quote/bid?token=${encodeURIComponent(token)}`;

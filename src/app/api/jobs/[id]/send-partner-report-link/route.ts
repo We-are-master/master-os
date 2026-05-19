@@ -5,11 +5,14 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   createSideConversation,
+  createTicket,
   getZendeskTicketId,
   isZendeskConfigured,
   replyToSideConversation,
 } from "@/lib/zendesk";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { appBaseUrl } from "@/lib/app-base-url";
+import { ZD_STATUS_SCHEDULED } from "@/lib/zendesk-statuses";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -50,7 +53,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const admin = createServiceClient();
   const { data: job, error: jobErr } = await admin
     .from("jobs")
-    .select("id, reference, title, property_address, partner_id, external_source, external_ref, zendesk_side_conversation_id")
+    .select("id, reference, title, property_address, partner_id, client_name, client_email, scope, external_source, external_ref, zendesk_side_conversation_id")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -87,7 +90,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const token = createPartnerReportToken(String(job.id), String(job.partner_id));
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  const base = appBaseUrl();
   // Semantic /job/report path for partner work-report submission.
   const reportUrl = `${base}/job/report?token=${encodeURIComponent(token)}`;
 
@@ -100,11 +103,47 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     reportUrl,
   });
 
-  const ticketId = getZendeskTicketId(job);
+  let ticketId = getZendeskTicketId(job);
+  const failureChain: string[] = [];
 
-  // Path 1: Zendesk linked → side conversation (preferred channel).
+  // Path 0: No ticket yet → create a Zendesk ticket so the side
+  // conversation has a parent, then proceed. We register the **partner**
+  // as the requester (not the customer) because this action is explicitly
+  // about routing the report link to the partner — the customer should
+  // not receive a new-ticket notification. We also mark the first
+  // comment as private (`public: false`) so the requester-email Zendesk
+  // sends out only carries the silent placeholder we put there; the
+  // actual partner-facing email is the side conv below.
+  if (!ticketId && isZendeskConfigured() && partnerEmail) {
+    const tCreate = await createTicket({
+      subject: `Job ${job.reference ?? ""} — ${job.title ?? ""}`.trim(),
+      htmlBody: `<p>Auto-created from Fixfy OS to route the work report request to the partner.</p>`,
+      publicComment: false,
+      requesterEmail: partnerEmail,
+      requesterName: partnerName || null,
+      customStatusId: ZD_STATUS_SCHEDULED,
+      externalId: `job:${job.id}`,
+      tags: ["fixfy_os_auto_created", "partner_report_link"],
+    });
+    if (tCreate.ok && tCreate.id) {
+      ticketId = String(tCreate.id);
+      await admin
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: ticketId })
+        .eq("id", jobId);
+      console.log("[send-partner-report-link] auto-created partner-scoped ticket", ticketId, "for job", job.reference);
+    } else {
+      failureChain.push(`auto-create: ${tCreate.error ?? "unknown"}`);
+    }
+  } else if (!ticketId && isZendeskConfigured() && !partnerEmail) {
+    failureChain.push("auto-create: no partner email to use as requester");
+  }
+
+  // Path 1: Zendesk side conversation (preferred when ticket is linked).
   if (ticketId && isZendeskConfigured()) {
     let sideConvId: string | null = (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
+
+    // 1a) Try replying on the existing thread first.
     if (sideConvId) {
       const r = await replyToSideConversation({
         ticketId,
@@ -112,34 +151,65 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
         htmlBody: html,
         bodyText: text,
       });
-      if (!r.ok) {
-        return NextResponse.json({ error: r.error ?? "Could not reply on side conversation." }, { status: 502 });
+      if (r.ok) {
+        return NextResponse.json({ ok: true, channel: "zendesk_side_conv_reply", sideConversationId: sideConvId, reportUrl });
       }
-      return NextResponse.json({ ok: true, channel: "zendesk_side_conv_reply", sideConversationId: sideConvId, reportUrl });
+      // Reply failed — common cause is the stored side conv lost its `to`
+      // (e.g. created with the wrong/missing partner email earlier). Clear
+      // the saved id and fall through to create a fresh side conv with
+      // the current partner email.
+      console.warn(
+        "[send-partner-report-link] reply on existing side conv",
+        sideConvId,
+        "failed:",
+        r.error,
+      );
+      failureChain.push(`reply: ${r.error ?? "unknown"}`);
+      sideConvId = null;
     }
-    const r = await createSideConversation({
-      ticketId,
-      toEmail: partnerEmail,
-      toName: partnerName,
-      subject,
-      htmlBody: html,
-      bodyText: text,
-    });
-    if (!r.ok) {
-      return NextResponse.json({ error: r.error ?? "Could not open side conversation." }, { status: 502 });
+
+    // 1b) Open a new side conversation. Requires a partner email.
+    if (partnerEmail) {
+      const r = await createSideConversation({
+        ticketId,
+        toEmail: partnerEmail,
+        toName: partnerName,
+        subject,
+        htmlBody: html,
+        bodyText: text,
+      });
+      if (r.ok) {
+        if (r.id) {
+          await admin.from("jobs").update({ zendesk_side_conversation_id: r.id }).eq("id", jobId);
+        }
+        return NextResponse.json({ ok: true, channel: "zendesk_side_conv_open", sideConversationId: r.id ?? null, reportUrl });
+      }
+      failureChain.push(`create: ${r.error ?? "unknown"}`);
+    } else {
+      failureChain.push("create: partner has no email");
     }
-    if (r.id) {
-      sideConvId = r.id;
-      await admin.from("jobs").update({ zendesk_side_conversation_id: r.id }).eq("id", jobId);
-    }
-    return NextResponse.json({ ok: true, channel: "zendesk_side_conv_open", sideConversationId: sideConvId, reportUrl });
+  } else if (!ticketId) {
+    failureChain.push("zendesk: job is not linked to a ticket");
+  } else if (!isZendeskConfigured()) {
+    failureChain.push("zendesk: server env vars missing");
   }
 
-  // Path 2: Resend direct email fallback.
+  // Path 2: Resend direct email to the partner (fallback whenever Zendesk
+  // path didn't deliver — links a non-Zendesk job, missing env, or any
+  // upstream 4xx/5xx). We still need a partner email.
+  if (!partnerEmail) {
+    return NextResponse.json(
+      { error: `Could not deliver: partner has no email on file. ${failureChain.join(" · ")}` },
+      { status: 400 },
+    );
+  }
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (!resendKey) {
     return NextResponse.json(
-      { error: "No delivery channel: job is not Zendesk-linked and RESEND_API_KEY is not configured." },
+      {
+        error:
+          `Zendesk delivery failed and Resend fallback is not configured. ${failureChain.join(" · ")}`,
+      },
       { status: 503 },
     );
   }
@@ -153,9 +223,19 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     text,
   });
   if (error) {
-    return NextResponse.json({ error: error.message ?? "Email send failed." }, { status: 502 });
+    return NextResponse.json(
+      { error: `${error.message ?? "Email send failed."} (zendesk: ${failureChain.join(" · ") || "ok"})` },
+      { status: 502 },
+    );
   }
-  return NextResponse.json({ ok: true, channel: "resend", reportUrl });
+  return NextResponse.json({
+    ok:        true,
+    channel:   "resend",
+    reportUrl,
+    // Surface the upstream Zendesk failure (if any) so the operator knows
+    // why we fell back to direct email instead of the ticket side conv.
+    zendeskFailure: failureChain.length > 0 ? failureChain.join(" · ") : null,
+  });
 }
 
 function buildPartnerReportRequestEmail(args: {
