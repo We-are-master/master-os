@@ -10,6 +10,7 @@ import {
   replyToSideConversation,
 } from "@/lib/zendesk";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -87,7 +88,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const token = createPartnerReportToken(String(job.id), String(job.partner_id));
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  const base = appBaseUrl();
   // Semantic /job/report path for partner work-report submission.
   const reportUrl = `${base}/job/report?token=${encodeURIComponent(token)}`;
 

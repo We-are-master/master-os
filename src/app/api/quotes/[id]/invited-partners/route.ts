@@ -4,6 +4,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -58,7 +59,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "Quote not found" }, { status: 404 });
   }
 
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
+  const base = appBaseUrl();
   const bidsByPartner = new Map<string, { amount: number; status: string; updatedAt: string }>();
   for (const b of bids ?? []) {
     const partnerId = (b as { partner_id: string }).partner_id;

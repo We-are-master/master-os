@@ -6,6 +6,7 @@ import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { appBaseUrl } from "@/lib/app-base-url";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -160,8 +161,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // partner email (assigned/completed/etc) so the partner can submit the
   // report straight from their inbox without the app. The token binds
   // (jobId, partnerId), so reassigning the partner invalidates older links.
-  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "";
-  let reportUrl = `${appBaseUrl}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
+  const base = appBaseUrl();
+  let reportUrl = `${base}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
   try {
     const r = await upsertShortLink({
       targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
@@ -169,7 +170,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       entityRef:  `job:${job.id}:partner:${partner.id}`,
       createdBy:  auth.user.id,
     });
-    reportUrl = `${appBaseUrl}${r.shortPath}`;
+    reportUrl = `${base}${r.shortPath}`;
   } catch (err) {
     console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
   }
