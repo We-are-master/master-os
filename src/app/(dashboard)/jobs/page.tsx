@@ -1181,7 +1181,7 @@ function JobsPageContent() {
           title: formData.title ?? "",
           catalog_service_id: formData.catalog_service_id ?? null,
           catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
-          catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? null,
+          catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? [],
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           client_name: formData.client_name ?? "",
@@ -1250,7 +1250,7 @@ function JobsPageContent() {
         title: formData.title ?? "",
         catalog_service_id: formData.catalog_service_id ?? null,
         catalog_pricing_preset_id: formData.catalog_pricing_preset_id ?? null,
-        catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? null,
+        catalog_pricing_addon_ids: formData.catalog_pricing_addon_ids ?? [],
         client_id: formData.client_id,
         client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
@@ -3040,10 +3040,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
         form.catalog_service_id?.trim() && form.catalog_pricing_preset_id?.trim()
           ? form.catalog_pricing_preset_id.trim()
           : null,
-      catalog_pricing_addon_ids:
-        isStackablePricing && form.catalog_pricing_addon_ids.length > 0
-          ? form.catalog_pricing_addon_ids
-          : null,
+      catalog_pricing_addon_ids: isStackablePricing ? form.catalog_pricing_addon_ids : [],
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,

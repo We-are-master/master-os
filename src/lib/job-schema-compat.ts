@@ -102,7 +102,21 @@ export function prepareJobRowForInsert(row: Record<string, unknown>): Record<str
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
+  normalizeCatalogPricingAddonIds(out);
   return out;
+}
+
+/** `jobs.catalog_pricing_addon_ids` is NOT NULL jsonb — never send explicit null on insert/update. */
+function normalizeCatalogPricingAddonIds(row: Record<string, unknown>): void {
+  if (!("catalog_pricing_addon_ids" in row)) return;
+  const v = row.catalog_pricing_addon_ids;
+  if (v == null) {
+    row.catalog_pricing_addon_ids = [];
+    return;
+  }
+  if (Array.isArray(v)) {
+    row.catalog_pricing_addon_ids = v.map((id) => String(id).trim()).filter(Boolean);
+  }
 }
 
 /** Partial row for `jobs.update` */
@@ -123,6 +137,7 @@ export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<s
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
+  normalizeCatalogPricingAddonIds(out);
   return out;
 }
 
