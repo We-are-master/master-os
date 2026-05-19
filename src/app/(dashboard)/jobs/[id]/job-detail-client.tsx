@@ -9363,20 +9363,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       parking: partnerAssignExtraBreakdown.parking,
                     });
                     toast.success(`${selected?.company_name?.trim() || selected?.contact_name || "Partner"} assigned · ${formatCurrency(partnerAssignTotal)} partner cost`);
-                    // Explicit Zendesk fire on fresh assignment — belt and
-                    // suspenders next to handleJobUpdate's internal notify
-                    // path, which can be skipped when `current` (the cached
-                    // job state) drifts mid-mutation or shouldNotifyPartnerForJobPatch
-                    // misses a partner key.
-                    if (selectedPartnerId !== prevPartnerId) {
-                      void notifyPartnerJobChange({
-                        jobId: job.id,
-                        jobReference: job.reference,
-                        kind: "assigned",
-                        skipPush: true,
-                        silent: true,
-                      });
-                    }
+                    // Always fire Zendesk notify on Assign & confirm — clicking
+                    // the button is an explicit intent to notify, even when
+                    // the partner didn't change (e.g. operator wants to
+                    // re-deliver the Job booked side conv). The notify route
+                    // is idempotent: side conv reuses the saved thread id,
+                    // and status sync is a no-op when the ticket already
+                    // matches. Logs the fire so we can confirm in console
+                    // when triaging "notify didn't reach Zendesk".
+                    console.log(
+                      "[change-partner] firing notifyPartnerJobChange",
+                      { jobId: job.id, selectedPartnerId, prevPartnerId },
+                    );
+                    void notifyPartnerJobChange({
+                      jobId: job.id,
+                      jobReference: job.reference,
+                      kind: "assigned",
+                      skipPush: true,
+                      silent: true,
+                    }).then((r) => {
+                      console.log("[change-partner] notify result", r);
+                    });
                   }
                   setPartnerModalOpen(false);
                 } finally {
