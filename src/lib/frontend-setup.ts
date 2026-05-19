@@ -1,3 +1,4 @@
+import { ACCESS_CCZ_FEE_GBP, ACCESS_PARKING_FEE_GBP } from "@/lib/ccz";
 import { OFFICE_JOB_CANCELLATION_REASONS } from "@/lib/job-office-cancellation";
 
 /**
@@ -66,6 +67,16 @@ export type FrontendSetup = {
    * server `ZENDESK_SUBDOMAIN` env var when not set here.
    */
   zendesk_subdomain?: string;
+
+  /** Customer CCZ (congestion charge) surcharge per job when applied (GBP). */
+  access_ccz_fee_gbp?: number;
+  /** Customer parking surcharge per job when no free parking (GBP). */
+  access_parking_fee_gbp?: number;
+};
+
+export type AccessFees = {
+  cczFeeGbp: number;
+  parkingFeeGbp: number;
 };
 
 export type PulsePresetId = "1d" | "wtd" | "mtd" | "qtd" | "all";
@@ -131,6 +142,23 @@ export const DEFAULT_DISPLAY_TIME_FORMAT: TimeFormatId = "24h";
 export const DEFAULT_GREETING_MORNING_UNTIL = 12;
 export const DEFAULT_GREETING_EVENING_FROM = 18;
 
+export const DEFAULT_ACCESS_CCZ_FEE_GBP = ACCESS_CCZ_FEE_GBP;
+export const DEFAULT_ACCESS_PARKING_FEE_GBP = ACCESS_PARKING_FEE_GBP;
+export const MIN_ACCESS_FEE_GBP = 0;
+export const MAX_ACCESS_FEE_GBP = 999;
+
+export function clampAccessFeeGbp(raw: unknown, fallback: number): number {
+  return clampNum(raw, fallback, MIN_ACCESS_FEE_GBP, MAX_ACCESS_FEE_GBP);
+}
+
+export function resolveAccessFees(setup?: FrontendSetup | null): AccessFees {
+  const s = setup ?? parseFrontendSetup(null);
+  return {
+    cczFeeGbp: clampAccessFeeGbp(s.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP),
+    parkingFeeGbp: clampAccessFeeGbp(s.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP),
+  };
+}
+
 export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   bidding_sla_hours: 8,
   job_on_hold_presets: [...DEFAULT_JOB_ON_HOLD_PRESETS],
@@ -154,6 +182,8 @@ export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   display_time_format: DEFAULT_DISPLAY_TIME_FORMAT,
   greeting_morning_until: DEFAULT_GREETING_MORNING_UNTIL,
   greeting_evening_from: DEFAULT_GREETING_EVENING_FROM,
+  access_ccz_fee_gbp: DEFAULT_ACCESS_CCZ_FEE_GBP,
+  access_parking_fee_gbp: DEFAULT_ACCESS_PARKING_FEE_GBP,
 };
 
 const PULSE_PRESET_IDS: PulsePresetId[] = ["1d", "wtd", "mtd", "qtd", "all"];
@@ -328,6 +358,8 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (typeof o.zendesk_subdomain === "string") {
     base.zendesk_subdomain = normalizeZendeskSubdomain(o.zendesk_subdomain) || undefined;
   }
+  base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
+  base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   return base;
 }
 
@@ -420,6 +452,12 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.zendesk_subdomain !== undefined) {
     base.zendesk_subdomain = normalizeZendeskSubdomain(patch.zendesk_subdomain) || undefined;
+  }
+  if (patch.access_ccz_fee_gbp !== undefined) {
+    base.access_ccz_fee_gbp = clampAccessFeeGbp(patch.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
+  }
+  if (patch.access_parking_fee_gbp !== undefined) {
+    base.access_parking_fee_gbp = clampAccessFeeGbp(patch.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   }
   return base;
 }

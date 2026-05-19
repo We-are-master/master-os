@@ -469,6 +469,12 @@ const JOB_SORT_AMOUNT: ColumnSortOption[] = [
   ...JOB_SORT_CREATED,
 ];
 
+const JOB_SORT_COST: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "partner_cost", direction: "asc" },
+  { label: "High to low", sortKey: "partner_cost", direction: "desc" },
+  ...JOB_SORT_CREATED,
+];
+
 const JOB_SORT_AMOUNT_DUE: ColumnSortOption[] = [
   { label: "Low to high", sortKey: "amount_due", direction: "asc" },
   { label: "High to low", sortKey: "amount_due", direction: "desc" },
@@ -560,7 +566,7 @@ function JobsPageContent() {
     initialStatus: "all",
   });
   const { profile } = useProfile();
-  const { officeCancellationPresets } = useFrontendSetup();
+  const { officeCancellationPresets, accessFees } = useFrontendSetup();
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -894,6 +900,9 @@ function JobsPageContent() {
         case "margin_percent":
           cmp = jobAmount(a) - jobAmount(b);
           break;
+        case "partner_cost":
+          cmp = Number(a.partner_cost ?? 0) - Number(b.partner_cost ?? 0);
+          break;
         case "amount_due":
           cmp = amountDue(a) - amountDue(b);
           break;
@@ -1163,6 +1172,8 @@ function JobsPageContent() {
       : computeAccessSurcharge({
           inCcz: inCczEff,
           hasFreeParking: formData.has_free_parking,
+          cczFeeGbp: accessFees.cczFeeGbp,
+          parkingFeeGbp: accessFees.parkingFeeGbp,
         });
     try {
       const dupJobs = await findDuplicateJobs({
@@ -1911,12 +1922,20 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap",
       sortable: true,
       sortOptions: JOB_SORT_AMOUNT,
-      render: (item) => (
-        <div>
-          <p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p>
-          <span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span>
-        </div>
-      ),
+      render: (item) => {
+        const amount = jobBillableAmount(item);
+        const marginPct = item.margin_percent;
+        return (
+          <div>
+            <p className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(amount)}</p>
+            <span
+              className={`text-[11px] font-medium ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}
+            >
+              {marginPct}% margin
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: "amount_due",
@@ -1959,6 +1978,33 @@ function JobsPageContent() {
       render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
     },
   ];
+
+  /** Active jobs: Cost column after Job Amount; no Amount Due. Other tabs unchanged. */
+  const tableColumns = useMemo(() => {
+    if (status !== "all") return columns;
+    const withoutDue = columns.filter((c) => c.key !== "amount_due");
+    const jobAmountIdx = withoutDue.findIndex((c) => c.key === "margin_percent");
+    if (jobAmountIdx < 0) return withoutDue;
+    const costColumn: Column<Job> = {
+      key: "partner_cost",
+      label: "Cost",
+      minWidth: "88px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
+      sortable: true,
+      sortOptions: JOB_SORT_COST,
+      render: (item) => (
+        <span className="text-sm font-semibold text-text-secondary tabular-nums">
+          {formatCurrency(Number(item.partner_cost ?? 0))}
+        </span>
+      ),
+    };
+    return [
+      ...withoutDue.slice(0, jobAmountIdx + 1),
+      costColumn,
+      ...withoutDue.slice(jobAmountIdx + 1),
+    ];
+  }, [columns, status]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
@@ -2364,7 +2410,7 @@ function JobsPageContent() {
           ) : null}
           {viewMode === "list" && (
             <DataTable
-              columns={columns}
+              columns={tableColumns}
               data={sortedDataForTable}
               groupedSections={awaitingPaymentGroupedSections}
               columnConfigKey="jobs-columns"
@@ -2687,6 +2733,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
   ) => void;
 }) {
+  const { accessFees } = useFrontendSetup();
   const requiredFieldClass = "border-[#d9d5cf] focus:border-[#b8b2aa] focus:ring-[#ede9e3] hover:border-[#cfcac3]";
   const [form, setForm] = useState({
     title: "",
@@ -3106,7 +3153,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
   const cczEligible = !isHousekeepJob && isLikelyCczAddress(clientAddress.property_address);
   const inCczPreview = cczEligible && form.in_ccz;
-  const accessSurchargePreview = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: inCczPreview, hasFreeParking: form.has_free_parking });
+  const accessSurchargePreview = isHousekeepJob
+    ? 0
+    : computeAccessSurcharge({
+        inCcz: inCczPreview,
+        hasFreeParking: form.has_free_parking,
+        cczFeeGbp: accessFees.cczFeeGbp,
+        parkingFeeGbp: accessFees.parkingFeeGbp,
+      });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -3407,7 +3461,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
                   </p>
                   <p className="text-[10px] text-text-tertiary leading-snug">
-                    {!cczEligible && !isHousekeepJob ? "Only EC/WC/W/SW1/SE1 postcodes" : inCczPreview ? "+£15 applied" : "No charge applied"}
+                    {!cczEligible && !isHousekeepJob
+                      ? "Only EC/WC/W/SW1/SE1 postcodes"
+                      : inCczPreview
+                        ? `+${formatCurrency(accessFees.cczFeeGbp)} applied`
+                        : "No charge applied"}
                   </p>
                 </div>
                 <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
@@ -3429,7 +3487,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
               >
                 <div>
                   <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-[10px] text-text-tertiary leading-snug">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
+                  </p>
                 </div>
                 <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
                   <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />

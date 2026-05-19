@@ -36,6 +36,80 @@ export const PATTERN_LABELS: Record<JobRecurrencePattern, string> = {
   monthly: "Monthly",
 };
 
+/** Quick picks in create-job recurring UI — maps to pattern + interval. */
+export type RecurrencePresetId =
+  | "daily"
+  | "weekly"
+  | "biweekly"
+  | "monthly"
+  | "bimonthly"
+  | "quarterly"
+  | "custom";
+
+export const RECURRENCE_PRESET_OPTIONS: ReadonlyArray<{
+  id: RecurrencePresetId;
+  label: string;
+  pattern: JobRecurrencePattern;
+  interval: number;
+}> = [
+  { id: "daily", label: "Daily", pattern: "daily", interval: 1 },
+  { id: "weekly", label: "Weekly", pattern: "weekly", interval: 1 },
+  { id: "biweekly", label: "Every 2 weeks", pattern: "weekly", interval: 2 },
+  { id: "monthly", label: "Monthly", pattern: "monthly", interval: 1 },
+  { id: "bimonthly", label: "Bi-monthly (every 2 months)", pattern: "monthly", interval: 2 },
+  { id: "quarterly", label: "Every 3 months", pattern: "monthly", interval: 3 },
+  { id: "custom", label: "Custom interval…", pattern: "weekly", interval: 1 },
+];
+
+export function recurrencePresetFromRule(
+  pattern: JobRecurrencePattern,
+  interval: number,
+): RecurrencePresetId {
+  const n = Math.max(1, Math.floor(interval) || 1);
+  const hit = RECURRENCE_PRESET_OPTIONS.find(
+    (p) => p.id !== "custom" && p.pattern === pattern && p.interval === n,
+  );
+  return hit?.id ?? "custom";
+}
+
+export function ruleFromRecurrencePreset(id: RecurrencePresetId): {
+  pattern: JobRecurrencePattern;
+  interval: number;
+} {
+  const preset = RECURRENCE_PRESET_OPTIONS.find((p) => p.id === id);
+  if (!preset || id === "custom") {
+    return { pattern: "weekly", interval: 1 };
+  }
+  return { pattern: preset.pattern, interval: preset.interval };
+}
+
+/** Short label for previews and summaries. */
+export function describeRecurrenceRule(rule: {
+  pattern: JobRecurrencePattern;
+  interval: number;
+  byday?: JobRecurrenceByday[];
+}): string {
+  const n = Math.max(1, Math.floor(rule.interval) || 1);
+  if (rule.pattern === "daily") {
+    return n === 1 ? "every day" : `every ${n} days`;
+  }
+  if (rule.pattern === "weekly") {
+    const weekPart = n === 1 ? "every week" : `every ${n} weeks`;
+    if (rule.byday?.length) {
+      const days = rule.byday.map((d) => BYDAY_LABELS[d]).join(", ");
+      return `${weekPart} on ${days}`;
+    }
+    return weekPart;
+  }
+  if (rule.pattern === "monthly") {
+    if (n === 1) return "every month";
+    if (n === 2) return "every 2 months (bi-monthly)";
+    if (n === 3) return "every 3 months";
+    return `every ${n} months`;
+  }
+  return "recurring";
+}
+
 export const BYDAY_LABELS: Record<JobRecurrenceByday, string> = {
   MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat", SU: "Sun",
 };
@@ -273,14 +347,19 @@ export function seriesPreview(state: SeriesPreviewState): string {
 
   const first = occurrences[0]!.date;
   const last = occurrences[occurrences.length - 1]!.date;
+  const cadence = describeRecurrenceRule({
+    pattern: state.pattern,
+    interval: state.interval,
+    byday: state.byday,
+  });
 
   if (state.max_occurrences && occurrences.length === state.max_occurrences) {
-    return `Generates ${occurrences.length} jobs from ${humanDate(first)} to ${humanDate(last)} (${state.max_occurrences} occurrences)`;
+    return `${cadence}: ${occurrences.length} jobs from ${humanDate(first)} to ${humanDate(last)} (${state.max_occurrences} visits)`;
   }
   if (state.end_date) {
-    return `Generates ${occurrences.length} jobs from ${humanDate(first)} to ${humanDate(last)}`;
+    return `${cadence}: ${occurrences.length} jobs from ${humanDate(first)} to ${humanDate(last)}`;
   }
-  return `Generates ~${occurrences.length} jobs from ${humanDate(first)} (no end set — preview capped at 90 days)`;
+  return `${cadence}: ~${occurrences.length} jobs from ${humanDate(first)} (preview capped at 90 days)`;
 }
 
 function humanDate(ymd: string): string {
