@@ -5,12 +5,14 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   createSideConversation,
+  createTicket,
   getZendeskTicketId,
   isZendeskConfigured,
   replyToSideConversation,
 } from "@/lib/zendesk";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { appBaseUrl } from "@/lib/app-base-url";
+import { ZD_STATUS_SCHEDULED } from "@/lib/zendesk-statuses";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -51,7 +53,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const admin = createServiceClient();
   const { data: job, error: jobErr } = await admin
     .from("jobs")
-    .select("id, reference, title, property_address, partner_id, external_source, external_ref, zendesk_side_conversation_id")
+    .select("id, reference, title, property_address, partner_id, client_name, client_email, scope, external_source, external_ref, zendesk_side_conversation_id")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -101,12 +103,41 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     reportUrl,
   });
 
-  const ticketId = getZendeskTicketId(job);
-  // Collect every channel failure so we can return them all in the final
-  // error message — without this, a partner with a stale side conv id +
-  // a misconfigured Resend env would just see "to is required" with no hint
-  // about why the fallback didn't kick in either.
+  let ticketId = getZendeskTicketId(job);
   const failureChain: string[] = [];
+
+  // Path 0: No ticket yet → create a Zendesk ticket so the side
+  // conversation has a parent, then proceed. We register the **partner**
+  // as the requester (not the customer) because this action is explicitly
+  // about routing the report link to the partner — the customer should
+  // not receive a new-ticket notification. We also mark the first
+  // comment as private (`public: false`) so the requester-email Zendesk
+  // sends out only carries the silent placeholder we put there; the
+  // actual partner-facing email is the side conv below.
+  if (!ticketId && isZendeskConfigured() && partnerEmail) {
+    const tCreate = await createTicket({
+      subject: `Job ${job.reference ?? ""} — ${job.title ?? ""}`.trim(),
+      htmlBody: `<p>Auto-created from Fixfy OS to route the work report request to the partner.</p>`,
+      publicComment: false,
+      requesterEmail: partnerEmail,
+      requesterName: partnerName || null,
+      customStatusId: ZD_STATUS_SCHEDULED,
+      externalId: `job:${job.id}`,
+      tags: ["fixfy_os_auto_created", "partner_report_link"],
+    });
+    if (tCreate.ok && tCreate.id) {
+      ticketId = String(tCreate.id);
+      await admin
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: ticketId })
+        .eq("id", jobId);
+      console.log("[send-partner-report-link] auto-created partner-scoped ticket", ticketId, "for job", job.reference);
+    } else {
+      failureChain.push(`auto-create: ${tCreate.error ?? "unknown"}`);
+    }
+  } else if (!ticketId && isZendeskConfigured() && !partnerEmail) {
+    failureChain.push("auto-create: no partner email to use as requester");
+  }
 
   // Path 1: Zendesk side conversation (preferred when ticket is linked).
   if (ticketId && isZendeskConfigured()) {
