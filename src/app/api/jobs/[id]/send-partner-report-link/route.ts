@@ -102,10 +102,17 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   });
 
   const ticketId = getZendeskTicketId(job);
+  // Collect every channel failure so we can return them all in the final
+  // error message — without this, a partner with a stale side conv id +
+  // a misconfigured Resend env would just see "to is required" with no hint
+  // about why the fallback didn't kick in either.
+  const failureChain: string[] = [];
 
-  // Path 1: Zendesk linked → side conversation (preferred channel).
+  // Path 1: Zendesk side conversation (preferred when ticket is linked).
   if (ticketId && isZendeskConfigured()) {
     let sideConvId: string | null = (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
+
+    // 1a) Try replying on the existing thread first.
     if (sideConvId) {
       const r = await replyToSideConversation({
         ticketId,
@@ -113,34 +120,65 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
         htmlBody: html,
         bodyText: text,
       });
-      if (!r.ok) {
-        return NextResponse.json({ error: r.error ?? "Could not reply on side conversation." }, { status: 502 });
+      if (r.ok) {
+        return NextResponse.json({ ok: true, channel: "zendesk_side_conv_reply", sideConversationId: sideConvId, reportUrl });
       }
-      return NextResponse.json({ ok: true, channel: "zendesk_side_conv_reply", sideConversationId: sideConvId, reportUrl });
+      // Reply failed — common cause is the stored side conv lost its `to`
+      // (e.g. created with the wrong/missing partner email earlier). Clear
+      // the saved id and fall through to create a fresh side conv with
+      // the current partner email.
+      console.warn(
+        "[send-partner-report-link] reply on existing side conv",
+        sideConvId,
+        "failed:",
+        r.error,
+      );
+      failureChain.push(`reply: ${r.error ?? "unknown"}`);
+      sideConvId = null;
     }
-    const r = await createSideConversation({
-      ticketId,
-      toEmail: partnerEmail,
-      toName: partnerName,
-      subject,
-      htmlBody: html,
-      bodyText: text,
-    });
-    if (!r.ok) {
-      return NextResponse.json({ error: r.error ?? "Could not open side conversation." }, { status: 502 });
+
+    // 1b) Open a new side conversation. Requires a partner email.
+    if (partnerEmail) {
+      const r = await createSideConversation({
+        ticketId,
+        toEmail: partnerEmail,
+        toName: partnerName,
+        subject,
+        htmlBody: html,
+        bodyText: text,
+      });
+      if (r.ok) {
+        if (r.id) {
+          await admin.from("jobs").update({ zendesk_side_conversation_id: r.id }).eq("id", jobId);
+        }
+        return NextResponse.json({ ok: true, channel: "zendesk_side_conv_open", sideConversationId: r.id ?? null, reportUrl });
+      }
+      failureChain.push(`create: ${r.error ?? "unknown"}`);
+    } else {
+      failureChain.push("create: partner has no email");
     }
-    if (r.id) {
-      sideConvId = r.id;
-      await admin.from("jobs").update({ zendesk_side_conversation_id: r.id }).eq("id", jobId);
-    }
-    return NextResponse.json({ ok: true, channel: "zendesk_side_conv_open", sideConversationId: sideConvId, reportUrl });
+  } else if (!ticketId) {
+    failureChain.push("zendesk: job is not linked to a ticket");
+  } else if (!isZendeskConfigured()) {
+    failureChain.push("zendesk: server env vars missing");
   }
 
-  // Path 2: Resend direct email fallback.
+  // Path 2: Resend direct email to the partner (fallback whenever Zendesk
+  // path didn't deliver — links a non-Zendesk job, missing env, or any
+  // upstream 4xx/5xx). We still need a partner email.
+  if (!partnerEmail) {
+    return NextResponse.json(
+      { error: `Could not deliver: partner has no email on file. ${failureChain.join(" · ")}` },
+      { status: 400 },
+    );
+  }
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (!resendKey) {
     return NextResponse.json(
-      { error: "No delivery channel: job is not Zendesk-linked and RESEND_API_KEY is not configured." },
+      {
+        error:
+          `Zendesk delivery failed and Resend fallback is not configured. ${failureChain.join(" · ")}`,
+      },
       { status: 503 },
     );
   }
@@ -154,9 +192,19 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     text,
   });
   if (error) {
-    return NextResponse.json({ error: error.message ?? "Email send failed." }, { status: 502 });
+    return NextResponse.json(
+      { error: `${error.message ?? "Email send failed."} (zendesk: ${failureChain.join(" · ") || "ok"})` },
+      { status: 502 },
+    );
   }
-  return NextResponse.json({ ok: true, channel: "resend", reportUrl });
+  return NextResponse.json({
+    ok:        true,
+    channel:   "resend",
+    reportUrl,
+    // Surface the upstream Zendesk failure (if any) so the operator knows
+    // why we fell back to direct email instead of the ticket side conv.
+    zendeskFailure: failureChain.length > 0 ? failureChain.join(" · ") : null,
+  });
 }
 
 function buildPartnerReportRequestEmail(args: {
