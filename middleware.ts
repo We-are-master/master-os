@@ -38,6 +38,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/payment-success") ||
     pathname.startsWith("/quote/") ||
     pathname.startsWith("/job/report") ||   // partner work-report submission (rewrites to /quote/respond)
+    pathname.startsWith("/job/offer") ||    // partner job accept/decline offer page
     pathname.startsWith("/r/") ||           // short-link resolver
     pathname.startsWith("/portal/login") ||
     pathname.startsWith("/portal/auth/");

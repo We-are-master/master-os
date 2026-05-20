@@ -131,8 +131,31 @@ export function buildPartnerJobConfirmedSideConvBody(args: {
   /** Partner-scoped report submission link — included as a CTA when set so
    *  the partner can submit the work report directly from this email. */
   reportUrl?:      string;
+  /** Partner-scoped Accept/Decline offer page link — when set, surfaces the
+   *  primary CTA the partner is expected to action first (before reporting). */
+  offerUrl?:       string;
 }): string {
-  const cta = args.reportUrl
+  const offerCta = args.offerUrl
+    ? `
+  <p style="margin:18px 0 6px;font-size:13px;color:#3A3A55;">Please confirm whether you can take this job:</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td style="padding-right:8px;">
+      <a href="${escapeHtml(args.offerUrl)}" style="display:inline-block;background:#0F6E56;color:#ffffff;text-decoration:none;padding:11px 18px;border-radius:6px;font-weight:600;font-size:13px;">
+        Accept job
+      </a>
+    </td>
+    <td>
+      <a href="${escapeHtml(args.offerUrl)}" style="display:inline-block;background:#ffffff;color:#7A3D00;text-decoration:none;padding:10px 18px;border:1px solid #F5CFB8;border-radius:6px;font-weight:600;font-size:13px;">
+        Decline
+      </a>
+    </td>
+  </tr></table>
+  <p style="margin:6px 0 0;font-size:11px;color:#9A9AA0;">
+    One-click — no login needed.
+  </p>`
+    : "";
+
+  const reportCta = args.reportUrl
     ? `
   <p style="margin:18px 0 6px;">
     <a href="${escapeHtml(args.reportUrl)}" style="display:inline-block;background:#020040;color:#ffffff;text-decoration:none;padding:11px 18px;border-radius:6px;font-weight:600;font-size:13px;">
@@ -151,7 +174,8 @@ export function buildPartnerJobConfirmedSideConvBody(args: {
   <p style="margin:0 0 6px;font-size:13px;color:#6B6B85;">📅 ${escapeHtml(args.scheduledDate)} · 🕐 ${escapeHtml(args.scheduledHour)}</p>
   <p style="margin:0 0 12px;font-size:13px;color:#6B6B85;">📍 ${escapeHtml(args.propertyAddress)}</p>
   ${args.scope ? `<p style="margin:0;font-size:13px;line-height:20px;color:#3A3A55;white-space:pre-wrap;">${escapeHtml(args.scope)}</p>` : ""}
-  ${cta}
+  ${offerCta}
+  ${reportCta}
 </div>
   `;
   return compactHtml(html);

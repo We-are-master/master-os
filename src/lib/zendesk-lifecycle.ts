@@ -31,7 +31,7 @@ import {
   buildPartnerJobConfirmedSideConvBody,
   buildQuoteRejectedHtml,
 } from "@/lib/zendesk-lifecycle-templates";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { createPartnerReportToken, createPartnerOfferToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 
@@ -138,6 +138,23 @@ export async function dispatchJobCreatedZendesk(args: {
       }
       const reportUrl = `${base}${reportShortPath}`;
 
+      // Accept/Decline page (token-bound, no login). Office gets the
+      // partner's response written straight back into the OS.
+      const offerToken = createPartnerOfferToken(String(job.id), String(job.partner_id));
+      const offerTargetPath = `/job/offer?token=${encodeURIComponent(offerToken)}`;
+      let offerShortPath = offerTargetPath;
+      try {
+        const r = await upsertShortLink({
+          targetPath: offerTargetPath,
+          kind:       "partner_offer",
+          entityRef:  `job:${job.id}:partner:${job.partner_id}:offer`,
+        });
+        offerShortPath = r.shortPath;
+      } catch (err) {
+        console.error("[zendesk-lifecycle] short link upsert for offer failed:", err);
+      }
+      const offerUrl = `${base}${offerShortPath}`;
+
       const sideConvBody = buildPartnerJobConfirmedSideConvBody({
         reference: String(job.reference ?? ""),
         title: String(job.title ?? ""),
@@ -146,6 +163,7 @@ export async function dispatchJobCreatedZendesk(args: {
         propertyAddress: String(job.property_address ?? ""),
         scope: (job.scope as string | null) ?? null,
         reportUrl,
+        offerUrl,
       });
       const result = await createSideConversation({
         ticketId,

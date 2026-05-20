@@ -80,7 +80,7 @@ export function verifyQuoteResponseToken(token: string): string | null {
 //   Earlier prototype tied this to quoteId — switched to jobId so jobs created
 //   without a parent quote can still produce a report link.
 
-type PartnerTokenKind = "report" | "bid";
+type PartnerTokenKind = "report" | "bid" | "offer";
 
 function makePartnerToken(kind: PartnerTokenKind, entityId: string, partnerId: string): string {
   const secret = getSecret();
@@ -129,4 +129,16 @@ export function createPartnerBidToken(quoteId: string, partnerId: string): strin
 export function verifyPartnerBidToken(token: string): { quoteId: string; partnerId: string } | null {
   const v = verifyPartnerToken(token, "bid");
   return v ? { quoteId: v.entityId, partnerId: v.partnerId } : null;
+}
+
+/** Partner offer (accept/decline) token — bound to (jobId, partnerId). The
+ *  public response page lets the partner accept or decline the job assignment;
+ *  reassigning to another partner invalidates older links since they encode
+ *  the partner_id we issued. */
+export function createPartnerOfferToken(jobId: string, partnerId: string): string {
+  return makePartnerToken("offer", jobId, partnerId);
+}
+export function verifyPartnerOfferToken(token: string): { jobId: string; partnerId: string } | null {
+  const v = verifyPartnerToken(token, "offer");
+  return v ? { jobId: v.entityId, partnerId: v.partnerId } : null;
 }

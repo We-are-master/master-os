@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { createPartnerReportToken, createPartnerOfferToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -175,6 +176,24 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
   }
 
+  // Partner-scoped Accept/Decline page — only relevant for the initial
+  // "assigned" notify so the partner can confirm without login.
+  let offerUrl: string | null = null;
+  if (kind === "assigned") {
+    offerUrl = `${base}/job/offer?token=${encodeURIComponent(createPartnerOfferToken(job.id, partner.id))}`;
+    try {
+      const r = await upsertShortLink({
+        targetPath: `/job/offer?token=${encodeURIComponent(createPartnerOfferToken(job.id, partner.id))}`,
+        kind:       "partner_offer",
+        entityRef:  `job:${job.id}:partner:${partner.id}:offer`,
+        createdBy:  auth.user.id,
+      });
+      offerUrl = `${base}${r.shortPath}`;
+    } catch (err) {
+      console.error("[notify-partner-zendesk] offer short link upsert failed, using long URL:", err);
+    }
+  }
+
   // Resolve final reason / status label
   const effectiveReason = reason
     ?? (kind === "cancelled" ? job.cancellation_reason : null)
@@ -195,6 +214,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobType: isHourly ? "hourly" : "fixed",
       priceDisplay,
       reportUrl,
+      offerUrl: offerUrl ?? undefined,
     });
   } else if (kind === "rescheduled") {
     email = buildJobRescheduledEmail({
@@ -282,6 +302,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     zendeskResult = { ok: false, error: `skipped_kind_${kind}` };
   }
 
+  // ─── Resend fallback for non-Zendesk jobs ────────────────────────
+  // Partners on jobs without a linked Zendesk ticket still need the
+  // assignment email (Accept/Decline + report link). For "completed"
+  // we let the office's existing final-review-email flow handle it.
+  let resendResult: { ok: boolean; error?: string } = { ok: false, error: "skipped" };
+  if (!zendeskTicketId && kind === "assigned" && partner.email) {
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    if (resendKey) {
+      try {
+        const resend = new Resend(resendKey);
+        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy <reports@example.com>";
+        const r = await resend.emails.send({
+          from: fromEmail,
+          to: [partner.email],
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+        });
+        if (r.error) {
+          resendResult = { ok: false, error: r.error.message ?? "send_failed" };
+        } else {
+          resendResult = { ok: true };
+        }
+      } catch (err) {
+        resendResult = { ok: false, error: err instanceof Error ? err.message : "send_threw" };
+      }
+    } else {
+      resendResult = { ok: false, error: "resend_not_configured" };
+    }
+  }
+
   // ─── Always sync custom_status_id on the main ticket ─────────────
   // Every notify call carries an implicit "the office did something
   // on this job — make sure the ticket reflects it". The central
@@ -341,6 +392,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     zendesk: zendeskTicketId
       ? { ok: zendeskResult.ok, side_conversation_id: zendeskResult.side_conversation_id ?? null, error: zendeskResult.error ?? null }
       : { ok: false, skipped: "not_a_zendesk_job" },
+    email: zendeskTicketId
+      ? { ok: false, skipped: "delivered_via_zendesk" }
+      : { ok: resendResult.ok, error: resendResult.error ?? null },
+    offerUrl: offerUrl ?? null,
   });
 }
 

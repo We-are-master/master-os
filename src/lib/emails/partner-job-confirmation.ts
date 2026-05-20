@@ -23,6 +23,8 @@ export interface PartnerJobConfirmationData {
   priceDisplay: string;
   /** Where the partner submits the report — typically the partner app deep link. */
   reportUrl: string;
+  /** Where the partner accepts/declines this assignment offer (no login). */
+  offerUrl?: string;
   /** Support email (defaults to support@getfixfy.com). */
   supportEmail?: string;
   /** Support phone (defaults to +44 20 4538 4668). */
@@ -62,6 +64,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     price: escapeHtml(data.priceDisplay),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
     url: escapeHtml(data.reportUrl),
+    offerUrl: data.offerUrl ? escapeHtml(data.offerUrl) : null,
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
@@ -180,6 +183,22 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
         </table>
       </td></tr>
 
+      ${safe.offerUrl ? `
+      <!-- Accept / Decline (no login) -->
+      <tr><td align="center" style="padding:28px 40px 0 40px;" class="px-mobile">
+        <p style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#3A3A55;">Please confirm whether you can take this job — one click, no login needed.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-mobile" style="margin:0 auto;">
+          <tr>
+            <td align="center" style="border-radius:8px; background-color:#0F6E56; padding-right:8px;">
+              <a href="${safe.offerUrl}" target="_blank" style="display:inline-block; padding:14px 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:600; color:#FFFFFF; text-decoration:none; border-radius:8px;">Accept job</a>
+            </td>
+            <td align="center" style="border-radius:8px; background-color:#FFFFFF; border:1px solid #F5CFB8;">
+              <a href="${safe.offerUrl}" target="_blank" style="display:inline-block; padding:13px 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:600; color:#7A3D00; text-decoration:none; border-radius:8px;">Decline</a>
+            </td>
+          </tr>
+        </table>
+      </td></tr>` : ""}
+
       <!-- CTA -->
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-mobile">
@@ -219,7 +238,10 @@ ${data.clientPhone ? `Phone: ${data.clientPhone}\n` : ""}Address: ${data.propert
 Scope of work
 ${data.scope}
 
-Submit your job report once work is complete to release payment:
+${data.offerUrl ? `Confirm or decline this job (no login needed):
+${data.offerUrl}
+
+` : ""}Submit your job report once work is complete to release payment:
 ${data.reportUrl}
 
 Need help? Email ${supportEmail} or call ${supportPhone}.
