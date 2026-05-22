@@ -14,7 +14,7 @@ export interface PartnerJobConfirmationData {
   jobReference: string;
   jobTitle: string;
   clientName: string;
-  clientPhone?: string | null;
+  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
@@ -56,7 +56,6 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     ref: escapeHtml(data.jobReference),
     title: escapeHtml(data.jobTitle),
     client: escapeHtml(data.clientName),
-    phone: data.clientPhone ? escapeHtml(data.clientPhone) : null,
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
     price: escapeHtml(data.priceDisplay),
@@ -67,17 +66,8 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     supportTelHref: telHref(supportPhone),
   };
 
-  const phoneRow = safe.phone
-    ? `<tr>
-        <td colspan="2" style="padding:0;"><div style="border-top:1px solid #E4E4EC; height:1px; line-height:1px; font-size:1px;">&nbsp;</div></td>
-      </tr>
-      <tr>
-        <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Phone</td>
-        <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">
-          <a href="tel:${telHref(data.clientPhone!)}" style="color:#ED4B00; text-decoration:none; font-weight:600;">${safe.phone}</a>
-        </td>
-      </tr>`
-    : "";
+  /** Customer phone is intentionally NOT rendered — partner emails carry name + address only. */
+  const phoneRow = "";
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
@@ -214,7 +204,7 @@ ${data.jobTitle}
 Earnings: ${data.priceDisplay} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
 
 Client: ${data.clientName}
-${data.clientPhone ? `Phone: ${data.clientPhone}\n` : ""}Address: ${data.propertyAddress}
+Address: ${data.propertyAddress}
 
 Scope of work
 ${data.scope}
@@ -236,7 +226,7 @@ Fixfy · www.getfixfy.com`;
  * resumed / completed events. Uses the same Fixfy navy/coral layout as
  * the assignment email but with a different headline + reason line.
  */
-export type PartnerJobStatusKind = "status_changed" | "cancelled" | "on_hold" | "resumed" | "completed" | "rescheduled";
+export type PartnerJobStatusKind = "status_changed" | "cancelled" | "on_hold" | "resumed" | "completed" | "rescheduled" | "confirmation_request" | "booked";
 
 export interface PartnerJobStatusUpdateData {
   kind: PartnerJobStatusKind;
@@ -244,7 +234,7 @@ export interface PartnerJobStatusUpdateData {
   jobReference: string;
   jobTitle: string;
   clientName: string;
-  clientPhone?: string | null;
+  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
   scope: string;
   /** Display label for the new status (e.g. "Cancelled", "On Hold", "In Progress"). */
@@ -258,30 +248,39 @@ export interface PartnerJobStatusUpdateData {
 }
 
 const KIND_HEADLINE: Record<PartnerJobStatusKind, string> = {
-  status_changed: "Job status updated",
-  cancelled:      "Job cancelled",
-  on_hold:        "Job placed on hold",
-  resumed:        "Job resumed",
-  completed:      "Job marked complete",
-  rescheduled:    "Job rescheduled",
+  status_changed:       "Job status updated",
+  cancelled:            "Job cancelled",
+  on_hold:              "Job placed on hold",
+  resumed:              "Job resumed",
+  completed:            "Job marked complete",
+  rescheduled:          "Job rescheduled",
+  // confirmation_request / booked are handled by their own dedicated builders
+  // and never hit this generic status-update layout, but they still need to
+  // satisfy the Record type (unused values).
+  confirmation_request: "Please confirm this job",
+  booked:               "Job booked",
 };
 
 const KIND_INTRO: Record<PartnerJobStatusKind, string> = {
-  status_changed: "The status of one of your jobs has changed.",
-  cancelled:      "Unfortunately, this job has been cancelled by the office.",
-  on_hold:        "This job has been placed on hold.",
-  resumed:        "This job has been resumed and is active again.",
-  completed:      "This job has been marked as complete.",
-  rescheduled:    "This job has been moved to a new date.",
+  status_changed:       "The status of one of your jobs has changed.",
+  cancelled:            "Unfortunately, this job has been cancelled by the office.",
+  on_hold:              "This job has been placed on hold.",
+  resumed:              "This job has been resumed and is active again.",
+  completed:            "This job has been marked as complete.",
+  rescheduled:          "This job has been moved to a new date.",
+  confirmation_request: "We've allocated this job to you — please accept it.",
+  booked:               "Your job is booked.",
 };
 
 const KIND_PILL_COLOR: Record<PartnerJobStatusKind, string> = {
-  status_changed: "#0B5FFF",
-  cancelled:      "#DC2626",
-  on_hold:        "#D97706",
-  resumed:        "#16A34A",
-  completed:      "#16A34A",
-  rescheduled:    "#0E8A5F",
+  status_changed:       "#0B5FFF",
+  cancelled:            "#DC2626",
+  on_hold:              "#D97706",
+  resumed:              "#16A34A",
+  completed:            "#16A34A",
+  rescheduled:          "#0E8A5F",
+  confirmation_request: "#0B5FFF",
+  booked:               "#0E8A5F",
 };
 
 export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateData): {
@@ -303,7 +302,6 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     ref: escapeHtml(data.jobReference),
     title: escapeHtml(data.jobTitle),
     client: escapeHtml(data.clientName),
-    phone: data.clientPhone ? escapeHtml(data.clientPhone) : null,
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
     status: escapeHtml(data.newStatusLabel),
@@ -369,7 +367,6 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
             <p style="margin:0 0 20px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="info-row">
               <tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Client</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.client}</td></tr>
-              ${safe.phone ? `<tr><td colspan="2"><div style="border-top:1px solid #E4E4EC; height:1px;">&nbsp;</div></td></tr><tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Phone</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px;"><a href="tel:${telHref(data.clientPhone!)}" style="color:#ED4B00; text-decoration:none; font-weight:600;">${safe.phone}</a></td></tr>` : ""}
               <tr><td colspan="2"><div style="border-top:1px solid #E4E4EC; height:1px;">&nbsp;</div></td></tr>
               <tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Address</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</td></tr>
             </table>
@@ -413,7 +410,7 @@ Job #${data.jobReference}
 ${data.jobTitle}
 
 Client: ${data.clientName}
-${data.clientPhone ? `Phone: ${data.clientPhone}\n` : ""}Address: ${data.propertyAddress}
+Address: ${data.propertyAddress}
 
 Scope of work
 ${data.scope}
@@ -725,3 +722,290 @@ Fixfy · www.getfixfy.com`;
 
   return { subject, html, text };
 }
+
+/**
+ * "Your bid was approved — you've been booked for this job".
+ * Sent in a Side Conversation on the quote's parent ticket the moment OS
+ * staff approve a partner's bid. No acceptance step — partner already
+ * committed when they submitted the bid.
+ */
+export interface PartnerJobBookedFromBidData {
+  partnerFirstName: string;
+  jobReference:     string;
+  jobTitle:         string;
+  clientName:       string;
+  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  propertyAddress:  string;
+  scope:            string;
+  /** £ display value (e.g. "£280.00"). */
+  priceDisplay:     string;
+  /** Partner-scoped report URL — primary CTA. */
+  reportUrl:        string;
+  supportEmail?:    string;
+  supportPhone?:    string;
+}
+
+export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidData): {
+  subject: string;
+  html:    string;
+  text:    string;
+} {
+  const supportEmail = data.supportEmail ?? "support@getfixfy.com";
+  const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
+  const subject = `Bid approved — Job ${data.jobReference} is yours`;
+
+  const safe = {
+    name:    escapeHtml(data.partnerFirstName || "there"),
+    ref:     escapeHtml(data.jobReference),
+    title:   escapeHtml(data.jobTitle),
+    client:  escapeHtml(data.clientName),
+    address: escapeHtml(data.propertyAddress),
+    scope:   escapeHtml(data.scope),
+    price:   escapeHtml(data.priceDisplay),
+    url:     escapeHtml(data.reportUrl),
+    support: escapeHtml(supportEmail),
+    supportTel:     escapeHtml(supportPhone),
+    supportTelHref: telHref(supportPhone),
+  };
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bid approved — Fixfy</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+  a { color: #ED4B00; text-decoration: underline; }
+  @media screen and (max-width: 600px) {
+    .container { width: 100% !important; }
+    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
+    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
+    .btn-mobile a { display: block !important; }
+  }
+</style>
+</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding: 32px 16px;">
+    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td style="background-color:#0E8A5F; padding:10px 40px; text-align:center;" class="px-mobile">
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">✓ Bid approved — job booked</p>
+      </td></tr>
+      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
+        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
+      </td></tr>
+      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
+        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your bid was approved 🎉</h1>
+        <p style="margin:0 0 8px 0; font-size:16px; line-height:24px; color:#3A3A55;">You've been booked for the job below. We'll handle the customer side from here — no need to confirm anything else.</p>
+      </td></tr>
+      <tr><td style="padding:0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
+            <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
+            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
+            <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Client</p>
+              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.client}</p>
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Address</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</p>
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Scope of work</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55; white-space:pre-wrap;">${safe.scope}</p>
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
+        <a href="${safe.url}" target="_blank" style="display:inline-block; padding:16px 36px; background-color:#ED4B00; color:#FFFFFF; font-size:15px; font-weight:600; text-decoration:none; border-radius:8px;">Open job in app</a>
+      </td></tr>
+      <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Questions? Email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a> or call <a href="tel:${safe.supportTelHref}" style="color:#ED4B00;">${safe.supportTel}</a>.</p>
+      </td></tr>
+      <tr><td style="background-color:#F7F7FB; padding:20px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a></p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
+
+  const text =
+`BID APPROVED — JOB BOOKED
+
+Hi ${data.partnerFirstName || "there"},
+
+Your bid was approved. You've been booked for:
+Job #${data.jobReference} — ${data.jobTitle}
+Earnings: ${data.priceDisplay}
+Client:   ${data.clientName}
+Address:  ${data.propertyAddress}
+
+Scope:
+${data.scope}
+
+Open the job in the app: ${data.reportUrl}
+Questions? ${supportEmail} / ${supportPhone}
+
+Fixfy · www.getfixfy.com`;
+
+  return { subject, html, text };
+}
+
+/**
+ * "Please confirm this job within 24h".
+ * Sent when OS directly assigns a partner to a job that did NOT come from
+ * an approved bid (manual assignment). Includes an Accept link bound to
+ * (jobId, partnerId). Partner clicks → POST /api/jobs/confirm-acceptance →
+ * jobs.partner_confirmed_at stamped → booked email follows.
+ */
+export interface PartnerJobConfirmationRequestData {
+  partnerFirstName: string;
+  jobReference:     string;
+  jobTitle:         string;
+  clientName:       string;
+  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  propertyAddress:  string;
+  scope:            string;
+  /** £ display value (e.g. "£280.00"). */
+  priceDisplay:     string;
+  /** Tokenised accept URL — required. */
+  acceptUrl:        string;
+  /** Hours within which the partner is expected to accept. Default 24. */
+  responseHours?:   number;
+  supportEmail?:    string;
+  supportPhone?:    string;
+}
+
+export function buildPartnerJobConfirmationRequestEmail(
+  data: PartnerJobConfirmationRequestData,
+): { subject: string; html: string; text: string } {
+  const supportEmail  = data.supportEmail  ?? "support@getfixfy.com";
+  const supportPhone  = data.supportPhone  ?? "+44 20 4538 4668";
+  const responseHours = data.responseHours ?? 24;
+  const subject = `Please confirm — Job ${data.jobReference}`;
+
+  const safe = {
+    name:    escapeHtml(data.partnerFirstName || "there"),
+    ref:     escapeHtml(data.jobReference),
+    title:   escapeHtml(data.jobTitle),
+    client:  escapeHtml(data.clientName),
+    address: escapeHtml(data.propertyAddress),
+    scope:   escapeHtml(data.scope),
+    price:   escapeHtml(data.priceDisplay),
+    accept:  escapeHtml(data.acceptUrl),
+    hours:   String(responseHours),
+    support: escapeHtml(supportEmail),
+    supportTel:     escapeHtml(supportPhone),
+    supportTelHref: telHref(supportPhone),
+  };
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Please confirm — Fixfy</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+  a { color: #ED4B00; text-decoration: underline; }
+  @media screen and (max-width: 600px) {
+    .container { width: 100% !important; }
+    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
+    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
+    .btn-mobile a { display: block !important; }
+  }
+</style>
+</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding: 32px 16px;">
+    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required — respond within ${safe.hours} hours</p>
+      </td></tr>
+      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
+        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
+      </td></tr>
+      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
+        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, please confirm this job</h1>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the job below to you. Tap <strong style="color:#0A0A1F;">Accept job</strong> within ${safe.hours} hours so we can confirm the booking with the customer.</p>
+      </td></tr>
+      <tr><td style="padding:0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
+            <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
+            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
+            <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Client</p>
+              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.client}</p>
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Address</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</p>
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Scope of work</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55; white-space:pre-wrap;">${safe.scope}</p>
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>
+      <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
+        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">✓ Accept job</a>
+      </td></tr>
+      <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Can't take it? Reply to this email and we'll reallocate. Otherwise: <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a> · <a href="tel:${safe.supportTelHref}" style="color:#ED4B00;">${safe.supportTel}</a></p>
+      </td></tr>
+      <tr><td style="background-color:#F7F7FB; padding:20px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a></p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
+
+  const text =
+`ACTION REQUIRED — RESPOND WITHIN ${responseHours} HOURS
+
+Hi ${data.partnerFirstName || "there"},
+
+We've allocated this job to you. Please confirm within ${responseHours} hours:
+
+Job #${data.jobReference} — ${data.jobTitle}
+Earnings: ${data.priceDisplay}
+Client:   ${data.clientName}
+Address:  ${data.propertyAddress}
+
+Scope:
+${data.scope}
+
+Accept this job: ${data.acceptUrl}
+
+Can't take it? Reply to this email and we'll reallocate.
+Otherwise: ${supportEmail} / ${supportPhone}
+
+Fixfy · www.getfixfy.com`;
+
+  return { subject, html, text };
+}
+

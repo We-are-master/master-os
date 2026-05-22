@@ -136,6 +136,8 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobScheduleTimingChip } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
+import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
+import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
@@ -1140,9 +1142,52 @@ function JobsPageContent() {
   }, [data]);
 
   const handleCreate = useCallback(async (
-    formData: Partial<Job>,
+    formData: Partial<Job> & { __createZendeskTicket?: boolean },
     opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
   ) => {
+    // ─── Zendesk: open a new ticket when the modal asked us to ──────────
+    // The modal sets `__createZendeskTicket` when staff ticked "No ticket —
+    // create a new one". We open the ticket FIRST so we can stamp
+    // external_ref on the job record (and let the rest of the OS flow
+    // sync status / post side conversations to it).
+    if (formData.__createZendeskTicket) {
+      try {
+        const subject  = `${formData.title ?? "Job"} — ${formData.client_name ?? formData.property_address ?? "New job"}`;
+        const lines: string[] = [
+          `A new job is being created in the OS.`,
+          ``,
+          `Title:       ${formData.title ?? "—"}`,
+          `Client:      ${formData.client_name ?? "—"}`,
+          `Address:     ${formData.property_address ?? "—"}`,
+          `Scheduled:   ${formData.scheduled_date ?? "—"}${formData.scheduled_start_at ? ` ${formData.scheduled_start_at}` : ""}`,
+          formData.scope ? `Scope:       ${formData.scope}` : "",
+          formData.partner_name ? `Partner:     ${formData.partner_name}` : "",
+          ``,
+          `This ticket was opened automatically from the Master OS Create-Job modal.`,
+        ].filter(Boolean);
+        const res = await fetch("/api/zendesk/create-ticket-for-entity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entityType:  "job",
+            subject,
+            commentBody: lines.join("\n"),
+          }),
+        });
+        const j = await res.json();
+        if (!res.ok || !j.ok || !j.ticketId) {
+          toast.error(`Could not open Zendesk ticket: ${j.error ?? `HTTP ${res.status}`}`);
+          return;
+        }
+        formData.external_source = "zendesk";
+        formData.external_ref    = String(j.ticketId);
+      } catch (err) {
+        toast.error(getErrorMessage(err, "Zendesk ticket creation failed"));
+        return;
+      }
+      delete formData.__createZendeskTicket;
+    }
+
     const cp = formData.client_price ?? 0;
     const pc = formData.partner_cost ?? 0;
     const mc = formData.materials_cost ?? 0;
@@ -1233,6 +1278,8 @@ function JobsPageContent() {
           additional_notes: formData.additional_notes?.trim() || undefined,
           report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
           images: capJobImagesArray(coerceJobImagesArray(formData.images)),
+          external_source: formData.external_source ?? null,
+          external_ref:    formData.external_ref    ?? null,
         } as Omit<Job, "id" | "reference" | "created_at" | "updated_at">;
 
         const seriesResult = await createJobOrSeries({
@@ -1310,6 +1357,8 @@ function JobsPageContent() {
         additional_notes: formData.additional_notes?.trim() || undefined,
         report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
+        external_source: formData.external_source ?? null,
+        external_ref:    formData.external_ref    ?? null,
       });
       setCreateOpen(false);
       toast.success("Job created");
@@ -1329,6 +1378,15 @@ function JobsPageContent() {
             data: { type: "job_assigned", jobId: result.id },
           }),
         }).catch(() => {});
+        // Direct-assign path: send the confirmation_request email with the
+        // tokenised Accept link. Partner clicks → /job/confirm → POST
+        // /api/jobs/confirm-acceptance → status flips + booked email follow-up.
+        void notifyPartnerJobChange({
+          jobId:        result.id,
+          jobReference: result.reference,
+          kind:         "confirmation_request",
+          skipPush:     true,
+        });
       }
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
@@ -2771,6 +2829,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   /** When fixed-price partner cost still matches the last auto-filled value, keep syncing to ~40% margin as inputs change. */
   const lastAutoPartnerCost = useRef<string | null>(null);
@@ -3017,6 +3076,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
       return;
     }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
+    if (!isZendeskTicketFieldValid(zendesk)) {
+      toast.error("Paste the Zendesk ticket id or tick 'No ticket — create a new one'.");
+      return;
+    }
     if (isStackablePricing && !form.catalog_pricing_preset_id.trim()) {
       toast.error("Select a property size for this service");
       return;
@@ -3078,6 +3141,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
     }
 
     onCreate({
+      // Zendesk linkage: either paste an existing ticket id, or signal to the
+      // parent that it should open a new one via /api/zendesk/create-ticket-for-entity.
+      external_source: "zendesk",
+      external_ref:    zendesk.noTicket ? null : zendesk.ticketId.trim(),
+      ...(zendesk.noTicket ? { __createZendeskTicket: true } : {}),
       title: form.job_type === "hourly"
         ? (selectedCatalogService?.name ? (normalizeTypeOfWork(selectedCatalogService.name) || selectedCatalogService.name) : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()))
         : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()),
@@ -3148,6 +3216,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       assignment_mode: "manual",
     });
     setClientAddress({ client_name: "", property_address: "" });
+    setZendesk({ ticketId: "", noTicket: false });
   };
 
   const cczEligible = !isHousekeepJob && isLikelyCczAddress(clientAddress.property_address);
@@ -3424,6 +3493,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
             <p className="text-[11px] font-semibold text-text-tertiary">Client & Schedule</p>
             <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+            <ZendeskTicketField value={zendesk} onChange={setZendesk} />
             <JobModalScheduleFields
               jobKind={form.job_kind}
               scheduledDate={form.scheduled_date}

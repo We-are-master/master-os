@@ -20,7 +20,9 @@ export type NotifyPartnerJobChangeKind =
   | "on_hold"
   | "resumed"
   | "completed"
-  | "rescheduled";
+  | "rescheduled"
+  | "confirmation_request"
+  | "booked";
 
 export interface NotifyPartnerJobChangeOptions {
   jobId: string;

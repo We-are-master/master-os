@@ -57,6 +57,8 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "duration_value",
   "duration_unit",
   "engagement_kind",
+  "external_source",
+  "external_ref",
 ]);
 
 function pickQuotePayload(input: Record<string, unknown>): Record<string, unknown> {

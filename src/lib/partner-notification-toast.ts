@@ -26,17 +26,19 @@ export type PartnerNotifyToastContent = {
 };
 
 const KIND_TITLE: Record<NotifyPartnerJobChangeKind, string> = {
-  assigned: "Partner assigned",
-  status_changed: "Status changed",
-  cancelled: "Job cancelled",
-  on_hold: "Job on hold",
-  resumed: "Job back on",
-  completed: "Job finished",
-  rescheduled: "Date changed",
+  assigned:             "Partner assigned",
+  status_changed:       "Status changed",
+  cancelled:            "Job cancelled",
+  on_hold:              "Job on hold",
+  resumed:              "Job back on",
+  completed:            "Job finished",
+  rescheduled:          "Date changed",
+  confirmation_request: "Confirmation requested",
+  booked:               "Job booked",
 };
 
 /** Zendesk auto-email to partners — only when you assign them or mark the job done. */
-const ZENDESK_AUTO_EMAIL_KINDS = new Set<NotifyPartnerJobChangeKind>(["assigned", "completed"]);
+const ZENDESK_AUTO_EMAIL_KINDS = new Set<NotifyPartnerJobChangeKind>(["assigned", "completed", "confirmation_request", "booked"]);
 
 function jobRef(jobReference?: string): string {
   return jobReference?.trim() ? ` · ${jobReference.trim()}` : "";
