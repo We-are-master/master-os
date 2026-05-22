@@ -719,6 +719,20 @@ export async function createJob(
   if (jobHasPartnerSet(input as Job) && (input as Job).status === "auto_assigning") {
     baseRow.status = "scheduled";
   }
+  // Bridge quote → job side conversation. When converting an approved-bid
+  // quote into a job, carry over the Zendesk thread we already opened with
+  // the partner so subsequent events (on_hold, completed, …) reply on the
+  // same email thread instead of opening a new one.
+  const quoteIdForBridge = (input as { quote_id?: string | null }).quote_id;
+  if (quoteIdForBridge && !baseRow.zendesk_side_conversation_id) {
+    const { data: q } = await supabase
+      .from("quotes")
+      .select("zendesk_side_conversation_id")
+      .eq("id", quoteIdForBridge)
+      .maybeSingle();
+    const sideConvId = (q as { zendesk_side_conversation_id?: string | null } | null)?.zendesk_side_conversation_id;
+    if (sideConvId) baseRow.zendesk_side_conversation_id = sideConvId;
+  }
   const row = prepareJobRowForInsert(baseRow);
   let attemptPayload: Record<string, unknown> = { ...row };
   let { data, error } = await supabase.from("jobs").insert(attemptPayload).select().single();

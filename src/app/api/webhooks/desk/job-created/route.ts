@@ -402,7 +402,6 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobReference: params.jobReference,
     jobTitle: params.jobTitle,
     clientName: params.clientName,
-    clientPhone: params.clientPhone,
     propertyAddress: params.propertyAddress,
     scope: params.scope,
     jobType: isHourly ? "hourly" : "fixed",

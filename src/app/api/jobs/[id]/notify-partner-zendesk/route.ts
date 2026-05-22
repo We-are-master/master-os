@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
+import { createPartnerReportToken, createPartnerJobAcceptToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -12,6 +12,7 @@ import {
   buildPartnerJobStatusUpdateEmail,
   buildJobRescheduledEmail,
   buildPartnerJobOnHoldEmail,
+  buildPartnerJobConfirmationRequestEmail,
   type PartnerJobStatusKind,
 } from "@/lib/emails/partner-job-confirmation";
 
@@ -138,18 +139,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ ok: true, skipped: "partner_not_found" });
   }
 
-  // Best-effort client phone enrichment
-  let clientPhone: string | null = null;
-  if (job.client_name) {
-    const { data: client } = await supabase
-      .from("clients")
-      .select("phone")
-      .eq("full_name", job.client_name)
-      .is("deleted_at", null)
-      .limit(1)
-      .maybeSingle();
-    clientPhone = (client as { phone?: string | null } | null)?.phone ?? null;
-  }
+  // Customer phone is intentionally NOT looked up — partner emails carry
+  // name + address only (privacy decision: customer phone stays with OS).
 
   const isHourly = job.job_type === "hourly";
   const priceDisplay = isHourly
@@ -189,7 +180,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
-      clientPhone,
       propertyAddress: job.property_address || "—",
       scope: job.scope || "(no scope provided)",
       jobType: isHourly ? "hourly" : "fixed",
@@ -214,6 +204,47 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobTitle:        job.title || "Maintenance job",
       propertyAddress: job.property_address || "—",
     });
+  } else if (kind === "confirmation_request") {
+    // Tokenised Accept link, shortened so the email shows /p/abc12 instead
+    // of the raw token.
+    const acceptToken = createPartnerJobAcceptToken(job.id, partner.id);
+    let acceptUrl = `${base}/job/confirm?token=${encodeURIComponent(acceptToken)}`;
+    try {
+      const r = await upsertShortLink({
+        targetPath: `/job/confirm?token=${encodeURIComponent(acceptToken)}`,
+        kind:       "partner_accept",
+        entityRef:  `job:${job.id}:partner:${partner.id}`,
+        createdBy:  auth.user.id,
+      });
+      acceptUrl = `${base}${r.shortPath}`;
+    } catch (err) {
+      console.error("[notify-partner-zendesk] accept short link upsert failed:", err);
+    }
+    email = buildPartnerJobConfirmationRequestEmail({
+      partnerFirstName,
+      jobReference:    job.reference,
+      jobTitle:        job.title || "Maintenance job",
+      clientName:      job.client_name || "—",
+      propertyAddress: job.property_address || "—",
+      scope:           job.scope || "(no scope provided)",
+      priceDisplay,
+      acceptUrl,
+    });
+  } else if (kind === "booked") {
+    // Same body as the existing "assigned" email (which IS the booked
+    // template — variable name is legacy). Fired after the partner clicks
+    // Accept on a confirmation_request OR after a bid is approved.
+    email = buildPartnerJobConfirmationEmail({
+      partnerFirstName,
+      jobReference: job.reference,
+      jobTitle: job.title || "Maintenance job",
+      clientName: job.client_name || "—",
+      propertyAddress: job.property_address || "—",
+      scope: job.scope || "(no scope provided)",
+      jobType: isHourly ? "hourly" : "fixed",
+      priceDisplay,
+      reportUrl,
+    });
   } else {
     email = buildPartnerJobStatusUpdateEmail({
       kind,
@@ -221,7 +252,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
-      clientPhone,
       propertyAddress: job.property_address || "—",
       scope: job.scope || "(no scope provided)",
       newStatusLabel: effectiveStatusLabel,
@@ -359,25 +389,29 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
 function pushTitleFor(kind: NotifyKind, statusLabel: string): string {
   switch (kind) {
-    case "assigned":       return "New job assigned";
-    case "cancelled":      return "Job cancelled";
-    case "on_hold":        return "Job placed on hold";
-    case "resumed":        return "Job resumed";
-    case "completed":      return "Job completed";
-    case "rescheduled":    return "Job rescheduled";
-    case "status_changed": return `Job status: ${statusLabel}`;
+    case "assigned":              return "New job assigned";
+    case "cancelled":             return "Job cancelled";
+    case "on_hold":               return "Job placed on hold";
+    case "resumed":               return "Job resumed";
+    case "completed":             return "Job completed";
+    case "rescheduled":           return "Job rescheduled";
+    case "status_changed":        return `Job status: ${statusLabel}`;
+    case "confirmation_request":  return "Confirm this job";
+    case "booked":                return "Job booked";
   }
 }
 
 function pushTypeFor(kind: NotifyKind): string {
   switch (kind) {
-    case "assigned":       return "job_assigned";
-    case "cancelled":      return "job_cancelled_by_office";
-    case "on_hold":        return "job_on_hold";
-    case "resumed":        return "job_resumed";
-    case "completed":      return "job_completed";
-    case "rescheduled":    return "job_rescheduled";
-    case "status_changed": return "job_status_changed";
+    case "assigned":              return "job_assigned";
+    case "cancelled":             return "job_cancelled_by_office";
+    case "on_hold":               return "job_on_hold";
+    case "resumed":               return "job_resumed";
+    case "completed":             return "job_completed";
+    case "rescheduled":           return "job_rescheduled";
+    case "status_changed":        return "job_status_changed";
+    case "confirmation_request":  return "job_confirmation_request";
+    case "booked":                return "job_booked";
   }
 }
 

@@ -129,6 +129,7 @@ import {
 } from "@/lib/quote-proposal-line-notes";
 import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
+import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -1199,10 +1200,51 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
   const handleCreate = useCallback(
     async (
-      formData: Partial<Quote>,
+      formData: Partial<Quote> & { __createZendeskTicket?: boolean },
       options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean },
     ): Promise<boolean> => {
       const perfStart = performance.now();
+      // ─── Zendesk: open a new ticket when the modal asked us to ────────
+      // Done BEFORE the duplicate-check so we don't burn ticket numbers on
+      // duplicates: well, actually duplicates are infrequent and confirmed by
+      // the user — opening a ticket first is fine and keeps the flow simple.
+      if (formData.__createZendeskTicket) {
+        try {
+          const subject = `${formData.title?.trim() || "Quote"} — ${formData.client_name?.trim() || formData.property_address?.trim() || "New quote"}`;
+          const lines = [
+            `A new quote is being created in the OS.`,
+            ``,
+            `Title:       ${formData.title ?? "—"}`,
+            `Client:      ${formData.client_name ?? "—"}`,
+            `Address:     ${formData.property_address ?? "—"}`,
+            formData.scope ? `Scope:       ${formData.scope}` : "",
+            formData.start_date_option_1 ? `Start opt 1: ${formData.start_date_option_1}` : "",
+            formData.start_date_option_2 ? `Start opt 2: ${formData.start_date_option_2}` : "",
+            ``,
+            `This ticket was opened automatically from the Master OS Create-Quote modal.`,
+          ].filter(Boolean);
+          const res = await fetch("/api/zendesk/create-ticket-for-entity", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              entityType:  "quote",
+              subject,
+              commentBody: lines.join("\n"),
+            }),
+          });
+          const j = await res.json();
+          if (!res.ok || !j.ok || !j.ticketId) {
+            toast.error(`Could not open Zendesk ticket: ${j.error ?? `HTTP ${res.status}`}`);
+            return false;
+          }
+          formData.external_source = "zendesk";
+          formData.external_ref    = String(j.ticketId);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Zendesk ticket creation failed");
+          return false;
+        }
+        delete formData.__createZendeskTicket;
+      }
       try {
         const dupQ = await findDuplicateQuotes({
           clientEmail: formData.client_email ?? "",
@@ -1314,6 +1356,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           duration_value: formData.duration_value ?? null,
           duration_unit: (formData.duration_unit as QuoteDurationUnit | null | undefined) ?? null,
           engagement_kind: (formData.engagement_kind as QuoteEngagementKind | undefined) ?? "one_off",
+          external_source: (formData.external_source as string | null | undefined) ?? null,
+          external_ref:    (formData.external_ref    as string | null | undefined) ?? null,
         });
 
         const manualLines = options?.manualLineItems;
@@ -1698,18 +1742,29 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         // Partner is assigned at creation (not via UPDATE), so the
         // standard "assignedFresh" path in job-detail-client never fires.
         // Trigger push + Zendesk side conversation manually here.
+        //
+        // CHANNEL DECISION:
+        //   - Quote had an approved bid → partner already got "Bid approved
+        //     — job booked" the moment the bid was approved AND the existing
+        //     side conversation thread was carried over by createJob via
+        //     quotes.zendesk_side_conversation_id. Nothing more to send.
+        //   - No bid (manual quote) → partner is hearing about the job for
+        //     the first time, send the confirmation request with Accept link.
         if (hasPartner && job.partner_id) {
           notifyAssignedPartnerAboutJob({
             partnerId: job.partner_id,
             job,
             kind: "job_assigned",
           });
-          void notifyPartnerJobChange({
-            jobId: job.id,
-            jobReference: job.reference,
-            kind: "assigned",
-            skipPush: true, // notifyAssignedPartnerAboutJob already pushed
-          });
+          const cameFromBid = Boolean((quoteToConvert as { zendesk_side_conversation_id?: string | null } | null)?.zendesk_side_conversation_id);
+          if (!cameFromBid) {
+            void notifyPartnerJobChange({
+              jobId: job.id,
+              jobReference: job.reference,
+              kind: "confirmation_request",
+              skipPush: true,
+            });
+          }
         }
 
         setQuoteToConvert(null);
@@ -5771,6 +5826,16 @@ function QuoteDetailDrawer({
 
                                     await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
 
+                                    // Open a Side Conversation on the quote's ticket and email the
+                                    // partner "Bid approved — Job booked". Fire-and-forget — bid is
+                                    // already approved in the OS, side-conv failure shouldn't block
+                                    // the rest of the flow.
+                                    void fetch(`/api/quotes/${encodeURIComponent(quote.id)}/notify-partner-bid-approved`, {
+                                      method:  "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body:    JSON.stringify({ partnerId: bid.partner_id }),
+                                    }).catch((e) => console.error("[approve-bid] notify partner failed:", e));
+
                                     const updated = await persistProposalToQuote({
                                       lineItemsOverride: pre.lines,
                                       scopeTextOverride: scopeMerged,
@@ -7441,6 +7506,8 @@ function CreateQuoteForm({
   const [addContactClient, setAddContactClient] = useState(true);
   /** Free-text work address when there is no contact on the quote — stored only on the quote row, not as an account property. */
   const [manualSiteAddress, setManualSiteAddress] = useState("");
+  /** Mandatory Zendesk-ticket linkage — either paste an id or auto-create a new ticket. */
+  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedAccountLabel = useMemo(() => {
     const a = accountRows.find((x) => x.id === selectedAccountId);
@@ -7677,6 +7744,10 @@ function CreateQuoteForm({
       toast.error("Type of work is required");
       return;
     }
+    if (!isZendeskTicketFieldValid(zendesk)) {
+      toast.error("Paste the Zendesk ticket id or tick 'No ticket — create a new one'.");
+      return;
+    }
     const scopeFromLineItems = lineItems
       .map((li) => li.description.trim())
       .filter(Boolean)
@@ -7792,6 +7863,9 @@ function CreateQuoteForm({
         duration_value: 1,
         duration_unit: "week",
         engagement_kind: "one_off",
+        external_source: "zendesk" as const,
+        external_ref:    zendesk.noTicket ? null : zendesk.ticketId.trim(),
+        ...(zendesk.noTicket ? { __createZendeskTicket: true } : {}),
       };
       setRoutingInviteBusy(true);
       try {
@@ -7821,6 +7895,7 @@ function CreateQuoteForm({
           prev.forEach((u) => URL.revokeObjectURL(u));
           return [];
         });
+        setZendesk({ ticketId: "", noTicket: false });
       } finally {
         setRoutingInviteBusy(false);
       }
@@ -7941,6 +8016,9 @@ function CreateQuoteForm({
       duration_value: 1,
       duration_unit: "week",
       engagement_kind: "one_off",
+      external_source: "zendesk" as const,
+      external_ref:    zendesk.noTicket ? null : zendesk.ticketId.trim(),
+      ...(zendesk.noTicket ? { __createZendeskTicket: true } : {}),
     };
     setSubmitBusy(true);
     try {
@@ -7980,6 +8058,11 @@ function CreateQuoteForm({
     <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
       <div className="max-h-[min(65dvh,520px)] overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[min(72dvh,580px)] sm:px-6 sm:py-5">
         <div className="space-y-4">
+      {!continuationQuote ? (
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
+          <ZendeskTicketField value={zendesk} onChange={setZendesk} />
+        </div>
+      ) : null}
       {continuationQuote ? (
         <div className="rounded-xl border border-[#020040]/18 bg-[#020040]/[0.04] px-3 py-2.5 dark:bg-[#020040]/14">
           <p className="text-sm font-semibold text-[#020040]">Review & send · {continuationQuote.reference}</p>
