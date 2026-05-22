@@ -1,6 +1,5 @@
 import type { JobStatus } from "@/types/database";
-import { isJobOnSiteWorkStatus } from "@/lib/job-phases";
-import { formatLocalYmd, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import { formatLocalYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 
 /** Raw DB status + soft-delete; excludes completed, cancelled, and archived (deleted) jobs. */
 export type JobOverdueInput = {
@@ -17,6 +16,7 @@ const NEVER_OVERDUE_BADGE = new Set<string>([
   "cancelled",
   "deleted",
   "on_hold",
+  "in_progress",
   "final_check",
   "need_attention",
   "awaiting_payment",
@@ -31,10 +31,9 @@ const OVERDUE_BY_SCHEDULE_DAY_STATUSES = new Set<string>([
 ]);
 
 /**
- * Overdue badge only for Jobs Management buckets **Unassigned**, **Scheduled** (incl. `late`), and
- * **In progress** on-site phases. No badge on final check, awaiting payment, on hold, completed, etc.
+ * Overdue badge only for Jobs Management buckets **Unassigned**, **Scheduled** (incl. `late`).
+ * No badge once work has started (`in_progress`), final check, awaiting payment, on hold, completed, etc.
  *
- * **In progress (`in_progress`):** {@link jobFinishYmd} must exist and be strictly before today.
  * **Unassigned / scheduled / late:** strictly before today on {@link jobScheduleYmd} (needs a schedule).
  */
 export function isJobOverdue(job: JobOverdueInput, today: Date = new Date()): boolean {
@@ -42,13 +41,6 @@ export function isJobOverdue(job: JobOverdueInput, today: Date = new Date()): bo
   const st = String(job.status);
   if (NEVER_OVERDUE_BADGE.has(st)) return false;
   const todayStr = formatLocalYmd(today);
-
-  if (isJobOnSiteWorkStatus(job.status as JobStatus)) {
-    const finish = jobFinishYmd(job);
-    if (!finish) return false;
-    const finishStr = `${finish.y}-${String(finish.m).padStart(2, "0")}-${String(finish.d).padStart(2, "0")}`;
-    return finishStr < todayStr;
-  }
 
   if (!OVERDUE_BY_SCHEDULE_DAY_STATUSES.has(st)) return false;
 

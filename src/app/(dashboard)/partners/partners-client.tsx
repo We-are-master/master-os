@@ -24,13 +24,15 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Link2, Info, LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus,
 } from "lucide-react";
+
+import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listPartners, createPartner, updatePartner } from "@/services/partners";
+import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
@@ -107,7 +109,13 @@ import {
 } from "@/lib/partner-portal-allowlist";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
-import { PartnerServiceRatesTabSection } from "./service-rates-tab";
+import {
+  PartnerServiceRatesTabSection,
+  PartnerServiceRatesCreateStep,
+  buildPartnerServicePriceInputFromDraft,
+  type RowDraft as PartnerServiceRateRowDraft,
+} from "./service-rates-tab";
+import { upsertPartnerServicePrice } from "@/services/partner-service-prices";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 
 const PARTNERS_PAGE_SIZE = 10;
@@ -122,7 +130,20 @@ const PARTNER_DIRECTORY_STAGE_FILTERS = [
   { id: "inactive", label: "Inactive" },
 ] as const;
 
-type PartnersDirectoryDisplayMode = "list" | "grid";
+type PartnersDirectoryDisplayMode = "list" | "grid" | "kanban";
+
+const KANBAN_TRADE_COLUMN_COLORS = [
+  "bg-blue-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-violet-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+  "bg-orange-500",
+  "bg-indigo-500",
+] as const;
+
+const KANBAN_OTHER_TRADE_COLUMN = "Other";
 
 function PartnersDirectoryGridCheckbox({
   checked,
@@ -429,6 +450,143 @@ function PartnersDirectoryGridView({
   );
 }
 
+function PartnersDirectoryKanbanView({
+  partners,
+  columnLabels,
+  loading,
+  totalItems,
+  catalogServices,
+  selectedPartnerId,
+  onOpenPartner,
+}: {
+  partners: Partner[];
+  columnLabels: readonly string[];
+  loading: boolean;
+  totalItems: number;
+  catalogServices: readonly CatalogService[];
+  selectedPartnerId?: string | null;
+  onOpenPartner: (p: Partner) => void;
+}) {
+  const columns = useMemo(
+    () =>
+      buildPartnersTradeKanbanColumns(
+        partners,
+        columnLabels,
+        catalogServices,
+        columnLabels.length > 1,
+      ),
+    [partners, columnLabels, catalogServices],
+  );
+
+  if (loading) {
+    return (
+      <div className="p-4 sm:p-6">
+        <div className="flex gap-4 overflow-hidden">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex-shrink-0 w-72 space-y-2">
+              <div className="h-5 w-32 rounded-md bg-surface-secondary animate-shimmer" />
+              {Array.from({ length: 3 }).map((__, j) => (
+                <div
+                  key={j}
+                  className="h-24 rounded-xl border border-border-light bg-surface-secondary animate-shimmer"
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (partners.length === 0) {
+    return (
+      <motion.div
+        variants={fadeInUp}
+        initial="hidden"
+        animate="visible"
+        className="text-center px-6 py-16 space-y-2"
+      >
+        <div className="inline-flex items-center justify-center rounded-full bg-surface-hover p-3 mb-2">
+          <Users className="h-8 w-8 text-text-tertiary" aria-hidden />
+        </div>
+        <p className="text-sm font-medium text-text-secondary">No partners found.</p>
+        <p className="text-xs text-text-tertiary max-w-xs mx-auto">
+          Try another stage filter or clear search.
+        </p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="p-4 sm:p-6 space-y-3">
+      <p className="text-xs text-text-tertiary">
+        {totalItems} partner{totalItems === 1 ? "" : "s"} · grouped by type of work (a partner can
+        appear in more than one column)
+      </p>
+      <KanbanBoard
+        columns={columns}
+        getCardId={(p) => p.id}
+        onCardClick={onOpenPartner}
+        className="min-h-[320px]"
+        renderCard={(item) => {
+          const cfg = statusConfig[item.status] ?? statusConfig.active;
+          const raw = item.compliance_score;
+          const comp =
+            typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
+          const compClass =
+            comp >= 97
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400";
+          const isOpen = selectedPartnerId === item.id;
+          return (
+            <div
+              className={cn(
+                "rounded-xl border border-border-light bg-card shadow-sm p-3 transition-colors",
+                "hover:border-primary/30",
+                isOpen ? "border-primary/40 ring-1 ring-primary/20" : "",
+              )}
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <Avatar
+                  name={item.company_name}
+                  size="sm"
+                  src={item.avatar_url ?? undefined}
+                  className="shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <p className="text-sm font-semibold text-text-primary truncate">
+                      {item.company_name}
+                    </p>
+                    {item.verified ? (
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] text-text-tertiary truncate">{item.contact_name}</p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <Badge variant={cfg.variant} size="sm" dot>
+                      {item.status === "on_break" ? "Inactive" : cfg.label}
+                    </Badge>
+                    <span className={cn("text-[11px] font-semibold tabular-nums", compClass)}>
+                      {Math.round(comp)}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 mt-1.5 text-[11px] text-text-secondary min-w-0">
+                    <MapPin className="h-3 w-3 text-text-tertiary shrink-0" />
+                    <span className="truncate">
+                      {formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }}
+      />
+    </div>
+  );
+}
+
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
   needs_attention: { label: "Needs Attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
@@ -520,6 +678,54 @@ function partnerTradesForDisplay(
   catalog?: readonly CatalogService[],
 ): string[] {
   return getPartnerTrades(partner, catalog).filter((t) => !isHiddenTradeLabel(t));
+}
+
+function tradeMatchesColumnLabel(trade: string, columnLabel: string): boolean {
+  const normalized =
+    normalizeTradeName(trade) ?? normalizeTypeOfWork(trade) ?? trade.trim();
+  return normalized.toLowerCase() === columnLabel.trim().toLowerCase();
+}
+
+function partnerMatchesKanbanColumn(
+  partner: Partner,
+  columnLabel: string,
+  catalog: readonly CatalogService[],
+): boolean {
+  return partnerTradesForDisplay(partner, catalog).some((t) =>
+    tradeMatchesColumnLabel(t, columnLabel),
+  );
+}
+
+function buildPartnersTradeKanbanColumns(
+  partners: Partner[],
+  columnLabels: readonly string[],
+  catalog: readonly CatalogService[],
+  includeOtherColumn: boolean,
+): KanbanColumn<Partner>[] {
+  const cols: KanbanColumn<Partner>[] = columnLabels.map((label, i) => ({
+    id: label,
+    title: label,
+    color: KANBAN_TRADE_COLUMN_COLORS[i % KANBAN_TRADE_COLUMN_COLORS.length],
+    items: partners.filter((p) => partnerMatchesKanbanColumn(p, label, catalog)),
+  }));
+  if (!includeOtherColumn) return cols;
+  const otherItems = partners.filter((p) => {
+    const trades = partnerTradesForDisplay(p, catalog);
+    if (trades.length === 0) return true;
+    return !columnLabels.some((col) =>
+      trades.some((t) => tradeMatchesColumnLabel(t, col)),
+    );
+  });
+  if (otherItems.length === 0) return cols;
+  return [
+    ...cols,
+    {
+      id: KANBAN_OTHER_TRADE_COLUMN,
+      title: KANBAN_OTHER_TRADE_COLUMN,
+      color: "bg-slate-500",
+      items: otherItems,
+    },
+  ];
 }
 
 function overviewTradesForDisplay(
@@ -620,6 +826,53 @@ const emptyForm = {
   status: "onboarding" as PartnerStatus,
 };
 
+const CREATE_PARTNER_WIZARD_STEPS = [
+  { id: "info", label: "Partner info" },
+  { id: "documents", label: "Documents" },
+  { id: "rates", label: "Service rates" },
+] as const;
+
+type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
+
+function formatPartnerCreateError(err: unknown): string {
+  if (err && typeof err === "object") {
+    const o = err as { message?: string; code?: string; details?: string; hint?: string };
+    const msg = [o.message, o.details, o.hint].filter(Boolean).join(" — ");
+    const code = o.code ?? "";
+    const lower = msg.toLowerCase();
+    if (code === "23505" || lower.includes("duplicate") || lower.includes("unique")) {
+      if (lower.includes("email")) {
+        return "A partner with this email already exists. Search Directory for that email.";
+      }
+      return "A partner with these details may already exist (duplicate record).";
+    }
+    if (code === "42501" || lower.includes("row-level security") || lower.includes("permission denied")) {
+      return "You don't have permission to create partners. Ask an admin to add this partner.";
+    }
+    if (msg) return msg;
+  }
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return "Failed to create partner. Check required fields and try again.";
+}
+
+function validateCreatePartnerWizardStep(
+  step: CreatePartnerWizardStep,
+  form: typeof emptyForm,
+): string | null {
+  if (step !== "info") return null;
+  if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
+    return "Fill in company name, contact name, and email.";
+  }
+  if (form.partner_legal_type === "limited_company") {
+    if (form.vat_registered === null) return "Select whether the company is VAT registered.";
+    if (form.vat_registered === true && !form.vat_number.trim()) return "Enter the VAT number.";
+  }
+  if (!form.trades?.length) {
+    return "Select at least one trade.";
+  }
+  return null;
+}
+
 type PendingCreatePartnerDoc = {
   id: string;
   docType: string;
@@ -640,7 +893,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [createModalTab, setCreateModalTab] = useState<"info" | "documents">("info");
+  const [createWizardStep, setCreateWizardStep] = useState<CreatePartnerWizardStep>("info");
+  const [pendingCreateRateDrafts, setPendingCreateRateDrafts] = useState<Record<string, PartnerServiceRateRowDraft>>({});
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
   const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
   const createAvatarInputRef = useRef<HTMLInputElement>(null);
@@ -661,7 +915,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   useEffect(() => {
     try {
       const v = localStorage.getItem(PARTNERS_DIR_VIEW_STORAGE_KEY);
-      if (v === "grid" || v === "list") setDirectoryDisplayMode(v);
+      if (v === "grid" || v === "list" || v === "kanban") setDirectoryDisplayMode(v);
     } catch {
       /* ignore */
     }
@@ -720,14 +974,64 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     [tradeFilter]
   );
 
-  const { data: partners, loading, page, totalPages, totalItems, setPage, search, setSearch, status: statusFilter, setStatus: setStatusFilter, refresh } =
-    useSupabaseList<Partner>({
-      fetcher,
-      pageSize: PARTNERS_PAGE_SIZE,
-      realtimeTable: "partners",
-      initialStatus: "active",
-      initialData,
-    });
+  const {
+    data: partners,
+    loading,
+    page,
+    totalPages,
+    totalItems,
+    setPage,
+    search,
+    setSearch,
+    status: statusFilter,
+    setStatus: setStatusFilter,
+    refresh: refreshList,
+  } = useSupabaseList<Partner>({
+    fetcher,
+    pageSize: PARTNERS_PAGE_SIZE,
+    realtimeTable: "partners",
+    initialStatus: "active",
+    initialData,
+  });
+
+  const [kanbanPartners, setKanbanPartners] = useState<Partner[]>([]);
+  const [kanbanLoading, setKanbanLoading] = useState(false);
+  const [kanbanTotalItems, setKanbanTotalItems] = useState(0);
+
+  const loadKanbanPartners = useCallback(async () => {
+    setKanbanLoading(true);
+    try {
+      const rows = await listPartnersAll({
+        status: statusFilter,
+        search: search.trim() || undefined,
+        trade: tradeFilter !== "all" ? tradeFilter : undefined,
+      });
+      setKanbanPartners(rows);
+      setKanbanTotalItems(rows.length);
+    } catch {
+      toast.error("Failed to load partners for kanban");
+      setKanbanPartners([]);
+      setKanbanTotalItems(0);
+    } finally {
+      setKanbanLoading(false);
+    }
+  }, [statusFilter, search, tradeFilter]);
+
+  useEffect(() => {
+    if (viewMode !== "directory" || directoryDisplayMode !== "kanban") return;
+    void loadKanbanPartners();
+  }, [viewMode, directoryDisplayMode, loadKanbanPartners]);
+
+  const refresh = useCallback(() => {
+    refreshList();
+    if (directoryDisplayMode === "kanban") void loadKanbanPartners();
+  }, [refreshList, directoryDisplayMode, loadKanbanPartners]);
+
+  const kanbanColumnLabels = useMemo((): readonly string[] => {
+    if (tradeFilter !== "all") return [tradeFilter];
+    if (tradePickOptions.length > 0) return tradePickOptions;
+    return [GENERAL_MAINTENANCE_LABEL];
+  }, [tradeFilter, tradePickOptions]);
 
   const loadCounts = useCallback(async () => {
     try {
@@ -742,7 +1046,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   }, []);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
-  useEffect(() => { refresh(); }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    refreshList();
+    if (directoryDisplayMode === "kanban") void loadKanbanPartners();
+  }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createAvatarPreviewUrl = useMemo(
     () => (createAvatarFile ? URL.createObjectURL(createAvatarFile) : null),
@@ -759,8 +1066,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setCreateAvatarFile(null);
       return;
     }
-    setCreateModalTab("info");
+    setCreateWizardStep("info");
     setPendingCreateDocs([]);
+    setPendingCreateRateDrafts({});
     setCreateQueueDocOpen(false);
     setCreateDocPreset(null);
     setCreateCustomCertName("");
@@ -814,23 +1122,29 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const activeCount = statusCounts["active"] ?? 0;
   const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
 
-  async function handleCreate() {
-    if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
-      toast.error("Please fill in company name, contact name, and email.");
+  const createWizardStepIndex = CREATE_PARTNER_WIZARD_STEPS.findIndex((s) => s.id === createWizardStep);
+  const isLastCreateWizardStep = createWizardStepIndex === CREATE_PARTNER_WIZARD_STEPS.length - 1;
+
+  const goCreateWizardNext = useCallback(() => {
+    const err = validateCreatePartnerWizardStep(createWizardStep, form);
+    if (err) {
+      toast.error(err);
       return;
     }
-    if (form.partner_legal_type === "limited_company") {
-      if (form.vat_registered === null) {
-        toast.error("Select whether the company is VAT registered.");
-        return;
-      }
-      if (form.vat_registered === true && !form.vat_number.trim()) {
-        toast.error("Enter the VAT number.");
-        return;
-      }
-    }
-    if (!form.trades?.length) {
-      toast.error("Select at least one trade (catalog is in Settings → Service catalog tab).");
+    const next = CREATE_PARTNER_WIZARD_STEPS[createWizardStepIndex + 1];
+    if (next) setCreateWizardStep(next.id);
+  }, [createWizardStep, createWizardStepIndex, form]);
+
+  const goCreateWizardBack = useCallback(() => {
+    const prev = CREATE_PARTNER_WIZARD_STEPS[createWizardStepIndex - 1];
+    if (prev) setCreateWizardStep(prev.id);
+  }, [createWizardStepIndex]);
+
+  async function handleCreate() {
+    const err = validateCreatePartnerWizardStep("info", form);
+    if (err) {
+      toast.error(err);
+      setCreateWizardStep("info");
       return;
     }
     const dupP = await findDuplicatePartners({
@@ -876,6 +1190,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           toast.error(err instanceof Error ? err.message : "Photo upload failed");
         }
       }
+      let rateSaveFailed = 0;
+      let rateSaveCount = 0;
+      for (const [serviceId, draft] of Object.entries(pendingCreateRateDrafts)) {
+        const payload = buildPartnerServicePriceInputFromDraft(created.id, serviceId, draft);
+        if (!payload) continue;
+        try {
+          await upsertPartnerServicePrice(payload);
+          rateSaveCount += 1;
+        } catch {
+          rateSaveFailed += 1;
+        }
+      }
       let docUploadFailed = 0;
       for (const d of pendingCreateDocs) {
         try {
@@ -898,22 +1224,28 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setCreateOpen(false);
       setForm(emptyForm);
       setPendingCreateDocs([]);
+      setPendingCreateRateDrafts({});
       refresh();
       await loadCounts();
       if (viewMode === "team") loadTeam();
-      if (docUploadFailed > 0) {
-        toast.success(
-          `Partner created. ${pendingCreateDocs.length - docUploadFailed} document(s) uploaded; ${docUploadFailed} failed — add them from the Documents tab.`,
-        );
-      } else {
-        toast.success(
-          pendingCreateDocs.length > 0
-            ? `Partner created with ${pendingCreateDocs.length} document(s).`
-            : "Partner created successfully.",
+      const parts: string[] = ["Partner created."];
+      if (pendingCreateDocs.length > 0) {
+        parts.push(
+          docUploadFailed > 0
+            ? `${pendingCreateDocs.length - docUploadFailed}/${pendingCreateDocs.length} document(s) uploaded.`
+            : `${pendingCreateDocs.length} document(s) uploaded.`,
         );
       }
+      if (rateSaveCount > 0) {
+        parts.push(
+          rateSaveFailed > 0
+            ? `${rateSaveCount} custom rate(s) saved; ${rateSaveFailed} failed.`
+            : `${rateSaveCount} custom rate(s) saved.`,
+        );
+      }
+      toast.success(parts.join(" "));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create partner.");
+      toast.error(formatPartnerCreateError(err));
     } finally {
       setSubmitting(false);
     }
@@ -935,7 +1267,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         { id, docType, name, file, previewFile: preview, expiresAt, certificateNumber },
       ]);
       setCreateQueueDocOpen(false);
-      setCreateModalTab("documents");
+      setCreateWizardStep("documents");
       toast.success("Added to queue — uploads when you create the partner.");
     },
     [],
@@ -1257,16 +1589,32 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   >
                     <LayoutGrid className="h-4 w-4" aria-hidden />
                   </button>
+                  <button
+                    type="button"
+                    aria-pressed={directoryDisplayMode === "kanban"}
+                    onClick={() => setDirectoryDisplayMode("kanban")}
+                    className={cn(
+                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+                      directoryDisplayMode === "kanban"
+                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
+                        : "font-medium text-text-primary/72 hover:text-text-primary",
+                    )}
+                    title="Kanban by type of work"
+                  >
+                    <Columns3 className="h-4 w-4" aria-hidden />
+                  </button>
                 </div>
-                <Select
-                  value={tradeFilter}
-                  onChange={(e) => {
-                    setTradeFilter(e.target.value);
-                    setPage(1);
-                  }}
-                  options={tradeCatalogSelectOptions}
-                  className="min-w-[160px] shrink-0 w-full sm:w-auto"
-                />
+                {directoryDisplayMode !== "kanban" ? (
+                  <Select
+                    value={tradeFilter}
+                    onChange={(e) => {
+                      setTradeFilter(e.target.value);
+                      setPage(1);
+                    }}
+                    options={tradeCatalogSelectOptions}
+                    className="min-w-[160px] shrink-0 w-full sm:w-auto"
+                  />
+                ) : null}
                 <SearchInput
                   placeholder="Search partners…"
                   className="flex-1 w-full min-w-0 sm:min-w-[200px]"
@@ -1296,7 +1644,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </div>
             </div>
 
-            {directoryDisplayMode === "list" ? (
+            {directoryDisplayMode === "kanban" ? (
+              <PartnersDirectoryKanbanView
+                partners={kanbanPartners}
+                columnLabels={kanbanColumnLabels}
+                loading={kanbanLoading}
+                totalItems={kanbanTotalItems}
+                catalogServices={partnerCatalogServices}
+                selectedPartnerId={selectedPartner?.id}
+                onOpenPartner={(p) => {
+                  setPartnerDrawerInitialTab(undefined);
+                  setSelectedPartner(p);
+                }}
+              />
+            ) : directoryDisplayMode === "list" ? (
               <DataTable
                 columns={columns}
                 data={partners}
@@ -1394,75 +1755,101 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         size="lg"
         className="max-w-3xl"
       >
-        <div className="px-6 pt-3 pb-3 border-b border-border-light">
-          <Tabs
-            variant="pills"
-            tabs={[
-              { id: "info", label: "Partner info" },
-              { id: "documents", label: "Documents", count: pendingCreateDocs.length },
-            ]}
-            activeTab={createModalTab}
-            onChange={(id) => setCreateModalTab(id as "info" | "documents")}
-            className="w-full sm:w-auto"
-          />
-        </div>
-        <div className="p-6 space-y-4">
-          {createModalTab === "info" ? (
-            <>
-          <div className="flex flex-col sm:flex-row items-start gap-4 pb-1">
-            <div className="flex flex-col items-center gap-2 shrink-0">
-              <Avatar
-                name={form.company_name.trim() || "Partner"}
-                size="xl"
-                src={createAvatarPreviewUrl ?? undefined}
-              />
-              <input
-                ref={createAvatarInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!f) return;
-                  const type = (f.type || "").toLowerCase();
-                  if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(type)) {
-                    toast.error("Use JPEG, PNG, WebP or GIF.");
-                    return;
-                  }
-                  if (f.size > 5 * 1024 * 1024) {
-                    toast.error("Image must be 5 MB or less.");
-                    return;
-                  }
-                  setCreateAvatarFile(f);
-                }}
-              />
-              <div className="flex flex-col items-center gap-1">
-                <Button
+        <div className="px-4 sm:px-6 pt-3 pb-3 border-b border-border-light">
+          <nav className="flex flex-wrap items-center gap-1.5 sm:gap-2" aria-label="Add partner steps">
+            {CREATE_PARTNER_WIZARD_STEPS.map((step, i) => {
+              const active = createWizardStep === step.id;
+              const done = i < createWizardStepIndex;
+              return (
+                <button
+                  key={step.id}
                   type="button"
-                  size="sm"
-                  variant="outline"
-                  className="text-[11px] h-8"
-                  onClick={() => createAvatarInputRef.current?.click()}
+                  onClick={() => {
+                    if (i > createWizardStepIndex) {
+                      const err = validateCreatePartnerWizardStep(createWizardStep, form);
+                      if (err && createWizardStep === "info") {
+                        toast.error(err);
+                        return;
+                      }
+                      if (createWizardStep === "info" && step.id !== "info") {
+                        const infoErr = validateCreatePartnerWizardStep("info", form);
+                        if (infoErr) {
+                          toast.error(infoErr);
+                          return;
+                        }
+                      }
+                    }
+                    setCreateWizardStep(step.id);
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors",
+                    active
+                      ? "bg-primary/10 text-primary ring-1 ring-primary/25"
+                      : done
+                        ? "text-text-secondary hover:bg-surface-hover"
+                        : "text-text-tertiary hover:text-text-secondary hover:bg-surface-hover",
+                  )}
                 >
-                  Photo
-                </Button>
-                {createAvatarFile ? (
-                  <button
-                    type="button"
-                    className="text-[10px] text-text-tertiary hover:text-text-secondary underline"
-                    onClick={() => setCreateAvatarFile(null)}
+                  <span
+                    className={cn(
+                      "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+                      active ? "bg-primary text-white" : done ? "bg-emerald-500/15 text-emerald-700" : "bg-surface-tertiary text-text-tertiary",
+                    )}
                   >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
+                    {done && !active ? "✓" : i + 1}
+                  </span>
+                  {step.label}
+                  {step.id === "documents" && pendingCreateDocs.length > 0 ? (
+                    <span className="text-[10px] font-bold tabular-nums opacity-80">({pendingCreateDocs.length})</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+        <div className="px-4 sm:px-6 py-4 space-y-3 max-h-[min(70vh,36rem)] overflow-y-auto overscroll-contain">
+          {createWizardStep === "info" ? (
+            <>
+          <div className="flex items-center gap-3 pb-1">
+            <Avatar
+              name={form.company_name.trim() || "Partner"}
+              size="md"
+              src={createAvatarPreviewUrl ?? undefined}
+            />
+            <input
+              ref={createAvatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                const type = (f.type || "").toLowerCase();
+                if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(type)) {
+                  toast.error("Use JPEG, PNG, WebP or GIF.");
+                  return;
+                }
+                if (f.size > 5 * 1024 * 1024) {
+                  toast.error("Image must be 5 MB or less.");
+                  return;
+                }
+                setCreateAvatarFile(f);
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => createAvatarInputRef.current?.click()}>
+                Photo
+              </Button>
+              {createAvatarFile ? (
+                <button type="button" className="text-[11px] text-text-tertiary hover:text-text-secondary underline" onClick={() => setCreateAvatarFile(null)}>
+                  Remove
+                </button>
+              ) : null}
+              <span className="text-[11px] text-text-tertiary">Optional · max 5 MB</span>
             </div>
-            <p className="text-xs text-text-tertiary pt-1 sm:pt-0">
-              Optional profile photo. JPEG, PNG, WebP or GIF, up to 5 MB. Saved when you create the partner.
-            </p>
           </div>
-          <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
+          <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
             <label className="text-xs font-medium text-text-secondary">Partner type *</label>
             <div className="flex flex-wrap gap-2">
               {(
@@ -1606,9 +1993,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               onChange={(next) => setForm((f) => ({ ...f, uk_coverage_regions: next }))}
               idPrefix="create-partner"
             />
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto overscroll-contain rounded-lg border border-border-light bg-card/50 p-2">
                 {tradePickOptions.map((t) => {
                   const active = form.trades.includes(t);
                   return (
@@ -1616,7 +2003,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                       key={t}
                       type="button"
                       onClick={() => setForm((f) => ({ ...f, trades: active ? f.trades.filter((x) => x !== t) : [...f.trades, t] }))}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${active ? "border-primary bg-primary/10 text-primary" : "border-border-light bg-card text-text-secondary hover:border-border"}`}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-all ${active ? "border-primary bg-primary/10 text-primary" : "border-border-light bg-card text-text-secondary hover:border-border"}`}
                     >
                       {t}
                     </button>
@@ -1625,8 +2012,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </div>
             </div>
             </>
-          ) : (
-            <div className="space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain pr-1 -mr-1">
+          ) : createWizardStep === "documents" ? (
+            <div className="space-y-3">
               <p className="text-xs text-text-tertiary leading-relaxed">
                 Same checklist and document types as <span className="font-medium text-text-secondary">Partner profile → Documents</span>. Files upload when you create the partner. You can skip and add later.
               </p>
@@ -1965,15 +2352,36 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 </div>
               )}
             </div>
+          ) : (
+            <PartnerServiceRatesCreateStep
+              trades={form.trades}
+              catalogServices={partnerCatalogServices}
+              drafts={pendingCreateRateDrafts}
+              onDraftsChange={setPendingCreateRateDrafts}
+            />
           )}
         </div>
-        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 border-t border-border-light">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-3 border-t border-border-light">
           <p className="text-[11px] text-text-tertiary hidden sm:block">
-            {createModalTab === "documents" ? "Switch to Partner info to edit details, or create when ready." : null}
+            Step {createWizardStepIndex + 1} of {CREATE_PARTNER_WIZARD_STEPS.length}
+            {createWizardStep === "documents" ? " · documents optional" : createWizardStep === "rates" ? " · rates optional" : ""}
           </p>
-          <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
+          <div className="flex items-center justify-end gap-2 w-full sm:w-auto">
             <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleCreate} disabled={submitting}>{submitting ? "Creating…" : "Create Partner"}</Button>
+            {createWizardStepIndex > 0 ? (
+              <Button variant="outline" size="sm" icon={<ChevronLeft className="h-3.5 w-3.5" />} onClick={goCreateWizardBack}>
+                Back
+              </Button>
+            ) : null}
+            {!isLastCreateWizardStep ? (
+              <Button size="sm" icon={<ChevronRight className="h-3.5 w-3.5" />} onClick={goCreateWizardNext}>
+                Next
+              </Button>
+            ) : (
+              <Button size="sm" onClick={handleCreate} disabled={submitting}>
+                {submitting ? "Creating…" : "Create Partner"}
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

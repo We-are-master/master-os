@@ -134,6 +134,7 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobScheduleTimingChip } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
@@ -1769,42 +1770,19 @@ function JobsPageContent() {
         const detail = formatJobScheduleLine(item);
         const secondaryLine = jobManagementScheduleSecondaryLine(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        const scheduleYmd = jobScheduleStartYmdUk(item) ?? "";
-        const todayYmd = ukTodayYmd(new Date());
-        const tomorrowYmd = addDaysYmd(todayYmd, 1);
-        const inTwoDaysYmd = addDaysYmd(todayYmd, 2);
-        const isTomorrow = scheduleYmd === tomorrowYmd || line === "Tomorrow";
-        const isToday = scheduleYmd === todayYmd || line === "Today";
-        const isInTwoDays = scheduleYmd === inTwoDaysYmd;
-        const chipLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : isInTwoDays ? "In 2 days" : line;
+        const timingChip = <JobScheduleTimingChip job={item} title={detail} />;
         return (
           <div className="min-w-0">
-            {line ? (
-              isTomorrow || isToday || isInTwoDays ? (
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-                    isToday
-                      ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
-                      : isTomorrow
-                        ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                        : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
-                  )}
-                  title={detail ?? undefined}
-                >
-                  {chipLabel}
-                </span>
-              ) : (
+            {timingChip ?? (line ? (
                 <span
                   className="text-[11px] text-text-secondary leading-snug block whitespace-normal break-words"
                   title={detail ?? undefined}
                 >
                   {line}
                 </span>
-              )
-            ) : (
+              ) : (
               <span className="text-[11px] text-text-tertiary">—</span>
-            )}
+            ))}
             {isOnsiteInProgress ? (
               <ScheduleInProgressLiveSecondary job={item} />
             ) : secondaryLine ? (
@@ -1979,12 +1957,33 @@ function JobsPageContent() {
     },
   ];
 
-  /** Active jobs: Cost column after Job Amount; no Amount Due. Other tabs unchanged. */
+  /** Active jobs: Cost after Job Amount; Zendesk ticket link instead of Finance; no Amount Due. */
   const tableColumns = useMemo(() => {
     if (status !== "all") return columns;
     const withoutDue = columns.filter((c) => c.key !== "amount_due");
-    const jobAmountIdx = withoutDue.findIndex((c) => c.key === "margin_percent");
-    if (jobAmountIdx < 0) return withoutDue;
+    const withZendeskTicket = withoutDue.map((c) =>
+      c.key === "finance_status"
+        ? ({
+            key: "zendesk_ticket",
+            label: "Ticket",
+            minWidth: "96px",
+            cellClassName: "whitespace-nowrap",
+            headerClassName: "whitespace-nowrap",
+            render: (item: Job) =>
+              item.external_source === "zendesk" && item.external_ref?.trim() ? (
+                <ZendeskTicketBadge
+                  source={item.external_source}
+                  ref={item.external_ref}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-xs text-text-tertiary">—</span>
+              ),
+          } satisfies Column<Job>)
+        : c,
+    );
+    const jobAmountIdx = withZendeskTicket.findIndex((c) => c.key === "margin_percent");
+    if (jobAmountIdx < 0) return withZendeskTicket;
     const costColumn: Column<Job> = {
       key: "partner_cost",
       label: "Cost",
@@ -2000,9 +1999,9 @@ function JobsPageContent() {
       ),
     };
     return [
-      ...withoutDue.slice(0, jobAmountIdx + 1),
+      ...withZendeskTicket.slice(0, jobAmountIdx + 1),
       costColumn,
-      ...withoutDue.slice(jobAmountIdx + 1),
+      ...withZendeskTicket.slice(jobAmountIdx + 1),
     ];
   }, [columns, status]);
 
@@ -3820,7 +3819,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <div className="grid grid-cols-1 @md:grid-cols-2 gap-2 min-w-0">
               <div className="min-w-0">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Client price £
+                  Client Price £
                   {!isStackablePricing && pricing ? (
                     <span className="ml-1.5">
                       <PricingSourceChip
@@ -3841,7 +3840,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
               </div>
               <div className="min-w-0">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Partner cost £
+                  Partner Cost £
                   {!isStackablePricing && pricing ? (
                     <span className="ml-1.5">
                       <PricingSourceChip

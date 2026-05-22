@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, AlertCircle, Loader2, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  formatPushEventDetail,
+  formatZendeskEventDetail,
+  zendeskEventPillOk,
+} from "@/lib/partner-notification-toast";
 
 interface ZendeskEvent {
   id: string;
@@ -148,14 +153,16 @@ export function JobZendeskStatus({ jobId, zendeskSubdomain }: { jobId: string; z
       {/* Last-event status pills (always visible if any) */}
       {last ? (
         <div className="flex items-center gap-2 px-3 pb-2 -mt-1">
-          <StatusPill ok={last.push_ok} label="Push" detail={
-            last.push_ok
-              ? `${last.push_tokens_sent} device${last.push_tokens_sent === 1 ? "" : "s"}`
-              : last.push_error ?? "failed"
-          } />
-          <StatusPill ok={last.zendesk_ok} label="Zendesk" detail={
-            last.zendesk_ok ? "delivered" : (last.zendesk_error ?? "failed")
-          } />
+          <StatusPill
+            ok={last.push_ok}
+            label="Push"
+            detail={formatPushEventDetail(last.push_ok, last.push_tokens_sent, last.push_error)}
+          />
+          <StatusPill
+            ok={zendeskEventPillOk(last.zendesk_ok, last.zendesk_error)}
+            label="Zendesk"
+            detail={formatZendeskEventDetail(last.zendesk_ok, last.zendesk_error, last.kind)}
+          />
         </div>
       ) : null}
 
@@ -170,8 +177,18 @@ export function JobZendeskStatus({ jobId, zendeskSubdomain }: { jobId: string; z
                   <div className="text-[10px] text-text-tertiary">{timeAgo(ev.created_at)}</div>
                 </div>
                 <div className="flex-1 flex items-center gap-1.5">
-                  <StatusPill ok={ev.push_ok} label="P" detail={ev.push_ok ? `${ev.push_tokens_sent}` : ev.push_error ?? "fail"} small />
-                  <StatusPill ok={ev.zendesk_ok} label="Z" detail={ev.zendesk_ok ? "ok" : ev.zendesk_error ?? "fail"} small />
+                  <StatusPill
+                    ok={ev.push_ok}
+                    label="P"
+                    detail={formatPushEventDetail(ev.push_ok, ev.push_tokens_sent, ev.push_error)}
+                    small
+                  />
+                  <StatusPill
+                    ok={zendeskEventPillOk(ev.zendesk_ok, ev.zendesk_error)}
+                    label="Z"
+                    detail={formatZendeskEventDetail(ev.zendesk_ok, ev.zendesk_error, ev.kind)}
+                    small
+                  />
                 </div>
               </li>
             ))}

@@ -20,7 +20,7 @@ import type {
   Partner,
   PartnerServicePrice,
 } from "@/types/database";
-import { filterCatalogServicesForPartner } from "@/lib/catalog-trade-ids";
+import { catalogServiceIdsForTradeLabels, filterCatalogServicesForPartner } from "@/lib/catalog-trade-ids";
 import {
   mergeCatalogWithPricingPreset,
   parsePricingAddons,
@@ -202,7 +202,7 @@ export function PartnerServiceRatesTabSection({
 
 type ItemPartnerDraft = { partner_cost: string };
 
-interface RowDraft {
+export interface RowDraft {
   use_standard: boolean;
   fixed_partner_cost: string;
   hourly_partner_rate: string;
@@ -537,6 +537,136 @@ function PartnerRateRow({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** True when the draft differs from catalog standard (saved after partner create). */
+export function partnerRateDraftHasCustomPay(draft: RowDraft): boolean {
+  if (draft.use_standard) return false;
+  if (parseNumOrNull(draft.fixed_partner_cost) != null) return true;
+  if (parseNumOrNull(draft.hourly_partner_rate) != null) return true;
+  if (parseNumOrNull(draft.default_hours) != null) return true;
+  if (draft.notes.trim()) return true;
+  for (const d of Object.values(draft.preset_overrides)) {
+    if (parseNumOrNull(d.partner_cost) != null) return true;
+  }
+  for (const d of Object.values(draft.addon_overrides)) {
+    if (parseNumOrNull(d.partner_cost) != null) return true;
+  }
+  return false;
+}
+
+export function buildPartnerServicePriceInputFromDraft(
+  partnerId: string,
+  catalogServiceId: string,
+  draft: RowDraft,
+): Omit<PartnerServicePrice, "id" | "created_at" | "updated_at" | "deleted_at" | "catalog_service_name" | "catalog_pricing_mode"> | null {
+  if (!partnerRateDraftHasCustomPay(draft)) return null;
+  return {
+    partner_id: partnerId,
+    catalog_service_id: catalogServiceId,
+    use_standard: false,
+    fixed_partner_cost: parseNumOrNull(draft.fixed_partner_cost),
+    hourly_partner_rate: parseNumOrNull(draft.hourly_partner_rate),
+    default_hours: parseNumOrNull(draft.default_hours),
+    notes: draft.notes.trim() || null,
+    preset_overrides: serializePartnerItemOverrides(draft.preset_overrides),
+    addon_overrides: serializePartnerItemOverrides(draft.addon_overrides),
+  };
+}
+
+/** Wizard step: configure pay rates before the partner row exists (applied on create). */
+export function PartnerServiceRatesCreateStep({
+  trades,
+  catalogServices,
+  drafts,
+  onDraftsChange,
+}: {
+  trades: string[];
+  catalogServices: CatalogService[];
+  drafts: Record<string, RowDraft>;
+  onDraftsChange: (next: Record<string, RowDraft>) => void;
+}) {
+  const partnerPreview = useMemo(
+    () => ({
+      trades,
+      trade: trades[0] ?? "",
+      catalog_service_ids: catalogServiceIdsForTradeLabels(trades, catalogServices),
+    }),
+    [trades, catalogServices],
+  );
+
+  const services = useMemo(
+    () => filterCatalogServicesForPartner(catalogServices, partnerPreview),
+    [catalogServices, partnerPreview],
+  );
+
+  useEffect(() => {
+    const initial: Record<string, RowDraft> = { ...drafts };
+    let changed = false;
+    for (const s of services) {
+      if (!initial[s.id]) {
+        initial[s.id] = draftFromPartnerService(s, null);
+        changed = true;
+      }
+    }
+    if (changed) onDraftsChange(initial);
+  }, [services]); // eslint-disable-line react-hooks/exhaustive-deps -- seed drafts when trades change
+
+  if (trades.length === 0) {
+    return (
+      <p className="text-sm text-text-tertiary py-6 text-center">
+        Select at least one trade on <span className="font-medium text-text-secondary">Partner info</span> to
+        configure rates.
+      </p>
+    );
+  }
+
+  if (services.length === 0) {
+    return (
+      <p className="text-sm text-text-tertiary py-6 text-center max-w-md mx-auto">
+        No catalog services match the selected trades. Check{" "}
+        <span className="font-medium text-text-secondary">Settings → Services</span> names match your trade
+        labels.
+      </p>
+    );
+  }
+
+  const customCount = services.filter((s) => partnerRateDraftHasCustomPay(drafts[s.id] ?? draftFromPartnerService(s, null))).length;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-tertiary leading-relaxed">
+        Optional. Uncheck &quot;Use standard&quot; to set what we pay this partner per service. Saved when you
+        create the partner{customCount > 0 ? ` (${customCount} custom)` : ""}.
+      </p>
+      <div className="space-y-2 max-h-[min(52vh,28rem)] overflow-y-auto overscroll-contain pr-1 -mr-1">
+        {services.map((service) => {
+          const draft = drafts[service.id] ?? draftFromPartnerService(service, null);
+          return (
+            <PartnerRateRow
+              key={service.id}
+              service={service}
+              override={null}
+              draft={draft}
+              onDraftChange={(patch) =>
+                onDraftsChange({
+                  ...drafts,
+                  [service.id]: { ...draft, ...patch },
+                })
+              }
+              onCommit={() => {}}
+              onResetToStandard={() =>
+                onDraftsChange({
+                  ...drafts,
+                  [service.id]: draftFromPartnerService(service, null),
+                })
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

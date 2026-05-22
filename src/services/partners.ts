@@ -201,6 +201,14 @@ export async function createPartner(
     data = fallback.data;
     error = fallback.error;
   }
+  if (error && "catalog_service_ids" in input) {
+    const { catalog_service_ids: _csi, ...legacyInput } = input as typeof input & {
+      catalog_service_ids?: unknown;
+    };
+    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) throw error;
   return data as Partner;
 }

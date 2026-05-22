@@ -1,6 +1,6 @@
 "use client";
 
-import { Crown, Download, Plus } from "lucide-react";
+import { Crown, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
@@ -97,13 +97,6 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
         >
           <Download className="h-3.5 w-3.5" />
           Export
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 px-3 py-[7px] rounded-md text-[13px] font-medium bg-fx-coral text-white hover:bg-fx-coral-h transition-colors"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Job
         </button>
         <LiveIndicator />
       </div>

@@ -30,7 +30,7 @@ export function jobModalClientArrivalPreview(
     const end = addMinutesUkWallClock(d, from, Number(mins));
     if (!end.hm) return null;
     const range = `${formatUkWallClockHmAmPm(from)} – ${formatUkWallClockHmAmPm(end.hm)}`;
-    return `Client & partner will see: Arrival time (${range})`;
+    return `Client & partner will see: Arrival Time (${range})`;
   }
 
   // Form inputs are UK wall-clock — convert to a proper UTC ISO so the
@@ -38,11 +38,11 @@ export function jobModalClientArrivalPreview(
   const startIso = ukWallClockToUtcIso(d, t);
   if (!startIso) return null;
   if (!hasWindow) {
-    return `Client & partner will see: Arrival time ${formatHourMinuteAmPm(new Date(startIso))} — choose window length for a range (2–3h typical).`;
+    return `Client & partner will see: Arrival Time ${formatHourMinuteAmPm(new Date(startIso))} — choose window length for a range (2–3h typical).`;
   }
   const endIso = new Date(new Date(startIso).getTime() + windowMins * 60_000).toISOString();
   const range = formatArrivalTimeRange(startIso, endIso);
-  return range ? `Client & partner will see: Arrival time (${range})` : null;
+  return range ? `Client & partner will see: Arrival Time (${range})` : null;
 }
 
 export type ResolveJobModalScheduleResult =
