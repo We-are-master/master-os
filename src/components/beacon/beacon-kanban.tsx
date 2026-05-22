@@ -19,12 +19,15 @@ import {
   getDateRangeForMode,
   resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
+import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 type KanbanJob = {
   id: string;
   reference: string;
   title: string;
   status: JobStatus;
+  client_id: string | null;
   partner_id: string | null;
   client_name: string;
   property_address: string | null;
@@ -87,7 +90,7 @@ const STAGES: Stage[] = [
     id: "final_checks",
     title: "Final Checks",
     tone: "violet",
-    matches: (s) => s === "final_check" || s === "awaiting_payment" || s === "need_attention" || s === "on_hold",
+    matches: (s) => s === "final_check" || s === "need_attention",
     dropStatus: "final_check",
   },
   {
@@ -125,6 +128,8 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   const [loading, setLoading] = useState(true);
   /** partner_id → avatar_url. Loaded lazily once we know which partners appear in the visible cards. */
   const [partnerAvatars, setPartnerAvatars] = useState<Record<string, string | null>>({});
+  /** clients.id → linked account logo_url (source_account). */
+  const [accountLogoByClientId, setAccountLogoByClientId] = useState<Record<string, string | null>>({});
   /** Stage being hovered during a drag — drives the drop-target highlight. */
   const [dragOverStageId, setDragOverStageId] = useState<StageId | null>(null);
   /** Job ids currently mid-flight to the API; cards show a busy state while saving. */
@@ -312,6 +317,26 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     };
   }, [jobs, partnerAvatars]);
 
+  useEffect(() => {
+    const clientIds = [...new Set(jobs.map((j) => j.client_id).filter(Boolean))] as string[];
+    if (clientIds.length === 0) {
+      setAccountLogoByClientId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const map = await batchResolveClientAccountLogoUrls(supabase, clientIds);
+      if (cancelled) return;
+      const next: Record<string, string | null> = {};
+      for (const id of clientIds) next[id] = map.get(id) ?? null;
+      setAccountLogoByClientId(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobs]);
+
   /**
    * Realtime: subscribe to changes on the `jobs` table and refetch on any
    * INSERT / UPDATE / DELETE. RLS still applies on the WAL stream — users only
@@ -474,6 +499,11 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                       onCancelClick={openCancelModal}
                       isCancelledStage={isCancelStage}
                       partnerAvatarUrl={j.partner_id ? partnerAvatars[j.partner_id] ?? null : null}
+                      accountLogoUrl={
+                        j.client_id
+                          ? accountLogoByClientId[j.client_id]?.trim() || null
+                          : null
+                      }
                       marginThresholds={marginThresholds}
                     />
                   ))
@@ -505,6 +535,7 @@ function KanbanCard({
   onCancelClick,
   isCancelledStage = false,
   partnerAvatarUrl,
+  accountLogoUrl,
   marginThresholds,
 }: {
   job: KanbanJob;
@@ -513,8 +544,10 @@ function KanbanCard({
   onCancelClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
   isCancelledStage?: boolean;
   partnerAvatarUrl?: string | null;
+  accountLogoUrl?: string | null;
   marginThresholds: MarginThresholds;
 }) {
+  const typeOfWorkLabel = normalizeTypeOfWork(job.title) || job.title;
   const [nowMs] = useState(() => Date.now());
   // "Live" = work actually started. `late` here means "scheduled but past
   // arrival time, partner hasn't started yet" — that's NOT live, it's overdue.
@@ -584,8 +617,24 @@ function KanbanCard({
         <StatusPill status={job.status} />
       </div>
       <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary leading-[1.3] line-clamp-2 min-w-0">
-          {job.title}
+        <div className="flex items-center gap-1 min-w-0 flex-1 text-[13px] font-medium text-text-primary leading-[1.3]">
+          {accountLogoUrl ? (
+            <>
+              <img
+                src={accountLogoUrl}
+                alt=""
+                className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 rounded-[3px] object-contain bg-white ring-1 ring-black/[0.08] dark:ring-white/10"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+              <span className="text-fx-mute shrink-0 font-normal" aria-hidden>
+                -
+              </span>
+            </>
+          ) : null}
+          <span className="truncate min-w-0" title={typeOfWorkLabel}>
+            {typeOfWorkLabel}
+          </span>
         </div>
         {formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at) ? (
           <span

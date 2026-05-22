@@ -142,7 +142,7 @@ export function JobModalScheduleFields({
           >
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Start date{startDateRequired ? " *" : ""}
+                Start Date{startDateRequired ? " *" : ""}
               </label>
               <Input
                 type="date"
@@ -173,7 +173,7 @@ export function JobModalScheduleFields({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Start date *
+                Start Date *
               </label>
               <Input
                 type="date"
@@ -188,14 +188,14 @@ export function JobModalScheduleFields({
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
             <TimeSelect
-              label="Start time *"
+              label="Start Time *"
               value={arrivalFrom}
               onChange={(v) => onChange("arrival_from", v)}
               className={requiredFieldClassName}
             />
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                End date *
+                End Date *
               </label>
               <Input
                 type="date"
@@ -213,7 +213,7 @@ export function JobModalScheduleFields({
               />
             </div>
             <TimeSelect
-              label="End time *"
+              label="End Time *"
               value={endTime}
               onChange={(v) => onChange("end_time", v)}
               className={requiredFieldClassName}
@@ -284,7 +284,7 @@ function RecurringFormFields({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Start date *
+            Start Date *
           </label>
           <Input
             type="date"
@@ -372,7 +372,7 @@ function RecurringFormFields({
         {recurrence.pattern === "weekly" ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              On these weekdays
+              On These Weekdays
             </label>
             <div className="flex flex-wrap gap-1.5">
               {BYDAY_ORDER.map((day) => {
@@ -409,13 +409,13 @@ function RecurringFormFields({
           <div />
         )}
         <TimeSelect
-          label="Start time *"
+          label="Start Time *"
           value={recurrence.start_time}
           onChange={(v) => onRecurrenceChange({ start_time: v })}
           className={requiredFieldClassName}
         />
         <TimeSelect
-          label="End time *"
+          label="End Time *"
           value={recurrence.end_time}
           onChange={(v) => onRecurrenceChange({ end_time: v })}
           className={requiredFieldClassName}

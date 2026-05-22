@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { Job } from "@/types/database";
+import {
+  formatPushEventDetail,
+  formatZendeskEventDetail,
+  zendeskEventPillOk,
+} from "@/lib/partner-notification-toast";
 
 /**
  * Inline pill that surfaces the Zendesk ticket id on a job/quote when
@@ -242,8 +247,16 @@ function ZendeskStatusBody({
             · {timeAgo(last.created_at)}
           </p>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <Pill ok={last.push_ok} label="Push" detail={last.push_ok ? `${last.push_tokens_sent} device${last.push_tokens_sent === 1 ? "" : "s"}` : last.push_error ?? "failed"} />
-            <Pill ok={last.zendesk_ok} label="Zendesk" detail={last.zendesk_ok ? "delivered" : last.zendesk_error ?? "failed"} />
+            <Pill
+              ok={last.push_ok}
+              label="Push"
+              detail={formatPushEventDetail(last.push_ok, last.push_tokens_sent, last.push_error)}
+            />
+            <Pill
+              ok={zendeskEventPillOk(last.zendesk_ok, last.zendesk_error)}
+              label="Zendesk"
+              detail={formatZendeskEventDetail(last.zendesk_ok, last.zendesk_error, last.kind)}
+            />
           </div>
         </div>
       ) : (

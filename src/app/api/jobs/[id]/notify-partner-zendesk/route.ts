@@ -248,7 +248,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
 
   // ─── Zendesk side conversation (only if we have the ticket) ──────
-  let zendeskResult: { ok: boolean; side_conversation_id?: string | null; error?: string } = { ok: false, error: "skipped" };
+  let zendeskResult: {
+    ok: boolean;
+    side_conversation_id?: string | null;
+    error?: string;
+    skipped?: string;
+  } = { ok: false, error: "skipped" };
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
@@ -279,7 +284,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       }
     }
   } else if (zendeskTicketId && !partnerEmailEnabled) {
-    zendeskResult = { ok: false, error: `skipped_kind_${kind}` };
+    // Intentional policy skip — not an error (partner email only on assign + complete).
+    zendeskResult = { ok: true, skipped: `kind_${kind}` };
   }
 
   // ─── Always sync custom_status_id on the main ticket ─────────────
@@ -339,7 +345,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     kind,
     push: { ok: pushResult.ok, tokens_sent: pushResult.tokens_sent, error: pushResult.error ?? null },
     zendesk: zendeskTicketId
-      ? { ok: zendeskResult.ok, side_conversation_id: zendeskResult.side_conversation_id ?? null, error: zendeskResult.error ?? null }
+      ? {
+          ok: zendeskResult.ok,
+          side_conversation_id: zendeskResult.side_conversation_id ?? null,
+          error: zendeskResult.error ?? null,
+          skipped: zendeskResult.skipped ?? null,
+        }
       : { ok: false, skipped: "not_a_zendesk_job" },
   });
 }

@@ -12,6 +12,7 @@ import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobScheduleTimingChip } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { JobZendeskStatus } from "@/components/jobs/job-zendesk-status";
 import { Progress } from "@/components/ui/progress";
@@ -5441,6 +5442,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
                     {config.label}
                   </Badge>
+                  <JobScheduleTimingChip job={job} />
                   {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
                 </div>
                 <JobOverdueBadge job={job} size="sm" />
@@ -6026,7 +6028,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               />
                             </div>
                             <div>
-                              <label className="mb-1 block text-[11px] font-medium text-text-secondary">Partner cost £</label>
+                              <label className="mb-1 block text-[11px] font-medium text-text-secondary">Partner Cost £</label>
                               <Input
                                 type="number"
                                 min={0}
@@ -6197,7 +6199,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         className="mb-2 text-[10px] font-medium uppercase"
                         style={{ color: "#020040", letterSpacing: "0.6px" }}
                       >
-                        Arrival time
+                        Arrival Time
                       </p>
                       <ArrivalSlotPicker
                         readOnly
@@ -6228,7 +6230,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="text-[10px] font-medium uppercase"
                           style={{ color: "#020040", letterSpacing: "0.6px" }}
                         >
-                          Arrival time
+                          Arrival Time
                         </p>
                         <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
                           {scheduleTime.trim()
@@ -8454,7 +8456,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Date *</label>
                   <Input
                     type="date"
                     value={resumeArrivalDate}
@@ -8469,11 +8471,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Time *</label>
                   <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected Finish Date</label>
                   <Input
                     type="date"
                     value={resumeExpectedFinishDate}
@@ -8551,7 +8553,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               loading={(resumeAction === "reschedule" && resumeSaving) || (resumeAction === "cancel" && cancellingJob)}
               onClick={() => void handleResumeModalAction()}
             >
-              {resumeAction === "reschedule" ? "Reschedule & resume" : resumeAction === "cancel" ? "Cancel job" : "Final Review"}
+              {resumeAction === "reschedule" ? "Reschedule & Resume" : resumeAction === "cancel" ? "Cancel Job" : "Final Review"}
             </Button>
           </div>
         </div>
@@ -8626,7 +8628,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ) : (
             <div className="space-y-3">
               <Select
-                label="Type of work *"
+                label="Type Of Work *"
                 value={jobTypeEditFixedTitle}
                 disabled={savingJobTypeEdit}
                 onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
@@ -8645,7 +8647,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner cost £</label>
+                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner Cost £</label>
                   <Input
                     type="number"
                     min={0}
@@ -9398,7 +9400,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 }
               }}
             >
-              Assign & confirm
+              Assign & Confirm
             </Button>
           </div>
         </div>
@@ -9424,7 +9426,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ) : null}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className={cn(isOneOffScheduleUi && "sm:col-span-2")}>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival date *</label>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival Date *</label>
               <Input
                 type="date"
                 className="h-10"
@@ -9467,7 +9469,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <>
                 <div>
                   <TimeSelect
-                    label="Arrival time"
+                    label="Arrival Time"
                     value={qrTime}
                     disabled={quickRescheduleSaving}
                     onChange={(v) => setQrTime(v)}
@@ -9488,7 +9490,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             {!isOneOffScheduleUi ? (
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-text-secondary">
-                  Expected finish date{qrDate.trim() ? <span className="text-red-600"> *</span> : null}
+                  Expected Finish Date{qrDate.trim() ? <span className="text-red-600"> *</span> : null}
                 </label>
                 <Input
                   type="date"
@@ -9521,7 +9523,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               disabled={quickRescheduleSaving || loadingPartners}
               onChange={(e) => setQrPartnerId(e.target.value)}
             >
-              <option value="">— No partner —</option>
+              <option value="">— No Partner —</option>
               {partners.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
@@ -9531,7 +9533,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div className={cn(loadingJobTypeCatalog && "pointer-events-none opacity-60")}>
             <ServiceCatalogSelect
-              label="Type of work (Services)"
+              label="Type Of Work (Services)"
               emptyOptionLabel="Keep current / not linked to catalog"
               catalog={catalogServicesJobType}
               value={qrCatalogServiceId}
@@ -9542,7 +9544,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Client price (£)</label>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Client Price (£)</label>
               <Input
                 type="number"
                 step="0.01"
@@ -9554,7 +9556,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Partner cost (£)</label>
+              <label className="mb-1 block text-xs font-medium text-text-secondary">Partner Cost (£)</label>
               <Input
                 type="number"
                 step="0.01"
@@ -9582,7 +9584,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               loading={quickRescheduleSaving}
               onClick={() => void confirmQuickReschedule()}
             >
-              Confirm &amp; update
+              Confirm &amp; Update
             </Button>
           </div>
         </div>

@@ -44,7 +44,7 @@ export function ArrivalSlotPicker({
     <div className={className}>
       {!hideLabel && (
         <label className="block text-xs font-medium text-text-secondary mb-1.5">
-          Arrival time *
+          Arrival Time *
         </label>
       )}
       <div
