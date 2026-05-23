@@ -174,7 +174,7 @@ export function WeekView({ jobs, onSelectJob, accountLogoByClientId, weekAnchor 
   const todayYmd = localYmd(today);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
       {/* Day column headers */}
       <div className="flex shrink-0 border-b border-border-light">
         <div style={{ width: TIME_GUTTER_WIDTH }} className="shrink-0" />
@@ -270,7 +270,7 @@ export function DayView({ jobs, onSelectJob, accountLogoByClientId, dayAnchor }:
     .filter((b): b is JobBlock => b != null);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
       <div className="shrink-0 border-b border-border-light px-3 py-2 text-sm font-semibold text-text-primary">
         {DAY_FULL_FORMATTER.format(dayAnchor)}
         <span className="ml-2 text-[11px] font-normal text-text-tertiary">
