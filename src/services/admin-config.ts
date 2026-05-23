@@ -258,8 +258,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {

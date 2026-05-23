@@ -2015,31 +2015,36 @@ function JobsPageContent() {
     },
   ];
 
-  /** Active jobs: Cost after Job Amount; Zendesk ticket link instead of Finance; no Amount Due. */
+  const zendeskTicketColumn: Column<Job> = useMemo(
+    () => ({
+      key: "zendesk_ticket",
+      label: "Ticket",
+      minWidth: "96px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
+      render: (item: Job) =>
+        item.external_source === "zendesk" && item.external_ref?.trim() ? (
+          <ZendeskTicketBadge source={item.external_source} ref={item.external_ref} size="sm" />
+        ) : (
+          <span className="text-xs text-text-tertiary">—</span>
+        ),
+    }),
+    [],
+  );
+
+  const replaceFinanceWithTicket = useCallback(
+    (cols: Column<Job>[]) => cols.map((c) => (c.key === "finance_status" ? zendeskTicketColumn : c)),
+    [zendeskTicketColumn],
+  );
+
+  /** Closed tab keeps Finance; all other tabs show Zendesk ticket. Active jobs also drop Amount Due and add Cost. */
   const tableColumns = useMemo(() => {
-    if (status !== "all") return columns;
+    if (status === "closed") return columns;
+
+    if (status !== "all") return replaceFinanceWithTicket(columns);
+
     const withoutDue = columns.filter((c) => c.key !== "amount_due");
-    const withZendeskTicket = withoutDue.map((c) =>
-      c.key === "finance_status"
-        ? ({
-            key: "zendesk_ticket",
-            label: "Ticket",
-            minWidth: "96px",
-            cellClassName: "whitespace-nowrap",
-            headerClassName: "whitespace-nowrap",
-            render: (item: Job) =>
-              item.external_source === "zendesk" && item.external_ref?.trim() ? (
-                <ZendeskTicketBadge
-                  source={item.external_source}
-                  ref={item.external_ref}
-                  size="sm"
-                />
-              ) : (
-                <span className="text-xs text-text-tertiary">—</span>
-              ),
-          } satisfies Column<Job>)
-        : c,
-    );
+    const withZendeskTicket = replaceFinanceWithTicket(withoutDue);
     const jobAmountIdx = withZendeskTicket.findIndex((c) => c.key === "margin_percent");
     if (jobAmountIdx < 0) return withZendeskTicket;
     const costColumn: Column<Job> = {
@@ -2061,7 +2066,7 @@ function JobsPageContent() {
       costColumn,
       ...withZendeskTicket.slice(jobAmountIdx + 1),
     ];
-  }, [columns, status]);
+  }, [columns, status, replaceFinanceWithTicket]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");

@@ -27,8 +27,8 @@ export const NAVIGATION: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Quotes", href: "/quotes", icon: "file-text" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock" },
     ],
   },
   {

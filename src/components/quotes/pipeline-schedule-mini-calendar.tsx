@@ -32,7 +32,13 @@ import { scheduleJobBarDoneVisually, scheduleJobNeedsAssignmentHighlight } from 
 import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
-import { WeekView, DayView } from "@/app/(dashboard)/schedule/calendar-time-grid";
+import { WeekView } from "@/app/(dashboard)/schedule/calendar-time-grid";
+import {
+  PartnerDayTimelineView,
+  UNASSIGNED_ROW_ID,
+  jobAssignedToPartnerId,
+  type PartnerTimelineRow,
+} from "@/app/(dashboard)/schedule/partner-day-timeline";
 
 /** Match Live View month bars (multi-day strip segments). */
 type ScheduleBarSegment = "only" | "first" | "middle" | "last";
@@ -176,21 +182,18 @@ function mondayStamp(d: Date): string {
   return `${m.getFullYear()}-${m.getMonth()}-${m.getDate()}`;
 }
 
-function jobAssignedToPartnerId(job: Job, partnerId: string): boolean {
-  const pid = job.partner_id?.trim();
-  if (pid === partnerId) return true;
-  const ids = job.partner_ids;
-  return Array.isArray(ids) && ids.some((x) => x != null && String(x).trim() === partnerId);
-}
-
 interface PipelineScheduleMiniCalendarProps {
   hideCardTitle?: boolean;
+  className?: string;
 }
 
 /**
  * Pipeline schedule (Operations → Schedule): Year / Month / Week / Day, same styling as Live View month grid where applicable.
  */
-export function PipelineScheduleMiniCalendar({ hideCardTitle = false }: PipelineScheduleMiniCalendarProps) {
+export function PipelineScheduleMiniCalendar({
+  hideCardTitle = false,
+  className,
+}: PipelineScheduleMiniCalendarProps) {
   const router = useRouter();
   const [calendarView, setCalendarView] = useState<PipelineCalendarView>("month");
   const [year, setYear] = useState(() => new Date().getFullYear());
@@ -446,6 +449,18 @@ export function PipelineScheduleMiniCalendar({ hideCardTitle = false }: Pipeline
     });
   }, [displayedJobs, calendarView, dayCursor]);
 
+  const dayTimelinePartnerRows = useMemo((): PartnerTimelineRow[] => {
+    if (schedulePartnerFilter === "__unassigned__") {
+      return [{ id: UNASSIGNED_ROW_ID, name: "Unassigned" }];
+    }
+    if (schedulePartnerFilter !== "all") {
+      const name =
+        activePartnerPicklist.find((p) => p.id === schedulePartnerFilter)?.name ?? "Partner";
+      return [{ id: schedulePartnerFilter, name }];
+    }
+    return [{ id: UNASSIGNED_ROW_ID, name: "Unassigned" }, ...activePartnerPicklist];
+  }, [schedulePartnerFilter, activePartnerPicklist]);
+
   const openDayFromYearGrid = useCallback((y: number, mIdx: number, dom: number) => {
     const d = new Date(y, mIdx, dom);
     d.setHours(0, 0, 0, 0);
@@ -456,7 +471,13 @@ export function PipelineScheduleMiniCalendar({ hideCardTitle = false }: Pipeline
   }, []);
 
   return (
-    <Card padding="none" className="overflow-hidden border-border-light shadow-soft">
+    <Card
+      padding="none"
+      className={cn(
+        "w-full overflow-hidden border-border-light shadow-soft flex flex-col min-h-0",
+        className,
+      )}
+    >
       <div className="flex flex-col gap-2 border-b border-border-light bg-gradient-to-br from-card via-card to-primary/[0.03] px-3 py-2.5 sm:px-4">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           {!hideCardTitle ? (
@@ -751,7 +772,10 @@ export function PipelineScheduleMiniCalendar({ hideCardTitle = false }: Pipeline
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ minHeight: "min(70vh, 640px)" }}>
+        <div
+          className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+          style={{ minHeight: "min(70vh, calc(100vh - 12rem))" }}
+        >
           {calendarView === "week" ? (
             <WeekView
               jobs={pipelineForTimeGrids}
@@ -760,11 +784,12 @@ export function PipelineScheduleMiniCalendar({ hideCardTitle = false }: Pipeline
               weekAnchor={dayCursor}
             />
           ) : (
-            <DayView
+            <PartnerDayTimelineView
               jobs={pipelineForTimeGrids}
               onSelectJob={onSelectJob}
               accountLogoByClientId={accountLogoByClientId}
               dayAnchor={dayCursor}
+              partnerRows={dayTimelinePartnerRows}
             />
           )}
         </div>
