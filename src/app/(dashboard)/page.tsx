@@ -11,7 +11,7 @@ import { LiveOperations } from "@/components/pulse/live-operations";
 import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
-import { LiveJobs } from "@/components/pulse/live-jobs";
+import { LiveBoard } from "@/components/pulse/live-board";
 import { RevenueTrend } from "@/components/pulse/revenue-trend";
 import { TopAccounts } from "@/components/pulse/top-accounts";
 
@@ -49,7 +49,7 @@ function PulseInner() {
               <TodaysFlow />
               <AlertsFeed />
             </div>
-            <LiveJobs />
+            <LiveBoard />
             <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
               <RevenueTrend />
               <TopAccounts />

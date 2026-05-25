@@ -6587,7 +6587,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 pt-2 border-t border-border">
                 <div className="flex items-center justify-between gap-2">
                   <JobCardTitleWithHint
-                    title="Additional notes"
+                    title="Notes"
                     hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
                     titleClassName="text-xs font-semibold text-text-primary"
                   />

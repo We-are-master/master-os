@@ -2864,7 +2864,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
   }, [clientAddress.client_id]);
 
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
-  const isStackablePricing = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
+  const serviceHasStackableAddons = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
+  /** Opt-in toggle: in Custom Price, the package/additionals UI is hidden by default; user clicks "Add additionals" to reveal it. Smart Pricing always shows. */
+  const [packagePricingOpen, setPackagePricingOpen] = useState(false);
+
+  useEffect(() => {
+    setPackagePricingOpen(false);
+  }, [form.catalog_service_id, form.job_type, open]);
+
+  /** When true, the stackable package UI is active: auto-fill prices, lock inputs, enforce preset/account validation. */
+  const isStackablePricing = serviceHasStackableAddons && packagePricingOpen;
+
   const catalogAddonOptions = useMemo(() => {
     if (!selectedCatalogService) return [];
     return sortPricingAddonsDisplay(parsePricingAddons(selectedCatalogService.pricing_addons));
@@ -3495,6 +3505,109 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </section>
 
+          {serviceHasStackableAddons && !packagePricingOpen ? (
+            <section className="rounded-xl border border-dashed border-border-light bg-surface-hover/10 p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-text-tertiary">Additionals</p>
+                  <p className="text-[10.5px] text-text-tertiary leading-snug">
+                    {form.job_type === "fixed"
+                      ? "Custom Price keeps prices manual. Add a package and addons if you want to stack them on top."
+                      : "Optional: pick a property size and addons to layer on top of the smart price."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPackagePricingOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-surface-hover transition-colors"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add additionals
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {isStackablePricing ? (
+            <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-text-tertiary">Package &amp; additionals</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPackagePricingOpen(false);
+                    setForm((p) => ({ ...p, catalog_pricing_addon_ids: [] }));
+                  }}
+                  className="text-[10.5px] font-medium text-text-tertiary hover:text-text-primary transition-colors"
+                >
+                  Hide
+                </button>
+              </div>
+              {!effectiveAccountId ? (
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+                  Select a client linked to an account — account-specific cleaning rates apply.
+                </p>
+              ) : null}
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-text-secondary">Property size *</p>
+                <div className="grid grid-cols-1 @sm:grid-cols-2 gap-1.5">
+                  {catalogPricingPresetOptions.map((opt) => {
+                    const selected = form.catalog_pricing_preset_id === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() =>
+                          setForm((p) => ({
+                            ...p,
+                            catalog_pricing_preset_id: opt.id,
+                            catalog_pricing_addon_ids: p.catalog_pricing_addon_ids,
+                          }))
+                        }
+                        className={cn(
+                          "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
+                          selected
+                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
+                            : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                        )}
+                      >
+                        <span className="font-semibold block">{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {catalogAddonOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-text-secondary">Additionals (optional)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {catalogAddonOptions.map((addon) => {
+                      const checked = form.catalog_pricing_addon_ids.includes(addon.id);
+                      return (
+                        <button
+                          key={addon.id}
+                          type="button"
+                          onClick={() => toggleStackableAddon(addon.id)}
+                          className={cn(
+                            "rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
+                            checked
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                          )}
+                        >
+                          <span className="font-medium">{addon.label}</span>
+                          <span className="block text-[10px] tabular-nums opacity-80">
+                            +{formatCurrency(addon.fixed_price)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
             <p className="text-[11px] font-semibold text-text-tertiary">Client & Schedule</p>
             <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
@@ -3592,7 +3705,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Additional notes</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Notes</label>
                 <textarea
                   value={form.additional_notes}
                   onChange={(e) => update("additional_notes", e.target.value)}
@@ -3670,189 +3783,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
               </div>
             </div>
           </details>
-
-          {isStackablePricing ? (
-            <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
-              <p className="text-[11px] font-semibold text-text-tertiary">Package &amp; additionals</p>
-              {!effectiveAccountId ? (
-                <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
-                  Select a client linked to an account — account-specific cleaning rates apply.
-                </p>
-              ) : null}
-              <div className="space-y-1.5">
-                <p className="text-[11px] font-medium text-text-secondary">Property size *</p>
-                <div className="grid grid-cols-1 @sm:grid-cols-2 gap-1.5">
-                  {catalogPricingPresetOptions.map((opt) => {
-                    const selected = form.catalog_pricing_preset_id === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() =>
-                          setForm((p) => ({
-                            ...p,
-                            catalog_pricing_preset_id: opt.id,
-                            catalog_pricing_addon_ids: p.catalog_pricing_addon_ids,
-                          }))
-                        }
-                        className={cn(
-                          "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
-                          selected
-                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
-                            : "border-border-light bg-card text-text-secondary hover:border-primary/30",
-                        )}
-                      >
-                        <span className="font-semibold block">{opt.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {catalogAddonOptions.length > 0 ? (
-                <div className="space-y-1.5">
-                  <p className="text-[11px] font-medium text-text-secondary">Additionals (optional)</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {catalogAddonOptions.map((addon) => {
-                      const checked = form.catalog_pricing_addon_ids.includes(addon.id);
-                      return (
-                        <button
-                          key={addon.id}
-                          type="button"
-                          onClick={() => toggleStackableAddon(addon.id)}
-                          className={cn(
-                            "rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
-                            checked
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border-light bg-card text-text-secondary hover:border-primary/30",
-                          )}
-                        >
-                          <span className="font-medium">{addon.label}</span>
-                          <span className="block text-[10px] tabular-nums opacity-80">
-                            +{formatCurrency(addon.fixed_price)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
-            <p className="text-[11px] font-semibold text-text-tertiary">Partner Allocation</p>
-            {!form.catalog_service_id ? (
-              <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
-                Select type of work above first — partner-specific prices load in Pricing below.
-              </p>
-            ) : null}
-            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
-                className={cn(
-                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
-                  form.assignment_mode === "manual"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
-                    : "border-border bg-card text-text-secondary",
-                )}
-              >
-                <p className="font-medium">Allocate partner</p>
-                <p className="text-xs opacity-80">Pick a specific partner now</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  lastAutoPartnerCost.current = null;
-                  setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }));
-                }}
-                className={cn(
-                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
-                  form.assignment_mode === "auto"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
-                    : "border-border bg-card text-text-secondary",
-                )}
-              >
-                <p className="font-medium">Auto assign</p>
-                <p className="text-xs opacity-80">System will assign after creation</p>
-              </button>
-            </div>
-            {form.assignment_mode === "manual" && (
-              <div className="space-y-2">
-                <Input
-                  placeholder="Search partner by name, trade, or location..."
-                  value={partnerSearch}
-                  onChange={(e) => setPartnerSearch(e.target.value)}
-                />
-                <div className="max-h-44 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
-                  <label
-                    className={cn(
-                      "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-text-primary">No partner</p>
-                      <p className="text-xs text-text-tertiary">Create job without assignment</p>
-                    </div>
-                    <input
-                      type="radio"
-                      name="partner-select"
-                      className="h-4 w-4"
-                      checked={!form.partner_id}
-                      onChange={() => applyPartnerPricing("")}
-                    />
-                  </label>
-                  {filteredPartners.map((p) => {
-                    const pid = p.id;
-                    const selected = form.partner_id === pid;
-                    const match = targetWorkType
-                      ? safePartnerMatchesTypeOfWork(p, targetWorkType, form.catalog_service_id || null)
-                      : false;
-                    return (
-                      <label
-                        key={pid}
-                        className={cn(
-                          "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                          selected
-                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
-                            : match
-                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
-                            : "border-border hover:border-[#1DB87A]/35",
-                        )}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
-                          <p
-                            className={cn(
-                              "text-xs truncate",
-                              match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
-                            )}
-                          >
-                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
-                          <input
-                            type="radio"
-                            name="partner-select"
-                            className="h-4 w-4"
-                            checked={selected}
-                            onChange={() => applyPartnerPricing(pid)}
-                          />
-                        </div>
-                      </label>
-                    );
-                  })}
-                  {filteredPartners.length === 0 ? (
-                    <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </section>
-
 
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
             <div className="flex items-center justify-between gap-2">
@@ -3974,6 +3904,121 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </p>
               </>
             ) : null}
+          </section>
+
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
+            <p className="text-[11px] font-semibold text-text-tertiary">Partner Allocation</p>
+            {!form.catalog_service_id ? (
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+                Select type of work above first — partner-specific prices load in Pricing above.
+              </p>
+            ) : null}
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
+                className={cn(
+                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
+                  form.assignment_mode === "manual"
+                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    : "border-border bg-card text-text-secondary",
+                )}
+              >
+                <p className="font-medium">Allocate partner</p>
+                <p className="text-xs opacity-80">Pick a specific partner now</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  lastAutoPartnerCost.current = null;
+                  setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }));
+                }}
+                className={cn(
+                  "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
+                  form.assignment_mode === "auto"
+                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    : "border-border bg-card text-text-secondary",
+                )}
+              >
+                <p className="font-medium">Auto assign</p>
+                <p className="text-xs opacity-80">System will assign after creation</p>
+              </button>
+            </div>
+            {form.assignment_mode === "manual" && (
+              <div className="space-y-2">
+                <Input
+                  placeholder="Search partner by name, trade, or location..."
+                  value={partnerSearch}
+                  onChange={(e) => setPartnerSearch(e.target.value)}
+                />
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
+                  <label
+                    className={cn(
+                      "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-text-primary">No partner</p>
+                      <p className="text-xs text-text-tertiary">Create job without assignment</p>
+                    </div>
+                    <input
+                      type="radio"
+                      name="partner-select"
+                      className="h-4 w-4"
+                      checked={!form.partner_id}
+                      onChange={() => applyPartnerPricing("")}
+                    />
+                  </label>
+                  {filteredPartners.map((p) => {
+                    const pid = p.id;
+                    const selected = form.partner_id === pid;
+                    const match = targetWorkType
+                      ? safePartnerMatchesTypeOfWork(p, targetWorkType, form.catalog_service_id || null)
+                      : false;
+                    return (
+                      <label
+                        key={pid}
+                        className={cn(
+                          "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                          selected
+                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
+                            : match
+                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
+                            : "border-border hover:border-[#1DB87A]/35",
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
+                          <p
+                            className={cn(
+                              "text-xs truncate",
+                              match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
+                            )}
+                          >
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
+                          <input
+                            type="radio"
+                            name="partner-select"
+                            className="h-4 w-4"
+                            checked={selected}
+                            onChange={() => applyPartnerPricing(pid)}
+                          />
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {filteredPartners.length === 0 ? (
+                    <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
           </section>
 
 

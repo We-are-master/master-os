@@ -1,0 +1,679 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { PageHeader } from "@/components/layout/page-header";
+import { PageTransition } from "@/components/layout/page-transition";
+import { Button } from "@/components/ui/button";
+import { Tabs } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { Drawer } from "@/components/ui/drawer";
+import { Modal } from "@/components/ui/modal";
+import { SearchInput, Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import Link from "next/link";
+import { Plus, Loader2, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
+import type { Lead, LeadStatus, LeadUrgency } from "@/types/database";
+import { useSupabaseList } from "@/hooks/use-supabase-list";
+import { listLeads, createLead, updateLead } from "@/services/leads";
+import { getStatusCounts, type ListResult } from "@/services/base";
+import { cn, formatYmdUkDisplay } from "@/lib/utils";
+import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
+import { validateLeadForm, type LeadFieldErrors } from "@/lib/lead-validation";
+
+function mapboxPartsToLeadFields(parts: AddressParts) {
+  const address =
+    parts.full_address?.trim() ||
+    [parts.address, parts.city, parts.postcode].filter(Boolean).join(", ");
+  return {
+    address,
+    city: parts.city?.trim() ?? "",
+    postcode: parts.postcode?.trim() ?? "",
+  };
+}
+
+/** Single line for Mapbox field — merges stored address / city / postcode when needed. */
+function leadAddressDisplay(lead: { address: string; city?: string | null; postcode?: string | null }): string {
+  const line = lead.address?.trim() ?? "";
+  const city = lead.city?.trim();
+  const pc = lead.postcode?.trim();
+  if (!city && !pc) return line;
+  const lower = line.toLowerCase();
+  if (pc && lower.includes(pc.toLowerCase())) {
+    if (!city || lower.includes(city.toLowerCase())) return line;
+    return `${line}, ${city}`;
+  }
+  return [line, city, pc].filter(Boolean).join(", ");
+}
+
+type LeadFormState = {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  postcode: string;
+  urgency: LeadUrgency;
+  scope: string;
+  status: LeadStatus;
+};
+
+function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
+  return {
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    postcode: "",
+    urgency: "medium",
+    scope: "",
+    status,
+  };
+}
+
+function FieldBlock({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <label className="text-xs font-medium text-text-secondary mb-1.5 block">{label}</label>
+      {children}
+      {error ? <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{error}</p> : null}
+    </div>
+  );
+}
+
+const LEAD_STATUSES: LeadStatus[] = ["new", "interested"];
+
+const statusConfig: Record<
+  LeadStatus,
+  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
+> = {
+  new: { label: "New", variant: "primary" },
+  interested: { label: "Interested", variant: "success" },
+};
+
+const urgencyConfig: Record<
+  LeadUrgency,
+  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
+> = {
+  low: { label: "Low", variant: "default" },
+  medium: { label: "Medium", variant: "info" },
+  high: { label: "High", variant: "warning" },
+  urgent: { label: "Urgent", variant: "danger" },
+};
+
+interface LeadsClientProps {
+  initialData?: ListResult<Lead> | null;
+}
+
+export function LeadsClient({ initialData }: LeadsClientProps = {}) {
+  const {
+    data,
+    loading,
+    page,
+    totalPages,
+    totalItems,
+    setPage,
+    search,
+    setSearch,
+    status,
+    setStatus,
+    refresh,
+  } = useSupabaseList<Lead>({
+    fetcher: listLeads,
+    realtimeTable: "leads",
+    initialData,
+    initialStatus: "new",
+  });
+
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [createForm, setCreateForm] = useState(() => emptyLeadForm());
+  const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
+  const [editForm, setEditForm] = useState(() => emptyLeadForm());
+  const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
+
+  const loadCounts = useCallback(async () => {
+    try {
+      const counts = await getStatusCounts("leads", LEAD_STATUSES);
+      setStatusCounts(counts);
+    } catch {
+      setStatusCounts({});
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCounts();
+  }, [loadCounts, data.length, status]);
+
+  useEffect(() => {
+    if (!selectedLead) return;
+    setEditErrors({});
+    setEditForm({
+      name: selectedLead.name,
+      email: selectedLead.email ?? "",
+      phone: selectedLead.phone ?? "",
+      address: leadAddressDisplay(selectedLead),
+      city: selectedLead.city ?? "",
+      postcode: selectedLead.postcode ?? "",
+      urgency: selectedLead.urgency,
+      scope: selectedLead.scope ?? "",
+      status: selectedLead.status,
+    });
+  }, [selectedLead]);
+
+  const tabs = useMemo(
+    () =>
+      LEAD_STATUSES.map((st) => ({
+        id: st,
+        label: statusConfig[st].label,
+        count: statusCounts[st] ?? 0,
+      })),
+    [statusCounts],
+  );
+
+  const columns: Column<Lead>[] = useMemo(
+    () => [
+      {
+        key: "reference",
+        label: "Ref",
+        sortable: true,
+        minWidth: "6.5rem",
+        headerClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell",
+        render: (item) => (
+          <span className="font-mono text-xs text-text-secondary tabular-nums whitespace-nowrap">
+            {item.reference}
+          </span>
+        ),
+      },
+      {
+        key: "name",
+        label: "Lead",
+        sortable: true,
+        minWidth: "10rem",
+        cellClassName: "min-w-[9rem] max-w-[min(100vw-8rem,22rem)] sm:max-w-xs lg:max-w-sm",
+        render: (item) => {
+          const urgency = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
+          const scopePreview = item.scope?.trim();
+          return (
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium text-text-primary truncate">{item.name}</p>
+              <p className="font-mono text-[10px] text-text-tertiary tabular-nums sm:hidden">{item.reference}</p>
+              <div className="flex flex-wrap items-center gap-1.5 md:hidden">
+                <Badge variant={urgency.variant} className="text-[10px] px-1.5 py-0">
+                  {urgency.label}
+                </Badge>
+                <Badge variant={statusConfig[item.status].variant} className="text-[10px] px-1.5 py-0">
+                  {statusConfig[item.status].label}
+                </Badge>
+              </div>
+              {item.email ? (
+                <p className="text-[11px] text-text-tertiary truncate md:hidden">{item.email}</p>
+              ) : null}
+              {scopePreview ? (
+                <p className="text-[11px] text-text-tertiary line-clamp-2 whitespace-pre-wrap lg:hidden">
+                  {scopePreview}
+                </p>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        key: "email",
+        label: "Email",
+        minWidth: "9rem",
+        headerClassName: "hidden md:table-cell",
+        cellClassName: "hidden md:table-cell max-w-[12rem]",
+        render: (item) => (
+          <span className="text-xs text-text-secondary truncate block">{item.email ?? "—"}</span>
+        ),
+      },
+      {
+        key: "phone",
+        label: "Phone",
+        minWidth: "7rem",
+        headerClassName: "hidden lg:table-cell",
+        cellClassName: "hidden lg:table-cell whitespace-nowrap",
+        render: (item) => (
+          <span className="text-xs text-text-secondary tabular-nums">{item.phone ?? "—"}</span>
+        ),
+      },
+      {
+        key: "urgency",
+        label: "Urgency",
+        minWidth: "5.5rem",
+        headerClassName: "hidden md:table-cell",
+        cellClassName: "hidden md:table-cell",
+        render: (item) => {
+          const cfg = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
+          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
+        },
+      },
+      {
+        key: "scope",
+        label: "Scope",
+        minWidth: "12rem",
+        headerClassName: "hidden lg:table-cell",
+        cellClassName: "hidden lg:table-cell max-w-md",
+        render: (item) => (
+          <p className="text-xs text-text-secondary line-clamp-2 whitespace-pre-wrap">
+            {item.scope?.trim() || "—"}
+          </p>
+        ),
+      },
+      {
+        key: "status",
+        label: "Status",
+        minWidth: "5.5rem",
+        headerClassName: "hidden md:table-cell",
+        cellClassName: "hidden md:table-cell",
+        render: (item) => {
+          const cfg = statusConfig[item.status] ?? statusConfig.new;
+          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
+        },
+      },
+      {
+        key: "created_at",
+        label: "Created",
+        sortable: true,
+        minWidth: "5.5rem",
+        headerClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell",
+        render: (item) => (
+          <span className="text-xs text-text-tertiary tabular-nums whitespace-nowrap">
+            {formatYmdUkDisplay(item.created_at.slice(0, 10))}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const handleCreate = async () => {
+    const errors = validateLeadForm(createForm);
+    setCreateErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast.error(Object.values(errors)[0] ?? "Check the form");
+      return;
+    }
+    setCreating(true);
+    try {
+      const lead = await createLead({
+        name: createForm.name,
+        email: createForm.email,
+        phone: createForm.phone,
+        address: createForm.address,
+        city: createForm.city,
+        postcode: createForm.postcode,
+        urgency: createForm.urgency,
+        scope: createForm.scope,
+        status: "new",
+      });
+      toast.success(`Lead ${lead.reference} created and linked to Fixfy clients`);
+      setCreateOpen(false);
+      setCreateForm(emptyLeadForm());
+      setCreateErrors({});
+      setStatus("new");
+      await refresh();
+      await loadCounts();
+      setSelectedLead(lead);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create lead");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedLead) return;
+    const errors = validateLeadForm(editForm);
+    setEditErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast.error(Object.values(errors)[0] ?? "Check the form");
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateLead(selectedLead.id, {
+        name: editForm.name,
+        email: editForm.email,
+        phone: editForm.phone,
+        address: editForm.address,
+        city: editForm.city,
+        postcode: editForm.postcode,
+        urgency: editForm.urgency,
+        scope: editForm.scope,
+        status: editForm.status,
+      });
+      toast.success("Lead updated");
+      setSelectedLead(updated);
+      await refresh();
+      await loadCounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save lead");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const markInterested = async () => {
+    if (!selectedLead || selectedLead.status === "interested") return;
+    setSaving(true);
+    try {
+      const updated = await updateLead(selectedLead.id, { status: "interested" });
+      toast.success("Marked as Interested");
+      setSelectedLead(updated);
+      setEditForm((f) => ({ ...f, status: "interested" }));
+      setStatus("interested");
+      await refresh();
+      await loadCounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update status");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <PageTransition>
+      <div className="min-w-0 space-y-4 sm:space-y-5">
+        <PageHeader
+          title="Leads"
+          subtitle="Capture opportunities before quoting — offer interested leads to partners."
+          className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
+        >
+          <Button
+            type="button"
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+            aria-label="Add lead"
+            title="Add lead"
+            onClick={() => setCreateOpen(true)}
+            className={cn(
+              "!flex-nowrap shrink-0 self-end sm:self-auto",
+              "h-9 w-9 p-0 justify-center",
+              "sm:h-auto sm:min-h-8 sm:w-auto sm:min-w-[8.75rem] sm:px-3 sm:py-1.5 sm:justify-center",
+              "[&>span:last-child]:whitespace-nowrap",
+            )}
+          >
+            <span className="hidden sm:inline">Add lead</span>
+          </Button>
+        </PageHeader>
+
+        <div className="min-w-0 -mx-1 px-1 overflow-x-auto">
+          <Tabs tabs={tabs} activeTab={status} onChange={setStatus} className="min-w-max sm:min-w-0" />
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, ref, scope…"
+            className="w-full min-w-0 sm:max-w-md"
+          />
+          <p className="text-xs text-text-tertiary tabular-nums shrink-0 sm:text-right">
+            {totalItems} lead{totalItems === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+          <DataTable
+            className="min-w-[20rem]"
+            columns={columns}
+            data={data}
+            loading={loading}
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onRowClick={setSelectedLead}
+            emptyMessage={
+              status === "new"
+                ? "No new leads yet — add one to get started."
+                : "No interested leads yet."
+            }
+          />
+        </div>
+      </div>
+
+      <Modal
+        open={createOpen}
+        onClose={() => {
+          setCreateOpen(false);
+          setCreateErrors({});
+        }}
+        title="Add lead"
+        subtitle="Contact is saved under the Fixfy account in Clients. New leads start in the New tab."
+        size="md"
+        className="max-w-[min(100vw-1.5rem,32rem)] sm:max-w-lg"
+      >
+        <div className="px-4 pb-4 pt-4 space-y-3.5 sm:px-5 sm:pb-5 max-h-[min(75dvh,640px)] overflow-y-auto">
+          <FieldBlock label="Name" error={createErrors.name}>
+            <Input
+              value={createForm.name}
+              onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Client or job title"
+              autoFocus
+              className={cn(createErrors.name && "border-red-400")}
+            />
+          </FieldBlock>
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+            <FieldBlock label="Email" error={createErrors.email}>
+              <Input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={createForm.email}
+                onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
+                placeholder="name@example.com"
+                className={cn(createErrors.email && "border-red-400")}
+              />
+            </FieldBlock>
+            <FieldBlock label="Phone" error={createErrors.phone}>
+              <Input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={createForm.phone}
+                onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value }))}
+                placeholder="07xxx xxxxxx"
+                className={cn(createErrors.phone && "border-red-400")}
+              />
+            </FieldBlock>
+          </div>
+          <FieldBlock label="Address" error={createErrors.address}>
+            <AddressAutocomplete
+              placeholder="Start typing address or postcode…"
+              value={createForm.address}
+              onChange={(v) =>
+                setCreateForm((f) => ({ ...f, address: v, city: "", postcode: "" }))
+              }
+              onSelect={(parts) => setCreateForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
+            />
+            <p className="mt-1.5 text-[11px] text-text-tertiary">
+              Choose a Mapbox suggestion — city and postcode are filled automatically.
+            </p>
+          </FieldBlock>
+          <FieldBlock label="Urgency">
+            <Select
+              value={createForm.urgency}
+              onChange={(e) => setCreateForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
+              options={[
+                { value: "low", label: "Low" },
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+                { value: "urgent", label: "Urgent" },
+              ]}
+            />
+          </FieldBlock>
+          <FieldBlock label="Scope" error={createErrors.scope}>
+            <textarea
+              value={createForm.scope}
+              onChange={(e) => setCreateForm((f) => ({ ...f, scope: e.target.value }))}
+              rows={4}
+              placeholder="Describe the work, access, and any constraints…"
+              className={cn(
+                "w-full min-h-[5.5rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
+                "placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/30",
+                createErrors.scope && "border-red-400",
+              )}
+            />
+          </FieldBlock>
+          <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+            <Button variant="ghost" onClick={() => setCreateOpen(false)} className="w-full sm:w-auto">
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={creating} className="w-full sm:w-auto">
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create lead"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Drawer
+        open={!!selectedLead}
+        onClose={() => setSelectedLead(null)}
+        title={selectedLead?.reference ?? "Lead"}
+        subtitle={selectedLead?.name}
+        width="w-full max-w-[100vw] sm:w-[min(100vw-2rem,28rem)]"
+      >
+        {selectedLead ? (
+          <div className="space-y-4 pb-6 px-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={statusConfig[selectedLead.status].variant}>
+                {statusConfig[selectedLead.status].label}
+              </Badge>
+              <Badge variant={urgencyConfig[selectedLead.urgency].variant}>
+                {urgencyConfig[selectedLead.urgency].label} urgency
+              </Badge>
+              {selectedLead.client_id ? (
+                <Badge variant="info">Fixfy client linked</Badge>
+              ) : null}
+              {selectedLead.published_at ? (
+                <Badge variant="default">Offered to partners</Badge>
+              ) : null}
+            </div>
+
+            {selectedLead.client_id ? (
+              <Link
+                href="/clients"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+              >
+                Open Clients directory
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            ) : null}
+
+            <FieldBlock label="Name" error={editErrors.name}>
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                className={cn(editErrors.name && "border-red-400")}
+              />
+            </FieldBlock>
+
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <FieldBlock label="Email" error={editErrors.email}>
+                <Input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                  className={cn(editErrors.email && "border-red-400")}
+                />
+              </FieldBlock>
+              <FieldBlock label="Phone" error={editErrors.phone}>
+                <Input
+                  type="tel"
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                  className={cn(editErrors.phone && "border-red-400")}
+                />
+              </FieldBlock>
+            </div>
+
+            <FieldBlock label="Address" error={editErrors.address}>
+              <AddressAutocomplete
+                placeholder="Start typing address or postcode…"
+                value={editForm.address}
+                onChange={(v) =>
+                  setEditForm((f) => ({ ...f, address: v, city: "", postcode: "" }))
+                }
+                onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
+              />
+              <p className="mt-1.5 text-[11px] text-text-tertiary">
+                Choose a Mapbox suggestion — city and postcode are filled automatically.
+              </p>
+            </FieldBlock>
+
+            <FieldBlock label="Urgency">
+              <Select
+                value={editForm.urgency}
+                onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
+                options={[
+                  { value: "low", label: "Low" },
+                  { value: "medium", label: "Medium" },
+                  { value: "high", label: "High" },
+                  { value: "urgent", label: "Urgent" },
+                ]}
+              />
+            </FieldBlock>
+
+            <FieldBlock label="Scope" error={editErrors.scope}>
+              <textarea
+                value={editForm.scope}
+                onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
+                rows={6}
+                className={cn(
+                  "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
+                  "focus:outline-none focus:ring-2 focus:ring-primary/30",
+                  editErrors.scope && "border-red-400",
+                )}
+              />
+            </FieldBlock>
+
+            <FieldBlock label="Status">
+              <Select
+                value={editForm.status}
+                onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as LeadStatus }))}
+                options={[
+                  { value: "new", label: "New" },
+                  { value: "interested", label: "Interested" },
+                ]}
+              />
+            </FieldBlock>
+
+            <div className="flex flex-col-reverse gap-2 pt-2 border-t border-border sm:flex-row sm:flex-wrap">
+              {selectedLead.status === "new" ? (
+                <Button variant="secondary" onClick={markInterested} disabled={saving} className="w-full sm:w-auto">
+                  Mark interested
+                </Button>
+              ) : null}
+              <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
+              </Button>
+            </div>
+
+            <p className="text-[11px] text-text-tertiary leading-snug">
+              Saving updates the linked client under the Fixfy account (matched by email). Interested leads can be
+              offered to partners soon.
+            </p>
+          </div>
+        ) : null}
+      </Drawer>
+    </PageTransition>
+  );
+}

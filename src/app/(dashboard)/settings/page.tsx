@@ -602,13 +602,13 @@ function TeamTab() {
 // ---------------------------------------------------------------------------
 
 const ALL_PERMISSIONS: PermissionKey[] = [
-  "dashboard", "requests", "quotes", "jobs", "service_catalog", "partners",
+  "dashboard", "requests", "leads", "quotes", "jobs", "service_catalog", "partners",
   "accounts", "finance", "team", "settings", "manage_team", "manage_roles",
   "delete_data", "export_data",
 ];
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "requests", "quotes", "jobs", "service_catalog"] },
+  { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "service_catalog"] },
   { label: "Network & Finance", keys: ["partners", "accounts", "finance", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
@@ -1209,7 +1209,7 @@ function NavigationTab() {
   };
 
   const permissionOptions = [
-    "dashboard", "requests", "quotes", "jobs", "service_catalog", "partners", "accounts", "finance", "team", "settings",
+    "dashboard", "requests", "leads", "quotes", "jobs", "service_catalog", "partners", "accounts", "finance", "team", "settings",
   ];
 
   if (loading && localNav.length === 0) {
@@ -1368,6 +1368,7 @@ const ROLE_META: Record<RoleKey, { name: string; description: string; color: str
 const permissionLabels: Record<string, string> = {
   dashboard: "Dashboard",
   requests: "Requests",
+  leads: "Leads",
   quotes: "Quotes",
   jobs: "Jobs",
   service_catalog: "Service catalog (admin pricing templates)",

@@ -3,6 +3,7 @@ import type { NavGroup } from "@/lib/constants";
 export type PermissionKey =
   | "dashboard"
   | "requests"
+  | "leads"
   | "quotes"
   | "jobs"
   | "service_catalog"
