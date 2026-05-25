@@ -314,6 +314,36 @@ function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   return "all";
 }
 
+const JOBS_DEFAULT_TAB_STORAGE_KEY = "master-os-jobs-default-tab-v1";
+const JOBS_DEFAULT_TAB_IDS = [
+  "all",
+  "action_required",
+  "scheduled",
+  "in_progress",
+  "final_check",
+  "closed",
+] as const;
+type JobsDefaultTabId = (typeof JOBS_DEFAULT_TAB_IDS)[number];
+const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
+  all: "Active jobs",
+  action_required: "Action Required",
+  scheduled: "Scheduled",
+  in_progress: "In Progress",
+  final_check: "Final Checks",
+  closed: "Closed",
+};
+
+function readStoredJobsDefaultTab(): JobsDefaultTabId {
+  if (typeof window === "undefined") return "all";
+  try {
+    const v = localStorage.getItem(JOBS_DEFAULT_TAB_STORAGE_KEY);
+    if (v && (JOBS_DEFAULT_TAB_IDS as readonly string[]).includes(v)) return v as JobsDefaultTabId;
+  } catch {
+    /* ignore */
+  }
+  return "all";
+}
+
 function formatMediumYmd(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return ymd;
@@ -534,6 +564,16 @@ function JobsPageContent() {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
   }, []);
+
+  const [defaultJobsTab, setDefaultJobsTabState] = useState<JobsDefaultTabId>(() => readStoredJobsDefaultTab());
+  const setDefaultJobsTab = useCallback((tab: JobsDefaultTabId) => {
+    setDefaultJobsTabState(tab);
+    try {
+      localStorage.setItem(JOBS_DEFAULT_TAB_STORAGE_KEY, tab);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
 
@@ -566,7 +606,7 @@ function JobsPageContent() {
     pageSize: jobsPageSize,
     realtimeTable: "jobs",
     listParams,
-    initialStatus: "all",
+    initialStatus: defaultJobsTab,
   });
   const { profile } = useProfile();
   const { officeCancellationPresets, accessFees } = useFrontendSetup();
@@ -2440,6 +2480,19 @@ function JobsPageContent() {
                       </div>
                     )}
                     <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterAccountId("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
+                    <div className="pt-2 mt-1 border-t border-border-light">
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Default tab on open</p>
+                      <select
+                        value={defaultJobsTab}
+                        onChange={(e) => setDefaultJobsTab(e.target.value as JobsDefaultTabId)}
+                        className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
+                      >
+                        {JOBS_DEFAULT_TAB_IDS.map((id) => (
+                          <option key={id} value={id}>{JOBS_DEFAULT_TAB_LABELS[id]}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-text-tertiary mt-1 leading-snug">Applies the next time you open Jobs.</p>
+                    </div>
                   </div>
                 )}
               </div>
