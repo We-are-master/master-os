@@ -170,14 +170,14 @@ function GlobalSearch() {
     <div ref={containerRef} className="relative hidden md:block">
       {/* Input */}
       <div className="relative flex items-center">
-        <Search className="absolute left-3 h-4 w-4 text-text-tertiary pointer-events-none" />
+        <Search className="absolute left-3 h-4 w-4 text-text-secondary pointer-events-none" />
         <input
           ref={inputRef}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => { if (query.trim().length >= 2) setOpen(true); }}
           placeholder="Search jobs, quotes, requests, address, postcode…"
-          className="h-8 w-80 rounded-md bg-fx-paper border border-transparent pl-9 pr-16 text-[13px] text-text-primary placeholder:text-fx-mute focus:outline-none focus:border-fx-line hover:border-fx-line transition-colors"
+          className="h-9 w-96 rounded-lg bg-surface border border-fx-line pl-9 pr-16 text-[13px] text-text-primary placeholder:text-text-tertiary shadow-sm focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15 hover:border-fx-line/80 hover:bg-fx-paper transition-all"
         />
         {query ? (
           <button
@@ -187,7 +187,7 @@ function GlobalSearch() {
             <X className="h-3.5 w-3.5" />
           </button>
         ) : (
-          <kbd className="absolute right-2.5 font-mono text-[10px] text-fx-mute bg-surface border border-fx-line rounded-sm px-1.5 py-0.5 select-none">⌘K</kbd>
+          <kbd className="absolute right-2.5 font-mono text-[10px] text-text-tertiary bg-fx-paper border border-fx-line rounded-sm px-1.5 py-0.5 select-none">⌘K</kbd>
         )}
       </div>
 

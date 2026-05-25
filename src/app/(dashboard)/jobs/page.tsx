@@ -134,7 +134,7 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
-import { JobScheduleTimingChip } from "@/components/shared/job-schedule-timing-chip";
+import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
@@ -1868,19 +1868,24 @@ function JobsPageContent() {
         const detail = formatJobScheduleLine(item);
         const secondaryLine = jobManagementScheduleSecondaryLine(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        const timingChip = <JobScheduleTimingChip job={item} title={detail} />;
+        const timingKind = getJobScheduleTimingKind(item);
+        const hasChip = Boolean(timingKind);
         return (
           <div className="min-w-0">
-            {timingChip ?? (line ? (
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {hasChip ? (
+                <JobScheduleTimingChip job={item} title={detail} />
+              ) : line ? (
                 <span
-                  className="text-[11px] text-text-secondary leading-snug block whitespace-normal break-words"
+                  className="text-[11px] text-text-secondary leading-snug whitespace-normal break-words"
                   title={detail ?? undefined}
                 >
                   {line}
                 </span>
               ) : (
-              <span className="text-[11px] text-text-tertiary">—</span>
-            ))}
+                <span className="text-[11px] text-text-tertiary">—</span>
+              )}
+            </div>
             {isOnsiteInProgress ? (
               <ScheduleInProgressLiveSecondary job={item} />
             ) : secondaryLine ? (
