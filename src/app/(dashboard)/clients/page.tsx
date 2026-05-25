@@ -1188,11 +1188,11 @@ function EditClientForm({
         />
       </div>
       <Select
-        label="Linked account (Accounts) *"
+        label="Select Account *"
         value={form.source_account_id}
         onChange={(e) => update("source_account_id", e.target.value)}
         options={[
-          { value: "", label: "— Where did the client come from? —" },
+          { value: "", label: "— Select the account for this client —" },
           ...linkedAccountSelectOptions,
         ]}
       />
@@ -1372,7 +1372,7 @@ function CreateClientForm({
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
       <Select
-        label="Linked account (Accounts) *"
+        label="Select Account *"
         value={form.source_account_id}
         onChange={(e) => {
           const value = e.target.value;
@@ -1386,7 +1386,7 @@ function CreateClientForm({
           }
         }}
         options={[
-          { value: "", label: "— Where did the client come from? —" },
+          { value: "", label: "— Select the account for this client —" },
           ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
           { value: CREATE_LINKED_ACCOUNT_OPTION, label: "+ Create new account" },
         ]}

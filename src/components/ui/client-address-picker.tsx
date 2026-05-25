@@ -1089,7 +1089,7 @@ export function ClientAddressPicker({
               </>
             ) : (
               <>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Linked account (Accounts) *</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Select Account *</label>
                 <select
                   value={createClientForm.source_account_id}
                   onChange={(e) => {
@@ -1105,7 +1105,7 @@ export function ClientAddressPicker({
                   }}
                   className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                 >
-                  <option value="">— Where did the client come from? —</option>
+                  <option value="">— Select the account for this client —</option>
                   {sourceAccounts.map((a) => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}

@@ -16,7 +16,7 @@ import { Plus, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import type { Lead, LeadStatus, LeadUrgency } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listLeads, createLead, updateLead } from "@/services/leads";
+import { listLeads, createLead, updateLead, countJobsForClient } from "@/services/leads";
 import { getStatusCounts, type ListResult } from "@/services/base";
 import { cn, formatYmdUkDisplay } from "@/lib/utils";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
@@ -145,6 +145,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
   const [editForm, setEditForm] = useState(() => emptyLeadForm());
   const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
+  const [linkedJobsCount, setLinkedJobsCount] = useState<number | null>(null);
 
   const loadCounts = useCallback(async () => {
     try {
@@ -160,7 +161,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   }, [loadCounts, data.length, status]);
 
   useEffect(() => {
-    if (!selectedLead) return;
+    if (!selectedLead) {
+      setLinkedJobsCount(null);
+      return;
+    }
     setEditErrors({});
     setEditForm({
       name: selectedLead.name,
@@ -173,6 +177,20 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       scope: selectedLead.scope ?? "",
       status: selectedLead.status,
     });
+
+    const clientId = selectedLead.client_id;
+    if (!clientId) {
+      setLinkedJobsCount(0);
+      return;
+    }
+    setLinkedJobsCount(null);
+    let cancelled = false;
+    countJobsForClient(clientId).then((n) => {
+      if (!cancelled) setLinkedJobsCount(n);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedLead]);
 
   const tabs = useMemo(
@@ -549,11 +567,25 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         onClose={() => setSelectedLead(null)}
         title={selectedLead?.reference ?? "Lead"}
         subtitle={selectedLead?.name}
-        width="w-full max-w-[100vw] sm:w-[min(100vw-2rem,28rem)]"
+        width="w-full sm:w-[min(100vw-2rem,30rem)] lg:w-[min(100vw-3rem,38rem)]"
+        footer={
+          selectedLead ? (
+            <div className="flex flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
+              {selectedLead.status === "new" ? (
+                <Button variant="secondary" onClick={markInterested} disabled={saving} className="w-full sm:w-auto">
+                  Mark interested
+                </Button>
+              ) : null}
+              <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
+              </Button>
+            </div>
+          ) : null
+        }
       >
         {selectedLead ? (
-          <div className="space-y-4 pb-6 px-1">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="px-4 py-4 space-y-4 sm:px-5 sm:py-5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Badge variant={statusConfig[selectedLead.status].variant}>
                 {statusConfig[selectedLead.status].label}
               </Badge>
@@ -562,6 +594,15 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               </Badge>
               {selectedLead.client_id ? (
                 <Badge variant="info">Fixfy client linked</Badge>
+              ) : null}
+              {linkedJobsCount === 0 ? (
+                <span title="No job available yet — labour-only lead" className="inline-flex">
+                  <Badge variant="warning">Lead only</Badge>
+                </span>
+              ) : linkedJobsCount && linkedJobsCount > 0 ? (
+                <Badge variant="success">
+                  {linkedJobsCount} job{linkedJobsCount === 1 ? "" : "s"} linked
+                </Badge>
               ) : null}
               {selectedLead.published_at ? (
                 <Badge variant="default">Offered to partners</Badge>
@@ -619,18 +660,30 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               </p>
             </FieldBlock>
 
-            <FieldBlock label="Urgency">
-              <Select
-                value={editForm.urgency}
-                onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
-                options={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Medium" },
-                  { value: "high", label: "High" },
-                  { value: "urgent", label: "Urgent" },
-                ]}
-              />
-            </FieldBlock>
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <FieldBlock label="Urgency">
+                <Select
+                  value={editForm.urgency}
+                  onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                    { value: "urgent", label: "Urgent" },
+                  ]}
+                />
+              </FieldBlock>
+              <FieldBlock label="Status">
+                <Select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as LeadStatus }))}
+                  options={[
+                    { value: "new", label: "New" },
+                    { value: "interested", label: "Interested" },
+                  ]}
+                />
+              </FieldBlock>
+            </div>
 
             <FieldBlock label="Scope" error={editErrors.scope}>
               <textarea
@@ -638,38 +691,16 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
                 rows={6}
                 className={cn(
-                  "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
+                  "w-full min-h-[6rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
                   "focus:outline-none focus:ring-2 focus:ring-primary/30",
                   editErrors.scope && "border-red-400",
                 )}
               />
             </FieldBlock>
 
-            <FieldBlock label="Status">
-              <Select
-                value={editForm.status}
-                onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as LeadStatus }))}
-                options={[
-                  { value: "new", label: "New" },
-                  { value: "interested", label: "Interested" },
-                ]}
-              />
-            </FieldBlock>
-
-            <div className="flex flex-col-reverse gap-2 pt-2 border-t border-border sm:flex-row sm:flex-wrap">
-              {selectedLead.status === "new" ? (
-                <Button variant="secondary" onClick={markInterested} disabled={saving} className="w-full sm:w-auto">
-                  Mark interested
-                </Button>
-              ) : null}
-              <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
-              </Button>
-            </div>
-
             <p className="text-[11px] text-text-tertiary leading-snug">
-              Saving updates the linked client under the Fixfy account (matched by email). Interested leads can be
-              offered to partners soon.
+              Lead saved under the Fixfy account (matched by email). Interested leads can be offered to partners as
+              labour-only when no job is available yet.
             </p>
           </div>
         ) : null}

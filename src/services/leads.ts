@@ -31,6 +31,19 @@ export async function listLeads(params: ListParams): Promise<ListResult<Lead>> {
   });
 }
 
+/** Cheap head count of non-cancelled jobs linked to a client (used by the Leads drawer). */
+export async function countJobsForClient(clientId: string): Promise<number> {
+  if (!clientId.trim()) return 0;
+  const supabase = getSupabase();
+  const { count, error } = await supabase
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", clientId)
+    .is("deleted_at", null);
+  if (error) return 0;
+  return count ?? 0;
+}
+
 export async function getLead(id: string): Promise<Lead | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase

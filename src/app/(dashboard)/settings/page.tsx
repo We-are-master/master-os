@@ -52,7 +52,6 @@ import { getAllConfigurableComplianceRequirementDefs } from "@/lib/partner-requi
 const SERVICE_CATALOG_TAB_ID = "service-catalog";
 
 const settingsAdminTabs = [
-  { id: "team", label: "Users Access" },
   { id: "tiers", label: "Dashboard" },
   { id: "ai-briefs", label: "AI & Daily brief" },
   { id: "setup", label: "Setup" },

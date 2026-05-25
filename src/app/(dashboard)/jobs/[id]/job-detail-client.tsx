@@ -2017,13 +2017,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setPartnerAssignFixedCost(
       String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
     );
+    const cczDefault = job.in_ccz && accessFees.cczFeeGbp > 0 ? String(accessFees.cczFeeGbp) : "";
+    const parkingDefault = job.has_free_parking === false && accessFees.parkingFeeGbp > 0 ? String(accessFees.parkingFeeGbp) : "";
     setPartnerAssignExtraInputs({
       extra: existingPartnerExtras > 0 ? String(existingPartnerExtras) : "",
-      ccz: "",
-      parking: "",
+      ccz: cczDefault,
+      parking: parkingDefault,
       materials: existingMaterials > 0 ? String(existingMaterials) : "",
     });
-  }, [partnerModalOpen, job?.id, job?.job_type, job?.catalog_service_id, job?.partner_cost, job?.partner_extras_amount, job?.materials_cost]);
+  }, [
+    partnerModalOpen,
+    job?.id,
+    job?.job_type,
+    job?.catalog_service_id,
+    job?.partner_cost,
+    job?.partner_extras_amount,
+    job?.materials_cost,
+    job?.in_ccz,
+    job?.has_free_parking,
+    accessFees.cczFeeGbp,
+    accessFees.parkingFeeGbp,
+  ]);
 
   useEffect(() => {
     if (!partnerPickerOpen) return;
@@ -4858,21 +4872,58 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const displayStatus = effectiveJobStatusForDisplay(job);
   const config = statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
   const statusColors = getStatusColors(displayStatus);
+  /**
+   * Ledger-derived sums of client/partner extras (excluding materials, which
+   * is tracked separately in `materials_cost`). Used below as a defensive
+   * floor so the Finance summary totals match the Extras breakdown even when
+   * `job.extras_amount` / `partner_cost` / `partner_extras_amount` drift from
+   * the `job_extra_entries` audit log.
+   */
+  const clientExtrasFromLedger = extraHistory.reduce((acc, row) => {
+    if (row.side !== "client") return acc;
+    if (extraHistoryBucket(row.extraType) === "materials") return acc;
+    return acc + extraHistorySignedAmount(row);
+  }, 0);
+  const partnerExtrasFromLedger = extraHistory.reduce((acc, row) => {
+    if (row.side !== "partner") return acc;
+    if (extraHistoryBucket(row.extraType) === "materials") return acc;
+    return acc + extraHistorySignedAmount(row);
+  }, 0);
+  const clientExtrasFromLedgerRounded = Math.max(0, Math.round(clientExtrasFromLedger * 100) / 100);
+  const partnerExtrasFromLedgerRounded = Math.max(0, Math.round(partnerExtrasFromLedger * 100) / 100);
+  const clientPriceClamp = Math.max(0, Number(job.client_price ?? 0));
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
-  const billableRevenue = jobCustomerBillableRevenueForCollections(job);
-  const partnerCap =
+  const billableRevenue = Math.max(
+    jobCustomerBillableRevenueForCollections(job),
+    clientPriceClamp + clientExtrasFromLedgerRounded,
+  );
+  const partnerStoredExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
+  /**
+   * Bump partnerCap by any ledger extras that exceed `partner_extras_amount`
+   * so Cash out — Partner reflects unsynced ledger rows (defensive against
+   * legacy schemas where `partner_extras_amount` lags behind the entries).
+   */
+  const partnerLedgerExcessAgainstStored = Math.max(0, partnerExtrasFromLedgerRounded - partnerStoredExtras);
+  const partnerCapBase =
     job.job_type === "hourly" && hourlyAutoBilling
       ? Math.max(partnerPaymentCap(job), hourlyAutoBilling.partnerTotal)
       : partnerPaymentCap(job);
+  const partnerCap = partnerCapBase + partnerLedgerExcessAgainstStored;
   const hourlyPartnerLabourForCashOut =
     job.job_type === "hourly" && hourlyAutoBilling ? hourlyAutoBilling.partnerTotal : null;
-  const { base: partnerCashOutBase, extra: partnerCashOutExtra } = partnerCashOutDisplaySplit(
+  /**
+   * Split using the ORIGINAL (un-bumped) cap so the base stays anchored to the
+   * subcontract labour; ledger-excess extras are layered on top of the resulting
+   * extra line so Initial balance + Extras still equal the (bumped) cap.
+   */
+  const { base: partnerCashOutBase, extra: partnerCashOutExtraRaw } = partnerCashOutDisplaySplit(
     job,
-    partnerCap,
+    partnerCapBase,
     hourlyPartnerLabourForCashOut,
   );
+  const partnerCashOutExtra = Math.round((partnerCashOutExtraRaw + partnerLedgerExcessAgainstStored) * 100) / 100;
   const partnerExtraFallback = Math.max(0, Number(job.partner_extras_amount ?? 0));
-  const partnerExtraDisplay = Math.max(partnerCashOutExtra, partnerExtraFallback, partnerExtrasUiValue);
+  const partnerExtraDisplay = Math.max(partnerCashOutExtra, partnerExtraFallback, partnerExtrasUiValue, partnerExtrasFromLedgerRounded);
   const hasPartnerExtra = partnerExtraDisplay > 0.02;
   const partnerExtraBreakdownTotal =
     Number(partnerExtraBreakdownUi.extra ?? 0) +
@@ -9272,31 +9323,78 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 />
               </div>
             )}
-            <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
-              {[
-                { key: "extra", label: "Labour" },
-                { key: "ccz", label: "CCZ" },
-                { key: "parking", label: "Parking" },
-                { key: "materials", label: "Materials" },
-              ].map((row) => (
-                <label key={row.key} className="flex items-center justify-between gap-2 text-xs text-text-secondary">
-                  <span>{row.label}</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={partnerAssignExtraInputs[row.key as keyof typeof partnerAssignExtraInputs]}
-                    onChange={(e) =>
-                      setPartnerAssignExtraInputs((prev) => ({
-                        ...prev,
-                        [row.key]: e.target.value,
-                      }))
-                    }
-                    className="h-8 w-28 text-xs"
-                    placeholder="0.00"
-                  />
-                </label>
-              ))}
+            <div className="space-y-2.5 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { key: "extra", label: "Labour" },
+                  { key: "materials", label: "Materials" },
+                ] as const).map((row) => (
+                  <label key={row.key} className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>{row.label}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerAssignExtraInputs[row.key]}
+                      onChange={(e) =>
+                        setPartnerAssignExtraInputs((prev) => ({
+                          ...prev,
+                          [row.key]: e.target.value,
+                        }))
+                      }
+                      className="h-8 text-xs"
+                      placeholder="0.00"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2 border-t border-border-light pt-2.5">
+                {([
+                  { key: "ccz", label: "CCZ", fee: accessFees.cczFeeGbp },
+                  { key: "parking", label: "Parking", fee: accessFees.parkingFeeGbp },
+                ] as const).map((row) => {
+                  const active = Number(partnerAssignExtraInputs[row.key]) > 0;
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      onClick={() =>
+                        setPartnerAssignExtraInputs((prev) => ({
+                          ...prev,
+                          [row.key]: active ? "" : String(row.fee),
+                        }))
+                      }
+                      aria-pressed={active}
+                      className={cn(
+                        "flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
+                        active
+                          ? "border-[#1DB87A] bg-[#ecfff6] text-[#157a55] dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                          : "border-border-light bg-card text-text-secondary hover:border-primary/30",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium leading-tight">{row.label}</p>
+                        <p className="text-[10px] leading-tight opacity-80 tabular-nums">
+                          {active ? `+${formatCurrency(row.fee)}` : `${formatCurrency(row.fee)} fee`}
+                        </p>
+                      </div>
+                      <span
+                        className={cn(
+                          "flex-shrink-0 h-5 w-9 rounded-full border p-0.5 transition-colors",
+                          active ? "border-[#1DB87A] bg-[#1DB87A]" : "border-border bg-border-light",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform",
+                            active && "translate-x-3.5",
+                          )}
+                        />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <p className="text-right text-sm font-semibold text-text-primary">Partner total: {formatCurrency(partnerAssignTotal)}</p>
           </div>

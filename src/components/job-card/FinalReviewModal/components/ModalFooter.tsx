@@ -43,7 +43,7 @@ export function ModalFooter({
           }}
         >
           <span aria-hidden>⚠</span>
-          <span>Force finalise</span>
+          <span>Force &amp; approve</span>
           <span aria-hidden className="text-[14px]">→</span>
         </button>
       ) : (
