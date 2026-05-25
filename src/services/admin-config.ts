@@ -257,6 +257,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Operations",
     items: [
+      { label: "Leads", href: "/leads", icon: "user-circle", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
@@ -293,6 +294,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
   admin: {
     dashboard: true,
     requests: true,
+    leads: true,
     quotes: true,
     jobs: true,
     service_catalog: true,
@@ -309,6 +311,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
   manager: {
     dashboard: true,
     requests: true,
+    leads: true,
     quotes: true,
     jobs: true,
     service_catalog: false,
@@ -325,6 +328,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
   operator: {
     dashboard: true,
     requests: true,
+    leads: true,
     quotes: true,
     jobs: true,
     service_catalog: false,

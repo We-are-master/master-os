@@ -508,7 +508,7 @@ function KindTab({
       disabled={disabled}
       aria-pressed={active}
       className={cn(
-        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-lg border px-2.5 py-1.5 text-left transition-colors",
+        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2.5 py-1.5 text-left transition-colors",
         active
           ? "border-primary bg-primary/10 text-primary"
           : disabled

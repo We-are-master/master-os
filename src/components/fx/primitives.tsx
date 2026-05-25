@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
@@ -116,6 +117,8 @@ export function KpiCard({
   trendDirection,
   variant = "default",
   topRight,
+  onShowDetails,
+  detailsLabel = "Show breakdown",
 }: {
   label: string;
   /** Optional hint shown as a subtle "!" icon next to the label with a hover popover. */
@@ -126,6 +129,9 @@ export function KpiCard({
   trendDirection?: "up" | "down" | "neutral";
   variant?: KpiVariant;
   topRight?: React.ReactNode;
+  /** When set, renders a clickable info icon next to the label that opens a breakdown modal. */
+  onShowDetails?: () => void;
+  detailsLabel?: string;
 }) {
   return (
     <div
@@ -142,6 +148,17 @@ export function KpiCard({
         <span className="fx-kk inline-flex items-center gap-1.5">
           {label}
           {hint && <FixfyHintIcon text={hint} />}
+          {onShowDetails && (
+            <button
+              type="button"
+              onClick={onShowDetails}
+              aria-label={detailsLabel}
+              title={detailsLabel}
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full text-fx-mute hover:bg-fx-paper hover:text-text-primary transition-colors"
+            >
+              <Info className="h-3 w-3" />
+            </button>
+          )}
         </span>
         {topRight}
       </div>

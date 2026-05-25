@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { startOfMonth, endOfMonth, startOfDay, endOfDay, formatISO } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
+import { startOfMonth, endOfMonth, startOfDay, endOfDay, formatISO, format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
@@ -12,27 +12,10 @@ import {
   parseFrontendSetup,
   type FrontendSetup,
 } from "@/lib/frontend-setup";
-import { KpiCard } from "@/components/fx/primitives";
-
-type Financials = {
-  revenue: number;
-  partnerCost: number;
-  materialsCost: number;
-  expenses: number;
-  workforce: number;
-  bills: number;
-  jobs: number;
-};
-
-const initial: Financials = {
-  revenue: 0,
-  partnerCost: 0,
-  materialsCost: 0,
-  expenses: 0,
-  workforce: 0,
-  bills: 0,
-  jobs: 0,
-};
+import { KpiCard, MicroLabel } from "@/components/fx/primitives";
+import { Modal } from "@/components/ui/modal";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { BreakdownTable, type BreakdownColumn } from "./financials-detail-modal";
 
 const ACTIVE_OPS_STATUSES = [
   "unassigned",
@@ -46,10 +29,49 @@ const ACTIVE_OPS_STATUSES = [
   "completed",
 ];
 
+type JobDetail = {
+  id: string;
+  reference: string | null;
+  title: string | null;
+  client_id: string | null;
+  client_name: string | null;
+  property_address: string | null;
+  scheduled_start_at: string | null;
+  client_price: number;
+  extras_amount: number;
+  partner_cost: number;
+  materials_cost: number;
+  expenses: number;
+  accountName: string | null;
+};
+
+type BillDetail = {
+  id: string;
+  description: string;
+  amount: number;
+  due_date: string | null;
+  status: string | null;
+  category: string | null;
+};
+
+type PayrollDetail = {
+  id: string;
+  payee_name: string | null;
+  description: string | null;
+  amount: number; // monthly commitment
+  proratedAmount: number; // applied to the window
+  lifecycle_stage: string | null;
+};
+
+type DetailModal = "revenue" | "operating" | "fixed" | "net" | null;
+
 export function Financials() {
   const { bounds, rangeLabel } = useDashboardDateRange();
-  const [data, setData] = useState<Financials>(initial);
+  const [jobs, setJobs] = useState<JobDetail[]>([]);
+  const [bills, setBills] = useState<BillDetail[]>([]);
+  const [payroll, setPayroll] = useState<PayrollDetail[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openModal, setOpenModal] = useState<DetailModal>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,65 +88,97 @@ export function Financials() {
         : { fromDay: ymd(startOfMonth(now)), toDay: ymd(endOfMonth(now)) };
 
       const [jobsRes, billsRes, payrollRes, settingsRes] = await Promise.all([
-        // Revenue + Operating Cost — active operational pipeline only
         supabase
           .from("jobs")
-          .select("client_price, extras_amount, partner_cost, materials_cost, expenses")
+          .select(
+            "id, reference, title, client_id, client_name, property_address, scheduled_start_at, client_price, extras_amount, partner_cost, materials_cost, expenses",
+          )
           .gte("scheduled_start_at", fromIso)
           .lte("scheduled_start_at", toIso)
           .in("status", ACTIVE_OPS_STATUSES)
-          .is("deleted_at", null),
-        // Bills — only what's actually due in the period (no approval gate, no run-rate).
-        // The bill enters the cost flow when its due_date hits the window.
+          .is("deleted_at", null)
+          .order("scheduled_start_at", { ascending: true, nullsFirst: false })
+          .limit(5000),
         supabase
           .from("bills")
-          .select("id, amount, status, due_date")
+          .select("id, description, amount, status, due_date, category")
           .is("archived_at", null)
           .neq("status", "rejected")
           .gte("due_date", fromDay)
-          .lte("due_date", toDay),
-        // Workforce — every active/onboarding payroll row counted at face value (monthly commitment).
-        // Pro-rated below by working days in the selected window.
+          .lte("due_date", toDay)
+          .order("due_date", { ascending: true }),
         supabase
           .from("payroll_internal_costs")
-          .select("id, amount, lifecycle_stage")
-          .neq("lifecycle_stage", "offboard"),
+          .select("id, amount, lifecycle_stage, payee_name, description")
+          .neq("lifecycle_stage", "offboard")
+          .order("payee_name", { ascending: true, nullsFirst: false }),
         supabase.from("company_settings").select("frontend_setup").limit(1).maybeSingle(),
       ]);
 
       if (cancelled) return;
 
       type JobRow = {
+        id: string;
+        reference: string | null;
+        title: string | null;
+        client_id: string | null;
+        client_name: string | null;
+        property_address: string | null;
+        scheduled_start_at: string | null;
         client_price: number | null;
         extras_amount: number | null;
         partner_cost: number | null;
         materials_cost: number | null;
         expenses: number | null;
       };
-      const jobsData = (jobsRes.data ?? []) as JobRow[];
-      let revenue = 0;
-      let partnerCost = 0;
-      let materialsCost = 0;
-      let expenses = 0;
-      for (const r of jobsData) {
-        revenue += (Number(r.client_price) || 0) + (Number(r.extras_amount) || 0);
-        partnerCost += Number(r.partner_cost) || 0;
-        materialsCost += Number(r.materials_cost) || 0;
-        expenses += Number(r.expenses) || 0;
+      const jobsRaw = (jobsRes.data ?? []) as JobRow[];
+      const clientIds = [
+        ...new Set(jobsRaw.map((j) => j.client_id?.trim()).filter(Boolean)),
+      ] as string[];
+
+      let accountByClient = new Map<string, string>();
+      if (clientIds.length > 0) {
+        try {
+          accountByClient = await batchResolveLinkedAccountLabels(supabase, clientIds);
+        } catch {
+          accountByClient = new Map();
+        }
       }
+      if (cancelled) return;
 
-      // Bills: simple sum of amounts due in period
-      type BillRow = { id: string; amount: number | null; status: string | null; due_date: string | null };
-      const billRows = (billsRes.data ?? []) as BillRow[];
-      const bills = billRows.reduce((a, b) => a + (Number(b.amount) || 0), 0);
+      const jobsDetail: JobDetail[] = jobsRaw.map((r) => ({
+        id: r.id,
+        reference: r.reference,
+        title: r.title,
+        client_id: r.client_id ?? null,
+        client_name: r.client_name,
+        property_address: r.property_address,
+        scheduled_start_at: r.scheduled_start_at,
+        client_price: Number(r.client_price) || 0,
+        extras_amount: Number(r.extras_amount) || 0,
+        partner_cost: Number(r.partner_cost) || 0,
+        materials_cost: Number(r.materials_cost) || 0,
+        expenses: Number(r.expenses) || 0,
+        accountName: r.client_id ? accountByClient.get(r.client_id) ?? null : null,
+      }));
 
-      // Workforce: each `payroll_internal_costs.amount` is a monthly commitment.
-      // Pro-rate by the share of working days in the window so "Today" doesn't
-      // show the whole monthly salary, "Week" shows ~6/26, etc. Falls back to
-      // the full monthly burn when no period is selected ("All Time").
-      type PayrollRow = { id: string | null; amount: number | null; lifecycle_stage: string | null };
-      const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
-      const monthlyBurnPayroll = payrollRows.reduce((a, r) => a + (Number(r.amount) || 0), 0);
+      const billRows = (billsRes.data ?? []) as Array<{
+        id: string;
+        description: string | null;
+        amount: number | null;
+        status: string | null;
+        due_date: string | null;
+        category: string | null;
+      }>;
+      const billsDetail: BillDetail[] = billRows.map((b) => ({
+        id: b.id,
+        description: (b.description ?? "").trim() || "Bill",
+        amount: Number(b.amount) || 0,
+        due_date: b.due_date,
+        status: b.status,
+        category: b.category,
+      }));
+
       const setup: FrontendSetup = parseFrontendSetup(
         (settingsRes.data as { frontend_setup?: unknown } | null)?.frontend_setup,
       );
@@ -132,20 +186,28 @@ export function Financials() {
       const toDate = bounds ? new Date(bounds.toIso) : endOfDay(now);
       const workingDaysInWindow = countWorkingDaysInRange(fromDate, toDate, setup);
       const monthlyDivisor = monthlyWorkingDays(setup);
-      const workforceFactor = bounds && monthlyDivisor > 0
-        ? workingDaysInWindow / monthlyDivisor
-        : 1; // "All Time" → full monthly commitment
-      const workforce = monthlyBurnPayroll * workforceFactor;
+      const workforceFactor =
+        bounds && monthlyDivisor > 0 ? workingDaysInWindow / monthlyDivisor : 1;
 
-      setData({
-        revenue,
-        partnerCost,
-        materialsCost,
-        expenses,
-        workforce,
-        bills,
-        jobs: jobsData.length,
-      });
+      const payrollRows = (payrollRes.data ?? []) as Array<{
+        id: string | null;
+        amount: number | null;
+        lifecycle_stage: string | null;
+        payee_name: string | null;
+        description: string | null;
+      }>;
+      const payrollDetail: PayrollDetail[] = payrollRows.map((r, i) => ({
+        id: r.id ?? `payroll-${i}`,
+        payee_name: r.payee_name,
+        description: r.description,
+        amount: Number(r.amount) || 0,
+        proratedAmount: (Number(r.amount) || 0) * workforceFactor,
+        lifecycle_stage: r.lifecycle_stage,
+      }));
+
+      setJobs(jobsDetail);
+      setBills(billsDetail);
+      setPayroll(payrollDetail);
       setLoading(false);
     })();
     return () => {
@@ -153,54 +215,432 @@ export function Financials() {
     };
   }, [bounds]);
 
-  const operatingCost = data.partnerCost + data.materialsCost + data.expenses;
-  const fixedCost = data.workforce + data.bills;
-  const netMargin = data.revenue - operatingCost - fixedCost;
-  const opsPct = data.revenue > 0 ? (operatingCost / data.revenue) * 100 : 0;
-  const fixedPct = data.revenue > 0 ? (fixedCost / data.revenue) * 100 : 0;
-  const netPct = data.revenue > 0 ? (netMargin / data.revenue) * 100 : 0;
+  const totals = useMemo(() => {
+    let revenue = 0;
+    let partnerCost = 0;
+    let materialsCost = 0;
+    let expenses = 0;
+    for (const j of jobs) {
+      revenue += j.client_price + j.extras_amount;
+      partnerCost += j.partner_cost;
+      materialsCost += j.materials_cost;
+      expenses += j.expenses;
+    }
+    const billsTotal = bills.reduce((a, b) => a + b.amount, 0);
+    const workforce = payroll.reduce((a, p) => a + p.proratedAmount, 0);
+    const operatingCost = partnerCost + materialsCost + expenses;
+    const fixedCost = workforce + billsTotal;
+    const netMargin = revenue - operatingCost - fixedCost;
+    return {
+      revenue,
+      partnerCost,
+      materialsCost,
+      expenses,
+      operatingCost,
+      workforce,
+      bills: billsTotal,
+      fixedCost,
+      netMargin,
+      opsPct: revenue > 0 ? (operatingCost / revenue) * 100 : 0,
+      fixedPct: revenue > 0 ? (fixedCost / revenue) * 100 : 0,
+      netPct: revenue > 0 ? (netMargin / revenue) * 100 : 0,
+      jobsCount: jobs.length,
+    };
+  }, [jobs, bills, payroll]);
+
+  const periodLabel = bounds ? rangeLabel : "this month";
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <KpiCard
-        label="Revenue"
-        hint="Total client price + extras for jobs in the active pipeline (excludes On Hold, Cancelled, Deleted)."
-        value={loading ? "—" : formatGbp(data.revenue)}
-        sub={
-          loading
-            ? "Loading…"
-            : `${data.jobs} job${data.jobs === 1 ? "" : "s"} · Active Pipeline${
-                bounds ? ` · ${rangeLabel}` : ""
-              }`
-        }
-        topRight={<StatusDot color="bg-fx-green" />}
-      />
-      <KpiCard
-        label="Operating Cost"
-        hint="Partner cost + materials + per-job expenses for the same pipeline."
-        value={loading ? "—" : formatGbp(operatingCost)}
-        sub={loading ? "Loading…" : `${opsPct.toFixed(1)}% · Partners · Materials · Expenses`}
-        topRight={<StatusDot color="bg-fx-amber" />}
-      />
-      <KpiCard
-        label="Fixed Costs"
-        hint="Workforce + bills allocated to this period. Workforce is each active person's monthly commitment pro-rated by working days in the window. Bills only count when their due_date falls inside the window."
-        value={loading ? "—" : formatGbp(fixedCost)}
-        sub={
-          loading
-            ? "Loading…"
-            : `${fixedPct.toFixed(1)}% · Workforce £${formatNum(data.workforce)} + Bills £${formatNum(data.bills)}`
-        }
-        topRight={<StatusDot color="bg-fx-blue" />}
-      />
-      <KpiCard
-        label="Net Margin"
-        hint="Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead."
-        variant={!loading && netMargin < 0 ? "alert" : netMargin > 0 && data.revenue > 0 ? "coral" : "default"}
-        value={loading ? "—" : formatGbp(netMargin)}
-        sub={loading ? "Loading…" : `${netPct.toFixed(1)}% of revenue`}
-        topRight={<StatusDot color={netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
-      />
+    <>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard
+          label="Revenue"
+          hint="Total client price + extras for jobs in the active pipeline (excludes On Hold, Cancelled, Deleted)."
+          value={loading ? "—" : formatGbp(totals.revenue)}
+          sub={
+            loading
+              ? "Loading…"
+              : `${totals.jobsCount} job${totals.jobsCount === 1 ? "" : "s"} · Active Pipeline${
+                  bounds ? ` · ${rangeLabel}` : ""
+                }`
+          }
+          topRight={<StatusDot color="bg-fx-green" />}
+          onShowDetails={() => setOpenModal("revenue")}
+          detailsLabel="View revenue breakdown"
+        />
+        <KpiCard
+          label="Operating Cost"
+          hint="Partner cost + materials + per-job expenses for the same pipeline."
+          value={loading ? "—" : formatGbp(totals.operatingCost)}
+          sub={
+            loading
+              ? "Loading…"
+              : `${totals.opsPct.toFixed(1)}% · Partners · Materials · Expenses`
+          }
+          topRight={<StatusDot color="bg-fx-amber" />}
+          onShowDetails={() => setOpenModal("operating")}
+          detailsLabel="View operating cost breakdown"
+        />
+        <KpiCard
+          label="Fixed Costs"
+          hint="Workforce + bills allocated to this period. Workforce is each active person's monthly commitment pro-rated by working days in the window. Bills only count when their due_date falls inside the window."
+          value={loading ? "—" : formatGbp(totals.fixedCost)}
+          sub={
+            loading
+              ? "Loading…"
+              : `${totals.fixedPct.toFixed(1)}% · Workforce £${formatNum(totals.workforce)} + Bills £${formatNum(totals.bills)}`
+          }
+          topRight={<StatusDot color="bg-fx-blue" />}
+          onShowDetails={() => setOpenModal("fixed")}
+          detailsLabel="View fixed cost breakdown"
+        />
+        <KpiCard
+          label="Net Margin"
+          hint="Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead."
+          variant={
+            !loading && totals.netMargin < 0
+              ? "alert"
+              : totals.netMargin > 0 && totals.revenue > 0
+                ? "coral"
+                : "default"
+          }
+          value={loading ? "—" : formatGbp(totals.netMargin)}
+          sub={loading ? "Loading…" : `${totals.netPct.toFixed(1)}% of revenue`}
+          topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
+          onShowDetails={() => setOpenModal("net")}
+          detailsLabel="View net margin breakdown"
+        />
+      </div>
+
+      <Modal
+        open={openModal === "revenue"}
+        onClose={() => setOpenModal(null)}
+        title="Revenue breakdown"
+        subtitle={`${totals.jobsCount} job${totals.jobsCount === 1 ? "" : "s"} · ${periodLabel} · ${formatGbp(totals.revenue)}`}
+        size="lg"
+      >
+        <BreakdownTable
+          rows={jobs}
+          rowHref={(j) => `/jobs/${j.id}`}
+          onRowNavigate={() => setOpenModal(null)}
+          emptyLabel="No jobs in this period."
+          columns={revenueColumns}
+          totals={
+            <div className="flex justify-between gap-4">
+              <span>{totals.jobsCount} job{totals.jobsCount === 1 ? "" : "s"}</span>
+              <span>{formatGbp(totals.revenue)}</span>
+            </div>
+          }
+        />
+      </Modal>
+
+      <Modal
+        open={openModal === "operating"}
+        onClose={() => setOpenModal(null)}
+        title="Operating cost breakdown"
+        subtitle={`Partners + materials + expenses · ${periodLabel} · ${formatGbp(totals.operatingCost)}`}
+        size="lg"
+      >
+        <BreakdownTable
+          rows={jobs}
+          rowHref={(j) => `/jobs/${j.id}`}
+          onRowNavigate={() => setOpenModal(null)}
+          emptyLabel="No jobs in this period."
+          columns={operatingColumns}
+          totals={
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+              <span>{totals.jobsCount} job{totals.jobsCount === 1 ? "" : "s"}</span>
+              <span className="font-mono text-[11px] text-fx-mute">
+                Partners {formatGbp(totals.partnerCost)} · Materials {formatGbp(totals.materialsCost)} · Expenses{" "}
+                {formatGbp(totals.expenses)}
+              </span>
+              <span>{formatGbp(totals.operatingCost)}</span>
+            </div>
+          }
+        />
+      </Modal>
+
+      <Modal
+        open={openModal === "fixed"}
+        onClose={() => setOpenModal(null)}
+        title="Fixed costs breakdown"
+        subtitle={`Workforce ${formatGbp(totals.workforce)} + Bills ${formatGbp(totals.bills)} · ${periodLabel}`}
+        size="lg"
+      >
+        <div className="space-y-5 py-4">
+          <section>
+            <div className="px-5 pb-2 flex items-center justify-between">
+              <MicroLabel>Workforce</MicroLabel>
+              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                {formatGbp(totals.workforce)}
+              </span>
+            </div>
+            <BreakdownTable
+              rows={payroll}
+              emptyLabel="No active payroll commitments."
+              columns={workforceColumns}
+            />
+          </section>
+          <section>
+            <div className="px-5 pb-2 flex items-center justify-between">
+              <MicroLabel>Bills due in period</MicroLabel>
+              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                {formatGbp(totals.bills)}
+              </span>
+            </div>
+            <BreakdownTable
+              rows={bills}
+              rowHref={() => "/finance/bills"}
+              onRowNavigate={() => setOpenModal(null)}
+              emptyLabel="No bills due in this period."
+              columns={billsColumns}
+            />
+          </section>
+        </div>
+      </Modal>
+
+      <Modal
+        open={openModal === "net"}
+        onClose={() => setOpenModal(null)}
+        title="Net margin breakdown"
+        subtitle={`Revenue − Operating Cost − Fixed Costs · ${periodLabel}`}
+        size="lg"
+      >
+        <div className="px-5 py-5">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <SummaryRow label="Revenue" value={totals.revenue} tone="green" />
+            <SummaryRow label="Operating Cost" value={-totals.operatingCost} tone="amber" />
+            <SummaryRow label="Fixed Costs" value={-totals.fixedCost} tone="blue" />
+            <SummaryRow
+              label="Net Margin"
+              value={totals.netMargin}
+              tone={totals.netMargin >= 0 ? "green" : "red"}
+              emphasis
+            />
+          </dl>
+          <div className="mt-5 grid grid-cols-1 gap-2 text-[12px] text-fx-mute">
+            <p>
+              Partners <strong className="text-text-primary tabular-nums">{formatGbp(totals.partnerCost)}</strong>
+              {" · "}Materials <strong className="text-text-primary tabular-nums">{formatGbp(totals.materialsCost)}</strong>
+              {" · "}Expenses <strong className="text-text-primary tabular-nums">{formatGbp(totals.expenses)}</strong>
+            </p>
+            <p>
+              Workforce <strong className="text-text-primary tabular-nums">{formatGbp(totals.workforce)}</strong>
+              {" · "}Bills <strong className="text-text-primary tabular-nums">{formatGbp(totals.bills)}</strong>
+            </p>
+            <p>
+              Margin {totals.netPct.toFixed(1)}% of revenue · {totals.jobsCount} job
+              {totals.jobsCount === 1 ? "" : "s"} in pipeline.
+            </p>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+const revenueColumns: BreakdownColumn<JobDetail>[] = [
+  {
+    key: "job",
+    label: "Job",
+    render: (j) => (
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">{j.title?.trim() || "—"}</div>
+        <div className="font-mono text-[10.5px] text-fx-mute mt-0.5">{j.reference ?? ""}</div>
+      </div>
+    ),
+  },
+  {
+    key: "client",
+    label: "Client",
+    className: "min-w-[10rem]",
+    render: (j) => (
+      <div className="min-w-0">
+        <div className="text-text-primary truncate">{j.client_name?.trim() || "—"}</div>
+        {j.property_address?.trim() ? (
+          <div className="text-[11px] text-fx-mute truncate" title={j.property_address}>
+            {shortAddress(j.property_address)}
+          </div>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "account",
+    label: "Account",
+    className: "hidden md:table-cell min-w-[8rem]",
+    render: (j) =>
+      j.accountName?.trim() ? (
+        <span className="text-text-primary truncate block">{j.accountName}</span>
+      ) : (
+        <span className="text-fx-mute italic">Direct</span>
+      ),
+  },
+  {
+    key: "date",
+    label: "Start",
+    className: "hidden sm:table-cell whitespace-nowrap",
+    render: (j) => (
+      <span className="font-mono text-[11.5px] text-fx-mute">{formatWhen(j.scheduled_start_at)}</span>
+    ),
+  },
+  {
+    key: "value",
+    label: "Value",
+    align: "right",
+    render: (j) => (
+      <span className="font-medium text-text-primary">
+        {formatGbp(j.client_price + j.extras_amount)}
+      </span>
+    ),
+  },
+];
+
+const operatingColumns: BreakdownColumn<JobDetail>[] = [
+  {
+    key: "job",
+    label: "Job",
+    render: (j) => (
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">{j.title?.trim() || "—"}</div>
+        <div className="font-mono text-[10.5px] text-fx-mute mt-0.5">
+          {j.reference ?? ""} · {j.client_name?.trim() || "—"}
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "partner",
+    label: "Partner",
+    align: "right",
+    className: "hidden sm:table-cell",
+    render: (j) => <span className="text-text-primary">{formatGbp(j.partner_cost)}</span>,
+  },
+  {
+    key: "materials",
+    label: "Materials",
+    align: "right",
+    className: "hidden md:table-cell",
+    render: (j) => <span className="text-text-primary">{formatGbp(j.materials_cost)}</span>,
+  },
+  {
+    key: "expenses",
+    label: "Expenses",
+    align: "right",
+    className: "hidden lg:table-cell",
+    render: (j) => <span className="text-text-primary">{formatGbp(j.expenses)}</span>,
+  },
+  {
+    key: "total",
+    label: "Total",
+    align: "right",
+    render: (j) => (
+      <span className="font-medium text-text-primary">
+        {formatGbp(j.partner_cost + j.materials_cost + j.expenses)}
+      </span>
+    ),
+  },
+];
+
+const workforceColumns: BreakdownColumn<PayrollDetail>[] = [
+  {
+    key: "person",
+    label: "Person",
+    render: (p) => (
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">
+          {p.payee_name?.trim() || p.description?.trim() || "Team member"}
+        </div>
+        {p.lifecycle_stage && p.lifecycle_stage !== "active" ? (
+          <div className="font-mono text-[10.5px] text-fx-mute mt-0.5 uppercase tracking-[0.1em]">
+            {p.lifecycle_stage}
+          </div>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "monthly",
+    label: "Monthly",
+    align: "right",
+    className: "hidden sm:table-cell",
+    render: (p) => <span className="text-text-primary">{formatGbp(p.amount)}</span>,
+  },
+  {
+    key: "applied",
+    label: "Period share",
+    align: "right",
+    render: (p) => <span className="font-medium text-text-primary">{formatGbp(p.proratedAmount)}</span>,
+  },
+];
+
+const billsColumns: BreakdownColumn<BillDetail>[] = [
+  {
+    key: "description",
+    label: "Bill",
+    render: (b) => (
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">{b.description}</div>
+        {b.category ? (
+          <div className="font-mono text-[10.5px] text-fx-mute mt-0.5 uppercase tracking-[0.08em]">
+            {b.category}
+          </div>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "due",
+    label: "Due",
+    className: "hidden sm:table-cell whitespace-nowrap",
+    render: (b) => (
+      <span className="font-mono text-[11.5px] text-fx-mute">{formatDay(b.due_date)}</span>
+    ),
+  },
+  {
+    key: "status",
+    label: "Status",
+    className: "hidden md:table-cell uppercase tracking-[0.08em] text-[10.5px] font-mono text-fx-mute",
+    render: (b) => <span>{b.status ?? "—"}</span>,
+  },
+  {
+    key: "amount",
+    label: "Amount",
+    align: "right",
+    render: (b) => <span className="font-medium text-text-primary">{formatGbp(b.amount)}</span>,
+  },
+];
+
+function SummaryRow({
+  label,
+  value,
+  tone,
+  emphasis = false,
+}: {
+  label: string;
+  value: number;
+  tone: "green" | "amber" | "blue" | "red";
+  emphasis?: boolean;
+}) {
+  const toneClass =
+    tone === "green"
+      ? "text-fx-green"
+      : tone === "amber"
+        ? "text-fx-amber"
+        : tone === "blue"
+          ? "text-fx-blue"
+          : "text-fx-red";
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-fx-line bg-card px-4 py-3",
+        emphasis && "border-fx-line-2 bg-fx-paper-2/30",
+      )}
+    >
+      <MicroLabel>{label}</MicroLabel>
+      <div className={cn("mt-1 text-[20px] font-semibold tabular-nums", toneClass)}>
+        {formatGbpSigned(value)}
+      </div>
     </div>
   );
 }
@@ -222,6 +662,29 @@ function formatGbp(n: number): string {
   }).format(n);
 }
 
+function formatGbpSigned(n: number): string {
+  const sign = n < 0 ? "−" : "";
+  return sign + formatGbp(Math.abs(n));
+}
+
 function formatNum(n: number): string {
   return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(n);
+}
+
+function formatWhen(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return format(d, "d MMM · HH:mm");
+}
+
+function formatDay(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  if (Number.isNaN(d.getTime())) return value;
+  return format(d, "d MMM yyyy");
+}
+
+function shortAddress(addr: string): string {
+  return addr.split(",").slice(0, 2).join(",").trim();
 }

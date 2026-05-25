@@ -60,6 +60,8 @@ export interface CatalogService {
 }
 
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
+export type LeadStatus = "new" | "interested";
+export type LeadUrgency = "low" | "medium" | "high" | "urgent";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
 export type JobStatus =
   | "unassigned"
@@ -207,6 +209,31 @@ export interface ServiceRequest {
   property_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Pre-quote lead offered to partners (name, urgency, scope). */
+export interface Lead {
+  id: string;
+  reference: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  address: string;
+  city?: string | null;
+  postcode?: string | null;
+  urgency: LeadUrgency;
+  scope: string;
+  status: LeadStatus;
+  /** Linked `clients` row under Fixfy account. */
+  client_id?: string | null;
+  client_address_id?: string | null;
+  account_id?: string | null;
+  owner_id?: string | null;
+  published_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 }
 
 /** Physical site / property linked to an account (Assets module). Contacts are `clients` with matching source_account_id. */
