@@ -12,10 +12,12 @@ import {
   parseFrontendSetup,
   type FrontendSetup,
 } from "@/lib/frontend-setup";
-import { KpiCard, MicroLabel } from "@/components/fx/primitives";
+import { KpiCard, MicroLabel, Pill } from "@/components/fx/primitives";
 import { Modal } from "@/components/ui/modal";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { BreakdownTable, type BreakdownColumn } from "./financials-detail-modal";
+import { jobStatusLabel } from "@/lib/job-status-ui";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 
 const ACTIVE_OPS_STATUSES = [
   "unassigned",
@@ -36,6 +38,9 @@ type JobDetail = {
   client_id: string | null;
   client_name: string | null;
   property_address: string | null;
+  property_postcode: string | null;
+  partner_name: string | null;
+  status: string | null;
   scheduled_start_at: string | null;
   client_price: number;
   extras_amount: number;
@@ -91,7 +96,7 @@ export function Financials() {
         supabase
           .from("jobs")
           .select(
-            "id, reference, title, client_id, client_name, property_address, scheduled_start_at, client_price, extras_amount, partner_cost, materials_cost, expenses",
+            "id, reference, title, client_id, client_name, property_address, partner_name, status, scheduled_start_at, client_price, extras_amount, partner_cost, materials_cost, expenses",
           )
           .gte("scheduled_start_at", fromIso)
           .lte("scheduled_start_at", toIso)
@@ -124,6 +129,8 @@ export function Financials() {
         client_id: string | null;
         client_name: string | null;
         property_address: string | null;
+        partner_name: string | null;
+        status: string | null;
         scheduled_start_at: string | null;
         client_price: number | null;
         extras_amount: number | null;
@@ -153,6 +160,9 @@ export function Financials() {
         client_id: r.client_id ?? null,
         client_name: r.client_name,
         property_address: r.property_address,
+        property_postcode: r.property_address ? extractUkPostcode(r.property_address) : null,
+        partner_name: r.partner_name,
+        status: r.status,
         scheduled_start_at: r.scheduled_start_at,
         client_price: Number(r.client_price) || 0,
         extras_amount: Number(r.extras_amount) || 0,
@@ -460,6 +470,11 @@ const revenueColumns: BreakdownColumn<JobDetail>[] = [
         {j.property_address?.trim() ? (
           <div className="text-[11px] text-fx-mute truncate" title={j.property_address}>
             {shortAddress(j.property_address)}
+            {j.property_postcode ? (
+              <span className="font-mono uppercase tracking-[0.05em] text-text-secondary ml-1">
+                · {j.property_postcode}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -468,13 +483,30 @@ const revenueColumns: BreakdownColumn<JobDetail>[] = [
   {
     key: "account",
     label: "Account",
-    className: "hidden md:table-cell min-w-[8rem]",
+    className: "hidden md:table-cell min-w-[7rem]",
     render: (j) =>
       j.accountName?.trim() ? (
         <span className="text-text-primary truncate block">{j.accountName}</span>
       ) : (
         <span className="text-fx-mute italic">Direct</span>
       ),
+  },
+  {
+    key: "partner",
+    label: "Partner",
+    className: "hidden md:table-cell min-w-[7rem]",
+    render: (j) =>
+      j.partner_name?.trim() ? (
+        <span className="text-text-primary truncate block">{j.partner_name}</span>
+      ) : (
+        <span className="text-fx-mute italic">Unassigned</span>
+      ),
+  },
+  {
+    key: "status",
+    label: "Status",
+    className: "hidden lg:table-cell whitespace-nowrap",
+    render: (j) => (j.status ? <RevenueStatusPill status={j.status} /> : <span className="text-fx-mute">—</span>),
   },
   {
     key: "date",
@@ -495,6 +527,29 @@ const revenueColumns: BreakdownColumn<JobDetail>[] = [
     ),
   },
 ];
+
+function RevenueStatusPill({ status }: { status: string }) {
+  const label = jobStatusLabel(status);
+  switch (status) {
+    case "in_progress":
+      return <Pill tone="info">{label}</Pill>;
+    case "final_check":
+      return <Pill tone="violet">{label}</Pill>;
+    case "late":
+    case "need_attention":
+    case "unassigned":
+    case "auto_assigning":
+      return <Pill tone="bad">{label}</Pill>;
+    case "scheduled":
+    case "completed":
+      return <Pill tone="ok">{label}</Pill>;
+    case "awaiting_payment":
+    case "on_hold":
+      return <Pill tone="warn">{label}</Pill>;
+    default:
+      return <Pill tone="ghost">{label}</Pill>;
+  }
+}
 
 const operatingColumns: BreakdownColumn<JobDetail>[] = [
   {

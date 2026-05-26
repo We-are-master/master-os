@@ -8,6 +8,7 @@ import { JOB_LIST_ALL_TAB_STATUSES } from "@/services/jobs";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { FxAvatar, LiveIndicator, MicroLabel, Pill, SectionCard } from "@/components/fx/primitives";
 import { jobStatusLabel } from "@/lib/job-status-ui";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { cn } from "@/lib/utils";
 import type { LeadUrgency, QuoteStatus } from "@/types/database";
 
@@ -329,7 +330,13 @@ function JobsTable({
               <td className="px-4 py-3 align-middle">
                 <div className="font-medium text-text-primary">{j.client_name}</div>
                 {j.property_address && (
-                  <MicroLabel className="block mt-0.5">{shortAddress(j.property_address)}</MicroLabel>
+                  <MicroLabel className="block mt-0.5">
+                    {shortAddress(j.property_address)}
+                    {(() => {
+                      const pc = extractUkPostcode(j.property_address ?? "");
+                      return pc ? <span className="ml-1 uppercase">· {pc}</span> : null;
+                    })()}
+                  </MicroLabel>
                 )}
               </td>
               <td className="px-4 py-3 align-middle">
