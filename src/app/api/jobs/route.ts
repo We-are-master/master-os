@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
-import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
-import type { Partner } from "@/types/database";
+import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -223,15 +223,13 @@ export async function POST(req: NextRequest) {
   // ─── Partner matching (when auto_assign is on) ──────────────────────
   let matchedPartnerIds: string[] = [];
   if (autoAssign) {
-    const { data: activePartners } = await supabase
-      .from("partners")
-      .select("id, trade, trades, company_name, contact_name, expo_push_token, auth_user_id, uk_coverage_regions")
-      .eq("status", "active");
-    if (activePartners) {
-      matchedPartnerIds = (activePartners as unknown as Partner[])
-        .filter((p) => partnerMatchesTypeOfWork(p, serviceType))
-        .map((p) => p.id);
-    }
+    // Trade match + partner self-service prefs (excluded postcodes). Lead opt-in does not gate
+    // direct job assignment (kind: "job").
+    matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
+      serviceType,
+      postcode: extractUkPostcode(propertyAddress),
+      kind: "job",
+    });
   }
 
   // ─── Determine status ───────────────────────────────────────────────

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
-import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
-import type { Partner } from "@/types/database";
+import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
 
@@ -160,17 +160,12 @@ export async function POST(req: NextRequest) {
   let matchedPartnerIds: string[] = [];
 
   if (assignmentMode === "auto") {
-    const { data: activePartners } = await supabase
-      .from("partners")
-      .select("id, trade, trades, company_name, contact_name, expo_push_token, auth_user_id, uk_coverage_regions")
-      .eq("status", "active");
-
-    if (activePartners) {
-      const matched = (activePartners as unknown as Partner[]).filter((p) =>
-        partnerMatchesTypeOfWork(p, serviceType)
-      );
-      matchedPartnerIds = matched.map((p) => p.id);
-    }
+    // Trade match + partner self-service prefs (excluded postcodes).
+    matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
+      serviceType,
+      postcode: extractUkPostcode(propertyAddress),
+      kind: "job",
+    });
   }
 
   // ─── Determine status ───────────────────────────────────────────────
