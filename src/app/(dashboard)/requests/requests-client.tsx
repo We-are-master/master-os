@@ -44,6 +44,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
+import { RequestOffersCard } from "@/components/requests/request-offers-card";
 import { useRouter } from "next/navigation";
 import { useBuFilter } from "@/hooks/use-bu-filter";
 import { listPartners, listPartnersAll } from "@/services/partners";
@@ -1351,6 +1352,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     </Button>
                   </div>
                 )}
+
+                <RequestOffersCard requestId={selectedRequest.id} />
 
                 {/* Converted to Quote indicator */}
                 {selectedRequest.status === "converted_to_quote" && (
