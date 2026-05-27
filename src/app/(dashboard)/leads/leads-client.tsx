@@ -8,6 +8,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
+import { LeadOffersCard } from "@/components/leads/lead-offers-card";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -407,6 +408,22 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     }
   };
 
+  const togglePublish = async () => {
+    if (!selectedLead) return;
+    const next = selectedLead.published_at ? null : new Date().toISOString();
+    setSaving(true);
+    try {
+      const updated = await updateLead(selectedLead.id, { published_at: next });
+      toast.success(next ? "Lead published — now live in the Trade Portal" : "Lead unpublished");
+      setSelectedLead(updated);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update publish state");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <PageTransition>
       <div className="min-w-0 space-y-4 sm:space-y-5">
@@ -576,6 +593,14 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                   Mark interested
                 </Button>
               ) : null}
+              <Button
+                variant={selectedLead.published_at ? "ghost" : "secondary"}
+                onClick={togglePublish}
+                disabled={saving}
+                className="w-full sm:w-auto"
+              >
+                {selectedLead.published_at ? "Unpublish" : "Publish to partners"}
+              </Button>
               <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
               </Button>
@@ -608,6 +633,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 <Badge variant="default">Offered to partners</Badge>
               ) : null}
             </div>
+
+            <LeadOffersCard leadId={selectedLead.id} published={!!selectedLead.published_at} />
 
             {selectedLead.client_id ? (
               <Link
