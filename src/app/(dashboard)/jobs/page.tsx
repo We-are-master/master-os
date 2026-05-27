@@ -3028,7 +3028,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
     queueMicrotask(() =>
       setForm((prev) => ({
         ...prev,
-        job_type: pricing.pricing_mode,
         hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
         hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
         billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,

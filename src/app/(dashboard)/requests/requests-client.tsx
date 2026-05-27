@@ -2873,7 +2873,6 @@ function ConvertToJobModal({
     queueMicrotask(() =>
       setForm((p) => ({
         ...p,
-        job_type: pricing.pricing_mode,
         hourly_client_rate: pricing.client.hourly_rate?.toString() ?? p.hourly_client_rate,
         hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? p.hourly_partner_rate,
         billed_hours: pricing.client.default_hours?.toString() ?? p.billed_hours,
