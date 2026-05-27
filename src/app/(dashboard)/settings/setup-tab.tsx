@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AlarmClock, CalendarClock, Car, ChevronDown, ChevronUp, Loader2, MapPin, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import { AlarmClock, CalendarClock, Car, ChevronDown, ChevronUp, ClipboardCheck, Loader2, MapPin, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
@@ -35,6 +35,13 @@ import {
   parseFrontendSetup,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
+import {
+  buildDefaultPartnerDocumentRules,
+  getPartnerDocumentCatalogForSetup,
+  mergePartnerDocumentRules,
+  type PartnerDocCatalogEntry,
+  type PartnerDocRuleRow,
+} from "@/lib/partner-required-docs";
 
 const WEEKDAY_LABELS: { id: number; short: string; full: string }[] = [
   { id: 1, short: "Mon", full: "Monday" },
@@ -84,6 +91,10 @@ export function SetupTab() {
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
   const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
+  const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
+    buildDefaultPartnerDocumentRules(),
+  );
+  const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -108,6 +119,7 @@ export function SetupTab() {
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
+      setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
       setLoading(false);
     })();
     return () => {
@@ -175,6 +187,7 @@ export function SetupTab() {
         zendesk_subdomain: zendeskSubdomain,
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
+        partner_document_rules: partnerDocRules,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -211,6 +224,7 @@ export function SetupTab() {
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
+      setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (e) {
@@ -675,6 +689,148 @@ export function SetupTab() {
       <Card padding="none">
         <CardHeader className="px-6 pt-6">
           <div className="flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Partner documents</CardTitle>
+            <FixfyHintIcon text="Choose which documents partners must upload. Request shows the doc in checklists and upload links; Mandatory blocks compliance and counts toward the document score when missing." />
+          </div>
+          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+            UTR applies to self-employed partners only. Trade certificates apply when the partner has that trade.
+          </p>
+        </CardHeader>
+        <div className="px-6 pb-6 space-y-5">
+          <PartnerDocRulesGroup
+            title="Core & legal"
+            entries={getPartnerDocumentCatalogForSetup().filter((e) =>
+              ["core", "utr", "agreement"].includes(e.group),
+            )}
+            rules={partnerDocRules}
+            canEdit={canEditConfig}
+            onPatch={(id, patch) => {
+              setPartnerDocRules((prev) =>
+                prev.map((r) => {
+                  if (r.id !== id) return r;
+                  const enabled = patch.enabled ?? r.enabled;
+                  return {
+                    ...r,
+                    enabled,
+                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
+                  };
+                }),
+              );
+            }}
+          />
+          <div>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-border-light bg-card px-3 py-2.5 text-left hover:bg-surface-hover/80 transition-colors"
+              onClick={() => setTradeCertsExpanded((v) => !v)}
+            >
+              <span className="text-sm font-medium text-text-primary">Trade certificates</span>
+              {tradeCertsExpanded ? (
+                <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />
+              )}
+            </button>
+            {tradeCertsExpanded ? (
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={!canEditConfig}
+                    onClick={() => {
+                      const tradeIds = new Set(
+                        getPartnerDocumentCatalogForSetup()
+                          .filter((e) => e.group === "trade_cert")
+                          .map((e) => e.id),
+                      );
+                      setPartnerDocRules((prev) =>
+                        prev.map((r) =>
+                          tradeIds.has(r.id) ? { ...r, enabled: true, mandatory: true } : r,
+                        ),
+                      );
+                    }}
+                  >
+                    All trade certs mandatory
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={!canEditConfig}
+                    onClick={() => {
+                      const tradeIds = new Set(
+                        getPartnerDocumentCatalogForSetup()
+                          .filter((e) => e.group === "trade_cert")
+                          .map((e) => e.id),
+                      );
+                      setPartnerDocRules((prev) =>
+                        prev.map((r) =>
+                          tradeIds.has(r.id) ? { ...r, enabled: true, mandatory: false } : r,
+                        ),
+                      );
+                    }}
+                  >
+                    All optional
+                  </Button>
+                </div>
+                <PartnerDocRulesGroup
+                  title=""
+                  entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "trade_cert")}
+                  rules={partnerDocRules}
+                  canEdit={canEditConfig}
+                  onPatch={(id, patch) => {
+                    setPartnerDocRules((prev) =>
+                      prev.map((r) => {
+                        if (r.id !== id) return r;
+                        const enabled = patch.enabled ?? r.enabled;
+                        return {
+                          ...r,
+                          enabled,
+                          mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
+                        };
+                      }),
+                    );
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+          <PartnerDocRulesGroup
+            title="Optional extras"
+            entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "extra")}
+            rules={partnerDocRules}
+            canEdit={canEditConfig}
+            onPatch={(id, patch) => {
+              setPartnerDocRules((prev) =>
+                prev.map((r) => {
+                  if (r.id !== id) return r;
+                  const enabled = patch.enabled ?? r.enabled;
+                  return {
+                    ...r,
+                    enabled,
+                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
+                  };
+                }),
+              );
+            }}
+          />
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!canEditConfig || saving}
+            icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+          >
+            {saving ? "Saving…" : "Save setup"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
             <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
             <CardTitle>Integrations · Zendesk</CardTitle>
             <FixfyHintIcon text="Subdomain used to deep-link to Zendesk tickets from the Zendesk badge popover. Falls back to the server ZENDESK_SUBDOMAIN env when blank." />
@@ -711,6 +867,72 @@ export function SetupTab() {
         </div>
       </Card>
       </section>
+    </div>
+  );
+}
+
+function PartnerDocRulesGroup({
+  title,
+  entries,
+  rules,
+  canEdit,
+  onPatch,
+}: {
+  title: string;
+  entries: PartnerDocCatalogEntry[];
+  rules: PartnerDocRuleRow[];
+  canEdit: boolean;
+  onPatch: (id: string, patch: Partial<Pick<PartnerDocRuleRow, "enabled" | "mandatory">>) => void;
+}) {
+  const ruleById = new Map(rules.map((r) => [r.id, r]));
+  if (entries.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {title ? <MicroLabel>{title}</MicroLabel> : null}
+      <div className="rounded-lg border border-border-light overflow-hidden divide-y divide-border-light">
+        <div className="hidden sm:grid sm:grid-cols-[1fr_5.5rem_5.5rem] gap-2 px-3 py-2 bg-surface-hover/60 text-[10px] font-mono uppercase tracking-[0.1em] text-text-tertiary">
+          <span>Document</span>
+          <span className="text-center">Request</span>
+          <span className="text-center">Mandatory</span>
+        </div>
+        {entries.map((entry) => {
+          const rule = ruleById.get(entry.id) ?? { id: entry.id, enabled: true, mandatory: true };
+          return (
+            <div
+              key={entry.id}
+              className="grid grid-cols-1 sm:grid-cols-[1fr_5.5rem_5.5rem] gap-2 px-3 py-2.5 items-start sm:items-center"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary">{entry.name}</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  {entry.description}
+                  {entry.trade ? ` · ${entry.trade}` : ""}
+                </p>
+              </div>
+              <label className="flex items-center justify-start sm:justify-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
+                  checked={rule.enabled}
+                  disabled={!canEdit}
+                  onChange={(e) => onPatch(entry.id, { enabled: e.target.checked })}
+                />
+                <span className="sm:hidden">Request</span>
+              </label>
+              <label className="flex items-center justify-start sm:justify-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
+                  checked={rule.mandatory}
+                  disabled={!canEdit || !rule.enabled}
+                  onChange={(e) => onPatch(entry.id, { mandatory: e.target.checked })}
+                />
+                <span className="sm:hidden">Mandatory</span>
+              </label>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

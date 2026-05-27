@@ -12,6 +12,8 @@ import {
 import { getPartnerDocumentSignedUrlWithSupabase } from "@/services/partner-documents-storage";
 import type { Partner } from "@/types/database";
 import { inferPartnerLegal } from "@/lib/partner-compliance";
+import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
+import { resolvePartnerDocRule } from "@/lib/partner-required-docs";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +65,8 @@ export async function GET(req: NextRequest) {
       (partner as Partner).trade,
     ];
     const partnerRow = partner as Partner;
-    const fullChecklist = buildRequiredDocumentChecklist(trades, partnerRow);
+    const docRules = await fetchPartnerDocumentRules(supabase);
+    const fullChecklist = buildRequiredDocumentChecklist(trades, partnerRow, docRules);
     const requested = session.requestedDocIds;
 
     const checklistCore = fullChecklist.filter((req) => {
@@ -80,7 +83,9 @@ export async function GET(req: NextRequest) {
       matchedIds: pickRequiredDocMatches(docRows, req).map((d) => d.id),
     }));
 
-    const showDbs = requested == null || requested.includes("dbs");
+    const showDbs =
+      resolvePartnerDocRule("dbs", docRules).enabled &&
+      (requested == null || requested.includes("dbs"));
     const showOther = requested == null || requested.includes("other");
 
     const optionalDbsStatus = getOptionalDbsStatus(docRows);

@@ -11,6 +11,7 @@ import {
   resolveOfficeJobCancellationPresets,
   resolveAccessFees,
   resolveMarginThresholds,
+  resolvePartnerDocumentRules,
   type AccessFees,
   type MarginThresholds,
 } from "@/lib/frontend-setup";
@@ -43,6 +44,7 @@ export function useFrontendSetup() {
   const officeCancellationPresets = useMemo(() => resolveOfficeJobCancellationPresets(setup), [setup]);
   const marginThresholds = useMemo<MarginThresholds>(() => resolveMarginThresholds(setup), [setup]);
   const accessFees = useMemo<AccessFees>(() => resolveAccessFees(setup), [setup]);
+  const partnerDocumentRules = useMemo(() => resolvePartnerDocumentRules(setup), [setup]);
 
   return {
     loading,
@@ -53,6 +55,7 @@ export function useFrontendSetup() {
     officeCancellationPresets,
     marginThresholds,
     accessFees,
+    partnerDocumentRules,
     refetch: load,
   };
 }

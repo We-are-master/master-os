@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { resolvePartnerDocExpiresAt } from "@/lib/partner-required-docs";
+import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
+import {
+  buildJoinRegistrationDocChecklist,
+  resolvePartnerDocExpiresAt,
+} from "@/lib/partner-required-docs";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -32,13 +36,14 @@ function safeExtForMime(mime: string): string {
   }
 }
 
-// Maps form field name → partner_documents metadata
-const DOC_DEFS = [
-  { key: "photo_id",         name: "Photo ID",                  docType: "id_proof"        },
-  { key: "public_liability", name: "Public Liability Insurance", docType: "insurance"       },
-  { key: "proof_of_address", name: "Proof of Address",          docType: "proof_of_address" },
-  { key: "right_to_work",    name: "Right to Work",             docType: "right_to_work"   },
-] as const;
+// Maps form field name → partner_documents metadata (keys must match RequiredDocDef.id)
+function joinDocDefsFromRules(rules: Awaited<ReturnType<typeof fetchPartnerDocumentRules>>) {
+  return buildJoinRegistrationDocChecklist(rules).map((d) => ({
+    key: d.id,
+    name: d.name,
+    docType: d.docType,
+  }));
+}
 
 async function uploadToStorage(
   supabase: ReturnType<typeof createServiceClient>,
@@ -110,6 +115,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const supabase = createServiceClient();
+  const docRules = await fetchPartnerDocumentRules(supabase);
+  const DOC_DEFS = joinDocDefsFromRules(docRules);
+
   // Validate all documents are present
   const missingDocs = DOC_DEFS.filter(({ key }) => {
     const f = form.get(key);
@@ -155,8 +164,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Profile photo file type not supported." }, { status: 400 });
     }
   }
-
-  const supabase = createServiceClient();
 
   // 1. Create auth user. We auto-confirm because the partner needs to log
   // into the mobile app once their documents are reviewed and approved by
