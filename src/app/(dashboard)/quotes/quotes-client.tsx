@@ -6828,14 +6828,12 @@ function CreateJobFromQuoteModal({
       }>;
       const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid);
       const split = splitPartnerCostFromFirstTwoLines(items);
-      const bidJobType = approvedBid?.job_type === "hourly" || approvedBid?.job_type === "fixed" ? approvedBid.job_type : undefined;
       setForm((prev) => ({
         ...prev,
         partner_id: pid || prev.partner_id,
         scope: mergedScope,
         partner_cost: split.hasSplit ? String(split.labour) : String(q.partner_cost ?? prev.partner_cost),
         materials_cost: split.hasSplit ? String(split.materials) : prev.materials_cost,
-        job_type: bidJobType ?? prev.job_type,
       }));
       let resolvedAddr = q.property_address ?? "";
       let accountId =
