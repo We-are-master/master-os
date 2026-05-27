@@ -195,6 +195,7 @@ import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
+import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
@@ -6926,6 +6927,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   onApprovalChange={() => router.refresh()}
                 />
               </div>
+              <JobPartnerMediaCard jobId={job.id} />
               {(v2StartSubmitted || v2FinalSubmitted) ? (
                 <div
                   className="flex items-center justify-between gap-2 pt-[12px]"
