@@ -195,6 +195,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   });
   const [propertyAddressEditing, setPropertyAddressEditing] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [distributing, setDistributing] = useState(false);
   const [requestImageUrls, setRequestImageUrls] = useState<string[]>([]);
   const [requestPhotosSaving, setRequestPhotosSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState("details");
@@ -471,6 +472,26 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const handleConvertToJob = useCallback((req: ServiceRequest) => {
     setSelectedRequest(null);
     setConvertToJobOpen(req);
+  }, []);
+
+  // Distribute this lead to matching partners (Fixfy Trade Portal "Leads").
+  const handleDistribute = useCallback(async (req: ServiceRequest) => {
+    setDistributing(true);
+    try {
+      const res = await fetch("/api/requests/distribute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: req.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to distribute");
+      if (json.offered > 0) toast.success(`Lead sent to ${json.offered} partner${json.offered === 1 ? "" : "s"}`);
+      else toast("No matching partners for this lead (check trades / postcodes).");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to distribute");
+    } finally {
+      setDistributing(false);
+    }
   }, []);
 
   const handleRequestPhotosAdd = useCallback(
@@ -1324,6 +1345,9 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     </Button>
                     <Button variant="outline" className="flex-1" size="sm" icon={<Briefcase className="h-3.5 w-3.5" />} onClick={() => handleConvertToJob(selectedRequest)}>
                       Create Job
+                    </Button>
+                    <Button variant="outline" className="flex-1" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => handleDistribute(selectedRequest)} disabled={distributing}>
+                      {distributing ? "Sending…" : "Distribute to partners"}
                     </Button>
                   </div>
                 )}
