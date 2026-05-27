@@ -74,7 +74,7 @@ import {
   pickRequiredDocMatches,
   pickRequiredDocMatch,
   buildRequiredDocumentChecklist,
-  buildMandatoryDocsForComplianceScore,
+  buildFullMandatoryDocsForComplianceScore,
   buildTradeCertificateRequirements,
   computeComplianceScore,
   getRequiredDocComplianceStatus,
@@ -107,6 +107,8 @@ import {
   getPartnerPortalAllowlistIds,
   getPartnerPortalAllowlistOptions,
 } from "@/lib/partner-portal-allowlist";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import type { PartnerDocRuleRow } from "@/lib/partner-required-docs";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -890,6 +892,7 @@ interface PartnersClientProps {
 }
 
 export function PartnersClient({ initialData }: PartnersClientProps = {}) {
+  const { partnerDocumentRules } = useFrontendSetup();
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -1095,12 +1098,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     [form.partner_legal_type, form.trades, form.crn, tradePickOptions],
   );
   const mandatoryDocsCreate = useMemo(
-    () => buildMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs),
-    [syntheticPartnerForCreateDocs],
+    () => buildFullMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs, partnerTradesForCreate, partnerDocumentRules),
+    [syntheticPartnerForCreateDocs, partnerTradesForCreate, partnerDocumentRules],
   );
   const tradeCertsDocsCreate = useMemo(
-    () => buildTradeCertificateRequirements(partnerTradesForCreate),
-    [partnerTradesForCreate],
+    () => buildTradeCertificateRequirements(partnerTradesForCreate, partnerDocumentRules),
+    [partnerTradesForCreate, partnerDocumentRules],
   );
   const pendingDocsForCompliancePreview = useMemo(
     () => pendingCreateDocsAsPartnerDocs(pendingCreateDocs),
@@ -1732,6 +1735,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         initialTab={partnerDrawerInitialTab}
         tradePickOptions={tradePickOptions}
         partnerCatalogForIds={partnerCatalogServices}
+        partnerDocumentRules={partnerDocumentRules}
         onClose={() => {
           setSelectedPartner(null);
           setSelectedTeamMember(null);
@@ -3038,6 +3042,7 @@ function PartnerDetailDrawer({
   onTeamChanged,
   tradePickOptions = [GENERAL_MAINTENANCE_LABEL],
   partnerCatalogForIds = [],
+  partnerDocumentRules,
 }: {
   partner: Partner | null;
   teamMember: TeamMember | null;
@@ -3046,6 +3051,7 @@ function PartnerDetailDrawer({
   tradePickOptions?: readonly string[];
   /** Services catalogue — used to sync `catalog_service_ids` when trades change. */
   partnerCatalogForIds?: CatalogService[];
+  partnerDocumentRules: PartnerDocRuleRow[];
   onClose: () => void;
   onPartnerPatch: (patch: Partial<Partner>) => Promise<void>;
   onVerify: (partner: Partner) => void;
@@ -3143,14 +3149,14 @@ function PartnerDetailDrawer({
   } | null>(null);
 
   const portalAllowlistOptions = useMemo(
-    () => (partner ? getPartnerPortalAllowlistOptions(partner) : []),
-    [partner],
+    () => (partner ? getPartnerPortalAllowlistOptions(partner, partnerDocumentRules) : []),
+    [partner, partnerDocumentRules],
   );
 
   useEffect(() => {
     if (!portalLinkModalOpen || !partner) return;
-    setPortalLinkSelectedIds(new Set(getPartnerPortalAllowlistIds(partner)));
-  }, [portalLinkModalOpen, partner]);
+    setPortalLinkSelectedIds(new Set(getPartnerPortalAllowlistIds(partner, partnerDocumentRules)));
+  }, [portalLinkModalOpen, partner, partnerDocumentRules]);
 
   useEffect(() => {
     if (teamMember) {
@@ -3581,11 +3587,18 @@ function PartnerDetailDrawer({
     () => (partner ? partnerTradesForDisplay(partner, partnerCatalogForIds) : []),
     [partner, partnerCatalogForIds],
   );
-  const mandatoryDocsForScore = partner ? buildMandatoryDocsForComplianceScore(partner) : [];
-  const tradeCertificateDocs = partner ? buildTradeCertificateRequirements(partnerTradesForCompliance) : [];
+  const mandatoryDocsForScore = partner
+    ? buildFullMandatoryDocsForComplianceScore(partner, partnerTradesForCompliance, partnerDocumentRules)
+    : [];
+  const tradeCertificateDocs = partner
+    ? buildTradeCertificateRequirements(partnerTradesForCompliance, partnerDocumentRules)
+    : [];
   const requiredDocuments = useMemo(
-    () => (partner ? buildRequiredDocumentChecklist(partnerTradesForCompliance, partner) : []),
-    [partner, partnerTradesForCompliance],
+    () =>
+      partner
+        ? buildRequiredDocumentChecklist(partnerTradesForCompliance, partner, partnerDocumentRules)
+        : [],
+    [partner, partnerTradesForCompliance, partnerDocumentRules],
   );
   const documentComplianceScore = partner ? computeComplianceScore(documents, mandatoryDocsForScore) : 0;
   const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner) : 0;

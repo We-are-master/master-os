@@ -199,13 +199,15 @@ function OnboardingPhase({ onComplete }: { onComplete: () => void }) {
 
 // ─── Registration form ────────────────────────────────────────────────────────
 
-type DocKey = "photo_id" | "public_liability" | "proof_of_address" | "right_to_work";
+type DocKey = string;
 
-const DOC_FIELDS: { key: DocKey; label: string; hint: string }[] = [
-  { key: "photo_id",         label: "Photo ID",                  hint: "Passport or driving licence" },
+type JoinDocField = { key: DocKey; label: string; hint: string };
+
+const DEFAULT_JOIN_DOC_FIELDS: JoinDocField[] = [
+  { key: "photo_id", label: "Photo ID", hint: "Passport or driving licence" },
   { key: "public_liability", label: "Public Liability Insurance", hint: "Active insurance certificate" },
-  { key: "proof_of_address", label: "Proof of Address",          hint: "Utility bill or bank statement" },
-  { key: "right_to_work",    label: "Right to Work",             hint: "Visa or passport biometric page" },
+  { key: "proof_of_address", label: "Proof of Address", hint: "Utility bill or bank statement" },
+  { key: "right_to_work", label: "Right to Work", hint: "Visa or passport biometric page" },
 ];
 
 const STEPS = ["Account", "Business", "Documents"];
@@ -445,9 +447,20 @@ function RegistrationForm() {
   const [showPassword,    setShowPassword]    = useState(false);
 
   const [tradeOptions, setTradeOptions] = useState<string[]>([]);
+  const [docFields, setDocFields] = useState<JoinDocField[]>(DEFAULT_JOIN_DOC_FIELDS);
   useEffect(() => {
     void listCatalogServicesForPicker()
       .then((c) => setTradeOptions(typeOfWorkLabelsFromCatalog(c)))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    void fetch("/api/join/document-requirements")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { documents?: JoinDocField[] } | null) => {
+        if (Array.isArray(data?.documents) && data.documents.length > 0) {
+          setDocFields(data.documents);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -485,7 +498,7 @@ function RegistrationForm() {
       if (!address.trim() || address.trim().length < 10) return "Please enter your full business address (street, city and postcode).";
     }
     if (s === 2) {
-      const missing = DOC_FIELDS.filter(({ key }) => !docs[key]).map(({ label }) => label);
+      const missing = docFields.filter(({ key }) => !docs[key]).map(({ label }) => label);
       if (missing.length) return `Please upload: ${missing.join(", ")}.`;
     }
     return null;
@@ -521,7 +534,7 @@ function RegistrationForm() {
       // well under Vercel's 4.5 MB API limit even with 5 attached files.
       const [compressedProfile, ...compressedDocs] = await Promise.all([
         profilePhoto ? compressImage(profilePhoto) : Promise.resolve(null),
-        ...DOC_FIELDS.map(({ key }) => {
+        ...docFields.map(({ key }) => {
           const f = docs[key];
           return f ? compressImage(f) : Promise.resolve(null);
         }),
@@ -543,7 +556,7 @@ function RegistrationForm() {
         form.append("profile_photo", sanitizeFileForUpload(compressedProfile, "profile_photo"));
       }
 
-      DOC_FIELDS.forEach(({ key }, idx) => {
+      docFields.forEach(({ key }, idx) => {
         const f = compressedDocs[idx];
         if (f) form.append(key, sanitizeFileForUpload(f, key));
       });
@@ -656,6 +669,7 @@ function RegistrationForm() {
         )}
         {step === 2 && (
           <Step2
+            docFields={docFields}
             docs={docs}
             fileRefs={fileRefs}
             onFileChange={handleFileChange}
@@ -950,7 +964,8 @@ function Step1({
   );
 }
 
-function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePhotoRef, onProfilePhotoChange, onRemoveProfilePhoto }: {
+function Step2({ docFields, docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePhotoRef, onProfilePhotoChange, onRemoveProfilePhoto }: {
+  docFields: JoinDocField[];
   docs: Partial<Record<DocKey, File>>;
   fileRefs: React.MutableRefObject<Partial<Record<DocKey, HTMLInputElement>>>;
   onFileChange: (key: DocKey, e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -1020,7 +1035,7 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
       </div>
 
       <div className="space-y-3">
-        {DOC_FIELDS.map(({ key, label, hint }) => (
+        {docFields.map(({ key, label, hint }) => (
           <div key={key}
             className={`rounded-xl border-2 p-3.5 transition-colors ${docs[key] ? "border-green-400 bg-green-50" : "border-slate-200 bg-slate-50 hover:border-orange-300"}`}>
             {docs[key] ? (

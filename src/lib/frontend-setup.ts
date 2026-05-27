@@ -1,5 +1,9 @@
 import { ACCESS_CCZ_FEE_GBP, ACCESS_PARKING_FEE_GBP } from "@/lib/ccz";
 import { OFFICE_JOB_CANCELLATION_REASONS } from "@/lib/job-office-cancellation";
+import {
+  mergePartnerDocumentRules,
+  type PartnerDocRuleRow,
+} from "@/lib/partner-required-docs";
 
 /**
  * Parsed from `company_settings.frontend_setup` (Settings → Setup).
@@ -72,6 +76,12 @@ export type FrontendSetup = {
   access_ccz_fee_gbp?: number;
   /** Customer parking surcharge per job when no free parking (GBP). */
   access_parking_fee_gbp?: number;
+
+  /**
+   * Partner document rules (Settings → Setup → Partner documents).
+   * Controls which docs are requested and which are mandatory for compliance.
+   */
+  partner_document_rules?: PartnerDocRuleRow[];
 };
 
 export type AccessFees = {
@@ -326,6 +336,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
     base.office_job_cancellation_presets = normalizeOfficeJobCancellationPresets(null);
     base.working_days = [...DEFAULT_WORKING_DAYS];
     base.working_hours = { ...DEFAULT_WORKING_HOURS };
+    base.partner_document_rules = mergePartnerDocumentRules(null);
     return base;
   }
   const o = raw as Record<string, unknown>;
@@ -360,6 +371,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   }
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
+  base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
   return base;
 }
 
@@ -459,7 +471,15 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.access_parking_fee_gbp !== undefined) {
     base.access_parking_fee_gbp = clampAccessFeeGbp(patch.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   }
+  if (patch.partner_document_rules !== undefined) {
+    base.partner_document_rules = mergePartnerDocumentRules(patch.partner_document_rules);
+  }
   return base;
+}
+
+/** Resolved partner document rules from company setup (merged with code defaults). */
+export function resolvePartnerDocumentRules(setup?: FrontendSetup | null): PartnerDocRuleRow[] {
+  return mergePartnerDocumentRules(setup?.partner_document_rules);
 }
 
 export type ResolvedSlaRules = {

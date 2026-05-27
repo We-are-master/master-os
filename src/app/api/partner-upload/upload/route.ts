@@ -4,7 +4,9 @@ import { resolvePartnerPortalCredential } from "@/lib/partner-portal-session";
 import {
   buildRequiredDocumentChecklist,
   resolvePartnerDocExpiresAt,
+  type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
+import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
 import {
   removeStorageObjectsWithSupabase,
   uploadPartnerDocumentFileWithSupabase,
@@ -18,6 +20,7 @@ function resolveUploadTarget(
   trades: string[],
   requirementId: string,
   displayName: string | null,
+  rules?: PartnerDocRuleRow[] | null,
 ): { docType: string; name: string } | null {
   const trimmed = requirementId.trim();
   if (trimmed === "dbs") {
@@ -28,7 +31,7 @@ function resolveUploadTarget(
     if (!n) return null;
     return { docType: "other", name: n };
   }
-  const list = buildRequiredDocumentChecklist(trades, partner);
+  const list = buildRequiredDocumentChecklist(trades, partner, rules);
   const found = list.find((r) => r.id === trimmed);
   if (!found) return null;
   const name = displayName?.trim() || found.name;
@@ -86,7 +89,8 @@ export async function POST(req: NextRequest) {
 
   const p = partner as Partner;
   const trades = (p.trades?.length ? p.trades : null) ?? [p.trade];
-  const target = resolveUploadTarget(p, trades, requirementId, displayName);
+  const docRules = await fetchPartnerDocumentRules(supabase);
+  const target = resolveUploadTarget(p, trades, requirementId, displayName, docRules);
   if (!target) {
     return NextResponse.json({ error: "invalid_requirement" }, { status: 400 });
   }

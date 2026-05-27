@@ -1,6 +1,24 @@
 import type { Partner } from "@/types/database";
 import { inferPartnerLegal } from "@/lib/partner-compliance";
 
+/** Per-document rule stored in `company_settings.frontend_setup.partner_document_rules`. */
+export type PartnerDocRuleRow = {
+  id: string;
+  enabled: boolean;
+  mandatory: boolean;
+};
+
+export type PartnerDocCatalogGroup = "core" | "utr" | "agreement" | "trade_cert" | "extra";
+
+export type PartnerDocCatalogEntry = {
+  id: string;
+  name: string;
+  description: string;
+  group: PartnerDocCatalogGroup;
+  /** Trade label when `group === "trade_cert"`. */
+  trade?: string;
+};
+
 /** Minimal shape for compliance matching (partner_documents rows + synthetic queue items). */
 export interface PartnerDocLike {
   id: string;
@@ -134,36 +152,175 @@ export const AGREEMENT_REQUIRED_DOCS: RequiredDocDef[] = [
   },
 ];
 
+/** Portal-only extras (not part of compliance checklist builders). */
+export const PORTAL_EXTRA_DOC_DEFS: RequiredDocDef[] = [
+  {
+    id: "dbs",
+    name: "DBS (Disclosure and Barring)",
+    description: "Optional — basic DBS certificate if applicable.",
+    docType: "dbs",
+    aliases: ["dbs", "disclosure", "barring"],
+  },
+  {
+    id: "other",
+    name: "Other document",
+    description: "Any other file the partner labels when uploading.",
+    docType: "other",
+    aliases: ["other"],
+  },
+];
+
+function tradeCertRequirementId(certName: string): string {
+  const key = certName.trim().toLowerCase();
+  return `trade-cert-${key.replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+/** All trade certificate defs (required + optional maps), deduped by id. */
+export function getAllTradeCertificateCatalogEntries(): PartnerDocCatalogEntry[] {
+  const out: PartnerDocCatalogEntry[] = [];
+  const seen = new Set<string>();
+  const add = (trade: string, cert: string, description: string) => {
+    const id = tradeCertRequirementId(cert);
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      name: cert,
+      description,
+      group: "trade_cert",
+      trade,
+    });
+  };
+  for (const [trade, certs] of Object.entries(CERT_REQUIREMENTS_BY_TRADE)) {
+    for (const cert of certs) add(trade, cert, `Required for ${trade} work`);
+  }
+  for (const [trade, certs] of Object.entries(OPTIONAL_TRADE_CERTS_BY_TRADE)) {
+    for (const cert of certs) add(trade, cert, `Optional for ${trade} work`);
+  }
+  return out;
+}
+
+/** Full catalog for Settings → Setup (core, UTR, agreements, trade certs, extras). */
+export function getPartnerDocumentCatalogForSetup(): PartnerDocCatalogEntry[] {
+  const core = REQUIRED_PARTNER_DOCS.map((d) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    group: "core" as const,
+  }));
+  const utr: PartnerDocCatalogEntry = {
+    id: UTR_REQUIRED_DOC.id,
+    name: UTR_REQUIRED_DOC.name,
+    description: `${UTR_REQUIRED_DOC.description} (self-employed partners only)`,
+    group: "utr",
+  };
+  const agreements = AGREEMENT_REQUIRED_DOCS.map((d) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    group: "agreement" as const,
+  }));
+  const extras = PORTAL_EXTRA_DOC_DEFS.filter((d) => d.id !== "other").map((d) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    group: "extra" as const,
+  }));
+  return [...core, utr, ...agreements, ...getAllTradeCertificateCatalogEntries(), ...extras];
+}
+
+/** Default rules = current product behaviour before any Setup overrides. */
+export function buildDefaultPartnerDocumentRules(): PartnerDocRuleRow[] {
+  const catalog = getPartnerDocumentCatalogForSetup();
+  const optionalIds = new Set(["dbs"]);
+  return catalog.map((entry) => ({
+    id: entry.id,
+    enabled: true,
+    mandatory: !optionalIds.has(entry.id),
+  }));
+}
+
+export function mergePartnerDocumentRules(stored: unknown): PartnerDocRuleRow[] {
+  const defaults = buildDefaultPartnerDocumentRules();
+  if (!Array.isArray(stored)) return defaults;
+  const storedById = new Map<string, PartnerDocRuleRow>();
+  for (const row of stored) {
+    if (row == null || typeof row !== "object") continue;
+    const o = row as { id?: unknown; enabled?: unknown; mandatory?: unknown };
+    if (typeof o.id !== "string" || !o.id.trim()) continue;
+    const enabled = Boolean(o.enabled);
+    storedById.set(o.id.trim(), {
+      id: o.id.trim(),
+      enabled,
+      mandatory: enabled && Boolean(o.mandatory),
+    });
+  }
+  return defaults.map((d) => storedById.get(d.id) ?? d);
+}
+
+export function resolvePartnerDocRule(
+  id: string,
+  rules?: PartnerDocRuleRow[] | null,
+): { enabled: boolean; mandatory: boolean } {
+  const merged = rules ?? buildDefaultPartnerDocumentRules();
+  const row = merged.find((r) => r.id === id);
+  if (row) return { enabled: row.enabled, mandatory: row.mandatory && row.enabled };
+  const def = buildDefaultPartnerDocumentRules().find((r) => r.id === id);
+  if (def) return { enabled: def.enabled, mandatory: def.mandatory && def.enabled };
+  return { enabled: false, mandatory: false };
+}
+
+function filterDefsByRules(
+  defs: RequiredDocDef[],
+  rules?: PartnerDocRuleRow[] | null,
+  opts?: { mandatoryOnly?: boolean },
+): RequiredDocDef[] {
+  return defs.filter((d) => {
+    const r = resolvePartnerDocRule(d.id, rules);
+    if (!r.enabled) return false;
+    if (opts?.mandatoryOnly && !r.mandatory) return false;
+    return true;
+  });
+}
+
 /**
  * Full mandatory checklist for the partner (Documents UI): core IDs, UTR when self-employed, agreements.
  * Trade certificates are separate ({@link buildTradeCertificateRequirements}).
  */
-export function buildMandatoryDocsChecklist(partner: Partner | null): RequiredDocDef[] {
+export function buildMandatoryDocsChecklist(
+  partner: Partner | null,
+  rules?: PartnerDocRuleRow[] | null,
+): RequiredDocDef[] {
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
   const withUtr =
     partner && inferPartnerLegal(partner) === "self_employed" ? [...core, UTR_REQUIRED_DOC] : [...core];
-  return [...withUtr, ...AGREEMENT_REQUIRED_DOCS];
+  return filterDefsByRules([...withUtr, ...AGREEMENT_REQUIRED_DOCS], rules);
 }
 
 /**
  * All requirement definitions that can be toggled in Settings (core + UTR + agreements).
- * Trade certs are configured per partner trade, not here.
+ * @deprecated Prefer {@link getPartnerDocumentCatalogForSetup} in Settings → Setup.
  */
 export function getAllConfigurableComplianceRequirementDefs(): RequiredDocDef[] {
   return [...REQUIRED_PARTNER_DOCS, UTR_REQUIRED_DOC, ...AGREEMENT_REQUIRED_DOCS];
 }
 
 /**
- * Subset of {@link buildMandatoryDocsChecklist} that counts toward the numeric document score.
- * @param companyExcludedDocIds — from `company_settings.compliance_score_excluded_doc_ids` (Settings → admin).
+ * Subset that counts toward the numeric document score — only enabled + mandatory rules.
  */
 export function buildMandatoryDocsForComplianceScore(
   partner: Partner | null,
-  companyExcludedDocIds?: string[] | null,
+  rules?: PartnerDocRuleRow[] | null,
 ): RequiredDocDef[] {
-  const full = buildMandatoryDocsChecklist(partner);
-  const excluded = new Set(companyExcludedDocIds ?? []);
-  return full.filter((r) => !excluded.has(r.id));
+  const base = buildMandatoryDocsChecklist(partner, rules);
+  return filterDefsByRules(base, rules, { mandatoryOnly: true });
+}
+
+/** Mandatory enabled core docs for join registration (excludes agreements, trade certs, UTR file). */
+export function buildJoinRegistrationDocChecklist(
+  rules?: PartnerDocRuleRow[] | null,
+): RequiredDocDef[] {
+  return filterDefsByRules([...REQUIRED_PARTNER_DOCS], rules, { mandatoryOnly: true });
 }
 
 export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike | null {
@@ -192,7 +349,10 @@ export function extractCertificateNumber(doc: Pick<PartnerDocLike, "notes">): st
   return null;
 }
 
-export function buildTradeCertificateRequirements(trades: string[] | null | undefined): RequiredDocDef[] {
+export function buildTradeCertificateRequirements(
+  trades: string[] | null | undefined,
+  rules?: PartnerDocRuleRow[] | null,
+): RequiredDocDef[] {
   const out: RequiredDocDef[] = [];
   const seen = new Set<string>();
   for (const t of trades ?? []) {
@@ -202,7 +362,7 @@ export function buildTradeCertificateRequirements(trades: string[] | null | unde
       if (!key || seen.has(key)) continue;
       seen.add(key);
       out.push({
-        id: `trade-cert-${key.replace(/[^a-z0-9]+/g, "-")}`,
+        id: tradeCertRequirementId(cert),
         name: cert,
         description: `Required for ${t} work`,
         docType: "certification",
@@ -210,19 +370,42 @@ export function buildTradeCertificateRequirements(trades: string[] | null | unde
       });
     }
   }
-  return out;
+  return filterDefsByRules(out, rules);
 }
 
 export function buildRequiredDocumentChecklist(
   trades: string[] | null | undefined,
   partner: Partner | null,
+  rules?: PartnerDocRuleRow[] | null,
 ): RequiredDocDef[] {
-  const tradeCerts = buildTradeCertificateRequirements(trades);
+  const tradeCerts = buildTradeCertificateRequirements(trades, rules);
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
-  if (partner && inferPartnerLegal(partner) === "self_employed") {
-    return [...core, UTR_REQUIRED_DOC, ...tradeCerts];
-  }
-  return [...core, ...tradeCerts];
+  const base =
+    partner && inferPartnerLegal(partner) === "self_employed"
+      ? [...core, UTR_REQUIRED_DOC, ...tradeCerts]
+      : [...core, ...tradeCerts];
+  return filterDefsByRules(base, rules);
+}
+
+/** Mandatory trade + core docs for compliance score. */
+export function buildFullMandatoryDocsForComplianceScore(
+  partner: Partner | null,
+  trades: string[] | null | undefined,
+  rules?: PartnerDocRuleRow[] | null,
+): RequiredDocDef[] {
+  const base = buildMandatoryDocsForComplianceScore(partner, rules);
+  const tradeMandatory = filterDefsByRules(
+    buildTradeCertificateRequirements(trades, rules),
+    rules,
+    { mandatoryOnly: true },
+  );
+  const seen = new Set(base.map((d) => d.id));
+  return [...base, ...tradeMandatory.filter((d) => !seen.has(d.id))];
+}
+
+/** Enabled portal extras (DBS, etc.) respecting Setup rules. */
+export function buildEnabledPortalExtraDocs(rules?: PartnerDocRuleRow[] | null): RequiredDocDef[] {
+  return filterDefsByRules(PORTAL_EXTRA_DOC_DEFS, rules);
 }
 
 /** True only when the row is explicitly approved and not past file expiry. */
