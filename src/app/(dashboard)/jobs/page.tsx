@@ -17,7 +17,7 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
-  ArrowRight, Briefcase, Receipt,
+  ArrowRight, Briefcase, Receipt, Wallet,
   MapPin, Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
   Timer,
@@ -972,6 +972,21 @@ function JobsPageContent() {
     clientAccountMap,
   ]);
 
+  /** Active jobs tab only — sums match Job Amount & Cost columns in the list. */
+  const activeJobsTabFinancialTotals = useMemo(() => {
+    if (status !== "all") return { revenue: 0, cost: 0 };
+    let revenue = 0;
+    let cost = 0;
+    for (const j of sortedDataForTable) {
+      revenue += jobBillableAmount(j);
+      cost += Number(j.partner_cost ?? 0);
+    }
+    return {
+      revenue: Math.round(revenue * 100) / 100,
+      cost: Math.round(cost * 100) / 100,
+    };
+  }, [status, sortedDataForTable]);
+
   const kanbanColumns = useMemo(() => {
     const defs = [
       {
@@ -1900,7 +1915,7 @@ function JobsPageContent() {
       label: "Partner",
       minWidth: "132px",
       cellClassName: "min-w-[7rem] max-w-[12rem]",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: jobColumnSortPack("partner_name", "Partner"),
       render: (item) => {
@@ -1926,7 +1941,7 @@ function JobsPageContent() {
       label: "Status",
       minWidth: "118px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_STATUS,
       render: (item) => {
@@ -2000,7 +2015,7 @@ function JobsPageContent() {
       label: "Job Amount",
       minWidth: "112px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_AMOUNT,
       render: (item) => {
@@ -2023,7 +2038,7 @@ function JobsPageContent() {
       label: "Amount Due",
       minWidth: "96px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_AMOUNT_DUE,
       render: (item) => {
@@ -2041,7 +2056,7 @@ function JobsPageContent() {
       label: "Finance",
       minWidth: "88px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
       render: (item) => {
@@ -2055,7 +2070,7 @@ function JobsPageContent() {
       width: "44px",
       minWidth: "44px",
       cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
-      headerClassName: "w-11",
+      headerClassName: "w-11 normal-case",
       render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
     },
   ];
@@ -2066,7 +2081,7 @@ function JobsPageContent() {
       label: "Ticket",
       minWidth: "96px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       render: (item: Job) =>
         item.external_source === "zendesk" && item.external_ref?.trim() ? (
           <ZendeskTicketBadge source={item.external_source} ref={item.external_ref} size="sm" />
@@ -2097,7 +2112,7 @@ function JobsPageContent() {
       label: "Cost",
       minWidth: "88px",
       cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_COST,
       render: (item) => (
@@ -2327,7 +2342,8 @@ function JobsPageContent() {
     const parts = [
       "Track and manage jobs.",
       "First KPI = active pipeline (Action Required through Final Checks). Avg time = mean wall-clock duration from scheduled anchor (start of booking) to first transition into Final Checks (audit), in the same schedule window.",
-      "Avg ticket & margin use the same schedule window as the list when Dates is set.",
+      "On Active jobs, Revenue & Cost sum the Job Amount and partner Cost columns in the list.",
+      "On other tabs, Avg ticket & margin use the same schedule window as the list when Dates is set.",
     ];
     if (scheduleWindowLine) parts.push(scheduleWindowLine);
     return parts.join("\n\n");
@@ -2389,22 +2405,45 @@ function JobsPageContent() {
             icon={Timer}
             accent="emerald"
           />
-          <KpiCard
-            className="min-h-[128px] h-full"
-            title="Avg ticket"
-            value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(avgTicket)}
-            format="none"
-            icon={Receipt}
-            accent="purple"
-          />
-          <KpiCard
-            className="min-h-[128px] h-full"
-            title="Avg margin"
-            value={kpiFinancialLoading ? "—" : avgMarginPct}
-            format={kpiFinancialLoading ? "none" : "percent"}
-            icon={TrendingUp}
-            accent="amber"
-          />
+          {status === "all" ? (
+            <>
+              <KpiCard
+                className="min-h-[128px] h-full"
+                title="Revenue"
+                value={loading ? "—" : formatCurrencyPrecise(activeJobsTabFinancialTotals.revenue)}
+                format="none"
+                icon={Receipt}
+                accent="purple"
+              />
+              <KpiCard
+                className="min-h-[128px] h-full"
+                title="Cost"
+                value={loading ? "—" : formatCurrencyPrecise(activeJobsTabFinancialTotals.cost)}
+                format="none"
+                icon={Wallet}
+                accent="amber"
+              />
+            </>
+          ) : (
+            <>
+              <KpiCard
+                className="min-h-[128px] h-full"
+                title="Avg ticket"
+                value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(avgTicket)}
+                format="none"
+                icon={Receipt}
+                accent="purple"
+              />
+              <KpiCard
+                className="min-h-[128px] h-full"
+                title="Avg margin"
+                value={kpiFinancialLoading ? "—" : avgMarginPct}
+                format={kpiFinancialLoading ? "none" : "percent"}
+                icon={TrendingUp}
+                accent="amber"
+              />
+            </>
+          )}
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
