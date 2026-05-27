@@ -237,7 +237,6 @@ import { JOB_STATUS_BADGE_VARIANT, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
-  localHmFromIsoTimestamp,
   onHoldSnapshotArrivalYmd,
   resumeRequiresStrictFutureArrivalDate,
   validateResumeArrivalDate,
@@ -994,6 +993,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [resumeAction, setResumeAction] = useState<"reschedule" | "cancel" | "complete">("reschedule");
   const [resumeArrivalDate, setResumeArrivalDate] = useState("");
   const [resumeArrivalTime, setResumeArrivalTime] = useState("");
+  const [resumeArrivalWindowMins, setResumeArrivalWindowMins] = useState("");
   const [resumeExpectedFinishDate, setResumeExpectedFinishDate] = useState("");
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
@@ -3179,15 +3179,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       nextArrival = today;
     }
     setResumeArrivalDate(nextArrival);
-    const hm =
-      localHmFromIsoTimestamp(job.on_hold_snapshot_scheduled_start_at ?? job.scheduled_start_at ?? null) ||
-      scheduleTime.trim();
-    setResumeArrivalTime(hm);
+    const usesSlots = isOneOffScheduleUi;
+    const startAt = job.on_hold_snapshot_scheduled_start_at ?? job.scheduled_start_at ?? null;
+    const endAt = job.on_hold_snapshot_scheduled_end_at ?? job.scheduled_end_at ?? null;
+    if (startAt) {
+      const { hm } = utcIsoToUkWallClock(startAt);
+      let time = hm;
+      let wm = "";
+      if (endAt) {
+        const startMs = new Date(startAt).getTime();
+        const endMs = new Date(endAt).getTime();
+        wm = snapArrivalWindowMinutes(startMs, endMs);
+      }
+      if (usesSlots && time && wm) {
+        const canon = canonicalArrivalSlotValues(time, wm);
+        time = canon.from;
+        wm = canon.mins;
+      }
+      setResumeArrivalTime(time);
+      setResumeArrivalWindowMins(wm);
+    } else {
+      setResumeArrivalTime(usesSlots ? "09:00" : scheduleTime.trim());
+      setResumeArrivalWindowMins(usesSlots ? "180" : "");
+    }
     const finishYmd = (job.on_hold_snapshot_scheduled_finish_date ?? job.scheduled_finish_date ?? "").trim().slice(0, 10);
-    setResumeExpectedFinishDate(finishYmd);
+    setResumeExpectedFinishDate(isRecurringSeriesJob ? finishYmd : "");
     setResumeAction("reschedule");
     setResumeJobOpen(true);
-  }, [job, scheduleTime]);
+  }, [job, scheduleTime, isOneOffScheduleUi, isRecurringSeriesJob]);
 
   const confirmResumeJob = useCallback(async () => {
     if (!job || job.status !== "on_hold") return;
@@ -3201,17 +3220,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("Set an arrival time.");
       return;
     }
+    const wmTrim = resumeArrivalWindowMins.trim();
+    const windowMins = wmTrim ? Number(wmTrim) : NaN;
+    const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
+    if (job.partner_id?.trim() && !hasWindow) {
+      toast.error("Choose an arrival window length when a partner is assigned.");
+      return;
+    }
+    if (isOneOffScheduleUi && !hasWindow) {
+      toast.error("Choose an arrival window length.");
+      return;
+    }
     const schedule = buildSchedulePatchForResume({
       arrivalDateYmd: resumeArrivalDate,
       arrivalTimeHm: resumeArrivalTime,
+      arrivalWindowMins: resumeArrivalWindowMins,
       snapshotStartAt: job.on_hold_snapshot_scheduled_start_at,
       snapshotEndAt: job.on_hold_snapshot_scheduled_end_at,
       snapshotFinishDate: job.on_hold_snapshot_scheduled_finish_date,
       fallbackFinishDate: job.scheduled_finish_date,
+      oneOff: isOneOffScheduleUi,
     });
     const arrY = resumeArrivalDate.trim().slice(0, 10);
-    const finishY = resumeExpectedFinishDate.trim().slice(0, 10) || (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
-    if (finishY && finishY < arrY) {
+    const finishY = isRecurringSeriesJob
+      ? resumeExpectedFinishDate.trim().slice(0, 10) ||
+        (schedule.scheduled_finish_date ?? "").toString().slice(0, 10)
+      : (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
+    if (isRecurringSeriesJob && finishY && finishY < arrY) {
       toast.error("Arrival date cannot be after the expected finish date.");
       return;
     }
@@ -3270,7 +3305,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job,
     resumeArrivalDate,
     resumeArrivalTime,
+    resumeArrivalWindowMins,
     resumeExpectedFinishDate,
+    isOneOffScheduleUi,
+    isRecurringSeriesJob,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
@@ -8505,12 +8543,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <p className="text-xs text-text-tertiary">
                 If the saved arrival date is no longer in the future, choose a valid date/time before resuming.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className={cn(isOneOffScheduleUi && "sm:col-span-2")}>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Date *</label>
                   <Input
                     type="date"
                     value={resumeArrivalDate}
+                    disabled={resumeSaving}
                     onChange={(e) => {
                       const v = e.target.value;
                       setResumeArrivalDate(v);
@@ -8521,31 +8560,76 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className="h-10"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Time *</label>
-                  <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected Finish Date</label>
-                  <Input
-                    type="date"
-                    value={resumeExpectedFinishDate}
-                    min={isRecurringSeriesJob && resumeArrivalDate.trim() ? resumeArrivalDate.trim() : undefined}
-                    disabled={isRecurringSeriesJob && !resumeArrivalDate.trim()}
-                    title={
-                      isRecurringSeriesJob && !resumeArrivalDate.trim()
-                        ? "Set the arrival date first"
-                        : undefined
-                    }
-                    onChange={(e) => {
-                      const min = isRecurringSeriesJob ? resumeArrivalDate.trim() : "";
-                      const v = e.target.value;
-                      if (min && v && v < min) return;
-                      setResumeExpectedFinishDate(v);
-                    }}
-                    className="h-10"
-                  />
-                </div>
+                {isOneOffScheduleUi ? (
+                  <div
+                    className={cn(
+                      "sm:col-span-2",
+                      resumeSaving && "pointer-events-none opacity-60",
+                    )}
+                  >
+                    <ArrivalSlotPicker
+                      arrivalFrom={resumeArrivalTime}
+                      arrivalWindowMins={resumeArrivalWindowMins}
+                      onPick={(from, mins) => {
+                        setResumeArrivalTime(from);
+                        setResumeArrivalWindowMins(mins);
+                      }}
+                    />
+                    {(() => {
+                      const preview = jobModalClientArrivalPreview(
+                        resumeArrivalDate,
+                        resumeArrivalTime,
+                        resumeArrivalWindowMins,
+                        { useArrivalSlots: isOneOffScheduleUi },
+                      );
+                      return preview ? (
+                        <p className="mt-2 text-[11px] font-medium text-text-secondary">{preview}</p>
+                      ) : null;
+                    })()}
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <TimeSelect
+                        label="Arrival Time"
+                        value={resumeArrivalTime}
+                        disabled={resumeSaving}
+                        onChange={(v) => setResumeArrivalTime(v)}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-text-secondary">Window</label>
+                      <Select
+                        className="h-10"
+                        value={resumeArrivalWindowMins}
+                        disabled={resumeSaving}
+                        onChange={(e) => setResumeArrivalWindowMins(e.target.value)}
+                        options={[...ARRIVAL_WINDOW_OPTIONS]}
+                      />
+                    </div>
+                  </>
+                )}
+                {isRecurringSeriesJob ? (
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Expected Finish Date{resumeArrivalDate.trim() ? <span className="text-red-600"> *</span> : null}
+                    </label>
+                    <Input
+                      type="date"
+                      value={resumeExpectedFinishDate}
+                      min={resumeArrivalDate.trim() ? resumeArrivalDate.trim() : undefined}
+                      disabled={resumeSaving || !resumeArrivalDate.trim()}
+                      title={!resumeArrivalDate.trim() ? "Set the arrival date first" : undefined}
+                      onChange={(e) => {
+                        const min = resumeArrivalDate.trim();
+                        const v = e.target.value;
+                        if (min && v && v < min) return;
+                        setResumeExpectedFinishDate(v);
+                      }}
+                      className="h-10"
+                    />
+                  </div>
+                ) : null}
               </div>
             </>
           ) : null}
