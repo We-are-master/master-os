@@ -55,19 +55,30 @@ export function validateResumeArrivalDate(args: {
   return { ok: true };
 }
 
-/** Build schedule fields for resume from modal date/time + snapshot window + finish date. */
+/** Build schedule fields for resume from modal date/time + window + finish date. */
 export function buildSchedulePatchForResume(args: {
   arrivalDateYmd: string;
   arrivalTimeHm: string;
+  /** Explicit window from the modal; falls back to snapshot start/end when omitted. */
+  arrivalWindowMins?: number | string | null;
   snapshotStartAt: string | null | undefined;
   snapshotEndAt: string | null | undefined;
   snapshotFinishDate: string | null | undefined;
   /** Used when the snapshot did not store a finish date. */
   fallbackFinishDate?: string | null;
+  /** One-off jobs: no separate expected finish date on the schedule. */
+  oneOff?: boolean;
 }): Pick<Job, "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"> {
   const d = args.arrivalDateYmd.trim().slice(0, 10);
   const t = args.arrivalTimeHm.trim();
-  const wm = windowMinutesFromSnapshotStartEnd(args.snapshotStartAt, args.snapshotEndAt);
+  const explicitRaw =
+    args.arrivalWindowMins != null && String(args.arrivalWindowMins).trim() !== ""
+      ? Number(String(args.arrivalWindowMins).trim())
+      : NaN;
+  const wm =
+    Number.isFinite(explicitRaw) && explicitRaw > 0
+      ? explicitRaw
+      : windowMinutesFromSnapshotStartEnd(args.snapshotStartAt, args.snapshotEndAt);
   const scheduled_start_at = t ? ukWallClockToUtcIso(d, t) || null : null;
   let scheduled_end_at: string | null = null;
   if (scheduled_start_at && wm != null && wm > 0) {
@@ -81,7 +92,7 @@ export function buildSchedulePatchForResume(args: {
     typeof args.fallbackFinishDate === "string" && args.fallbackFinishDate.trim()
       ? args.fallbackFinishDate.trim().slice(0, 10)
       : null;
-  const finish = snapFinish ?? fb;
+  const finish = args.oneOff ? null : snapFinish ?? fb;
   return {
     scheduled_date: d || null,
     scheduled_start_at: scheduled_start_at,
