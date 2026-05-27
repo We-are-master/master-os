@@ -1063,6 +1063,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [partnerAssignRateType, setPartnerAssignRateType] = useState<"fixed" | "hourly">("fixed");
   const [partnerAssignServiceId, setPartnerAssignServiceId] = useState("");
   const [partnerAssignFixedCost, setPartnerAssignFixedCost] = useState("");
+  const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("1");
+  const [partnerAssignClientHourlyRate, setPartnerAssignClientHourlyRate] = useState("");
+  const [partnerAssignPartnerHourlyRate, setPartnerAssignPartnerHourlyRate] = useState("");
   const [partnerAssignExtraInputs, setPartnerAssignExtraInputs] = useState<{
     extra: string;
     ccz: string;
@@ -2017,6 +2020,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setPartnerAssignFixedCost(
       String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
     );
+    if (job.job_type === "hourly") {
+      setPartnerAssignBilledHours(String(Math.max(0.5, Number(job.billed_hours) || 1)));
+      setPartnerAssignClientHourlyRate(String(Math.max(0, Number(job.hourly_client_rate) || 0)));
+      setPartnerAssignPartnerHourlyRate(String(Math.max(0, Number(job.hourly_partner_rate) || 0)));
+    } else {
+      setPartnerAssignBilledHours("1");
+      setPartnerAssignClientHourlyRate("");
+      setPartnerAssignPartnerHourlyRate("");
+    }
     const cczDefault = job.in_ccz && accessFees.cczFeeGbp > 0 ? String(accessFees.cczFeeGbp) : "";
     const parkingDefault = job.has_free_parking === false && accessFees.parkingFeeGbp > 0 ? String(accessFees.parkingFeeGbp) : "";
     setPartnerAssignExtraInputs({
@@ -2030,6 +2042,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job?.id,
     job?.job_type,
     job?.catalog_service_id,
+    job?.billed_hours,
+    job?.hourly_client_rate,
+    job?.hourly_partner_rate,
     job?.partner_cost,
     job?.partner_extras_amount,
     job?.materials_cost,
@@ -2109,20 +2124,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [catalogServicesJobType, partnerAssignServiceId],
   );
   const partnerAssignHourlyPreview = useMemo(() => {
-    if (!job || !partnerAssignService) return null;
-    const elapsedSeconds = computeOfficeTimerElapsedSeconds(job);
-    const effectiveSeconds = elapsedSeconds > 0 ? elapsedSeconds : 3600;
-    const clientRate = Math.max(0, Number(partnerAssignService.hourly_rate) || 0);
-    const partnerRate = Math.max(
-      0,
-      partnerHourlyRateFromCatalogBundle(partnerAssignService.partner_cost, partnerAssignService.default_hours),
-    );
-    return computeHourlyTotals({
-      elapsedSeconds: effectiveSeconds,
-      clientHourlyRate: clientRate,
-      partnerHourlyRate: partnerRate,
-    });
-  }, [job, partnerAssignService]);
+    const billedHours = Math.max(0.5, Number(partnerAssignBilledHours) || 0);
+    const clientRate = Math.max(0, Number(partnerAssignClientHourlyRate) || 0);
+    const partnerRate = Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0);
+    if (clientRate <= 0 && partnerRate <= 0) return null;
+    return {
+      billedHours,
+      clientTotal: Math.round(clientRate * billedHours * 100) / 100,
+      partnerTotal: Math.round(partnerRate * billedHours * 100) / 100,
+    };
+  }, [partnerAssignBilledHours, partnerAssignClientHourlyRate, partnerAssignPartnerHourlyRate]);
   const partnerAssignExtraBreakdown = useMemo(() => {
     const toAmount = (v: string) => Math.round(Math.max(0, Number(v) || 0) * 100) / 100;
     return {
@@ -2158,7 +2169,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   );
   const partnerAssignCanConfirm =
     !!selectedPartnerId &&
-    (partnerAssignRateType === "hourly" ? !!partnerAssignServiceId && partnerAssignBaseCost > 0 : partnerAssignBaseCost > 0);
+    (partnerAssignRateType === "hourly"
+      ? !!partnerAssignServiceId &&
+        Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
+        Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0 &&
+        Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0) > 0
+      : partnerAssignBaseCost > 0);
 
   useEffect(() => {
     if (!job) return;
@@ -9288,7 +9304,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <label className="block text-xs font-medium text-text-secondary">Service</label>
                 <select
                   value={partnerAssignServiceId}
-                  onChange={(e) => setPartnerAssignServiceId(e.target.value)}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setPartnerAssignServiceId(id);
+                    const service = catalogServicesJobType.find((s) => s.id === id);
+                    if (!service) return;
+                    setPartnerAssignClientHourlyRate(String(Math.max(0, Number(service.hourly_rate) || 0)));
+                    setPartnerAssignPartnerHourlyRate(
+                      String(
+                        Math.max(
+                          0,
+                          partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours),
+                        ),
+                      ),
+                    );
+                    setPartnerAssignBilledHours(String(Math.max(0.5, Number(service.default_hours) || 1)));
+                  }}
                   className="h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                 >
                   <option value="">Select service...</option>
@@ -9304,10 +9335,64 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     );
                   })}
                 </select>
-                {partnerAssignService ? (
-                  <p className="text-xs text-text-tertiary">
-                    Client rate: <span className="font-medium text-text-primary">{formatCurrency(Math.max(0, Number(partnerAssignService.hourly_rate) || 0))}/h</span>
-                  </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Client rate £/h</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerAssignClientHourlyRate}
+                      onChange={(e) => setPartnerAssignClientHourlyRate(e.target.value)}
+                      className="h-9"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Partner rate £/h</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerAssignPartnerHourlyRate}
+                      onChange={(e) => setPartnerAssignPartnerHourlyRate(e.target.value)}
+                      className="h-9"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Min hours</span>
+                    <Input
+                      type="number"
+                      min={0.5}
+                      step="0.5"
+                      value={partnerAssignBilledHours}
+                      onChange={(e) => setPartnerAssignBilledHours(e.target.value)}
+                      className="h-9"
+                    />
+                  </label>
+                </div>
+                {partnerAssignHourlyPreview ? (
+                  <div className="rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2 text-[11px] text-text-secondary space-y-1">
+                    <p>
+                      Client labour:{" "}
+                      <span className="font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(partnerAssignHourlyPreview.clientTotal)}
+                      </span>
+                      <span className="text-text-tertiary">
+                        {" "}
+                        ({partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignClientHourlyRate) || 0))}/h)
+                      </span>
+                    </p>
+                    <p>
+                      Partner labour:{" "}
+                      <span className="font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(partnerAssignHourlyPreview.partnerTotal)}
+                      </span>
+                      <span className="text-text-tertiary">
+                        {" "}
+                        ({partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0))}/h)
+                      </span>
+                    </p>
+                  </div>
                 ) : null}
               </div>
             ) : (
@@ -9428,21 +9513,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   };
                   if (selectedPartnerId) {
                     if (partnerAssignRateType === "hourly" && partnerAssignService) {
-                      const clientRate = Math.max(0, Number(partnerAssignService.hourly_rate) || 0);
-                      const partnerRate = Math.max(
-                        0,
-                        partnerHourlyRateFromCatalogBundle(partnerAssignService.partner_cost, partnerAssignService.default_hours),
-                      );
+                      const billedHours = Math.max(0.5, Number(partnerAssignBilledHours) || 0);
+                      const clientRate = Math.max(0, Number(partnerAssignClientHourlyRate) || 0);
+                      const partnerRate = Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0);
                       const hourlyTotals = partnerAssignHourlyPreview;
+                      const titleOut =
+                        normalizeTypeOfWork(partnerAssignService.name) || partnerAssignService.name;
                       partnerPatch.job_type = "hourly";
                       partnerPatch.catalog_service_id = partnerAssignService.id;
+                      partnerPatch.title = titleOut;
                       partnerPatch.hourly_client_rate = clientRate;
                       partnerPatch.hourly_partner_rate = partnerRate;
+                      partnerPatch.billed_hours = billedHours;
                       if (hourlyTotals) {
-                        partnerPatch.billed_hours = hourlyTotals.billedHours;
                         partnerPatch.client_price = hourlyTotals.clientTotal;
                         partnerPatch.partner_cost = hourlyTotals.partnerTotal;
                       }
+                      const deposit = Math.max(0, Number(job.customer_deposit) || 0);
+                      const extrasAmount = Math.max(0, Number(job.extras_amount) || 0);
+                      partnerPatch.customer_final_payment = Math.round(
+                        Math.max(0, (hourlyTotals?.clientTotal ?? 0) + extrasAmount - deposit) * 100,
+                      ) / 100;
                     } else {
                       partnerPatch.job_type = "fixed";
                       partnerPatch.partner_cost = partnerAssignBaseCost;
@@ -9450,6 +9541,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.partner_cost = Math.round((Number(partnerPatch.partner_cost ?? 0) + extrasCombined) * 100) / 100;
                     partnerPatch.partner_extras_amount = extrasCombined;
                     partnerPatch.materials_cost = materialsExtra;
+                    partnerPatch.partner_agreed_value = Math.round((Number(partnerPatch.partner_cost ?? 0) + materialsExtra) * 100) / 100;
                   }
                   if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
                     partnerPatch.status = "scheduled";
