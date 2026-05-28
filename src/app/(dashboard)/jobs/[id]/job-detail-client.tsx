@@ -9646,27 +9646,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       parking: partnerAssignExtraBreakdown.parking,
                     });
                     toast.success(`${selected?.company_name?.trim() || selected?.contact_name || "Partner"} assigned · ${formatCurrency(partnerAssignTotal)} partner cost`);
-                    // Always fire Zendesk notify on Assign & confirm — clicking
-                    // the button is an explicit intent to notify, even when
-                    // the partner didn't change (e.g. operator wants to
-                    // re-deliver the Job booked side conv). The notify route
-                    // is idempotent: side conv reuses the saved thread id,
-                    // and status sync is a no-op when the ticket already
-                    // matches. Logs the fire so we can confirm in console
-                    // when triaging "notify didn't reach Zendesk".
-                    console.log(
-                      "[change-partner] firing notifyPartnerJobChange",
-                      { jobId: job.id, selectedPartnerId, prevPartnerId },
-                    );
-                    void notifyPartnerJobChange({
-                      jobId: job.id,
-                      jobReference: job.reference,
-                      kind: "assigned",
-                      skipPush: true,
-                      silent: true,
-                    }).then((r) => {
-                      console.log("[change-partner] notify result", r);
-                    });
+                    // Fire Zendesk notify only when handleJobUpdate didn't
+                    // already fire it. handleJobUpdate fires kind="assigned"
+                    // on a FRESH partner change; on same-partner re-confirm
+                    // it stays silent, so we fire here to honour the operator's
+                    // explicit "Assign & confirm" intent (re-deliver the
+                    // Job booked side conv).
+                    // Without this guard the partner gets the "Job booked"
+                    // email twice on every partner change.
+                    if (selectedPartnerId === prevPartnerId) {
+                      void notifyPartnerJobChange({
+                        jobId: job.id,
+                        jobReference: job.reference,
+                        kind: "assigned",
+                        skipPush: true,
+                        silent: true,
+                      });
+                    }
                   }
                   setPartnerModalOpen(false);
                 } finally {
