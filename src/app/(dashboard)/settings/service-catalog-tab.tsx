@@ -144,9 +144,13 @@ function buildPricingAddonsPayload(
 }
 
 function pricingStructureFromRow(row: CatalogService): CatalogPricingStructure {
-  if (catalogHasStackableAddons(row)) return "base_plus_addons";
-  if (parsePricingPresets(row.pricing_presets).length > 0) return "variable";
-  return "single";
+  const presets = sortPricingPresetsDisplay(parsePricingPresets(row.pricing_presets));
+  const hasAddons = catalogHasStackableAddons(row);
+  if (presets.length === 0) return "single";
+  if (!hasAddons) return "variable";
+  const anyHourly = presets.some((p) => presetPricingMode(p) === "hourly");
+  if (anyHourly) return "variable";
+  return "base_plus_addons";
 }
 
 /** Stable preset id for storage — generated from label when not shown in UI. */
@@ -404,7 +408,7 @@ export function ServiceCatalogTab() {
   };
 
   const buildAddonsForSave = (): { ok: true; addons: ServicePricingAddon[] } | { ok: false; message: string } => {
-    if (form.pricing_structure !== "base_plus_addons") {
+    if (form.pricing_structure === "single") {
       return { ok: true, addons: [] };
     }
     return buildPricingAddonsPayload(addonRows);
@@ -629,6 +633,118 @@ export function ServiceCatalogTab() {
     form.display_icon_key.trim() === "" ? suggestSlugFromServiceName(form.name) : form.display_icon_key;
   const IconPreviewComp = entryForSlug(iconPreviewSlug).Icon;
 
+  const additionalsFields = (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-sm font-medium text-text-primary">Additionals</p>
+          <FixfyHintIcon text="Optional extras stacked on the selected band (e.g. oven, windows). Operators tick these on the job — prices add automatically." />
+        </div>
+        <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}>
+          Add additional
+        </Button>
+      </div>
+      {addonRows.length === 0 ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-text-tertiary italic">No additionals yet.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}
+          >
+            Add line
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {addonRows.map((arow, idx) => (
+            <div key={`${arow.id}-${idx}`} className="rounded-lg border border-border-light bg-card p-2">
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_auto] gap-2 items-end">
+                <div>
+                  <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Label *</label>
+                  <Input
+                    value={arow.label}
+                    onChange={(e) =>
+                      setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
+                    }
+                    placeholder="Oven deep clean"
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Client £ *</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={arow.fixed_price}
+                    onChange={(e) =>
+                      setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, fixed_price: e.target.value } : x)))
+                    }
+                    className="h-8 text-xs tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Partner £</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={arow.partner_cost}
+                    onChange={(e) =>
+                      setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, partner_cost: e.target.value } : x)))
+                    }
+                    className="h-8 text-xs tabular-nums"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-red-600 shrink-0"
+                  onClick={() => setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
+                  aria-label="Remove additional"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              icon={<Copy className="h-3.5 w-3.5" />}
+              onClick={() =>
+                setAddonRows((rows) => {
+                  const last = rows[rows.length - 1];
+                  return last ? [...rows, duplicateAddonFormRow(last)] : rows;
+                })
+              }
+            >
+              Duplicate
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}
+            >
+              Add line
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   const FormFields = (
     <>
       <div>
@@ -697,8 +813,6 @@ export function ServiceCatalogTab() {
             });
           } else {
             setPresetRows([]);
-          }
-          if (pricing_structure !== "base_plus_addons") {
             setAddonRows([]);
           }
         }}
@@ -925,118 +1039,10 @@ export function ServiceCatalogTab() {
 
           <div className="border-t border-border-light" role="separator" />
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <p className="text-sm font-medium text-text-primary">Additionals</p>
-                <FixfyHintIcon text="Optional extras stacked on the base (e.g. oven, windows). Operators tick these on the job — prices add automatically." />
-              </div>
-              <Button type="button" variant="outline" size="sm" className="h-8 shrink-0" onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}>
-                Add additional
-              </Button>
-            </div>
-            {addonRows.length === 0 ? (
-              <div className="space-y-2">
-                <p className="text-[11px] text-text-tertiary italic">No additionals yet.</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}
-                >
-                  Add line
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {addonRows.map((arow, idx) => (
-                  <div key={`${arow.id}-${idx}`} className="rounded-lg border border-border-light bg-card p-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_auto] gap-2 items-end">
-                      <div>
-                        <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Label *</label>
-                        <Input
-                          value={arow.label}
-                          onChange={(e) =>
-                            setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
-                          }
-                          placeholder="Oven deep clean"
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Client £ *</label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={arow.fixed_price}
-                          onChange={(e) =>
-                            setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, fixed_price: e.target.value } : x)))
-                          }
-                          className="h-8 text-xs tabular-nums"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-text-secondary mb-0.5">Partner £</label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={arow.partner_cost}
-                          onChange={(e) =>
-                            setAddonRows((rows) => rows.map((x, i) => (i === idx ? { ...x, partner_cost: e.target.value } : x)))
-                          }
-                          className="h-8 text-xs tabular-nums"
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-red-600 shrink-0"
-                        onClick={() => setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
-                        aria-label="Remove additional"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    icon={<Copy className="h-3.5 w-3.5" />}
-                    onClick={() =>
-                      setAddonRows((rows) => {
-                        const last = rows[rows.length - 1];
-                        return last ? [...rows, duplicateAddonFormRow(last)] : rows;
-                      })
-                    }
-                  >
-                    Duplicate
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    icon={<Plus className="h-3.5 w-3.5" />}
-                    onClick={() => setAddonRows((r) => [...r, newAddonFormRow()])}
-                  >
-                    Add line
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
+          {additionalsFields}
         </div>
       ) : (
-        <div className="rounded-xl border border-dashed border-border bg-surface-hover/40 p-3 space-y-2">
+        <div className="rounded-xl border border-dashed border-border bg-surface-hover/40 p-3 space-y-4">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
               <p className="text-sm font-semibold text-text-primary">Pricing Bands</p>
@@ -1213,6 +1219,8 @@ export function ServiceCatalogTab() {
               })}
             </div>
           )}
+          <div className="border-t border-border-light" role="separator" />
+          {additionalsFields}
         </div>
       )}
       <div>
