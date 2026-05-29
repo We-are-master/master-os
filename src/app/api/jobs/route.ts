@@ -33,19 +33,38 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     title:            string,      // required
  *     client_name:      string,      // required
  *     client_email:     string,      // required
+ *     client_phone?:    string,      // optional contact phone. On creation it
+ *                                    //   lands on clients.phone. When the
+ *                                    //   client already exists with an empty
+ *                                    //   phone, this value backfills it; a
+ *                                    //   non-empty phone is never overwritten.
  *     property_address: string,      // required (geocoded by app for partner map)
  *     service_type:     string,      // required (trade — used for partner matching)
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
- *     client_price?:    number|str,  // £ charged to the client (default 0). Strings
- *                                    //   like "£177.60" / "177,60" / "1,234.50" are
- *                                    //   accepted — currency, spaces and UK/EU
- *                                    //   number formatting get normalized.
- *     partner_cost?:    number|str,  // £ paid to the partner. When OMITTED and
- *                                    //   client_price > 0, defaults to
- *                                    //   round(client_price * 0.60, 2) so the
+ *     rate_type?:       "fixed"|"hourly", // pricing mode (default "fixed").
+ *                                    //   - fixed:  uses client_price / partner_cost.
+ *                                    //   - hourly: uses hourly_client_rate /
+ *                                    //             hourly_partner_rate. Headline
+ *                                    //             client_price / partner_cost are
+ *                                    //             stored as 0 — totals get
+ *                                    //             computed from billed_hours later.
+ *     client_price?:    number|str,  // [fixed] £ charged to the client (default 0).
+ *                                    //   Strings like "£177.60" / "177,60" /
+ *                                    //   "1,234.50" are accepted — currency,
+ *                                    //   spaces and UK/EU number formatting
+ *                                    //   get normalized.
+ *     partner_cost?:    number|str,  // [fixed] £ paid to the partner. When
+ *                                    //   OMITTED and client_price > 0, defaults
+ *                                    //   to round(client_price * 0.60, 2) so the
  *                                    //   standard 40% margin is applied
  *                                    //   automatically. Send an explicit 0 to
  *                                    //   opt out.
+ *     hourly_client_rate?: number|str,    // [hourly] REQUIRED when rate_type
+ *                                    //   = "hourly". £/h charged to the client.
+ *     hourly_partner_rate?: number|str,   // [hourly] £/h paid to the partner.
+ *                                    //   Same auto-40% rule as partner_cost:
+ *                                    //   omitting it sets
+ *                                    //   round(hourly_client_rate * 0.60, 2).
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
  *                                    //   via the existing offer-window mechanism
@@ -65,12 +84,15 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *
  * Behavior:
  *   - Finds (or creates) a clients row in the given account matching
- *     client_email, then attaches the new job to it.
+ *     client_email, then attaches the new job to it. client_phone is
+ *     stored on creation and backfilled on existing clients only when
+ *     they don't have a phone yet.
  *   - date + arrival_time → scheduled_date, scheduled_start_at and
  *     scheduled_end_at (DST-safe UK wall-clock conversion).
  *   - Generates next reference via the existing next_job_ref RPC.
- *   - When partner_cost is missing and client_price > 0, applies the standard
- *     40% margin: partner_cost = round(client_price * 0.60, 2).
+ *   - When partner_cost (fixed) or hourly_partner_rate (hourly) is missing
+ *     and the client-side value is > 0, applies the standard 40% margin:
+ *     partner side = round(client side * 0.60, 2).
  *   - When auto_assign=true: matches active partners by service_type
  *     (using the same partnerMatchesTypeOfWork rules the Desk webhook
  *     uses), stores their ids in auto_assign_invited_partner_ids, and
@@ -105,20 +127,33 @@ export async function POST(req: NextRequest) {
   const title           = str(body.title);
   const clientName      = str(body.client_name);
   const clientEmail     = str(body.client_email).toLowerCase();
+  const clientPhone     = str(body.client_phone) || null;
   const propertyAddress = str(body.property_address);
   const serviceType     = str(body.service_type);
   const description     = str(body.description) || null;
-  const clientPrice     = num(body.client_price);
-  // Distinguish "omitted" from "explicit 0" so we can auto-apply the standard
-  // 40% partner margin when the caller didn't send a cost.
-  const partnerCostSent = isPresent(body.partner_cost);
-  const partnerCost     = partnerCostSent
-    ? num(body.partner_cost)
-    : clientPrice > 0
-      ? Math.round(clientPrice * (100 - AUTO_PARTNER_MARGIN_PCT)) / 100
-      : 0;
+  const rateType        = (str(body.rate_type).toLowerCase() || "fixed") as "fixed" | "hourly";
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
+
+  // Distinguish "omitted" from "explicit 0" so we can auto-apply the standard
+  // 40% partner margin when the caller didn't send a partner-side amount.
+  // The two pricing modes use different columns:
+  //   fixed  → client_price / partner_cost
+  //   hourly → hourly_client_rate / hourly_partner_rate
+  const clientPrice          = num(body.client_price);
+  const partnerCostSent      = isPresent(body.partner_cost);
+  const partnerCost          = partnerCostSent
+    ? num(body.partner_cost)
+    : clientPrice > 0
+      ? autoMargin(clientPrice)
+      : 0;
+  const hourlyClientRate     = num(body.hourly_client_rate);
+  const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate);
+  const hourlyPartnerRate    = hourlyPartnerRateSet
+    ? num(body.hourly_partner_rate)
+    : hourlyClientRate > 0
+      ? autoMargin(hourlyClientRate)
+      : 0;
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
@@ -136,6 +171,15 @@ export async function POST(req: NextRequest) {
   }
   if (!isValidUUID(accountId)) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
+  }
+  if (rateType !== "fixed" && rateType !== "hourly") {
+    return NextResponse.json({ error: "rate_type must be 'fixed' or 'hourly'." }, { status: 400 });
+  }
+  if (rateType === "hourly" && !(hourlyClientRate > 0)) {
+    return NextResponse.json(
+      { error: "hourly_client_rate (£/hour) is required when rate_type is 'hourly'." },
+      { status: 400 },
+    );
   }
   const isoDate = normalizeDateToIso(date);
   if (!isoDate) {
@@ -227,7 +271,7 @@ export async function POST(req: NextRequest) {
   if (!clientId) {
     const { data: existing, error: findErr } = await supabase
       .from("clients")
-      .select("id")
+      .select("id, phone")
       .eq("source_account_id", accountId)
       .ilike("email", clientEmail)
       .limit(1)
@@ -238,12 +282,26 @@ export async function POST(req: NextRequest) {
     }
     if (existing?.id) {
       clientId = existing.id as string;
+      // Backfill phone when the existing client doesn't have one yet and the
+      // caller now has a number. We never overwrite a phone that's already
+      // there — staff may have curated it.
+      const existingPhone = (existing as { phone: string | null }).phone;
+      if (clientPhone && !existingPhone?.trim()) {
+        const { error: phoneErr } = await supabase
+          .from("clients")
+          .update({ phone: clientPhone })
+          .eq("id", clientId);
+        if (phoneErr) {
+          console.error("[api/jobs] client phone backfill failed:", phoneErr.message);
+        }
+      }
     } else {
       const { data: created, error: createErr } = await supabase
         .from("clients")
         .insert({
           full_name: clientName,
           email: clientEmail,
+          phone: clientPhone,
           client_type: "commercial",
           source: "corporate",
           source_account_id: accountId,
@@ -282,10 +340,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Insert ────────────────────────────────────────────────────────
-  const margin =
-    clientPrice > 0 && partnerCost > 0
-      ? Math.round(((clientPrice - partnerCost) / clientPrice) * 10000) / 100
-      : 0;
+  // Margin sources differ by pricing mode. Fixed compares headline client_price
+  // vs partner_cost; hourly compares the per-hour rates (totals scale linearly
+  // so the percentage is the same).
+  const margin = rateType === "hourly"
+    ? (hourlyClientRate > 0 && hourlyPartnerRate > 0
+        ? Math.round(((hourlyClientRate - hourlyPartnerRate) / hourlyClientRate) * 10000) / 100
+        : 0)
+    : (clientPrice > 0 && partnerCost > 0
+        ? Math.round(((clientPrice - partnerCost) / clientPrice) * 10000) / 100
+        : 0);
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
@@ -295,8 +359,8 @@ export async function POST(req: NextRequest) {
     property_address:   propertyAddress,
     service_type:       serviceType,
     status,
-    client_price:       clientPrice,
-    partner_cost:       partnerCost,
+    client_price:       rateType === "hourly" ? 0 : clientPrice,
+    partner_cost:       rateType === "hourly" ? 0 : partnerCost,
     materials_cost:     0,
     margin_percent:     margin,
     scheduled_date:     isoDate,
@@ -305,10 +369,14 @@ export async function POST(req: NextRequest) {
     total_phases:       2,
     progress:           0,
     current_phase:      0,
-    job_type:           "fixed",
+    job_type:           rateType,
     finance_status:     "unpaid",
     scope:              description,
   };
+  if (rateType === "hourly") {
+    jobRow.hourly_client_rate  = hourlyClientRate;
+    jobRow.hourly_partner_rate = hourlyPartnerRate;
+  }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
   }
@@ -388,6 +456,11 @@ export async function POST(req: NextRequest) {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** Partner side of the standard margin: round(clientSide * 0.60, 2). */
+function autoMargin(clientSide: number): number {
+  return Math.round(clientSide * (100 - AUTO_PARTNER_MARGIN_PCT)) / 100;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */
