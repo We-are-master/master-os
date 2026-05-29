@@ -65,6 +65,10 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     service_type:     string,      // required (trade — used for partner matching)
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
  *     rate_type?:       "fixed"|"hourly", // pricing mode (default "fixed").
+ *                                    //   The Zendesk Job Type tag form
+ *                                    //   (`job_type_fixed` / `job_type_hourly`)
+ *                                    //   is also accepted — the prefix is
+ *                                    //   stripped before validation.
  *                                    //   - fixed:  uses client_price / partner_cost.
  *                                    //   - hourly: rates come from the Services
  *                                    //             catalog (account override →
@@ -168,7 +172,12 @@ export async function POST(req: NextRequest) {
   const propertyAddress = str(body.property_address);
   const serviceType     = str(body.service_type);
   const description     = str(body.description) || null;
-  const rateType        = (str(body.rate_type).toLowerCase() || "fixed") as "fixed" | "hourly";
+  // Accept either the bare value (`hourly` / `fixed`) or the Zendesk Job Type
+  // field tag form (`job_type_hourly` / `job_type_fixed`) — the prefix is
+  // stripped so the macro can post the tag straight through.
+  const rateType        = (
+    str(body.rate_type).toLowerCase().replace(/^job[_-]type[_-]/, "") || "fixed"
+  ) as "fixed" | "hourly";
   const catalogServiceIdIn = str(body.catalog_service_id) || null;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
