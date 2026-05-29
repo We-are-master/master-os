@@ -62,7 +62,12 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   phone, this value backfills it; a
  *                                    //   non-empty phone is never overwritten.
  *     property_address: string,      // required (geocoded by app for partner map)
- *     service_type:     string,      // required (trade — used for partner matching)
+ *     service_type:     string,      // required. Used at runtime for partner
+ *                                    //   matching (matchPartnerIdsForWork) and,
+ *                                    //   for hourly jobs, to look up the
+ *                                    //   service_catalog row. NOT persisted on
+ *                                    //   the jobs row directly — the catalog
+ *                                    //   linkage lives in jobs.catalog_service_id.
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
  *     rate_type?:       "fixed"|"hourly", // pricing mode (default "fixed").
  *                                    //   The Zendesk Job Type tag form
@@ -451,7 +456,6 @@ export async function POST(req: NextRequest) {
     client_id:          clientId,
     client_name:        clientName,
     property_address:   propertyAddress,
-    service_type:       serviceType,
     status,
     client_price:       rateType === "hourly" ? 0 : clientPrice,
     partner_cost:       rateType === "hourly" ? 0 : partnerCost,
