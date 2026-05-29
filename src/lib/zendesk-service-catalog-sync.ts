@@ -20,6 +20,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 const SUBDOMAIN  = process.env.ZENDESK_SUBDOMAIN?.trim();
 const EMAIL      = process.env.ZENDESK_EMAIL?.trim();
@@ -196,27 +197,156 @@ export async function removeCatalogOptionFromZendesk(
   return { ok: true, optionId: null };
 }
 
+export interface BackfillPlanEntry {
+  /** "rewrite"   = same option_id, value changes slug → UUID, name normalized to OS.
+   *  "rename"    = same option_id, value already UUID, only name updated to OS.
+   *  "unchanged" = option already matches OS, nothing to do.
+   *  "keep"      = legacy option Zendesk owns (non-UUID value, no OS match) — left alone.
+   *  "prune"     = UUID value that no longer points to an active OS row.
+   *  "append"    = OS row missing on the Zendesk side, will be added. */
+  action:    "rewrite" | "rename" | "unchanged" | "keep" | "prune" | "append";
+  /** Option id (if any). undefined for "append". */
+  optionId?: number;
+  /** Current Zendesk value (undefined for "append"). */
+  fromValue?: string;
+  /** Current Zendesk name (undefined for "append"). */
+  fromName?:  string;
+  /** New Zendesk value (set for rewrite + append). */
+  toValue?:   string;
+  /** New Zendesk name (set for rewrite + rename + append). */
+  toName?:    string;
+  /** OS catalog id this entry locks to (if matched). */
+  catalogId?: string;
+}
+
+export interface BackfillPlan {
+  options:  ZendeskFieldOption[];
+  entries:  BackfillPlanEntry[];
+  stats: {
+    rewrite:   number;
+    rename:    number;
+    unchanged: number;
+    keep:      number;
+    prune:     number;
+    append:    number;
+  };
+}
+
+/**
+ * Pure function — given the current Zendesk options and the OS catalog rows,
+ * produce the next options array plus a per-entry plan describing what would
+ * change. No I/O; safe to call from tests, scripts, and dryRun endpoints.
+ */
+export function planCatalogBackfill(
+  zendeskOptions: ZendeskFieldOption[],
+  catalog: { id: string; name: string | null }[],
+): BackfillPlan {
+  const activeRows = catalog
+    .filter((r) => (r.name ?? "").trim().length > 0)
+    .map((r) => ({ id: r.id, name: r.name!.trim() }));
+  const catalogIds = new Set(activeRows.map((r) => r.id));
+  const remaining  = new Map(activeRows.map((r) => [r.id, r] as const));
+
+  const entries: BackfillPlanEntry[] = [];
+  const next:    ZendeskFieldOption[] = [];
+  const stats = { rewrite: 0, rename: 0, unchanged: 0, keep: 0, prune: 0, append: 0 };
+
+  for (const o of zendeskOptions) {
+    if (looksLikeUuid(o.value)) {
+      // Already keyed by UUID — fast path.
+      const row = remaining.get(o.value);
+      if (!row) {
+        // UUID points to a catalog row that's gone (soft-deleted or never existed).
+        entries.push({ action: "prune", optionId: o.id, fromValue: o.value, fromName: o.name });
+        stats.prune++;
+        continue;
+      }
+      if (o.name === row.name) {
+        next.push(o);
+        entries.push({
+          action:    "unchanged",
+          optionId:  o.id,
+          fromValue: o.value,
+          fromName:  o.name,
+          catalogId: row.id,
+        });
+        stats.unchanged++;
+      } else {
+        next.push({ ...o, name: row.name });
+        entries.push({
+          action:    "rename",
+          optionId:  o.id,
+          fromValue: o.value,
+          fromName:  o.name,
+          toName:    row.name,
+          catalogId: row.id,
+        });
+        stats.rename++;
+      }
+      remaining.delete(row.id);
+      continue;
+    }
+
+    // Non-UUID value — attempt to migrate slug → UUID by name heuristic.
+    const matchId = matchOptionToCatalog(o.name, activeRows, catalogIds);
+    if (matchId && remaining.has(matchId)) {
+      const row = remaining.get(matchId)!;
+      next.push({ ...o, value: row.id, name: row.name });
+      entries.push({
+        action:    "rewrite",
+        optionId:  o.id,
+        fromValue: o.value,
+        fromName:  o.name,
+        toValue:   row.id,
+        toName:    row.name,
+        catalogId: row.id,
+      });
+      stats.rewrite++;
+      remaining.delete(row.id);
+    } else {
+      // Either a Zendesk-only legacy entry or a name we can't safely link.
+      next.push(o);
+      entries.push({ action: "keep", optionId: o.id, fromValue: o.value, fromName: o.name });
+      stats.keep++;
+    }
+  }
+
+  // Whatever OS rows are still unmatched get appended.
+  for (const row of remaining.values()) {
+    next.push({ name: row.name, value: row.id });
+    entries.push({
+      action:    "append",
+      toValue:   row.id,
+      toName:    row.name,
+      catalogId: row.id,
+    });
+    stats.append++;
+  }
+
+  return { options: next, entries, stats };
+}
+
 /**
  * Push the full active catalog into Zendesk in one PUT — used by the backfill
- * endpoint to seed the field after migration 202 or to repair drift. Only
- * touches options whose `value` matches a known catalog UUID; other options
- * on the field are left untouched.
+ * endpoint to seed the field after migration 202 or to repair drift.
+ *
+ * Migrates existing slug-keyed options to use the OS UUID as the option's
+ * value (in-place: same option_id, new value + name from OS). Options that
+ * can't be confidently matched to an OS row are left untouched.
  */
 export async function backfillCatalogOptionsToZendesk(opts?: {
   client?: SupabaseClient;
   dryRun?: boolean;
 }): Promise<{
   ok: boolean;
-  inserted: number;
-  updated: number;
-  unchanged: number;
-  pruned: number;
+  stats: BackfillPlan["stats"];
+  entries?: BackfillPlanEntry[];
   error?: string;
   skipped?: string;
 }> {
-  const empty = { inserted: 0, updated: 0, unchanged: 0, pruned: 0 };
+  const emptyStats = { rewrite: 0, rename: 0, unchanged: 0, keep: 0, prune: 0, append: 0 };
   if (!isConfigured()) {
-    return { ok: false, ...empty, skipped: "zendesk_not_configured" };
+    return { ok: false, stats: emptyStats, skipped: "zendesk_not_configured" };
   }
 
   const supabase = opts?.client ?? createServiceClient();
@@ -225,79 +355,107 @@ export async function backfillCatalogOptionsToZendesk(opts?: {
     .select("id, name")
     .is("deleted_at", null)
     .eq("is_active", true);
-  if (error) return { ok: false, ...empty, error: error.message };
-  const catalog = (rows ?? []) as { id: string; name: string | null }[];
-  const wantByValue = new Map<string, string>();
-  for (const c of catalog) {
-    const name = c.name?.trim();
-    if (name) wantByValue.set(c.id, name);
-  }
+  if (error) return { ok: false, stats: emptyStats, error: error.message };
 
   const cur = await fetchFieldOptions();
-  if (!cur.ok) return { ok: false, ...empty, error: cur.error };
+  if (!cur.ok) return { ok: false, stats: emptyStats, error: cur.error };
 
-  const knownIds = new Set(catalog.map((c) => c.id));
-  const next: ZendeskFieldOption[] = [];
-  const stats = { inserted: 0, updated: 0, unchanged: 0, pruned: 0 };
-
-  // Pass 1 — walk existing options, update name when needed, prune
-  // soft-deleted rows. Options whose value isn't a catalog UUID are kept
-  // untouched (manual entries Zendesk owns).
-  for (const o of cur.options) {
-    const want = wantByValue.get(o.value);
-    if (want === undefined) {
-      // Either a UUID that no longer points to a catalog row (prune), or a
-      // non-UUID legacy option (keep).
-      if (knownIds.has(o.value)) {
-        // not reachable: knownIds was built from catalog and want would have been set
-        next.push(o);
-      } else if (looksLikeUuid(o.value)) {
-        stats.pruned++;
-        continue;
-      } else {
-        next.push(o);
-      }
-    } else if (o.name === want) {
-      next.push(o);
-      stats.unchanged++;
-      wantByValue.delete(o.value);
-    } else {
-      next.push({ ...o, name: want });
-      stats.updated++;
-      wantByValue.delete(o.value);
-    }
-  }
-
-  // Pass 2 — append everything that's still missing.
-  for (const [value, name] of wantByValue) {
-    next.push({ name, value });
-    stats.inserted++;
-  }
+  const plan = planCatalogBackfill(cur.options, (rows ?? []) as { id: string; name: string | null }[]);
 
   if (opts?.dryRun) {
-    return { ok: true, ...stats };
+    return { ok: true, stats: plan.stats, entries: plan.entries };
   }
 
-  const put = await putFieldOptions(next);
-  if (!put.ok) return { ok: false, ...stats, error: put.error };
+  const put = await putFieldOptions(plan.options);
+  if (!put.ok) return { ok: false, stats: plan.stats, error: put.error };
 
   // Persist option ids back so single-row syncs can find them quickly.
   const byValue = new Map<string, number>();
   for (const o of put.options) {
     if (o.id != null) byValue.set(o.value, o.id);
   }
-  for (const c of catalog) {
-    const id = byValue.get(c.id);
-    if (id == null) continue;
+  for (const e of plan.entries) {
+    if (!e.catalogId) continue;
+    const value = e.toValue ?? e.fromValue;
+    if (!value) continue;
+    const optionId = byValue.get(value);
+    if (optionId == null) continue;
     await supabase
       .from("service_catalog")
-      .update({ zendesk_option_id: String(id) })
-      .eq("id", c.id);
+      .update({ zendesk_option_id: String(optionId) })
+      .eq("id", e.catalogId);
   }
 
-  return { ok: true, ...stats };
+  return { ok: true, stats: plan.stats, entries: plan.entries };
 }
 
 function looksLikeUuid(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
+/** Strip a leading `(XXX)` initialism prefix. */
+function stripBracketPrefix(s: string): string {
+  return s.replace(/^\s*\([^)]+\)\s*/, "").trim();
+}
+
+/** Strip a trailing `(XXX)` duplicate initialism (covers OS rows like
+ *  "(FES) Fire Extinguisher Service (FES)"). */
+function stripBracketSuffix(s: string): string {
+  return s.replace(/\s*\([^)]+\)\s*$/, "").trim();
+}
+
+/** Both ends stripped → the "base" name used for cross-system matching. */
+function baseName(s: string): string {
+  return stripBracketSuffix(stripBracketPrefix(s));
+}
+
+/**
+ * Match a Zendesk option's display name to an OS catalog row id. Layered:
+ *   1. Exact name (case-insensitive)
+ *   2. normalizeTypeOfWork alias (e.g. "handyman" → "General Maintenance")
+ *   3. Base-name match after stripping bracket prefix / suffix duplicates
+ *      (covers "(FRC) X" vs "(FAC) X", "(ELC) X" vs "X", "Y (X)" vs "Y")
+ *   4. Loose containment between bases when exactly one candidate matches
+ *      (covers "(EOT) End of Tenancy Cleaning" vs "(EOT) End of Tenancy")
+ *
+ * Returns null when there's no confident single match — better to keep the
+ * legacy option than to silently relink to the wrong row.
+ */
+function matchOptionToCatalog(
+  optionName: string,
+  catalog: { id: string; name: string }[],
+  _catalogIds: Set<string>,
+): string | null {
+  const z = optionName?.trim();
+  if (!z) return null;
+  const zLower = z.toLowerCase();
+
+  // 1. Exact name match.
+  const exact = catalog.find((c) => c.name.toLowerCase() === zLower);
+  if (exact) return exact.id;
+
+  // 2. Alias-normalized match.
+  const zNorm = normalizeTypeOfWork(z).toLowerCase();
+  if (zNorm) {
+    const byNorm = catalog.find((c) => normalizeTypeOfWork(c.name).toLowerCase() === zNorm);
+    if (byNorm) return byNorm.id;
+  }
+
+  // 3. Base-name match (strip bracket prefix and trailing duplicate).
+  const zBase = baseName(z).toLowerCase();
+  if (zBase) {
+    const byBase = catalog.find((c) => baseName(c.name).toLowerCase() === zBase);
+    if (byBase) return byBase.id;
+  }
+
+  // 4. Loose containment between bases — only when exactly one candidate.
+  if (zBase) {
+    const candidates = catalog.filter((c) => {
+      const cb = baseName(c.name).toLowerCase();
+      return cb && (cb.includes(zBase) || zBase.includes(cb));
+    });
+    if (candidates.length === 1) return candidates[0].id;
+  }
+
+  return null;
 }
