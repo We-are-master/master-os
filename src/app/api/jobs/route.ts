@@ -32,10 +32,27 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *   {
  *     account_id:       uuid,        // accounts.id — required
  *     date:             string,      // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
- *     arrival_time:     string,      // "HH:MM - HH:MM" UK wall-clock arrival window
- *                                    //   (e.g. "09:00 - 12:00"). Required. Spaces
- *                                    //   around the dash are optional. Single-time
- *                                    //   "HH:MM" is also accepted (no end window).
+ *     arrival_time:     string,      // UK wall-clock arrival window. Required.
+ *                                    //   Accepts:
+ *                                    //   - "HH:MM - HH:MM"  (e.g. "09:00-12:00",
+ *                                    //                       "09:00 – 12:00";
+ *                                    //                       hyphen, en-dash and
+ *                                    //                       em-dash all work,
+ *                                    //                       spaces optional).
+ *                                    //   - "HH:MM"          (single time, no
+ *                                    //                       end window).
+ *                                    //   - Slot tag from the Zendesk Arrival
+ *                                    //     Window field — `earlier_morning`,
+ *                                    //     `arrival_morning`,
+ *                                    //     `arrival_early_afternoon`,
+ *                                    //     `arrival_late_afternoon`,
+ *                                    //     `arrival_evening` — or the bare slot
+ *                                    //     id without the `arrival_` prefix.
+ *                                    //     Mapped to the canonical windows
+ *                                    //     (earlier morning 08–09, morning
+ *                                    //     09–12, early afternoon 13–15,
+ *                                    //     late afternoon 15–18, evening
+ *                                    //     18–20).
  *     title:            string,      // required
  *     client_name:      string,      // required
  *     client_email:     string,      // required
@@ -645,16 +662,52 @@ function num(v: unknown): number {
 }
 
 /**
+ * Slot id → (start, end) UK wall-clock map. Mirrors ARRIVAL_SLOTS in
+ * lib/job-arrival-window.ts. We keep a local copy so the API can also accept
+ * the Zendesk macro tags (e.g. `arrival_morning`, `arrival_late_afternoon`)
+ * without needing the partner-app dependency tree.
+ */
+const ARRIVAL_SLOT_LOOKUP: Record<string, { start: string; end: string }> = {
+  earlier_morning:      { start: "08:00", end: "09:00" },
+  morning:              { start: "09:00", end: "12:00" },
+  early_afternoon:      { start: "13:00", end: "15:00" },
+  // Zendesk uses `late_afternoon`; internal slot id is just `afternoon`.
+  // Accept both spellings so either side stays valid.
+  afternoon:            { start: "15:00", end: "18:00" },
+  late_afternoon:       { start: "15:00", end: "18:00" },
+  evening:              { start: "18:00", end: "20:00" },
+};
+
+/**
  * Parse an arrival_time payload into UK wall-clock HH:MM start (and optional
  * end). Accepts:
- *   "09:00 - 12:00"  → { start: "09:00", end: "12:00" }
- *   "09:00-12:00"    → same (dashes/spaces flex)
- *   "9:00 - 12:00"   → start padded to "09:00"
- *   "09:00"          → { start: "09:00", end: null } — no window
+ *   "09:00 - 12:00"      → { start: "09:00", end: "12:00" }   ASCII hyphen
+ *   "09:00 – 12:00"      → same   (en-dash, what Zendesk renders by default)
+ *   "09:00 — 12:00"      → same   (em-dash)
+ *   "09:00-12:00"        → same   (dashes/spaces flex)
+ *   "9:00 - 12:00"       → start padded to "09:00"
+ *   "09:00"              → { start: "09:00", end: null } — no window
+ *   "morning"            → catalog slot lookup → 09:00 / 12:00
+ *   "arrival_morning"    → same — Zendesk macro tag prefix is tolerated
+ *   "early_afternoon" / "afternoon" / "late_afternoon" / "evening" → likewise
  * Returns null when the shape doesn't match or hours/minutes are out of range.
  */
 function parseArrivalTime(input: string): { start: string; end: string | null } | null {
-  const s = input.trim();
+  const raw = input.trim();
+  if (!raw) return null;
+
+  // Slot id / Zendesk tag path — try the lookup before regex so callers can
+  // ship the macro tag straight through. Strip a leading `arrival_` if the
+  // value came from Zendesk's tag form.
+  const slotKey = raw.toLowerCase().replace(/^arrival[_-]/, "");
+  if (ARRIVAL_SLOT_LOOKUP[slotKey]) {
+    return { ...ARRIVAL_SLOT_LOOKUP[slotKey] };
+  }
+
+  // Normalize any dash character (en-dash U+2013, em-dash U+2014, minus sign
+  // U+2212, hyphen-minus, etc.) to a plain ASCII hyphen so one regex covers
+  // every dash flavor that copy-paste / Zendesk might produce.
+  const s = raw.replace(/[‐-―−]/g, "-");
   const m = s.match(/^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?$/);
   if (!m) return null;
   const start = padHm(m[1], m[2]);
