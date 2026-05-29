@@ -8,6 +8,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
+import { resolveJobPricing } from "@/lib/job-pricing-resolver";
+import type {
+  AccountServicePrice,
+  CatalogService,
+} from "@/types/database";
 
 const AUTO_PARTNER_MARGIN_PCT = 40;
 
@@ -43,11 +49,21 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
  *     rate_type?:       "fixed"|"hourly", // pricing mode (default "fixed").
  *                                    //   - fixed:  uses client_price / partner_cost.
- *                                    //   - hourly: uses hourly_client_rate /
- *                                    //             hourly_partner_rate. Headline
- *                                    //             client_price / partner_cost are
- *                                    //             stored as 0 — totals get
- *                                    //             computed from billed_hours later.
+ *                                    //   - hourly: rates come from the Services
+ *                                    //             catalog (account override →
+ *                                    //             standard). hourly_client_rate
+ *                                    //             / hourly_partner_rate from the
+ *                                    //             payload act as overrides when
+ *                                    //             present. Headline client_price
+ *                                    //             / partner_cost are stored as 0
+ *                                    //             — totals get computed from
+ *                                    //             billed_hours later.
+ *     catalog_service_id?: string,   // [hourly] optional UUID of the
+ *                                    //   service_catalog row to use. When
+ *                                    //   omitted, the API matches service_type
+ *                                    //   to the catalog by exact name → normalized
+ *                                    //   canonical type-of-work. Match must be
+ *                                    //   unambiguous.
  *     client_price?:    number|str,  // [fixed] £ charged to the client (default 0).
  *                                    //   Strings like "£177.60" / "177,60" /
  *                                    //   "1,234.50" are accepted — currency,
@@ -59,11 +75,15 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   standard 40% margin is applied
  *                                    //   automatically. Send an explicit 0 to
  *                                    //   opt out.
- *     hourly_client_rate?: number|str,    // [hourly] REQUIRED when rate_type
- *                                    //   = "hourly". £/h charged to the client.
+ *     hourly_client_rate?: number|str,    // [hourly] £/h charged to the
+ *                                    //   client. Optional — when omitted, the
+ *                                    //   API resolves it from
+ *                                    //   account_service_prices (override) or
+ *                                    //   service_catalog (standard). Must end up
+ *                                    //   > 0 from one of those sources, else 400.
  *     hourly_partner_rate?: number|str,   // [hourly] £/h paid to the partner.
- *                                    //   Same auto-40% rule as partner_cost:
- *                                    //   omitting it sets
+ *                                    //   Optional — when omitted, defaults to
+ *                                    //   the auto-40% margin
  *                                    //   round(hourly_client_rate * 0.60, 2).
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
@@ -132,6 +152,7 @@ export async function POST(req: NextRequest) {
   const serviceType     = str(body.service_type);
   const description     = str(body.description) || null;
   const rateType        = (str(body.rate_type).toLowerCase() || "fixed") as "fixed" | "hourly";
+  const catalogServiceIdIn = str(body.catalog_service_id) || null;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
 
@@ -147,13 +168,13 @@ export async function POST(req: NextRequest) {
     : clientPrice > 0
       ? autoMargin(clientPrice)
       : 0;
-  const hourlyClientRate     = num(body.hourly_client_rate);
+  // For hourly: the body values act as caller overrides; when omitted, rates
+  // are resolved later from the Services catalog (account override → standard)
+  // and partner rate falls back to auto 40%.
+  const hourlyClientRateSent = isPresent(body.hourly_client_rate);
+  const hourlyClientRateIn   = num(body.hourly_client_rate);
   const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate);
-  const hourlyPartnerRate    = hourlyPartnerRateSet
-    ? num(body.hourly_partner_rate)
-    : hourlyClientRate > 0
-      ? autoMargin(hourlyClientRate)
-      : 0;
+  const hourlyPartnerRateIn  = num(body.hourly_partner_rate);
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
@@ -175,9 +196,9 @@ export async function POST(req: NextRequest) {
   if (rateType !== "fixed" && rateType !== "hourly") {
     return NextResponse.json({ error: "rate_type must be 'fixed' or 'hourly'." }, { status: 400 });
   }
-  if (rateType === "hourly" && !(hourlyClientRate > 0)) {
+  if (catalogServiceIdIn && !isValidUUID(catalogServiceIdIn)) {
     return NextResponse.json(
-      { error: "hourly_client_rate (£/hour) is required when rate_type is 'hourly'." },
+      { error: "catalog_service_id must be a valid UUID when provided." },
       { status: 400 },
     );
   }
@@ -316,6 +337,53 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ─── Hourly: resolve rates from Services catalog ────────────────────
+  // For hourly jobs the rate is sourced from the Services catalog instead of
+  // the payload. Resolution order for hourly_client_rate:
+  //   1) explicit body.hourly_client_rate (caller override — still respected)
+  //   2) account_service_prices.hourly_rate when use_standard = false
+  //   3) service_catalog.hourly_rate (standard)
+  // hourly_partner_rate falls back to the auto 40% margin when the caller
+  // doesn't send one, so jobs default to a 40%-margin allocation and stay
+  // unassigned (or auto_assigning) for staff/partners to pick up.
+  let resolvedCatalogServiceId: string | null = null;
+  let hourlyClientRate = hourlyClientRateIn;
+  let hourlyPartnerRate = hourlyPartnerRateIn;
+  if (rateType === "hourly") {
+    const catalog = await resolveCatalogServiceForHourly(
+      supabase,
+      catalogServiceIdIn,
+      serviceType,
+    );
+    if (!catalog.ok) {
+      return NextResponse.json({ error: catalog.error }, { status: catalog.status });
+    }
+    resolvedCatalogServiceId = catalog.row.id;
+
+    if (!hourlyClientRateSent) {
+      const override = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
+      const resolved = resolveJobPricing({
+        catalog: catalog.row,
+        accountOverride: override,
+        partnerOverride: null,
+      });
+      hourlyClientRate = Number(resolved.client.hourly_rate ?? 0);
+    }
+    if (!(hourlyClientRate > 0)) {
+      return NextResponse.json(
+        {
+          error:
+            "No hourly_client_rate available — set it on the account's Services pricing " +
+            "(or include hourly_client_rate in the request).",
+        },
+        { status: 400 },
+      );
+    }
+    if (!hourlyPartnerRateSet) {
+      hourlyPartnerRate = autoMargin(hourlyClientRate);
+    }
+  }
+
   // ─── Partner matching (when auto_assign is on) ──────────────────────
   let matchedPartnerIds: string[] = [];
   if (autoAssign) {
@@ -376,6 +444,9 @@ export async function POST(req: NextRequest) {
   if (rateType === "hourly") {
     jobRow.hourly_client_rate  = hourlyClientRate;
     jobRow.hourly_partner_rate = hourlyPartnerRate;
+    if (resolvedCatalogServiceId) {
+      jobRow.catalog_service_id = resolvedCatalogServiceId;
+    }
   }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
@@ -453,6 +524,85 @@ export async function POST(req: NextRequest) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+type CatalogResolveResult =
+  | { ok: true; row: CatalogService }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Resolve the service_catalog row for an hourly job. Prefers an explicit
+ * catalog_service_id when the caller knows it; otherwise reuses the same
+ * label→catalog matcher the in-app pickers use (exact name → normalized
+ * type-of-work) so Zendesk macros can keep sending "deep_cleaning" /
+ * "Cleaning" / "General Maintenance" without learning UUIDs.
+ */
+async function resolveCatalogServiceForHourly(
+  supabase: SupabaseClient,
+  catalogServiceIdIn: string | null,
+  serviceType: string,
+): Promise<CatalogResolveResult> {
+  if (catalogServiceIdIn) {
+    const { data, error } = await supabase
+      .from("service_catalog")
+      .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+      .eq("id", catalogServiceIdIn)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (error) {
+      console.error("[api/jobs] catalog lookup by id failed:", error.message);
+      return { ok: false, status: 500, error: "Catalog lookup failed." };
+    }
+    if (!data) {
+      return { ok: false, status: 400, error: "catalog_service_id not found." };
+    }
+    return { ok: true, row: data as CatalogService };
+  }
+
+  const { data: catalogRows, error: listErr } = await supabase
+    .from("service_catalog")
+    .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+    .eq("is_active", true)
+    .is("deleted_at", null);
+  if (listErr) {
+    console.error("[api/jobs] catalog list failed:", listErr.message);
+    return { ok: false, status: 500, error: "Catalog lookup failed." };
+  }
+  const rows = (catalogRows ?? []) as CatalogService[];
+  const matchedId = catalogServiceIdForTypeOfWorkLabel(serviceType, rows);
+  if (!matchedId) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        `service_type "${serviceType}" did not match any active Services catalog ` +
+        `entry. Send catalog_service_id explicitly or use one of the canonical type ` +
+        `names (e.g. "Cleaning", "Plumber", "Electrician", "General Maintenance").`,
+    };
+  }
+  const row = rows.find((r) => r.id === matchedId);
+  if (!row) {
+    return { ok: false, status: 500, error: "Catalog matcher returned a stale id." };
+  }
+  return { ok: true, row };
+}
+
+async function fetchAccountServiceOverride(
+  supabase: SupabaseClient,
+  accountId: string,
+  catalogServiceId: string,
+): Promise<AccountServicePrice | null> {
+  const { data, error } = await supabase
+    .from("account_service_prices")
+    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours")
+    .eq("account_id", accountId)
+    .eq("catalog_service_id", catalogServiceId)
+    .maybeSingle();
+  if (error) {
+    console.error("[api/jobs] account override lookup failed:", error.message);
+    return null;
+  }
+  return (data as AccountServicePrice | null) ?? null;
+}
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
