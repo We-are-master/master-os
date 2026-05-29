@@ -201,7 +201,6 @@ export async function POST(req: NextRequest) {
     client_id: clientId,
     client_name: clientName,
     property_address: propertyAddress,
-    service_type: serviceType,
     status,
     partner_id: partnerId,
     partner_name: partnerName,
