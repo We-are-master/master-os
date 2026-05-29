@@ -1,5 +1,33 @@
 import { getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
 import type { CatalogService } from "@/types/database";
+import {
+  upsertCatalogOptionInZendesk,
+  removeCatalogOptionFromZendesk,
+} from "@/lib/zendesk-service-catalog-sync";
+
+/**
+ * Fire-and-forget the Zendesk option sync after a catalog mutation. The
+ * upsert/remove helpers no-op when Zendesk isn't configured and swallow
+ * their own errors via a logged result, so a Zendesk outage never blocks
+ * the mutation that just succeeded against Supabase.
+ */
+function dispatchZendeskOptionSync(
+  kind: "upsert" | "remove",
+  catalogId: string,
+): void {
+  const op = kind === "upsert"
+    ? upsertCatalogOptionInZendesk(catalogId)
+    : removeCatalogOptionFromZendesk(catalogId);
+  void op
+    .then((r) => {
+      if (!r.ok && !r.skipped) {
+        console.error(`[catalog-services] Zendesk ${kind} failed:`, r.error);
+      }
+    })
+    .catch((err) => {
+      console.error(`[catalog-services] Zendesk ${kind} threw:`, err);
+    });
+}
 
 /** List for admin UI. `params.status`: `active` / `inactive` maps to `is_active` (no `status` column on table). */
 export async function listCatalogServices(params: ListParams): Promise<ListResult<CatalogService>> {
@@ -62,7 +90,9 @@ export async function createCatalogService(
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CatalogService;
+  const row = data as CatalogService;
+  dispatchZendeskOptionSync("upsert", row.id);
+  return row;
 }
 
 export async function updateCatalogService(id: string, input: Partial<CatalogService>): Promise<CatalogService> {
@@ -75,9 +105,12 @@ export async function updateCatalogService(id: string, input: Partial<CatalogSer
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CatalogService;
+  const row = data as CatalogService;
+  dispatchZendeskOptionSync("upsert", row.id);
+  return row;
 }
 
 export async function deleteCatalogService(id: string, deletedBy?: string): Promise<void> {
   await softDeleteById("service_catalog", id, deletedBy);
+  dispatchZendeskOptionSync("remove", id);
 }
