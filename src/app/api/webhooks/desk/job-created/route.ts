@@ -4,7 +4,13 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
-import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
+import {
+  buildPartnerJobConfirmationEmail,
+  buildPartnerJobConfirmationRequestEmail,
+} from "@/lib/emails/partner-job-confirmation";
+import { createPartnerJobAcceptToken } from "@/lib/quote-response-token";
+import { upsertShortLink } from "@/lib/short-links";
+import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -241,6 +247,20 @@ export async function POST(req: NextRequest) {
       body: `${jobRef} · ${title || serviceType} · ${propertyAddress}`,
       data: { type: "job_assigned", jobId },
     });
+
+    // Broadcast Zendesk side conversation invites — one Accept-link email
+    // per matched partner. Fire-and-forget so a slow Zendesk call can't
+    // block the webhook response.
+    void broadcastAutoAssignInvites({
+      jobId,
+      jobReference: jobRef,
+      jobTitle: title || serviceType,
+      clientName,
+      propertyAddress,
+      scope,
+      partnerIds: matchedPartnerIds,
+      ticketId,
+    }).catch((err) => console.error("[webhook/desk/job] auto invites failed:", err));
   } else if (assignmentMode === "specific" && partnerId) {
     pushSent = await sendPushToPartners(supabase, [partnerId], {
       title: "Job assigned",
@@ -367,10 +387,10 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
   // Look up partner email + name + rate
   const { data: partner } = await supabase
     .from("partners")
-    .select("contact_name, company_name, email")
+    .select("contact_name, company_name, email, zendesk_user_id")
     .eq("id", params.partnerId)
     .maybeSingle();
-  const p = partner as { contact_name: string | null; company_name: string | null; email: string | null } | null;
+  const p = partner as { contact_name: string | null; company_name: string | null; email: string | null; zendesk_user_id: string | null } | null;
   if (!p?.email) return;
 
   // Look up job_type + price for the email pill
@@ -406,10 +426,124 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
 
   await createSideConversation({
     ticketId: params.ticketId,
-    toEmail: p.email,
-    toName: p.contact_name || p.company_name || undefined,
-    subject: email.subject,
+    toEmail:  p.email,
+    toName:   p.contact_name || p.company_name || undefined,
+    toUserId: p.zendesk_user_id ?? undefined,
+    subject:  email.subject,
     htmlBody: email.html,
     bodyText: email.text,
   });
+}
+
+interface BroadcastAutoAssignInvitesParams {
+  jobId:           string;
+  jobReference:    string;
+  jobTitle:        string;
+  clientName:      string;
+  propertyAddress: string;
+  scope:           string;
+  partnerIds:      string[];
+  ticketId:        string;
+}
+
+/**
+ * For each matched partner in an auto-assign job:
+ *   1. Mint a tokenised Accept link bound to (jobId, partnerId)
+ *   2. Open a Zendesk side conversation on the job's main ticket with the
+ *      confirmation-request email body
+ *   3. Insert a row in job_partner_invites tracking (job, partner, sc_id, status)
+ *
+ * Partners without an email get a row with side_conversation_id = null
+ * (push-only invite).
+ *
+ * Errors are logged per-partner; one bad partner doesn't kill the broadcast.
+ */
+async function broadcastAutoAssignInvites(params: BroadcastAutoAssignInvitesParams): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { data: partners } = await supabase
+    .from("partners")
+    .select("id, contact_name, company_name, email, zendesk_user_id")
+    .in("id", params.partnerIds)
+    .eq("status", "active");
+
+  if (!partners || partners.length === 0) return;
+
+  // Look up job's price + type once — they're shared across all partner emails.
+  const { data: jobInfo } = await supabase
+    .from("jobs")
+    .select("job_type, hourly_partner_rate, partner_cost")
+    .eq("id", params.jobId)
+    .maybeSingle();
+  const ji = jobInfo as { job_type: "hourly" | "fixed" | null; hourly_partner_rate: number | null; partner_cost: number | null } | null;
+  const isHourly = ji?.job_type === "hourly";
+  const priceDisplay = isHourly
+    ? `£${Number(ji?.hourly_partner_rate ?? 0).toFixed(2)}/hr`
+    : `£${Number(ji?.partner_cost ?? 0).toFixed(2)}`;
+
+  const base = appBaseUrl();
+
+  for (const row of partners as { id: string; contact_name: string | null; company_name: string | null; email: string | null; zendesk_user_id: string | null }[]) {
+    const partnerFirstName = (row.contact_name?.trim().split(/\s+/)[0])
+      || (row.company_name?.trim() ?? "Partner");
+
+    let sideConversationId: string | null = null;
+
+    if (row.email) {
+      try {
+        const acceptToken = createPartnerJobAcceptToken(params.jobId, row.id);
+        let acceptUrl = `${base}/job/confirm?token=${encodeURIComponent(acceptToken)}`;
+        try {
+          const r = await upsertShortLink({
+            targetPath: `/job/confirm?token=${encodeURIComponent(acceptToken)}`,
+            kind:       "partner_accept",
+            entityRef:  `job:${params.jobId}:partner:${row.id}`,
+          });
+          acceptUrl = `${base}${r.shortPath}`;
+        } catch (err) {
+          console.error("[broadcast invites] short link failed, using long URL:", err);
+        }
+
+        const email = buildPartnerJobConfirmationRequestEmail({
+          partnerFirstName,
+          jobReference:    params.jobReference,
+          jobTitle:        params.jobTitle,
+          clientName:      params.clientName,
+          propertyAddress: params.propertyAddress,
+          scope:           params.scope,
+          priceDisplay,
+          acceptUrl,
+        });
+
+        const sc = await createSideConversation({
+          ticketId: params.ticketId,
+          toEmail:  row.email,
+          toName:   row.contact_name || row.company_name || undefined,
+          toUserId: row.zendesk_user_id ?? undefined,
+          subject:  email.subject,
+          htmlBody: email.html,
+          bodyText: email.text,
+        });
+
+        if (sc.ok && sc.id) {
+          sideConversationId = sc.id;
+        } else {
+          console.error(`[broadcast invites] side conv failed for partner ${row.id}:`, sc.error);
+        }
+      } catch (err) {
+        console.error(`[broadcast invites] threw for partner ${row.id}:`, err);
+      }
+    }
+
+    const { error: upErr } = await supabase
+      .from("job_partner_invites")
+      .upsert({
+        job_id:                       params.jobId,
+        partner_id:                   row.id,
+        zendesk_side_conversation_id: sideConversationId,
+        status:                       "invited",
+        invited_at:                   new Date().toISOString(),
+      }, { onConflict: "job_id,partner_id" });
+    if (upErr) console.error(`[broadcast invites] upsert failed for partner ${row.id}:`, upErr);
+  }
 }

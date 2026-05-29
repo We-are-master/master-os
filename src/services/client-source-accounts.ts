@@ -53,6 +53,14 @@ export async function createClientSourceAccount(input: {
     credit_limit: 0,
     payment_terms: (input.payment_terms ?? "Net 30").trim() || "Net 30",
   });
+
+  // Mirror into Zendesk fire-and-forget (🏢 prefix + os_type=account).
+  void fetch("/api/admin/account/zendesk-sync", {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ accountId: account.id }),
+  }).catch(() => { /* non-blocking */ });
+
   return {
     id: account.id,
     name: account.company_name,

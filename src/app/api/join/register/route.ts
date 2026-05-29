@@ -6,6 +6,7 @@ import {
   resolvePartnerDocExpiresAt,
 } from "@/lib/partner-required-docs";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -256,6 +257,14 @@ export async function POST(req: NextRequest) {
   }
 
   const partnerId = partnerRow.id as string;
+
+  // Mirror the partner into Zendesk (Organisation + User) so future side
+  // conversations on jobs target the partner's zendesk_user_id. Fire-and-
+  // forget — registration completes even if Zendesk is unreachable.
+  void syncPartnerToZendesk(partnerId).then(
+    (r) => { if (!r.ok && !r.skipped) console.error("[join/register] zendesk sync failed:", r.error); },
+    (err) => console.error("[join/register] zendesk sync threw:", err),
+  );
 
   // 4. Upload documents + insert into partner_documents
   for (const { key, name, docType } of DOC_DEFS) {

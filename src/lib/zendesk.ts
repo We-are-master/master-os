@@ -314,6 +314,12 @@ export interface SideConversationParams {
   toEmail: string;
   /** Optional recipient display name. */
   toName?: string | null;
+  /**
+   * Optional Zendesk user id of the recipient. When set, Zendesk threads the
+   * side conv under that user's organisation view (mirrored from
+   * partners.zendesk_user_id).
+   */
+  toUserId?: string | null;
   /** Subject line for the side conversation. */
   subject: string;
   /** HTML body (set `bodyText` to a plaintext fallback if you have one). */
@@ -349,16 +355,23 @@ export async function createSideConversation(
 
   const url = `${baseUrl()}/tickets/${params.ticketId}/side_conversations`;
 
+  // When the recipient already exists in Zendesk as a user (e.g. a partner
+  // we've mirrored via syncPartnerToZendesk), passing `user_id` threads the
+  // side conv into their organisation view. Email is still required by
+  // Zendesk as the channel hint.
+  const recipient: Record<string, unknown> = { email: params.toEmail };
+  if (params.toName) recipient.name = params.toName;
+  if (params.toUserId) {
+    const n = Number(params.toUserId);
+    if (Number.isFinite(n)) recipient.user_id = n;
+  }
+
   const body = {
     message: {
       subject: params.subject,
       body: params.bodyText ?? stripHtml(params.htmlBody),
       html_body: params.htmlBody,
-      to: [
-        params.toName
-          ? { name: params.toName, email: params.toEmail }
-          : { email: params.toEmail },
-      ],
+      to: [recipient],
     },
   };
 
@@ -432,6 +445,205 @@ export async function replyToSideConversation(params: {
     return { ok: true, id: json?.message?.id, status: res.status };
   } catch (err) {
     console.error("[zendesk] reply network error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
+ * Close a side conversation. Used after a job is claimed in auto-assign mode
+ * so the partners who didn't win get their side conv thread closed in
+ * Zendesk (the office still sees the history, but it falls out of the
+ * "open" list).
+ *
+ * Zendesk supports `state: "open" | "closed"` on PUT
+ * /api/v2/tickets/:id/side_conversations/:scId.json with the body shape
+ * `{ "state": "closed" }` (no wrapper).
+ */
+export async function closeSideConversation(params: {
+  ticketId: string | number;
+  sideConversationId: string;
+}): Promise<SideConversationResult> {
+  if (!isZendeskConfigured()) {
+    return { ok: false, error: "Zendesk not configured" };
+  }
+  if (!params.ticketId || !params.sideConversationId) {
+    return { ok: false, error: "ticketId and sideConversationId are required" };
+  }
+
+  const url = `${baseUrl()}/tickets/${params.ticketId}/side_conversations/${params.sideConversationId}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: authHeader(),
+      },
+      body: JSON.stringify({ state: "closed" }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[zendesk] side conversation close failed (${res.status}):`, text.slice(0, 500));
+      return { ok: false, status: res.status, error: text.slice(0, 500) };
+    }
+    return { ok: true, id: params.sideConversationId, status: res.status };
+  } catch (err) {
+    console.error("[zendesk] side conversation close network error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+// ─── Organisations + Users ──────────────────────────────────────────────
+//
+// Used to mirror OS partners into Zendesk so side conversations on jobs
+// can target the partner's Zendesk user_id (which automatically threads
+// them under the partner's organisation in the Zendesk UI).
+//
+// We use create_or_update endpoints, keyed on `external_id` — so re-syncing
+// the same partner is idempotent and won't create duplicates.
+
+export interface ZendeskOrgResult {
+  ok:     boolean;
+  id?:    string;
+  status?: number;
+  error?: string;
+}
+
+/** Emoji prefix convention used in Zendesk org names so the office can scan
+ *  the list visually: 🔧 = partner (trade), 🏢 = account (client). */
+const ZD_ORG_EMOJI = { partner: "🔧", account: "🏢" } as const;
+export type ZendeskOrgKind = keyof typeof ZD_ORG_EMOJI;
+
+/** Strip any leading emoji prefix from a name before re-applying the canonical one. */
+function stripLeadingEmoji(name: string): string {
+  return name.replace(/^[\p{Extended_Pictographic}\u{FE0F}\s]+/u, "").trim();
+}
+
+/**
+ * Create or update a Zendesk Organisation for a partner or account.
+ *
+ * Naming: the name is normalised to `${emoji} ${cleanName}` based on `kind`.
+ * Dedup: keyed on `external_id = fixfy:<kind>:<uuid>`.
+ * Custom fields populated:
+ *   - `org_id`  → the OS UUID (existing field, used by the office to copy back)
+ *   - `os_type` → "partner" | "account" (drives filters/reports in Zendesk)
+ */
+export async function createOrUpdateZendeskOrganization(params: {
+  kind:           ZendeskOrgKind;
+  name:           string;
+  /** OS UUID — used for both `external_id` and the `org_id` custom field. */
+  entityId:       string;
+  details?:       string;
+  domainNames?:   string[];
+}): Promise<ZendeskOrgResult> {
+  if (!isZendeskConfigured()) {
+    return { ok: false, error: "Zendesk not configured" };
+  }
+  if (!params.name?.trim()) {
+    return { ok: false, error: "name is required" };
+  }
+
+  const emoji = ZD_ORG_EMOJI[params.kind];
+  const cleanName = stripLeadingEmoji(params.name);
+  const displayName = `${emoji} ${cleanName}`;
+
+  const url = `${baseUrl()}/organizations/create_or_update.json`;
+  const body = {
+    organization: {
+      name:               displayName,
+      external_id:        `fixfy:${params.kind}:${params.entityId}`,
+      details:            params.details,
+      domain_names:       params.domainNames,
+      organization_fields: {
+        org_id:  params.entityId,
+        os_type: params.kind,
+      },
+    },
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: authHeader(),
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[zendesk] org create_or_update failed (${res.status}):`, text.slice(0, 500));
+      return { ok: false, status: res.status, error: text.slice(0, 500) };
+    }
+    const json = await res.json().catch(() => ({}));
+    const id = json?.organization?.id;
+    return { ok: true, id: id !== undefined ? String(id) : undefined, status: res.status };
+  } catch (err) {
+    console.error("[zendesk] org create_or_update network error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
+ * Create or update a Zendesk User (end-user role) for the partner or account
+ * contact. Keyed by email — re-running with the same email returns the
+ * existing user.
+ *
+ * `external_id` is `fixfy:<kind>-contact:<uuid>` so we can find the user back
+ * from the OS entity id without scanning by email.
+ */
+export async function createOrUpdateZendeskUser(params: {
+  kind:            ZendeskOrgKind;
+  name:            string;
+  email:           string;
+  /** OS UUID of the parent entity (partner.id or account.id). */
+  entityId:        string;
+  /** Zendesk org id (string) — when set, the user is placed under this org. */
+  organizationId?: string;
+  phone?:          string;
+}): Promise<ZendeskOrgResult> {
+  if (!isZendeskConfigured()) {
+    return { ok: false, error: "Zendesk not configured" };
+  }
+  if (!params.email?.trim() || !params.name?.trim()) {
+    return { ok: false, error: "name and email are required" };
+  }
+
+  const url = `${baseUrl()}/users/create_or_update.json`;
+  const userBody: Record<string, unknown> = {
+    name:        params.name.trim(),
+    email:       params.email.trim().toLowerCase(),
+    external_id: `fixfy:${params.kind}-contact:${params.entityId}`,
+    role:        "end-user",
+    verified:    true,
+  };
+  if (params.organizationId) {
+    const n = Number(params.organizationId);
+    if (Number.isFinite(n)) userBody.organization_id = n;
+  }
+  if (params.phone?.trim()) userBody.phone = params.phone.trim();
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: authHeader(),
+      },
+      body: JSON.stringify({ user: userBody }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[zendesk] user create_or_update failed (${res.status}):`, text.slice(0, 500));
+      return { ok: false, status: res.status, error: text.slice(0, 500) };
+    }
+    const json = await res.json().catch(() => ({}));
+    const id = json?.user?.id;
+    return { ok: true, id: id !== undefined ? String(id) : undefined, status: res.status };
+  } catch (err) {
+    console.error("[zendesk] user create_or_update network error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
   }
 }

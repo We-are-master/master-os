@@ -123,7 +123,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // Look up partner email + push token in one go
   const { data: partnerRow } = await supabase
     .from("partners")
-    .select("id, contact_name, company_name, email, expo_push_token, auth_user_id")
+    .select("id, contact_name, company_name, email, expo_push_token, auth_user_id, zendesk_user_id")
     .eq("id", job.partner_id)
     .maybeSingle();
   const partner = partnerRow as {
@@ -133,6 +133,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     email: string | null;
     expo_push_token: string | null;
     auth_user_id: string | null;
+    zendesk_user_id: string | null;
   } | null;
 
   if (!partner) {
@@ -298,9 +299,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     } else {
       const r = await createSideConversation({
         ticketId: zendeskTicketId,
-        toEmail: partner.email,
-        toName: partner.contact_name || partner.company_name || undefined,
-        subject: email.subject,
+        toEmail:  partner.email,
+        toName:   partner.contact_name || partner.company_name || undefined,
+        toUserId: partner.zendesk_user_id ?? undefined,
+        subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
       });
