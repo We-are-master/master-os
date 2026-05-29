@@ -53,7 +53,10 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //     09–12, early afternoon 13–15,
  *                                    //     late afternoon 15–18, evening
  *                                    //     18–20).
- *     title:            string,      // required
+ *     title?:           string,      // optional. When omitted, falls back to
+ *                                    //   service_type so Zendesk macros that
+ *                                    //   only carry the trade label can post
+ *                                    //   without padding a separate title.
  *     client_name:      string,      // required
  *     client_email:     string,      // required
  *     client_phone?:    string,      // optional contact phone. On creation it
@@ -62,7 +65,17 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   phone, this value backfills it; a
  *                                    //   non-empty phone is never overwritten.
  *     property_address: string,      // required (geocoded by app for partner map)
- *     service_type:     string,      // required (trade — used for partner matching)
+ *     service_type?:    string,      // trade label. Optional when
+ *                                    //   catalog_service_id is sent — the
+ *                                    //   catalog row's `name` is used instead.
+ *                                    //   Required when no catalog_service_id
+ *                                    //   is provided. Used at runtime for
+ *                                    //   partner matching (matchPartnerIdsForWork)
+ *                                    //   and, for hourly jobs, to look up the
+ *                                    //   service_catalog row. NOT persisted on
+ *                                    //   the jobs row directly — the trade
+ *                                    //   label lives on jobs.title and the
+ *                                    //   catalog linkage on jobs.catalog_service_id.
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
  *     rate_type?:       "fixed"|"hourly", // pricing mode (default "fixed").
  *                                    //   The Zendesk Job Type tag form
@@ -79,12 +92,17 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //             / partner_cost are stored as 0
  *                                    //             — totals get computed from
  *                                    //             billed_hours later.
- *     catalog_service_id?: string,   // [hourly] optional UUID of the
- *                                    //   service_catalog row to use. When
- *                                    //   omitted, the API matches service_type
- *                                    //   to the catalog by exact name → normalized
- *                                    //   canonical type-of-work. Match must be
- *                                    //   unambiguous.
+ *     catalog_service_id?: string,   // optional UUID of the service_catalog
+ *                                    //   row. When sent, the row's `name` is
+ *                                    //   pulled and used as service_type /
+ *                                    //   title, so the macro can send the id
+ *                                    //   alone without duplicating the label.
+ *                                    //   For hourly jobs, the row is also the
+ *                                    //   anchor for the rate resolver. When
+ *                                    //   omitted on hourly, the API matches
+ *                                    //   service_type to the catalog by exact
+ *                                    //   name → normalized canonical type-of-work
+ *                                    //   (must be unambiguous).
  *     client_price?:    number|str,  // [fixed] £ charged to the client (default 0).
  *                                    //   Strings like "£177.60" / "177,60" /
  *                                    //   "1,234.50" are accepted — currency,
@@ -170,7 +188,9 @@ export async function POST(req: NextRequest) {
   const clientEmail     = str(body.client_email).toLowerCase();
   const clientPhone     = str(body.client_phone) || null;
   const propertyAddress = str(body.property_address);
-  const serviceType     = str(body.service_type);
+  // `let` because the catalog name can override this when the caller pinned a
+  // catalog_service_id without sending a separate service_type.
+  let serviceType       = str(body.service_type);
   const description     = str(body.description) || null;
   // Accept either the bare value (`hourly` / `fixed`) or the Zendesk Job Type
   // field tag form (`job_type_hourly` / `job_type_fixed`) — the prefix is
@@ -204,14 +224,15 @@ export async function POST(req: NextRequest) {
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
-    !accountId || !date || !arrivalTime || !title ||
-    !clientName || !clientEmail || !propertyAddress || !serviceType
+    !accountId || !date || !arrivalTime ||
+    !clientName || !clientEmail || !propertyAddress ||
+    (!serviceType && !catalogServiceIdIn)
   ) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, arrival_time, title, client_name, client_email, " +
-          "property_address, and service_type are required.",
+          "account_id, date, arrival_time, client_name, client_email, " +
+          "property_address, and either service_type or catalog_service_id are required.",
       },
       { status: 400 },
     );
@@ -263,6 +284,33 @@ export async function POST(req: NextRequest) {
 
   // ─── DB ──────────────────────────────────────────────────────────────
   const supabase = createServiceClient();
+
+  // When the caller pinned a catalog_service_id, treat the catalog row's name
+  // as the trade label. The macro's mental model is "catalog id IS the type of
+  // work" — there's no separate service_type to send. The resolved name is
+  // also used as the title fallback (jobs.title) and for partner matching
+  // downstream, so everything lines up with what the Services catalog has.
+  if (catalogServiceIdIn) {
+    const { data: catRow, error: catErr } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", catalogServiceIdIn)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (catErr) {
+      console.error("[api/jobs] catalog name lookup failed:", catErr.message);
+      return NextResponse.json({ error: "Catalog lookup failed." }, { status: 500 });
+    }
+    if (!catRow) {
+      return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
+    }
+    serviceType = String((catRow as { name: string }).name).trim();
+  }
+
+  // service_type doubles as title when the caller doesn't supply one. The jobs
+  // table has a `title` column, no `service_type` column — the trade label is
+  // stored there and also used at runtime for partner matching / catalog lookup.
+  const titleResolved = title || serviceType;
 
   // Idempotency: if a Zendesk ticket id was supplied and we already have a
   // job for it, return the existing row instead of duplicating.
@@ -447,11 +495,10 @@ export async function POST(req: NextRequest) {
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
-    title,
+    title:              titleResolved,
     client_id:          clientId,
     client_name:        clientName,
     property_address:   propertyAddress,
-    service_type:       serviceType,
     status,
     client_price:       rateType === "hourly" ? 0 : clientPrice,
     partner_cost:       rateType === "hourly" ? 0 : partnerCost,
@@ -527,7 +574,7 @@ export async function POST(req: NextRequest) {
     try {
       partnersNotified = await sendPushToPartners(supabase, matchedPartnerIds, {
         title: "New job available",
-        body:  `${inserted.reference} · ${title} · ${propertyAddress}`,
+        body:  `${inserted.reference} · ${titleResolved} · ${propertyAddress}`,
         data:  { type: "job_assigned", jobId: String(inserted.id) },
       });
     } catch (err) {
