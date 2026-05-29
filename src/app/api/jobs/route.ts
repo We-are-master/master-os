@@ -7,6 +7,9 @@ import { extractUkPostcode } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+
+const AUTO_PARTNER_MARGIN_PCT = 40;
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -21,39 +24,53 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *
  * Body (JSON):
  *   {
- *     account_id:       uuid,    // accounts.id — required
- *     date:             string,  // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
- *     hour:             "HH:MM", // 24h, required
- *     title:            string,  // required
- *     client_name:      string,  // required
- *     client_email:     string,  // required
- *     property_address: string,  // required (geocoded by app for partner map)
- *     service_type:     string,  // required (trade — used for partner matching)
- *     description?:     string,  // → jobs.scope (work brief — same field as quotes.scope)
- *     client_price?:    number,  // £ charged to the client (default 0)
- *     partner_cost?:    number,  // £ paid to the partner   (default 0)
- *     auto_assign?:     boolean, // when true → status='auto_assigning'
- *                                  + push notify partners matching service_type
- *                                  via the existing offer-window mechanism
- *                                  (mig 080). Default false → status='unassigned',
- *                                  staff picks partner manually.
- *     ticket_id?:       string   // Zendesk ticket id — stored as
- *                                  //   external_source='zendesk',
- *                                  //   external_ref=ticket_id.
- *                                  //   Re-posting the same id returns the
- *                                  //   existing job (idempotent).
- *                                  //   If a QUOTE already exists with this
- *                                  //   ticket_id (e.g. created by an earlier
- *                                  //   Zendesk macro), the job is created
- *                                  //   linked to it (jobs.quote_id) and the
- *                                  //   quote is marked status='converted_to_job'.
+ *     account_id:       uuid,        // accounts.id — required
+ *     date:             string,      // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
+ *     arrival_time:     string,      // "HH:MM - HH:MM" UK wall-clock arrival window
+ *                                    //   (e.g. "09:00 - 12:00"). Required. Spaces
+ *                                    //   around the dash are optional. Single-time
+ *                                    //   "HH:MM" is also accepted (no end window).
+ *     title:            string,      // required
+ *     client_name:      string,      // required
+ *     client_email:     string,      // required
+ *     property_address: string,      // required (geocoded by app for partner map)
+ *     service_type:     string,      // required (trade — used for partner matching)
+ *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
+ *     client_price?:    number|str,  // £ charged to the client (default 0). Strings
+ *                                    //   like "£177.60" / "177,60" / "1,234.50" are
+ *                                    //   accepted — currency, spaces and UK/EU
+ *                                    //   number formatting get normalized.
+ *     partner_cost?:    number|str,  // £ paid to the partner. When OMITTED and
+ *                                    //   client_price > 0, defaults to
+ *                                    //   round(client_price * 0.60, 2) so the
+ *                                    //   standard 40% margin is applied
+ *                                    //   automatically. Send an explicit 0 to
+ *                                    //   opt out.
+ *     auto_assign?:     boolean,     // when true → status='auto_assigning'
+ *                                    //   + push notify partners matching service_type
+ *                                    //   via the existing offer-window mechanism
+ *                                    //   (mig 080). Default false → status='unassigned',
+ *                                    //   staff picks partner manually.
+ *     ticket_id?:       string       // Zendesk ticket id — stored as
+ *                                    //   external_source='zendesk',
+ *                                    //   external_ref=ticket_id.
+ *                                    //   Re-posting the same id returns the
+ *                                    //   existing job (idempotent).
+ *                                    //   If a QUOTE already exists with this
+ *                                    //   ticket_id (e.g. created by an earlier
+ *                                    //   Zendesk macro), the job is created
+ *                                    //   linked to it (jobs.quote_id) and the
+ *                                    //   quote is marked status='converted_to_job'.
  *   }
  *
  * Behavior:
  *   - Finds (or creates) a clients row in the given account matching
  *     client_email, then attaches the new job to it.
- *   - date + hour → scheduled_start_at (timestamptz) and scheduled_date.
+ *   - date + arrival_time → scheduled_date, scheduled_start_at and
+ *     scheduled_end_at (DST-safe UK wall-clock conversion).
  *   - Generates next reference via the existing next_job_ref RPC.
+ *   - When partner_cost is missing and client_price > 0, applies the standard
+ *     40% margin: partner_cost = round(client_price * 0.60, 2).
  *   - When auto_assign=true: matches active partners by service_type
  *     (using the same partnerMatchesTypeOfWork rules the Desk webhook
  *     uses), stores their ids in auto_assign_invited_partner_ids, and
@@ -84,7 +101,7 @@ export async function POST(req: NextRequest) {
 
   const accountId       = str(body.account_id);
   const date            = str(body.date);
-  const hour            = str(body.hour);
+  const arrivalTime     = str(body.arrival_time);
   const title           = str(body.title);
   const clientName      = str(body.client_name);
   const clientEmail     = str(body.client_email).toLowerCase();
@@ -92,19 +109,26 @@ export async function POST(req: NextRequest) {
   const serviceType     = str(body.service_type);
   const description     = str(body.description) || null;
   const clientPrice     = num(body.client_price);
-  const partnerCost     = num(body.partner_cost);
+  // Distinguish "omitted" from "explicit 0" so we can auto-apply the standard
+  // 40% partner margin when the caller didn't send a cost.
+  const partnerCostSent = isPresent(body.partner_cost);
+  const partnerCost     = partnerCostSent
+    ? num(body.partner_cost)
+    : clientPrice > 0
+      ? Math.round(clientPrice * (100 - AUTO_PARTNER_MARGIN_PCT)) / 100
+      : 0;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
-    !accountId || !date || !hour || !title ||
+    !accountId || !date || !arrivalTime || !title ||
     !clientName || !clientEmail || !propertyAddress || !serviceType
   ) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, hour, title, client_name, client_email, " +
+          "account_id, date, arrival_time, title, client_name, client_email, " +
           "property_address, and service_type are required.",
       },
       { status: 400 },
@@ -120,16 +144,30 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (!/^\d{2}:\d{2}$/.test(hour)) {
-    return NextResponse.json({ error: "hour must be HH:MM (24h)." }, { status: 400 });
+  const arrivalWindow = parseArrivalTime(arrivalTime);
+  if (!arrivalWindow) {
+    return NextResponse.json(
+      { error: "arrival_time must be \"HH:MM - HH:MM\" or \"HH:MM\" (24h, UK wall-clock)." },
+      { status: 400 },
+    );
   }
   if (!clientEmail.includes("@")) {
     return NextResponse.json({ error: "client_email must be a valid email." }, { status: 400 });
   }
 
-  const startIso = combineDateHourToIso(isoDate, hour);
+  const startIso = ukWallClockToUtcIso(isoDate, arrivalWindow.start);
   if (!startIso) {
-    return NextResponse.json({ error: "date + hour did not parse to a valid timestamp." }, { status: 400 });
+    return NextResponse.json({ error: "date + arrival_time did not parse to a valid timestamp." }, { status: 400 });
+  }
+  let endIso: string | null = null;
+  if (arrivalWindow.end) {
+    endIso = ukWallClockToUtcIso(isoDate, arrivalWindow.end);
+    if (!endIso) {
+      return NextResponse.json({ error: "arrival_time end did not parse to a valid timestamp." }, { status: 400 });
+    }
+    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      return NextResponse.json({ error: "arrival_time end must be after start." }, { status: 400 });
+    }
   }
 
   // ─── DB ──────────────────────────────────────────────────────────────
@@ -263,6 +301,7 @@ export async function POST(req: NextRequest) {
     margin_percent:     margin,
     scheduled_date:     isoDate,
     scheduled_start_at: startIso,
+    scheduled_end_at:   endIso,
     total_phases:       2,
     progress:           0,
     current_phase:      0,
@@ -351,9 +390,64 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** Was the field included in the request? Empty strings count as "not sent". */
+function isPresent(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  return true;
+}
+
+/**
+ * Coerce a money-ish value (number or string) into a finite number.
+ *
+ * Tolerates the shapes a Zendesk macro / spreadsheet template tends to
+ * produce: a currency prefix (£/$/€), whitespace, and UK/EU number
+ * formatting ("1,234.50" thousands separator, or "177,60" with a comma
+ * as decimal point). Returns 0 for anything we can't make sense of.
+ */
 function num(v: unknown): number {
-  const n = Number(v);
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v !== "string") return 0;
+  let s = v.trim().replace(/[£$€\s]/g, "");
+  if (!s) return 0;
+  if (s.includes(",") && s.includes(".")) {
+    // "1,234.50" — comma is the thousands separator.
+    s = s.replace(/,/g, "");
+  } else if (s.includes(",")) {
+    // "177,60" — comma is the decimal point.
+    s = s.replace(/,/g, ".");
+  }
+  const n = Number(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Parse an arrival_time payload into UK wall-clock HH:MM start (and optional
+ * end). Accepts:
+ *   "09:00 - 12:00"  → { start: "09:00", end: "12:00" }
+ *   "09:00-12:00"    → same (dashes/spaces flex)
+ *   "9:00 - 12:00"   → start padded to "09:00"
+ *   "09:00"          → { start: "09:00", end: null } — no window
+ * Returns null when the shape doesn't match or hours/minutes are out of range.
+ */
+function parseArrivalTime(input: string): { start: string; end: string | null } | null {
+  const s = input.trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?$/);
+  if (!m) return null;
+  const start = padHm(m[1], m[2]);
+  if (!start) return null;
+  if (m[3] === undefined) return { start, end: null };
+  const end = padHm(m[3], m[4]);
+  if (!end) return null;
+  return { start, end };
+}
+
+function padHm(hh: string, mm: string): string | null {
+  const h = Number(hh);
+  const mi = Number(mm);
+  if (!Number.isInteger(h) || !Number.isInteger(mi)) return null;
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}`;
 }
 
 /** Accepts `YYYY-MM-DD`, `DD-MM-YYYY`, `DD-MM-YY`, `DD/MM/YYYY`, or
@@ -378,12 +472,6 @@ function validateYmd(yyyy: string, mm: string, dd: string): string | null {
     dt.getUTCDate() !== Number(dd)
   ) return null;
   return `${yyyy}-${mm}-${dd}`;
-}
-
-function combineDateHourToIso(date: string, hour: string): string | null {
-  const dt = new Date(`${date}T${hour}:00Z`);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt.toISOString();
 }
 
 function secretsMatch(provided: string | null, expected: string): boolean {
