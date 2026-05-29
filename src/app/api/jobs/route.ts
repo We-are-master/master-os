@@ -53,7 +53,10 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //     09–12, early afternoon 13–15,
  *                                    //     late afternoon 15–18, evening
  *                                    //     18–20).
- *     title:            string,      // required
+ *     title?:           string,      // optional. When omitted, falls back to
+ *                                    //   service_type so Zendesk macros that
+ *                                    //   only carry the trade label can post
+ *                                    //   without padding a separate title.
  *     client_name:      string,      // required
  *     client_email:     string,      // required
  *     client_phone?:    string,      // optional contact phone. On creation it
@@ -209,18 +212,22 @@ export async function POST(req: NextRequest) {
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
-    !accountId || !date || !arrivalTime || !title ||
+    !accountId || !date || !arrivalTime ||
     !clientName || !clientEmail || !propertyAddress || !serviceType
   ) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, arrival_time, title, client_name, client_email, " +
+          "account_id, date, arrival_time, client_name, client_email, " +
           "property_address, and service_type are required.",
       },
       { status: 400 },
     );
   }
+  // service_type doubles as title when the caller doesn't supply one. The jobs
+  // table has a `title` column, no `service_type` column — the trade label is
+  // stored there and also used at runtime for partner matching / catalog lookup.
+  const titleResolved = title || serviceType;
   if (!isValidUUID(accountId)) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
   }
@@ -452,7 +459,7 @@ export async function POST(req: NextRequest) {
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
-    title,
+    title:              titleResolved,
     client_id:          clientId,
     client_name:        clientName,
     property_address:   propertyAddress,
@@ -531,7 +538,7 @@ export async function POST(req: NextRequest) {
     try {
       partnersNotified = await sendPushToPartners(supabase, matchedPartnerIds, {
         title: "New job available",
-        body:  `${inserted.reference} · ${title} · ${propertyAddress}`,
+        body:  `${inserted.reference} · ${titleResolved} · ${propertyAddress}`,
         data:  { type: "job_assigned", jobId: String(inserted.id) },
       });
     } catch (err) {
