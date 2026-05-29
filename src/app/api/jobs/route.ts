@@ -33,6 +33,11 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     title:            string,      // required
  *     client_name:      string,      // required
  *     client_email:     string,      // required
+ *     client_phone?:    string,      // optional contact phone. On creation it
+ *                                    //   lands on clients.phone. When the
+ *                                    //   client already exists with an empty
+ *                                    //   phone, this value backfills it; a
+ *                                    //   non-empty phone is never overwritten.
  *     property_address: string,      // required (geocoded by app for partner map)
  *     service_type:     string,      // required (trade — used for partner matching)
  *     description?:     string,      // → jobs.scope (work brief — same field as quotes.scope)
@@ -79,7 +84,9 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *
  * Behavior:
  *   - Finds (or creates) a clients row in the given account matching
- *     client_email, then attaches the new job to it.
+ *     client_email, then attaches the new job to it. client_phone is
+ *     stored on creation and backfilled on existing clients only when
+ *     they don't have a phone yet.
  *   - date + arrival_time → scheduled_date, scheduled_start_at and
  *     scheduled_end_at (DST-safe UK wall-clock conversion).
  *   - Generates next reference via the existing next_job_ref RPC.
@@ -120,6 +127,7 @@ export async function POST(req: NextRequest) {
   const title           = str(body.title);
   const clientName      = str(body.client_name);
   const clientEmail     = str(body.client_email).toLowerCase();
+  const clientPhone     = str(body.client_phone) || null;
   const propertyAddress = str(body.property_address);
   const serviceType     = str(body.service_type);
   const description     = str(body.description) || null;
@@ -263,7 +271,7 @@ export async function POST(req: NextRequest) {
   if (!clientId) {
     const { data: existing, error: findErr } = await supabase
       .from("clients")
-      .select("id")
+      .select("id, phone")
       .eq("source_account_id", accountId)
       .ilike("email", clientEmail)
       .limit(1)
@@ -274,12 +282,26 @@ export async function POST(req: NextRequest) {
     }
     if (existing?.id) {
       clientId = existing.id as string;
+      // Backfill phone when the existing client doesn't have one yet and the
+      // caller now has a number. We never overwrite a phone that's already
+      // there — staff may have curated it.
+      const existingPhone = (existing as { phone: string | null }).phone;
+      if (clientPhone && !existingPhone?.trim()) {
+        const { error: phoneErr } = await supabase
+          .from("clients")
+          .update({ phone: clientPhone })
+          .eq("id", clientId);
+        if (phoneErr) {
+          console.error("[api/jobs] client phone backfill failed:", phoneErr.message);
+        }
+      }
     } else {
       const { data: created, error: createErr } = await supabase
         .from("clients")
         .insert({
           full_name: clientName,
           email: clientEmail,
+          phone: clientPhone,
           client_type: "commercial",
           source: "corporate",
           source_account_id: accountId,
