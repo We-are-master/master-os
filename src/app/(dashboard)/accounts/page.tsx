@@ -342,6 +342,15 @@ export default function AccountsPage() {
         default_client_cancel_fee_gbp:
           Number(form.default_client_cancel_fee_gbp) > 0 ? Math.round(Number(form.default_client_cancel_fee_gbp) * 100) / 100 : null,
       });
+
+      // Mirror the new account into Zendesk (🏢 + os_type=account). Fire-and-
+      // forget so a slow Zendesk doesn't block the UI.
+      void fetch("/api/admin/account/zendesk-sync", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ accountId: created.id }),
+      }).catch(() => { /* non-blocking */ });
+
       setCreateOpen(false);
       setForm(emptyForm);
       toast.success(`Account "${created.company_name}" created.`);

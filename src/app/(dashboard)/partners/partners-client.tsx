@@ -1184,6 +1184,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         verified: false,
         catalog_service_ids: catalogServiceIdsForTradeLabels(form.trades, partnerCatalogServices),
       });
+
+      // Mirror the new partner into Zendesk (Organisation + User) fire-and-
+      // forget so future job side conversations target their zendesk_user_id.
+      void fetch("/api/admin/partner/zendesk-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ partnerId: created.id }),
+      }).catch(() => { /* non-blocking */ });
+
       let partnerToShow: Partner = created;
       if (createAvatarFile) {
         try {

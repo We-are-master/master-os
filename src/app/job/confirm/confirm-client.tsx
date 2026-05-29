@@ -6,7 +6,11 @@ import { useSearchParams } from "next/navigation";
 type State =
   | { kind: "loading" }
   | { kind: "ok"; jobReference: string; partnerLabel: string; alreadyConfirmed: boolean }
+  | { kind: "taken"; jobReference: string | null }
   | { kind: "error"; message: string };
+
+const PORTAL_URL =
+  (process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim().replace(/\/$/, "")) || "https://app.getfixfy.com";
 
 export function ConfirmClient() {
   const search = useSearchParams();
@@ -29,6 +33,10 @@ export function ConfirmClient() {
         const j = await res.json();
         if (cancelled) return;
         if (!res.ok || !j.ok) {
+          if (j.error === "job_taken") {
+            setState({ kind: "taken", jobReference: j.jobReference ?? null });
+            return;
+          }
           setState({
             kind:    "error",
             message: j.message ?? friendlyError(j.error) ?? "We couldn't confirm this job. Please contact support.",
@@ -77,7 +85,34 @@ export function ConfirmClient() {
                 ? `Job ${state.jobReference} is already booked to you.`
                 : `Thanks ${state.partnerLabel}. Job ${state.jobReference} is booked — we've sent the brief and earnings details to your inbox.`}
             </p>
-            <p className="text-xs text-slate-400">You can close this tab now.</p>
+            <a
+              href={PORTAL_URL}
+              className="inline-flex items-center justify-center w-full px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm transition-colors"
+            >
+              Open partner portal
+            </a>
+          </>
+        )}
+
+        {state.kind === "taken" && (
+          <>
+            <div className="w-20 h-20 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-5">
+              <svg className="w-10 h-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h1 className="text-2xl font-black text-slate-800 mb-2">Taken by another partner</h1>
+            <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+              {state.jobReference
+                ? `Job ${state.jobReference} was accepted by another partner before you. Thanks for being quick — we'll send the next one your way.`
+                : `This job was accepted by another partner before you. Thanks for being quick — we'll send the next one your way.`}
+            </p>
+            <a
+              href={PORTAL_URL}
+              className="inline-flex items-center justify-center w-full px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm transition-colors"
+            >
+              Open partner portal
+            </a>
           </>
         )}
 
