@@ -103,12 +103,9 @@ export async function POST() {
   let zendesk: Awaited<ReturnType<typeof backfillCatalogOptionsToZendesk>> | undefined;
   if (created > 0) {
     zendesk = await backfillCatalogOptionsToZendesk({ client: db }).catch((err) => ({
-      ok:        false,
-      inserted:  0,
-      updated:   0,
-      unchanged: 0,
-      pruned:    0,
-      error:     err instanceof Error ? err.message : String(err),
+      ok:    false,
+      stats: { rewrite: 0, rename: 0, unchanged: 0, keep: 0, prune: 0, append: 0 },
+      error: err instanceof Error ? err.message : String(err),
     }));
   }
 
