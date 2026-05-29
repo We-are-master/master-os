@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient, isServiceRoleConfigured } from "@/lib/supabase/service";
 import { CANONICAL_TYPE_OF_WORK_NAMES } from "@/lib/type-of-work";
+import { backfillCatalogOptionsToZendesk } from "@/lib/zendesk-service-catalog-sync";
 import { loadMergedPermissions, resolvePermission } from "@/services/admin-config";
 import type { PermissionKey, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
@@ -96,5 +97,20 @@ export async function POST() {
     created++;
   }
 
-  return NextResponse.json({ ok: true, created, skipped });
+  // After the OS-side inserts settle, push the new options to the Zendesk
+  // Type of Work tagger field in one batched PUT. Best-effort: if Zendesk is
+  // down we still return ok so the canonical seeding doesn't roll back.
+  let zendesk: Awaited<ReturnType<typeof backfillCatalogOptionsToZendesk>> | undefined;
+  if (created > 0) {
+    zendesk = await backfillCatalogOptionsToZendesk({ client: db }).catch((err) => ({
+      ok:        false,
+      inserted:  0,
+      updated:   0,
+      unchanged: 0,
+      pruned:    0,
+      error:     err instanceof Error ? err.message : String(err),
+    }));
+  }
+
+  return NextResponse.json({ ok: true, created, skipped, zendesk });
 }
