@@ -198,7 +198,9 @@ export async function POST(req: NextRequest) {
   const rateType        = (
     str(body.rate_type).toLowerCase().replace(/^job[_-]type[_-]/, "") || "fixed"
   ) as "fixed" | "hourly";
-  const catalogServiceIdIn = str(body.catalog_service_id) || null;
+  // `let` because we drop the value to service_type below when it isn't a UUID
+  // (typically a Zendesk ticket saved before the slug→UUID backfill).
+  let catalogServiceIdIn = str(body.catalog_service_id) || null;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
 
@@ -244,10 +246,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "rate_type must be 'fixed' or 'hourly'." }, { status: 400 });
   }
   if (catalogServiceIdIn && !isValidUUID(catalogServiceIdIn)) {
-    return NextResponse.json(
-      { error: "catalog_service_id must be a valid UUID when provided." },
-      { status: 400 },
-    );
+    // Webhook is feeding us a Type of Work field value that's still the
+    // pre-backfill slug (`deep_cleaning`, `fire_alarm_service`, …) rather
+    // than the OS UUID. Treat it as a service_type label so the slug-aware
+    // matcher can resolve it, instead of failing the request.
+    if (!serviceType) serviceType = catalogServiceIdIn;
+    catalogServiceIdIn = null;
   }
   const isoDate = normalizeDateToIso(date);
   if (!isoDate) {
@@ -641,7 +645,9 @@ async function resolveCatalogServiceForHourly(
     return { ok: false, status: 500, error: "Catalog lookup failed." };
   }
   const rows = (catalogRows ?? []) as CatalogService[];
-  const matchedId = catalogServiceIdForTypeOfWorkLabel(serviceType, rows);
+  const matchedId =
+    catalogServiceIdForTypeOfWorkLabel(serviceType, rows) ??
+    matchCatalogBySlug(serviceType, rows);
   if (!matchedId) {
     return {
       ok: false,
@@ -657,6 +663,57 @@ async function resolveCatalogServiceForHourly(
     return { ok: false, status: 500, error: "Catalog matcher returned a stale id." };
   }
   return { ok: true, row };
+}
+
+/**
+ * Slug-aware fallback matcher. Zendesk macros and other integrations often
+ * carry the trade as a snake_case slug (`deep_cleaning`, `fire_alarm_service`,
+ * `pat_testing`) rather than a canonical display name. The label matcher in
+ * `catalogServiceIdForTypeOfWorkLabel` looks at the catalog's `name` column,
+ * where rows are stored with bracket prefixes ("(DC) Deep Cleaning") — so a
+ * direct text match misses.
+ *
+ * This fallback slugifies the input and the catalog names (both the full
+ * name and the base name with bracket prefix / trailing duplicate stripped)
+ * and looks for a single confident match. Returns null when zero or multiple
+ * candidates match — better to surface a 400 than to silently relink to the
+ * wrong row.
+ */
+function matchCatalogBySlug(
+  input: string,
+  catalog: { id: string; name: string }[],
+): string | null {
+  const slug = slugify(input);
+  if (!slug) return null;
+
+  const exact = catalog.filter((c) => {
+    const full = slugify(c.name);
+    const base = slugify(stripBracketDecor(c.name));
+    return full === slug || base === slug;
+  });
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) return null;
+
+  // Loose containment between slug forms — catches `end_of_tenancy_cleaning`
+  // ↔ `end_of_tenancy`, but only when exactly one catalog candidate matches.
+  const loose = catalog.filter((c) => {
+    const base = slugify(stripBracketDecor(c.name));
+    return base && (base.includes(slug) || slug.includes(base));
+  });
+  return loose.length === 1 ? loose[0].id : null;
+}
+
+function slugify(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/** Strip a leading `(XXX)` initialism and a trailing `(XXX)` duplicate. */
+function stripBracketDecor(s: string): string {
+  return s
+    .replace(/^\s*\([^)]+\)\s*/, "")
+    .replace(/\s*\([^)]+\)\s*$/, "")
+    .trim();
 }
 
 async function fetchAccountServiceOverride(
