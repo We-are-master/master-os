@@ -1280,8 +1280,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         }
         const intent = createQuoteIntentRef.current;
         const oneShotPartnerIds = options?.oneShotBiddingPartnerIds?.filter(Boolean) ?? [];
+        // Two entry points produce a bidding-status quote:
+        //   - oneShot: legacy path where staff selects partners explicitly
+        //     (still allowed when callers populate oneShotBiddingPartnerIds).
+        //   - broadcast: routing_invite + a catalog_service_id on the
+        //     payload. Trade Portal then targets partners whose trades cover
+        //     that catalog row. This is the path the New bidding modal now
+        //     uses.
         const isOneShotBidding = oneShotPartnerIds.length > 0 && intent === "routing_invite";
-        const routingPhaseDraft = (intent === "routing" || intent === "routing_invite") && !isOneShotBidding;
+        const isBroadcastBidding =
+          intent === "routing_invite" &&
+          !isOneShotBidding &&
+          !!(formData.catalog_service_id && String(formData.catalog_service_id).trim());
+        const isBidding = isOneShotBidding || isBroadcastBidding;
+        const routingPhaseDraft = (intent === "routing" || intent === "routing_invite") && !isBidding;
         const wantsSendCustomer =
           Boolean(options?.sendToCustomer) &&
           (formData.quote_type ?? "internal") === "internal" &&
@@ -1326,13 +1338,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
-          status: isOneShotBidding ? "bidding" : (formData.status ?? "draft"),
-          total_value: isOneShotBidding ? 0 : (formData.total_value ?? 0),
+          status: isBidding ? "bidding" : (formData.status ?? "draft"),
+          total_value: isBidding ? 0 : (formData.total_value ?? 0),
           partner_quotes_count: isOneShotBidding ? oneShotPartnerIds.length : (formData.partner_quotes_count ?? 0),
-          cost: isOneShotBidding ? 0 : (formData.cost ?? 0),
-          sell_price: isOneShotBidding ? 0 : (formData.sell_price ?? formData.total_value ?? 0),
-          margin_percent: isOneShotBidding ? 0 : (formData.margin_percent ?? 0),
-          quote_type: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
+          cost: isBidding ? 0 : (formData.cost ?? 0),
+          sell_price: isBidding ? 0 : (formData.sell_price ?? formData.total_value ?? 0),
+          margin_percent: isBidding ? 0 : (formData.margin_percent ?? 0),
+          quote_type: isBidding ? "partner" : (formData.quote_type ?? "internal"),
           deposit_percent: formData.deposit_percent ?? 50,
           deposit_required: formData.deposit_required ?? 0,
           customer_accepted: false,
@@ -1344,7 +1356,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           scope: formData.scope,
           start_date_option_1: formData.start_date_option_1,
           start_date_option_2: formData.start_date_option_2,
-          partner_cost: isOneShotBidding ? 0 : (formData.partner_cost ?? formData.cost ?? 0),
+          partner_cost: isBidding ? 0 : (formData.partner_cost ?? formData.cost ?? 0),
           ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
           ...(formData.images?.length ? { images: formData.images } : {}),
           email_attach_request_photos: formData.email_attach_request_photos ?? false,
@@ -1358,7 +1370,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         });
 
         const manualLines = options?.manualLineItems;
-        if (!isOneShotBidding && formData.quote_type === "internal" && manualLines?.length) {
+        if (!isBidding && formData.quote_type === "internal" && manualLines?.length) {
           const supabase = getSupabase();
           const rows = manualLines.map((li, i) => ({
             quote_id: result.id,
@@ -1512,7 +1524,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         refreshWithKpis();
         trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
-          quoteType: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
+          quoteType: isBidding ? "partner" : (formData.quote_type ?? "internal"),
           lineItems: manualLines?.length ?? 0,
           sendToCustomer: wantsSendCustomer,
         });
@@ -7451,7 +7463,7 @@ function CreateQuoteForm({
   routingCollectTrade?: boolean;
 }) {
   const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
-  const [form, setForm] = useState({ title: "", total_value: "" });
+  const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState<ProposalLineRow[]>(() => seedManualProposalLines(""));
   const [scopeText, setScopeText] = useState("");
@@ -7599,7 +7611,7 @@ function CreateQuoteForm({
       const cq = continuationQuote;
       const t = cq.title ?? "";
       setQuoteType("internal");
-      setForm({ title: t, total_value: String(cq.total_value ?? "") });
+      setForm({ title: t, total_value: String(cq.total_value ?? ""), catalog_service_id: cq.catalog_service_id ?? "" });
       setScopeText(bidPayloadTrimmedString(cq.scope as unknown));
       setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_1 as unknown)) || "");
       setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_2 as unknown)) || "");
@@ -7773,15 +7785,11 @@ function CreateQuoteForm({
         toast.error("Select type of work");
         return;
       }
-      if (routingCollectTrade) {
-        if (partnersForTrade.length === 0) {
-          toast.error("No partners match this type of work yet — add partners in Directory or choose another trade.");
-          return;
-        }
-        if (selectedPartnerIds.size === 0) {
-          toast.error("Select at least one partner");
-          return;
-        }
+      if (routingCollectTrade && !form.catalog_service_id?.trim()) {
+        // Broadcasting bidding requires a catalog row id — without it the
+        // Trade Portal has no way to target the right partners.
+        toast.error("Select a Type of Work from the catalog");
+        return;
       }
 
       let imageUrls: string[] | undefined;
@@ -7825,7 +7833,7 @@ function CreateQuoteForm({
                 ? { source_account_id: selectedAccountId.trim() }
                 : {}),
             }),
-        catalog_service_id: null,
+        catalog_service_id: form.catalog_service_id?.trim() || null,
         total_value: 0,
         cost: 0,
         sell_price: 0,
@@ -7848,11 +7856,15 @@ function CreateQuoteForm({
       try {
         const ok = await onSubmit(
           payload,
-          routingCollectTrade ? { oneShotBiddingPartnerIds: Array.from(selectedPartnerIds) } : undefined,
+          // Bidding is now broadcast-based: the caller writes
+          // catalog_service_id on the quote and the Trade Portal targets
+          // partners by trade match. We don't send a oneShot partner list
+          // any more; the modal no longer collects one.
+          undefined,
         );
         if (ok === false) return;
         inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-        setForm({ title: "", total_value: "" });
+        setForm({ title: "", total_value: "", catalog_service_id: "" });
         setSelectedAccountId("");
         setAddContactClient(true);
         setManualSiteAddress("");
@@ -8006,7 +8018,7 @@ function CreateQuoteForm({
       const ok = await Promise.resolve(onSubmit(payload, second));
       if (ok === false) return;
       inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-      setForm({ title: "", total_value: "" });
+      setForm({ title: "", total_value: "", catalog_service_id: "" });
       setSelectedAccountId("");
       setAddContactClient(true);
       setManualSiteAddress("");
@@ -8048,15 +8060,36 @@ function CreateQuoteForm({
           </p>
         </div>
       ) : null /* Quote type is now picked via the toggle at the top of the modal (Invite Partner / Manual Quote). */}
-      <Select
-        label="Type of work *"
-        value={form.title}
-        onChange={(e) => update("title", e.target.value)}
-        options={[
-          { value: "", label: "Select type of work..." },
-          ...typeOfWorkOptions,
-        ]}
-      />
+      {routingCollectTrade && variant === "routing_minimal" ? (
+        // Bidding mode: the Type of Work choice anchors broadcasting to the
+        // Trade Portal — partners whose catalog_service_ids/trades cover this
+        // UUID see the bidding quote. So we render a catalog-driven select that
+        // tracks the UUID and writes the row's name back into form.title for
+        // every other piece of code that still reads the label.
+        <Select
+          label="Type of work *"
+          value={form.catalog_service_id}
+          onChange={(e) => {
+            const id = e.target.value;
+            const row = towCatalog.find((c) => c.id === id);
+            setForm((f) => ({ ...f, catalog_service_id: id, title: row?.name ?? "" }));
+          }}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...towCatalog.map((c) => ({ value: c.id, label: c.name })),
+          ]}
+        />
+      ) : (
+        <Select
+          label="Type of work *"
+          value={form.title}
+          onChange={(e) => update("title", e.target.value)}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...typeOfWorkOptions,
+          ]}
+        />
+      )}
       {!continuationQuote ? (
         <>
       <Select
@@ -8201,117 +8234,16 @@ function CreateQuoteForm({
             )}
           </div>
           {routingCollectTrade ? (
-            <div>
-              <div className="mb-2 space-y-2 flex flex-col items-center">
-                <div className="flex w-full max-w-lg flex-col items-center gap-2">
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
-                    Partners <span className="text-[#ED4B00]">*</span>
-                  </p>
-                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-                    <button
-                      type="button"
-                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
-                      disabled={partnersForTrade.length === 0}
-                      onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
-                    >
-                      Select matched
-                    </button>
-                    <button
-                      type="button"
-                      className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
-                      disabled={partnersForTrade.length === 0}
-                      onClick={() =>
-                        setSelectedPartnerIds((prev) => {
-                          const next = new Set(prev);
-                          partnersForTrade.forEach((p) => next.delete(p.id));
-                          return next;
-                        })
-                      }
-                    >
-                      Deselect matched
-                    </button>
-                    <button
-                      type="button"
-                      className="text-[11px] font-medium text-text-tertiary hover:underline"
-                      onClick={() => setSelectedPartnerIds(new Set())}
-                    >
-                      Clear selection
-                    </button>
-                  </div>
-                </div>
-                <div className="flex w-full max-w-lg flex-col items-center justify-center gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 text-center sm:flex-row sm:gap-2 sm:px-3 sm:py-2">
-                  <span
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
-                    aria-hidden
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                  </span>
-                  <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 [text-wrap:pretty]">
-                    Pick who gets the invitation — we create the bid request and send the push when you submit.
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-2 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2 max-h-[min(38dvh,280px)] overflow-y-auto overscroll-contain">
-                {partnersLoading && partners.length === 0 ? (
-                  <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
-                ) : !partnersLoading && partners.length === 0 ? (
-                  <p className="text-sm text-text-tertiary text-center py-6">No partners in Directory yet.</p>
-                ) : !form.title.trim() ? (
-                  <p className="text-sm text-text-tertiary text-center py-6">Select a type of work to see matching partners.</p>
-                ) : partnersForTrade.length === 0 ? (
-                  <p className="text-sm text-text-tertiary text-center py-6">
-                    No partners match this type of work yet — add partners in Directory or choose another trade.
-                  </p>
-                ) : (
-                  partnersForTrade.map((p) => {
-                    const isSelected = selectedPartnerIds.has(p.id);
-                    return (
-                      <label
-                        key={p.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                          isSelected
-                            ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
-                            : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            const next = new Set(selectedPartnerIds);
-                            if (e.target.checked) next.add(p.id);
-                            else next.delete(p.id);
-                            setSelectedPartnerIds(next);
-                          }}
-                          className="sr-only"
-                        />
-                        <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
-                          <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                            {partnerMatchTypeLabel(p, form.title)}
-                            {p.location?.trim() ? <> · {p.location}</> : null}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                            Match
-                          </span>
-                          <span
-                            aria-hidden
-                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                              isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
-                            }`}
-                          >
-                            {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
-                          </span>
-                        </div>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-              <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
+            <div className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2">
+              <span
+                className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
+                aria-hidden
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <p className="text-[11px] leading-snug text-text-tertiary">
+                Bidding is broadcast — the quote shows up in the Trade Portal for every active partner whose trade matches the type of work above. No manual partner selection needed.
+              </p>
             </div>
           ) : null}
         </>
