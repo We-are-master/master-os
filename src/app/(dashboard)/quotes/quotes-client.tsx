@@ -130,6 +130,7 @@ import {
 import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
+import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -2222,6 +2223,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         </span>
       ) : <span className="text-xs text-text-tertiary">—</span>,
     };
+    const ticketColumn: Column<Quote> = {
+      key: "external_ref",
+      label: "Ticket",
+      minWidth: "5.5rem",
+      sortable: false,
+      // Mirrors the Jobs table column: shows a clickable Zendesk badge when the
+      // quote is linked to a ticket, em-dash otherwise. Lets staff jump from
+      // the quote list straight to the matching Zendesk thread.
+      render: (item) =>
+        item.external_source === "zendesk" && item.external_ref?.trim() ? (
+          <ZendeskTicketBadge source={item.external_source} ref={item.external_ref} size="sm" />
+        ) : (
+          <span className="text-xs text-text-tertiary">—</span>
+        ),
+    };
     const actionsColumnTail: Column<Quote> = {
       key: "actions", label: "", width: "40px",
       render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
@@ -2259,16 +2275,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           );
         },
       };
-      return [summaryCol, amountCol, actionsColumnTail];
+      return [summaryCol, amountCol, ticketColumn, actionsColumnTail];
     }
-    if (status === "bidding") return [...leadCore, biddingSlaColumn, avgBidColumn, actionsColumnTail];
+    if (status === "bidding") return [...leadCore, biddingSlaColumn, avgBidColumn, ticketColumn, actionsColumnTail];
     if (status === "awaiting_customer" || status === "awaiting_payment") {
-      return [...leadApprovalPayment, amountColumn, depositColumn, finalBalanceColumn, marginColumn, actionsColumnTail];
+      return [...leadApprovalPayment, amountColumn, depositColumn, finalBalanceColumn, marginColumn, ticketColumn, actionsColumnTail];
     }
     if (status === "draft") {
-      return [...leadCore, newTabStageColumn, actionsColumnTail];
+      return [...leadCore, newTabStageColumn, ticketColumn, actionsColumnTail];
     }
-    return [...leadApprovalPayment, amountColumn, marginColumn, actionsColumnTail];
+    return [...leadApprovalPayment, amountColumn, marginColumn, ticketColumn, actionsColumnTail];
   }, [status, avgBidByQuoteId, biddingSlaMs, biddingSlaHoursLabelPretty]);
 
   return (
