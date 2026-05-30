@@ -110,6 +110,10 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
     client_id: clientId,
     client_address_id: clientAddressId,
     account_id: accountId,
+    // Publish to partners on creation so the lead reaches the Trade Portal
+    // without staff needing to click "Publish" first. Office can still
+    // unpublish from the lead detail panel when they want it hidden.
+    published_at: new Date().toISOString(),
   };
 
   const { data, error } = await supabase.from("leads").insert(payload).select("*").single();
