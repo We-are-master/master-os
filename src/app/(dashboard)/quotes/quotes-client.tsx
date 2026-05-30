@@ -1403,6 +1403,30 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           const patched = result;
           const inviteBody =
             `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`.trim() || patched.reference;
+          // Persist a quote_partner_invitations row for every picked partner so
+          // the Trade Portal feed surfaces this bidding quote to them. The
+          // push below is in-app notification only; without these rows the
+          // portal would never list the quote even after the push lands.
+          try {
+            const supabase = getSupabase();
+            const nowIso = new Date().toISOString();
+            const inviteRows = oneShotPartnerIds.map((pid) => ({
+              quote_id:        patched.id,
+              partner_id:      pid,
+              invited_by:      profile?.id ?? null,
+              invited_at:      nowIso,
+              last_invited_at: nowIso,
+              last_channel:    "in_app",
+            }));
+            const { error: invErr } = await supabase
+              .from("quote_partner_invitations")
+              .upsert(inviteRows, { onConflict: "quote_id,partner_id" });
+            if (invErr) {
+              console.error("[quotes] quote_partner_invitations upsert failed:", invErr.message);
+            }
+          } catch (err) {
+            console.error("[quotes] quote_partner_invitations persist threw:", err);
+          }
           try {
             const res = await fetch("/api/push/notify-partner", {
               method: "POST",
@@ -7785,11 +7809,17 @@ function CreateQuoteForm({
         toast.error("Select type of work");
         return;
       }
-      if (routingCollectTrade && !form.catalog_service_id?.trim()) {
-        // Broadcasting bidding requires a catalog row id — without it the
-        // Trade Portal has no way to target the right partners.
-        toast.error("Select a Type of Work from the catalog");
-        return;
+      if (routingCollectTrade) {
+        if (!form.catalog_service_id?.trim()) {
+          // Trade label drives the partner suggestion list (Select matched)
+          // and is what the Trade Portal targets later. Required.
+          toast.error("Select a Type of Work from the catalog");
+          return;
+        }
+        if (selectedPartnerIds.size === 0) {
+          toast.error("Select at least one partner — use Select all / Select matched or pick them by hand.");
+          return;
+        }
       }
 
       let imageUrls: string[] | undefined;
@@ -7856,11 +7886,7 @@ function CreateQuoteForm({
       try {
         const ok = await onSubmit(
           payload,
-          // Bidding is now broadcast-based: the caller writes
-          // catalog_service_id on the quote and the Trade Portal targets
-          // partners by trade match. We don't send a oneShot partner list
-          // any more; the modal no longer collects one.
-          undefined,
+          routingCollectTrade ? { oneShotBiddingPartnerIds: Array.from(selectedPartnerIds) } : undefined,
         );
         if (ok === false) return;
         inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
@@ -8234,16 +8260,130 @@ function CreateQuoteForm({
             )}
           </div>
           {routingCollectTrade ? (
-            <div className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2">
-              <span
-                className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
-                aria-hidden
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-              </span>
-              <p className="text-[11px] leading-snug text-text-tertiary">
-                Bidding is broadcast — the quote shows up in the Trade Portal for every active partner whose trade matches the type of work above. No manual partner selection needed.
-              </p>
+            <div>
+              <div className="mb-2 space-y-2 flex flex-col items-center">
+                <div className="flex w-full max-w-lg flex-col items-center gap-2">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
+                    Partners <span className="text-[#ED4B00]">*</span>
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partners.length === 0}
+                      onClick={() => setSelectedPartnerIds(new Set(partners.map((p) => p.id)))}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partnersForTrade.length === 0}
+                      onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
+                    >
+                      Select matched
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partnersForTrade.length === 0}
+                      onClick={() =>
+                        setSelectedPartnerIds((prev) => {
+                          const next = new Set(prev);
+                          partnersForTrade.forEach((p) => next.delete(p.id));
+                          return next;
+                        })
+                      }
+                    >
+                      Deselect matched
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-text-tertiary hover:underline"
+                      onClick={() => setSelectedPartnerIds(new Set())}
+                    >
+                      Clear selection
+                    </button>
+                  </div>
+                </div>
+                <div className="flex w-full max-w-lg flex-col items-center justify-center gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 text-center sm:flex-row sm:gap-2 sm:px-3 sm:py-2">
+                  <span
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
+                    aria-hidden
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 [text-wrap:pretty]">
+                    Pick who gets the invitation — only the partners you select will see this quote in the Trade Portal.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2 max-h-[min(38dvh,280px)] overflow-y-auto overscroll-contain">
+                {partnersLoading && partners.length === 0 ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
+                ) : !partnersLoading && partners.length === 0 ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">No partners in Directory yet.</p>
+                ) : !form.title.trim() ? (
+                  <p className="text-sm text-text-tertiary text-center py-6">Select a type of work to see matching partners.</p>
+                ) : (
+                  (partnersForTrade.length > 0 ? partnersForTrade : partners).map((p) => {
+                    const isMatched = partnersForTrade.some((m) => m.id === p.id);
+                    const isSelected = selectedPartnerIds.has(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
+                            : isMatched
+                              ? "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
+                              : "border-border bg-card hover:border-border-strong hover:bg-surface-hover"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedPartnerIds);
+                            if (e.target.checked) next.add(p.id);
+                            else next.delete(p.id);
+                            setSelectedPartnerIds(next);
+                          }}
+                          className="sr-only"
+                        />
+                        <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
+                          <p className="text-xs text-text-tertiary mt-0.5 truncate">
+                            {partnerMatchTypeLabel(p, form.title)}
+                            {p.location?.trim() ? <> · {p.location}</> : null}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isMatched ? (
+                            <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                              Match
+                            </span>
+                          ) : null}
+                          <span
+                            aria-hidden
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                              isSelected
+                                ? "border-primary bg-primary"
+                                : isMatched
+                                  ? "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                                  : "border-border bg-white dark:bg-card"
+                            }`}
+                          >
+                            {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
             </div>
           ) : null}
         </>
