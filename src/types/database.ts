@@ -229,6 +229,10 @@ export interface Lead {
   client_address_id?: string | null;
   account_id?: string | null;
   owner_id?: string | null;
+  /** service_catalog row picked at creation. Drives Trade Portal targeting
+   *  (only partners whose trade matches see the lead). NULL for legacy leads
+   *  created before mig 204 — those keep broadcasting to every partner. */
+  catalog_service_id?: string | null;
   published_at?: string | null;
   created_at: string;
   updated_at: string;

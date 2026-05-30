@@ -15,9 +15,10 @@ import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
-import type { Lead, LeadStatus, LeadUrgency } from "@/types/database";
+import type { CatalogService, Lead, LeadStatus, LeadUrgency } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listLeads, createLead, updateLead, countJobsForClient } from "@/services/leads";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { getStatusCounts, type ListResult } from "@/services/base";
 import { cn, formatYmdUkDisplay } from "@/lib/utils";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
@@ -58,6 +59,8 @@ type LeadFormState = {
   urgency: LeadUrgency;
   scope: string;
   status: LeadStatus;
+  /** service_catalog.id — required so the Trade Portal can target matching partners. */
+  catalog_service_id: string;
 };
 
 function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
@@ -71,6 +74,7 @@ function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
     urgency: "medium",
     scope: "",
     status,
+    catalog_service_id: "",
   };
 }
 
@@ -148,6 +152,24 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
   const [linkedJobsCount, setLinkedJobsCount] = useState<number | null>(null);
 
+  // Service catalog rows for the Type of Work picker. Loaded once on mount —
+  // the list is small (canonical trade names + custom services) and the
+  // picker is only used in the New Lead modal.
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  useEffect(() => {
+    let active = true;
+    listCatalogServicesForPicker()
+      .then((rows) => {
+        if (active) setCatalogServices(rows);
+      })
+      .catch((err) => {
+        console.error("[leads] failed to load service_catalog:", err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const loadCounts = useCallback(async () => {
     try {
       const counts = await getStatusCounts("leads", LEAD_STATUSES);
@@ -177,6 +199,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       urgency: selectedLead.urgency,
       scope: selectedLead.scope ?? "",
       status: selectedLead.status,
+      catalog_service_id: selectedLead.catalog_service_id ?? "",
     });
 
     const clientId = selectedLead.client_id;
@@ -330,6 +353,13 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error(Object.values(errors)[0] ?? "Check the form");
       return;
     }
+    // Type of Work is required so the Trade Portal can target matching
+    // partners. validateLeadForm doesn't cover it (catalog-aware fields aren't
+    // in the validator's responsibility), so we gate it here.
+    if (!createForm.catalog_service_id.trim()) {
+      toast.error("Select a Type of Work");
+      return;
+    }
     setCreating(true);
     try {
       const lead = await createLead({
@@ -342,6 +372,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         urgency: createForm.urgency,
         scope: createForm.scope,
         status: "new",
+        catalog_service_id: createForm.catalog_service_id,
       });
       toast.success(`Lead ${lead.reference} created and linked to Fixfy clients`);
       setCreateOpen(false);
@@ -541,6 +572,21 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             />
             <p className="mt-1.5 text-[11px] text-text-tertiary">
               Choose a Mapbox suggestion — city and postcode are filled automatically.
+            </p>
+          </FieldBlock>
+          <FieldBlock label="Type of Work">
+            <Select
+              value={createForm.catalog_service_id}
+              onChange={(e) =>
+                setCreateForm((f) => ({ ...f, catalog_service_id: e.target.value }))
+              }
+              options={[
+                { value: "", label: "Select a type of work…" },
+                ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <p className="mt-1.5 text-[11px] text-text-tertiary">
+              Drives Trade Portal targeting — only partners covering this trade will see the lead.
             </p>
           </FieldBlock>
           <FieldBlock label="Urgency">

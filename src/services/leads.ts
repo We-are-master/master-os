@@ -61,7 +61,13 @@ export type CreateLeadInput = LeadClientAllocationInput & {
   scope?: string;
   status?: LeadStatus;
   owner_id?: string | null;
+  /** Required — picked from the service_catalog dropdown in the New Lead modal.
+   *  Drives Trade Portal targeting; without it the portal would broadcast the
+   *  lead to every partner regardless of trade. */
+  catalog_service_id: string;
 };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function createLead(input: CreateLeadInput): Promise<Lead> {
   const formInput = {
@@ -74,6 +80,12 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
   const errors = validateLeadForm(formInput);
   const first = Object.values(errors)[0];
   if (first) throw new Error(first);
+
+  const catalogServiceId = (input.catalog_service_id ?? "").trim();
+  if (!catalogServiceId) throw new Error("Select a Type of Work for the lead.");
+  if (!UUID_RE.test(catalogServiceId)) {
+    throw new Error("Type of Work selection is invalid.");
+  }
 
   const supabase = getSupabase();
   const { accountId, clientId, clientAddressId } = await allocateClientForLead(supabase, {
@@ -110,6 +122,7 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
     client_id: clientId,
     client_address_id: clientAddressId,
     account_id: accountId,
+    catalog_service_id: catalogServiceId,
     // Publish to partners on creation so the lead reaches the Trade Portal
     // without staff needing to click "Publish" first. Office can still
     // unpublish from the lead detail panel when they want it hidden.
