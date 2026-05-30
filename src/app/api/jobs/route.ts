@@ -60,12 +60,20 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   only carry the trade label can post
  *                                    //   without padding a separate title.
  *     client_name:      string,      // required
- *     client_email:     string,      // required
- *     client_phone?:    string,      // optional contact phone. On creation it
- *                                    //   lands on clients.phone. When the
- *                                    //   client already exists with an empty
- *                                    //   phone, this value backfills it; a
- *                                    //   non-empty phone is never overwritten.
+ *     client_email?:    string,      // optional. Placeholder strings the
+ *                                    //   Zendesk macro emits when the field
+ *                                    //   is blank ("", "0", "A", "n/a", "-")
+ *                                    //   are normalised to null. When null,
+ *                                    //   the client lookup falls back to
+ *                                    //   matching by client_name in the same
+ *                                    //   account.
+ *     client_phone?:    string,      // optional contact phone. Same
+ *                                    //   placeholder normalisation as
+ *                                    //   client_email. On creation it lands
+ *                                    //   on clients.phone. When the client
+ *                                    //   already exists with an empty phone,
+ *                                    //   this value backfills it; a non-empty
+ *                                    //   phone is never overwritten.
  *     property_address: string,      // required (geocoded by app for partner map)
  *     service_type?:    string,      // trade label. Optional when
  *                                    //   catalog_service_id is sent — the
@@ -216,8 +224,13 @@ export async function POST(req: NextRequest) {
   const arrivalTime     = str(body.arrival_time);
   const title           = str(body.title);
   const clientName      = str(body.client_name);
-  const clientEmail     = str(body.client_email).toLowerCase();
-  const clientPhone     = str(body.client_phone) || null;
+  // Free-text contact fields tolerate the placeholders a Zendesk macro emits
+  // when the corresponding ticket field is left blank ("", "0", "A", "n/a"…).
+  // We normalise to null so the OS row stays clean and the email lookup
+  // doesn't ilike against junk strings.
+  const clientEmailRaw  = nullish(body.client_email)?.toLowerCase() ?? null;
+  const clientEmail     = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
+  const clientPhone     = nullish(body.client_phone);
   const propertyAddress = str(body.property_address);
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
@@ -234,7 +247,7 @@ export async function POST(req: NextRequest) {
   let catalogServiceIdIn = str(body.catalog_service_id) || null;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
-  const reportLinkIn    = str(body.report_link) || null;
+  const reportLinkIn    = nullish(body.report_link);
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -260,16 +273,18 @@ export async function POST(req: NextRequest) {
   const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate) && hourlyPartnerRateIn > 0;
 
   // ─── Validation ──────────────────────────────────────────────────────
+  // client_email / client_phone are optional — Zendesk forms often leave one
+  // blank and the macro shouldn't 400 just because of that.
   if (
     !accountId || !date || !arrivalTime ||
-    !clientName || !clientEmail || !propertyAddress ||
+    !clientName || !propertyAddress ||
     (!serviceType && !catalogServiceIdIn)
   ) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, arrival_time, client_name, client_email, " +
-          "property_address, and either service_type or catalog_service_id are required.",
+          "account_id, date, arrival_time, client_name, property_address, " +
+          "and either service_type or catalog_service_id are required.",
       },
       { status: 400 },
     );
@@ -301,9 +316,6 @@ export async function POST(req: NextRequest) {
       { error: "arrival_time must be \"HH:MM - HH:MM\" or \"HH:MM\" (24h, UK wall-clock)." },
       { status: 400 },
     );
-  }
-  if (!clientEmail.includes("@")) {
-    return NextResponse.json({ error: "client_email must be a valid email." }, { status: 400 });
   }
 
   const startIso = ukWallClockToUtcIso(isoDate, arrivalWindow.start);
@@ -434,17 +446,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
 
-  // Find or create a client in this account matching the email — unless we're
-  // converting an existing quote, in which case we trust its linkage.
+  // Find or create a client in this account — unless we're converting an
+  // existing quote, in which case we trust its linkage.
+  //
+  // Lookup strategy:
+  //   - When client_email is present, match on email (unique-ish across the
+  //     account, case-insensitive).
+  //   - Otherwise fall back to matching on full_name in the same account.
+  //     Duplicates with the same name are possible but acceptable — the
+  //     caller chose to omit the email, and creating a fresh row each time
+  //     would silently fragment history worse than reusing a name match.
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
   if (!clientId) {
-    const { data: existing, error: findErr } = await supabase
+    const baseQuery = supabase
       .from("clients")
       .select("id, phone")
       .eq("source_account_id", accountId)
-      .ilike("email", clientEmail)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    const { data: existing, error: findErr } = clientEmail
+      ? await baseQuery.ilike("email", clientEmail).maybeSingle()
+      : await baseQuery.ilike("full_name", clientName).maybeSingle();
     if (findErr) {
       console.error("[api/jobs] client lookup failed:", findErr.message);
       return NextResponse.json({ error: "Client lookup failed." }, { status: 500 });
@@ -858,6 +879,22 @@ function isPresent(v: unknown): boolean {
   if (v === undefined || v === null) return false;
   if (typeof v === "string") return v.trim() !== "";
   return true;
+}
+
+/**
+ * Free-text input → null when the caller is just rendering a blank Zendesk
+ * field. Treats empty / whitespace / "0" / "A" / "a" / "n/a" / "-" / "—" as
+ * unset so contact fields and the report_link stay clean instead of carrying
+ * meaningless placeholders.
+ */
+function nullish(v: unknown): string | null {
+  const s = str(v);
+  if (!s) return null;
+  const norm = s.toLowerCase();
+  if (norm === "0" || norm === "a" || norm === "n/a" || norm === "-" || norm === "—") {
+    return null;
+  }
+  return s;
 }
 
 /**
