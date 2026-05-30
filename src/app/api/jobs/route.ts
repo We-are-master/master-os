@@ -10,12 +10,14 @@ import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
 import { resolveJobPricing } from "@/lib/job-pricing-resolver";
+import { parseFrontendSetup } from "@/lib/frontend-setup";
 import type {
   AccountServicePrice,
   CatalogService,
 } from "@/types/database";
 
-const AUTO_PARTNER_MARGIN_PCT = 40;
+/** Final fallback margin when company_settings.frontend_setup is unreadable. */
+const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -110,10 +112,10 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   get normalized.
  *     partner_cost?:    number|str,  // [fixed] £ paid to the partner. When
  *                                    //   OMITTED and client_price > 0, defaults
- *                                    //   to round(client_price * 0.60, 2) so the
- *                                    //   standard 40% margin is applied
- *                                    //   automatically. Send an explicit 0 to
- *                                    //   opt out.
+ *                                    //   to round(client_price * (1 - target/100), 2)
+ *                                    //   using the company margin target from
+ *                                    //   Settings → Setup (40% if unset). Send
+ *                                    //   an explicit 0 to opt out.
  *     hourly_client_rate?: number|str,    // [hourly] £/h charged to the
  *                                    //   client. Optional — when omitted OR
  *                                    //   sent as 0, the API resolves it from
@@ -126,8 +128,13 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   from one of those sources, else 400.
  *     hourly_partner_rate?: number|str,   // [hourly] £/h paid to the partner.
  *                                    //   Optional — when omitted OR sent as 0,
- *                                    //   defaults to the auto-40% margin
- *                                    //   round(hourly_client_rate * 0.60, 2).
+ *                                    //   the API resolves from the
+ *                                    //   service_catalog standard
+ *                                    //   (partner_cost / default_hours). When
+ *                                    //   the catalog row has no partner_cost
+ *                                    //   configured, falls back to the company
+ *                                    //   margin target × hourly_client_rate
+ *                                    //   (40% if unset).
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
  *                                    //   via the existing offer-window mechanism
@@ -153,9 +160,13 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *   - date + arrival_time → scheduled_date, scheduled_start_at and
  *     scheduled_end_at (DST-safe UK wall-clock conversion).
  *   - Generates next reference via the existing next_job_ref RPC.
- *   - When partner_cost (fixed) or hourly_partner_rate (hourly) is missing
- *     and the client-side value is > 0, applies the standard 40% margin:
- *     partner side = round(client side * 0.60, 2).
+ *   - When partner_cost (fixed) is missing and client_price > 0, applies
+ *     the company margin target from Settings → Setup (40% if unset):
+ *     partner_cost = round(client_price * (1 - target/100), 2).
+ *   - When hourly_partner_rate is missing, the partner side comes from
+ *     service_catalog (partner_cost / default_hours) when configured; the
+ *     same margin target × hourly_client_rate is used as the last-resort
+ *     fallback if the catalog row has no partner amount yet.
  *   - When auto_assign=true: matches active partners by service_type
  *     (using the same partnerMatchesTypeOfWork rules the Desk webhook
  *     uses), stores their ids in auto_assign_invited_partner_ids, and
@@ -208,22 +219,22 @@ export async function POST(req: NextRequest) {
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
 
-  // Distinguish "omitted" from "explicit 0" so we can auto-apply the standard
-  // 40% partner margin when the caller didn't send a partner-side amount.
+  // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
+  // margin target when the caller didn't send a partner-side amount. The
+  // target percentage itself is loaded from company_settings.frontend_setup
+  // below (after the supabase client is initialised), so the actual partner
+  // figures are computed further down.
   // The two pricing modes use different columns:
   //   fixed  → client_price / partner_cost
   //   hourly → hourly_client_rate / hourly_partner_rate
   const clientPrice          = num(body.client_price);
   const partnerCostSent      = isPresent(body.partner_cost);
-  const partnerCost          = partnerCostSent
-    ? num(body.partner_cost)
-    : clientPrice > 0
-      ? autoMargin(clientPrice)
-      : 0;
+  const partnerCostIn        = partnerCostSent ? num(body.partner_cost) : 0;
   // For hourly: the body values act as caller overrides; when omitted (or
   // explicitly 0, which a Zendesk macro will send when the rate field on the
   // ticket is left blank), rates are resolved from the Services catalog
-  // (account override → standard) and the partner rate falls back to auto 40%.
+  // (account override → standard) and the partner rate falls back to the
+  // service_catalog standard (with the company margin target as last resort).
   // Treating 0 the same as missing means the macro never needs to know the
   // account's pricing in advance.
   const hourlyClientRateIn   = num(body.hourly_client_rate);
@@ -295,6 +306,29 @@ export async function POST(req: NextRequest) {
 
   // ─── DB ──────────────────────────────────────────────────────────────
   const supabase = createServiceClient();
+
+  // Margin target — the company-wide percentage staff configured in
+  // Settings → Setup → Margin Targets. Drives both the fixed-mode partner
+  // cost auto-default and the hourly partner-rate fallback (when the catalog
+  // row has no standard partner amount). Falls back to 40% if the row can't
+  // be read so a transient DB hiccup doesn't break job creation.
+  const { data: companyRow } = await supabase
+    .from("company_settings")
+    .select("frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  const targetMarginPct = parseFrontendSetup(
+    (companyRow as { frontend_setup?: unknown } | null)?.frontend_setup ?? null,
+  ).target_margin_pct ?? AUTO_PARTNER_MARGIN_PCT_FALLBACK;
+
+  // Now that we know the target margin, finalise the fixed-mode partner cost.
+  // An explicit value from the body still wins; otherwise the auto-margin
+  // default kicks in only when there's a positive client price to apply it to.
+  const partnerCost = partnerCostSent
+    ? partnerCostIn
+    : clientPrice > 0
+      ? autoMargin(clientPrice, targetMarginPct)
+      : 0;
 
   // When the caller pinned a catalog_service_id, treat the catalog row's name
   // as the trade label. The macro's mental model is "catalog id IS the type of
@@ -428,9 +462,12 @@ export async function POST(req: NextRequest) {
   //   1) explicit body.hourly_client_rate (caller override — still respected)
   //   2) account_service_prices.hourly_rate when use_standard = false
   //   3) service_catalog.hourly_rate (standard)
-  // hourly_partner_rate falls back to the auto 40% margin when the caller
-  // doesn't send one, so jobs default to a 40%-margin allocation and stay
-  // unassigned (or auto_assigning) for staff/partners to pick up.
+  // Resolution order for hourly_partner_rate when the caller doesn't send
+  // one (or sends 0):
+  //   1) service_catalog.partner_cost / default_hours (what staff captured)
+  //   2) company margin target × hourly_client_rate (Settings → Setup)
+  // Jobs land allocated either way and stay unassigned (or auto_assigning)
+  // for staff/partners to pick up.
   let resolvedCatalogServiceId: string | null = null;
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
@@ -465,7 +502,22 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!hourlyPartnerRateSet) {
-      hourlyPartnerRate = autoMargin(hourlyClientRate);
+      // Partner side: prefer the service_catalog standard (where staff already
+      // captured what we pay) over a generic margin formula. Catalog stores
+      // partner_cost as the total for `default_hours` of work, so divide.
+      // When the catalog has no partner_cost configured for this trade, fall
+      // back to the company margin target — same lever fixed-mode uses.
+      const catRow = catalog.row;
+      const catPartnerCost = catRow.partner_cost != null ? Number(catRow.partner_cost) : 0;
+      const hours = catRow.default_hours && Number(catRow.default_hours) > 0
+        ? Number(catRow.default_hours)
+        : 1;
+      const fromCatalog = catPartnerCost > 0
+        ? Math.round((catPartnerCost / hours) * 100) / 100
+        : 0;
+      hourlyPartnerRate = fromCatalog > 0
+        ? fromCatalog
+        : autoMargin(hourlyClientRate, targetMarginPct);
     }
   }
 
@@ -745,9 +797,14 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-/** Partner side of the standard margin: round(clientSide * 0.60, 2). */
-function autoMargin(clientSide: number): number {
-  return Math.round(clientSide * (100 - AUTO_PARTNER_MARGIN_PCT)) / 100;
+/**
+ * Partner side of the company margin target. With targetPct = 40 returns
+ * round(clientSide * 0.60, 2) — but the caller passes the value from
+ * Settings → Setup, so it always reflects current configuration.
+ */
+function autoMargin(clientSide: number, targetPct: number): number {
+  const clamped = Math.max(0, Math.min(100, targetPct));
+  return Math.round(clientSide * (100 - clamped)) / 100;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */
