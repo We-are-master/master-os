@@ -115,14 +115,18 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   automatically. Send an explicit 0 to
  *                                    //   opt out.
  *     hourly_client_rate?: number|str,    // [hourly] £/h charged to the
- *                                    //   client. Optional — when omitted, the
- *                                    //   API resolves it from
+ *                                    //   client. Optional — when omitted OR
+ *                                    //   sent as 0, the API resolves it from
  *                                    //   account_service_prices (override) or
- *                                    //   service_catalog (standard). Must end up
- *                                    //   > 0 from one of those sources, else 400.
+ *                                    //   service_catalog (standard). Treating
+ *                                    //   0 the same as missing lets Zendesk
+ *                                    //   macros leave the rate field blank
+ *                                    //   without needing to know the account
+ *                                    //   pricing in advance. Must end up > 0
+ *                                    //   from one of those sources, else 400.
  *     hourly_partner_rate?: number|str,   // [hourly] £/h paid to the partner.
- *                                    //   Optional — when omitted, defaults to
- *                                    //   the auto-40% margin
+ *                                    //   Optional — when omitted OR sent as 0,
+ *                                    //   defaults to the auto-40% margin
  *                                    //   round(hourly_client_rate * 0.60, 2).
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
@@ -216,13 +220,16 @@ export async function POST(req: NextRequest) {
     : clientPrice > 0
       ? autoMargin(clientPrice)
       : 0;
-  // For hourly: the body values act as caller overrides; when omitted, rates
-  // are resolved later from the Services catalog (account override → standard)
-  // and partner rate falls back to auto 40%.
-  const hourlyClientRateSent = isPresent(body.hourly_client_rate);
+  // For hourly: the body values act as caller overrides; when omitted (or
+  // explicitly 0, which a Zendesk macro will send when the rate field on the
+  // ticket is left blank), rates are resolved from the Services catalog
+  // (account override → standard) and the partner rate falls back to auto 40%.
+  // Treating 0 the same as missing means the macro never needs to know the
+  // account's pricing in advance.
   const hourlyClientRateIn   = num(body.hourly_client_rate);
-  const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate);
+  const hourlyClientRateSent = isPresent(body.hourly_client_rate) && hourlyClientRateIn > 0;
   const hourlyPartnerRateIn  = num(body.hourly_partner_rate);
+  const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate) && hourlyPartnerRateIn > 0;
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
