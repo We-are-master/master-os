@@ -140,7 +140,7 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   via the existing offer-window mechanism
  *                                    //   (mig 080). Default false → status='unassigned',
  *                                    //   staff picks partner manually.
- *     ticket_id?:       string       // Zendesk ticket id — stored as
+ *     ticket_id?:       string,      // Zendesk ticket id — stored as
  *                                    //   external_source='zendesk',
  *                                    //   external_ref=ticket_id.
  *                                    //   Re-posting the same id returns the
@@ -150,6 +150,14 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                    //   Zendesk macro), the job is created
  *                                    //   linked to it (jobs.quote_id) and the
  *                                    //   quote is marked status='converted_to_job'.
+ *     report_link?:     string       // Free-text URL where the office submits
+ *                                    //   the customer-side report (Drive
+ *                                    //   folder, Notion page, internal portal,
+ *                                    //   etc). Persisted on jobs.report_link
+ *                                    //   and echoed back in the response so
+ *                                    //   the macro can confirm. Distinct from
+ *                                    //   the partner-app submission URL the
+ *                                    //   API builds on the fly.
  *   }
  *
  * Behavior:
@@ -175,12 +183,13 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *
  * Response: 201 { id, reference, status, report_link, partners_notified? }
  *
- *   - report_link: bare partner-app URL for the job report submission
- *     (`${partnerAppBase}/jobs/{reference}/report`). Same shape the Desk
- *     webhook and partner emails use. Returned on both `created` and
- *     `existing` (idempotent re-post) responses so the macro can paste it
- *     into a ticket field without a second lookup. Partner needs to be
- *     logged in to the partner app to view the report.
+ *   - report_link: echoes the value supplied in the request when present
+ *     (persisted on jobs.report_link). When the caller didn't send one,
+ *     falls back to the bare partner-app URL
+ *     `${partnerAppBase}/jobs/{reference}/report` so the response always
+ *     carries a usable link. Returned on both `created` and `existing`
+ *     (idempotent re-post) responses; on `existing` the persisted value
+ *     wins so the link the office set originally always comes back.
  */
 export async function POST(req: NextRequest) {
   // ─── Auth ────────────────────────────────────────────────────────────
@@ -225,6 +234,7 @@ export async function POST(req: NextRequest) {
   let catalogServiceIdIn = str(body.catalog_service_id) || null;
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
   const ticketId        = str(body.ticket_id) || null;
+  const reportLinkIn    = str(body.report_link) || null;
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -370,18 +380,24 @@ export async function POST(req: NextRequest) {
   if (ticketId) {
     const { data: dupJob } = await supabase
       .from("jobs")
-      .select("id, reference, status")
+      .select("id, reference, status, report_link")
       .eq("external_source", "zendesk")
       .eq("external_ref", ticketId)
       .maybeSingle();
     if (dupJob) {
+      const dup = dupJob as {
+        id: string;
+        reference: string;
+        status: string;
+        report_link: string | null;
+      };
       return NextResponse.json(
         {
-          id:         dupJob.id,
-          reference:  dupJob.reference,
-          status:     dupJob.status,
+          id:         dup.id,
+          reference:  dup.reference,
+          status:     dup.status,
           action:     "existing",
-          report_link: buildReportLink(String(dupJob.reference)),
+          report_link: dup.report_link ?? buildReportLink(String(dup.reference)),
         },
         { status: 200 },
       );
@@ -607,6 +623,9 @@ export async function POST(req: NextRequest) {
   if (convertingFromQuote) {
     jobRow.quote_id = convertingFromQuote.id;
   }
+  if (reportLinkIn) {
+    jobRow.report_link = reportLinkIn;
+  }
 
   const { data: inserted, error: insErr } = await supabase
     .from("jobs")
@@ -665,7 +684,7 @@ export async function POST(req: NextRequest) {
       reference:   inserted.reference,
       status:      inserted.status,
       action:      convertingFromQuote ? "converted_from_quote" : "created",
-      report_link: buildReportLink(String(inserted.reference)),
+      report_link: reportLinkIn ?? buildReportLink(String(inserted.reference)),
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
     },
