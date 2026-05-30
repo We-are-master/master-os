@@ -5873,7 +5873,23 @@ function QuoteDetailDrawer({
                                       "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
                                     );
                                   } catch (err) {
-                                    toast.error(err instanceof Error ? err.message : "Failed to approve bid");
+                                    // Supabase / PostgrestError objects aren't `instanceof Error`, so the
+                                    // generic "Failed to approve bid" fallback used to swallow the actual
+                                    // database message (RLS violation, constraint, etc.). Surface the real
+                                    // text whenever it's there so the office can act on it instead of guessing.
+                                    console.error("[approve-bid] failed:", err);
+                                    let msg = "Failed to approve bid";
+                                    if (err instanceof Error) {
+                                      msg = err.message;
+                                    } else if (err && typeof err === "object") {
+                                      const e = err as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+                                      const parts = [e.message, e.details, e.hint]
+                                        .map((x) => (typeof x === "string" ? x.trim() : ""))
+                                        .filter(Boolean);
+                                      if (parts.length) msg = parts.join(" — ");
+                                      else if (typeof e.code === "string" && e.code) msg = `Database error (${e.code})`;
+                                    }
+                                    toast.error(msg);
                                   }
                                 })();
                               }}
