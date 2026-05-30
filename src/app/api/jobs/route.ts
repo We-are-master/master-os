@@ -173,7 +173,14 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     sends an Expo push. Falls back to status='unassigned' if no
  *     partner matched.
  *
- * Response: 201 { id, reference, status, partners_notified? }
+ * Response: 201 { id, reference, status, report_link, partners_notified? }
+ *
+ *   - report_link: bare partner-app URL for the job report submission
+ *     (`${partnerAppBase}/jobs/{reference}/report`). Same shape the Desk
+ *     webhook and partner emails use. Returned on both `created` and
+ *     `existing` (idempotent re-post) responses so the macro can paste it
+ *     into a ticket field without a second lookup. Partner needs to be
+ *     logged in to the partner app to view the report.
  */
 export async function POST(req: NextRequest) {
   // ─── Auth ────────────────────────────────────────────────────────────
@@ -369,7 +376,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
     if (dupJob) {
       return NextResponse.json(
-        { id: dupJob.id, reference: dupJob.reference, status: dupJob.status, action: "existing" },
+        {
+          id:         dupJob.id,
+          reference:  dupJob.reference,
+          status:     dupJob.status,
+          action:     "existing",
+          report_link: buildReportLink(String(dupJob.reference)),
+        },
         { status: 200 },
       );
     }
@@ -648,10 +661,11 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json(
     {
-      id:        inserted.id,
-      reference: inserted.reference,
-      status:    inserted.status,
-      action:    convertingFromQuote ? "converted_from_quote" : "created",
+      id:          inserted.id,
+      reference:   inserted.reference,
+      status:      inserted.status,
+      action:      convertingFromQuote ? "converted_from_quote" : "created",
+      report_link: buildReportLink(String(inserted.reference)),
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
     },
@@ -660,6 +674,19 @@ export async function POST(req: NextRequest) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Partner app URL for the job report submission page. Same shape the Zoho
+ * Desk webhook and partner email use (`${partnerAppBase}/jobs/{reference}/report`)
+ * so anything carrying this link — Zendesk macros, partner emails, n8n
+ * forwards — resolves to the same destination. Bare URL with no token:
+ * the partner needs to be logged in to the partner app to view the report.
+ */
+function buildReportLink(reference: string): string {
+  const base = process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim().replace(/\/$/, "")
+    || "https://app.getfixfy.com";
+  return `${base}/jobs/${reference}/report`;
+}
 
 type CatalogResolveResult =
   | { ok: true; row: CatalogService }
