@@ -784,8 +784,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   /** Routing modal: quote = essentials in modal, trade in drawer; bidding = trade in modal then auto-open Invite Partners. */
   const [routingCreateEntry, setRoutingCreateEntry] = useState<"quote" | "bidding">("quote");
   const [drawerPendingOpenInviteQuoteId, setDrawerPendingOpenInviteQuoteId] = useState<string | null>(null);
-  const [newQuoteMenuOpen, setNewQuoteMenuOpen] = useState(false);
-  const newQuoteMenuRef = useRef<HTMLDivElement>(null);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -861,11 +859,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       if (filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
-      if (newQuoteMenuRef.current && !newQuoteMenuRef.current.contains(t)) setNewQuoteMenuOpen(false);
     }
-    if (filterOpen || newQuoteMenuOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen, newQuoteMenuOpen]);
+  }, [filterOpen]);
 
   const dateBounds = useMemo(() => resolveDateFilter(dateFilter), [dateFilter]);
   const filteredQuotes = useMemo(() => {
@@ -1283,8 +1280,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         }
         const intent = createQuoteIntentRef.current;
         const oneShotPartnerIds = options?.oneShotBiddingPartnerIds?.filter(Boolean) ?? [];
+        // Two entry points produce a bidding-status quote:
+        //   - oneShot: legacy path where staff selects partners explicitly
+        //     (still allowed when callers populate oneShotBiddingPartnerIds).
+        //   - broadcast: routing_invite + a catalog_service_id on the
+        //     payload. Trade Portal then targets partners whose trades cover
+        //     that catalog row. This is the path the New bidding modal now
+        //     uses.
         const isOneShotBidding = oneShotPartnerIds.length > 0 && intent === "routing_invite";
-        const routingPhaseDraft = (intent === "routing" || intent === "routing_invite") && !isOneShotBidding;
+        const isBroadcastBidding =
+          intent === "routing_invite" &&
+          !isOneShotBidding &&
+          !!(formData.catalog_service_id && String(formData.catalog_service_id).trim());
+        const isBidding = isOneShotBidding || isBroadcastBidding;
+        const routingPhaseDraft = (intent === "routing" || intent === "routing_invite") && !isBidding;
         const wantsSendCustomer =
           Boolean(options?.sendToCustomer) &&
           (formData.quote_type ?? "internal") === "internal" &&
@@ -1329,13 +1338,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
-          status: isOneShotBidding ? "bidding" : (formData.status ?? "draft"),
-          total_value: isOneShotBidding ? 0 : (formData.total_value ?? 0),
+          status: isBidding ? "bidding" : (formData.status ?? "draft"),
+          total_value: isBidding ? 0 : (formData.total_value ?? 0),
           partner_quotes_count: isOneShotBidding ? oneShotPartnerIds.length : (formData.partner_quotes_count ?? 0),
-          cost: isOneShotBidding ? 0 : (formData.cost ?? 0),
-          sell_price: isOneShotBidding ? 0 : (formData.sell_price ?? formData.total_value ?? 0),
-          margin_percent: isOneShotBidding ? 0 : (formData.margin_percent ?? 0),
-          quote_type: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
+          cost: isBidding ? 0 : (formData.cost ?? 0),
+          sell_price: isBidding ? 0 : (formData.sell_price ?? formData.total_value ?? 0),
+          margin_percent: isBidding ? 0 : (formData.margin_percent ?? 0),
+          quote_type: isBidding ? "partner" : (formData.quote_type ?? "internal"),
           deposit_percent: formData.deposit_percent ?? 50,
           deposit_required: formData.deposit_required ?? 0,
           customer_accepted: false,
@@ -1347,7 +1356,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           scope: formData.scope,
           start_date_option_1: formData.start_date_option_1,
           start_date_option_2: formData.start_date_option_2,
-          partner_cost: isOneShotBidding ? 0 : (formData.partner_cost ?? formData.cost ?? 0),
+          partner_cost: isBidding ? 0 : (formData.partner_cost ?? formData.cost ?? 0),
           ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
           ...(formData.images?.length ? { images: formData.images } : {}),
           email_attach_request_photos: formData.email_attach_request_photos ?? false,
@@ -1361,7 +1370,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         });
 
         const manualLines = options?.manualLineItems;
-        if (!isOneShotBidding && formData.quote_type === "internal" && manualLines?.length) {
+        if (!isBidding && formData.quote_type === "internal" && manualLines?.length) {
           const supabase = getSupabase();
           const rows = manualLines.map((li, i) => ({
             quote_id: result.id,
@@ -1394,6 +1403,30 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           const patched = result;
           const inviteBody =
             `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`.trim() || patched.reference;
+          // Persist a quote_partner_invitations row for every picked partner so
+          // the Trade Portal feed surfaces this bidding quote to them. The
+          // push below is in-app notification only; without these rows the
+          // portal would never list the quote even after the push lands.
+          try {
+            const supabase = getSupabase();
+            const nowIso = new Date().toISOString();
+            const inviteRows = oneShotPartnerIds.map((pid) => ({
+              quote_id:        patched.id,
+              partner_id:      pid,
+              invited_by:      profile?.id ?? null,
+              invited_at:      nowIso,
+              last_invited_at: nowIso,
+              last_channel:    "in_app",
+            }));
+            const { error: invErr } = await supabase
+              .from("quote_partner_invitations")
+              .upsert(inviteRows, { onConflict: "quote_id,partner_id" });
+            if (invErr) {
+              console.error("[quotes] quote_partner_invitations upsert failed:", invErr.message);
+            }
+          } catch (err) {
+            console.error("[quotes] quote_partner_invitations persist threw:", err);
+          }
           try {
             const res = await fetch("/api/push/notify-partner", {
               method: "POST",
@@ -1515,7 +1548,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         refreshWithKpis();
         trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
-          quoteType: isOneShotBidding ? "partner" : (formData.quote_type ?? "internal"),
+          quoteType: isBidding ? "partner" : (formData.quote_type ?? "internal"),
           lineItems: manualLines?.length ?? 0,
           sendToCustomer: wantsSendCustomer,
         });
@@ -2268,75 +2301,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
               Export
             </Button>
-            <div className="relative shrink-0" ref={newQuoteMenuRef}>
-              <Button
-                size="sm"
-                icon={<Plus className="h-3.5 w-3.5" />}
-                onClick={() => setNewQuoteMenuOpen((o) => !o)}
-                title="Create a new quote"
-              >
-                <span className="inline-flex items-center gap-1">
-                  New quote
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-75" aria-hidden />
-                </span>
-              </Button>
-              {newQuoteMenuOpen ? (
-                <div
-                  className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-2rem),15.5rem)] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg"
-                  role="menu"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover"
-                    onClick={() => {
-                      createQuoteIntentRef.current = "routing";
-                      setRoutingCreateEntry("quote");
-                      setCreateFormVariant("routing_minimal");
-                      setCreateOpen(true);
-                      setNewQuoteMenuOpen(false);
-                    }}
-                  >
-                    <span className="font-semibold text-text-primary">New quote</span>
-                    <span className="text-[11px] text-text-tertiary">
-                      Account, site and scope only — type of work in the drawer before bid or manual.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover border-t border-border-light"
-                    onClick={() => {
-                      createQuoteIntentRef.current = "routing_invite";
-                      setRoutingCreateEntry("bidding");
-                      setCreateFormVariant("routing_minimal");
-                      setCreateOpen(true);
-                      setNewQuoteMenuOpen(false);
-                    }}
-                  >
-                    <span className="font-semibold text-text-primary">New bidding</span>
-                    <span className="text-[11px] text-text-tertiary">
-                      Choose type of work, account, site and scope — then opens partner selection to send bids.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full flex-col gap-0.5 px-3 py-2.5 text-left text-xs hover:bg-surface-hover border-t border-border-light"
-                    onClick={() => {
-                      createQuoteIntentRef.current = "full";
-                      setRoutingCreateEntry("quote");
-                      setCreateFormVariant("full");
-                      setCreateOpen(true);
-                      setNewQuoteMenuOpen(false);
-                    }}
-                  >
-                    <span className="font-semibold text-text-primary">Quote manually</span>
-                    <span className="text-[11px] text-text-tertiary">Full line items, dates and deposit in one form.</span>
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <Button
+              size="sm"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => {
+                // Open in Invite Partner mode by default; user can toggle to
+                // Manual Quote at the top of the modal.
+                createQuoteIntentRef.current = "routing_invite";
+                setCreateFormVariant("routing_minimal");
+                setRoutingCreateEntry("bidding");
+                setCreateOpen(true);
+              }}
+              title="Create a quote"
+            >
+              Create a quote
+            </Button>
           </div>
         </PageHeader>
 
@@ -2685,28 +2664,61 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         open={createOpen}
         onClose={() => {
           setCreateOpen(false);
-          createQuoteIntentRef.current = "full";
-          setCreateFormVariant("full");
-          setRoutingCreateEntry("quote");
+          createQuoteIntentRef.current = "routing_invite";
+          setCreateFormVariant("routing_minimal");
+          setRoutingCreateEntry("bidding");
           setDrawerPendingOpenInviteQuoteId(null);
         }}
-        title={
-          createFormVariant === "routing_minimal"
-            ? routingCreateEntry === "bidding"
-              ? "New bidding"
-              : "New quote"
-            : "Create quote"
-        }
+        title="Create a quote"
         subtitle={
-          createFormVariant === "routing_minimal"
-            ? routingCreateEntry === "bidding"
-              ? "Account, site, scope, type of work and partners — one step: we create the bid request and notify them."
-              : "Account, site, type of work and scope — partners match on type of work when you send to bidding."
+          routingCreateEntry === "bidding"
+            ? "Account, site, scope, type of work and partners — one step: we create the bid request and notify them."
             : "Manual quote — we create the proposal and send the PDF to the inbox from Accounts (End client vs This account billing)."
         }
         size="lg"
         scrollBody
       >
+        {/* Mode toggle — same segmented-control pattern as the Jobs "Rate Type" tabs. */}
+        <div className="px-4 pt-3 sm:px-5">
+          <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
+            <button
+              type="button"
+              title="Invite partners to bid on this quote"
+              onClick={() => {
+                createQuoteIntentRef.current = "routing_invite";
+                setCreateFormVariant("routing_minimal");
+                setRoutingCreateEntry("bidding");
+              }}
+              className={cn(
+                "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-all",
+                routingCreateEntry === "bidding"
+                  ? "bg-[#1DB87A] text-white shadow-sm"
+                  : "text-text-secondary hover:bg-surface-hover",
+              )}
+            >
+              <Gavel className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Invite Partner</span>
+            </button>
+            <button
+              type="button"
+              title="Write the quote line by line yourself"
+              onClick={() => {
+                createQuoteIntentRef.current = "full";
+                setCreateFormVariant("full");
+                setRoutingCreateEntry("quote");
+              }}
+              className={cn(
+                "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-all",
+                createFormVariant === "full"
+                  ? "bg-[#7c3aed] text-white shadow-sm"
+                  : "text-text-secondary hover:bg-surface-hover",
+              )}
+            >
+              <Pencil className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Manual Quote</span>
+            </button>
+          </div>
+        </div>
         <CreateQuoteForm
           key={`${createFormVariant}-${routingCreateEntry}`}
           variant={createFormVariant}
@@ -2714,9 +2726,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           onSubmit={handleCreate}
           onCancel={() => {
             setCreateOpen(false);
-            createQuoteIntentRef.current = "full";
-            setCreateFormVariant("full");
-            setRoutingCreateEntry("quote");
+            createQuoteIntentRef.current = "routing_invite";
+            setCreateFormVariant("routing_minimal");
+            setRoutingCreateEntry("bidding");
             setDrawerPendingOpenInviteQuoteId(null);
           }}
         />
@@ -7475,7 +7487,7 @@ function CreateQuoteForm({
   routingCollectTrade?: boolean;
 }) {
   const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
-  const [form, setForm] = useState({ title: "", total_value: "" });
+  const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState<ProposalLineRow[]>(() => seedManualProposalLines(""));
   const [scopeText, setScopeText] = useState("");
@@ -7603,9 +7615,12 @@ function CreateQuoteForm({
       .finally(() => setAccountsLoading(false));
   }, []);
 
-  /** New quote / New bidding modals must never fall through to the full partner-invite branch (duplicate scope + partner pickers). */
+  /** Quote type is now picked via the segmented toggle at the top of the modal
+   *  (Invite Partner = routing_minimal/partner-routed; Manual Quote = full/internal).
+   *  Mirror the variant into quoteType so submit / downstream logic stays consistent
+   *  even though the in-form picker is gone. */
   useLayoutEffect(() => {
-    if (variant === "routing_minimal") setQuoteType("internal");
+    setQuoteType("internal");
   }, [variant]);
 
   useEffect(() => {
@@ -7620,7 +7635,7 @@ function CreateQuoteForm({
       const cq = continuationQuote;
       const t = cq.title ?? "";
       setQuoteType("internal");
-      setForm({ title: t, total_value: String(cq.total_value ?? "") });
+      setForm({ title: t, total_value: String(cq.total_value ?? ""), catalog_service_id: cq.catalog_service_id ?? "" });
       setScopeText(bidPayloadTrimmedString(cq.scope as unknown));
       setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_1 as unknown)) || "");
       setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(cq.start_date_option_2 as unknown)) || "");
@@ -7795,12 +7810,14 @@ function CreateQuoteForm({
         return;
       }
       if (routingCollectTrade) {
-        if (partnersForTrade.length === 0) {
-          toast.error("No partners match this type of work yet — add partners in Directory or choose another trade.");
+        if (!form.catalog_service_id?.trim()) {
+          // Trade label drives the partner suggestion list (Select matched)
+          // and is what the Trade Portal targets later. Required.
+          toast.error("Select a Type of Work from the catalog");
           return;
         }
         if (selectedPartnerIds.size === 0) {
-          toast.error("Select at least one partner");
+          toast.error("Select at least one partner — use Select all / Select matched or pick them by hand.");
           return;
         }
       }
@@ -7846,7 +7863,7 @@ function CreateQuoteForm({
                 ? { source_account_id: selectedAccountId.trim() }
                 : {}),
             }),
-        catalog_service_id: null,
+        catalog_service_id: form.catalog_service_id?.trim() || null,
         total_value: 0,
         cost: 0,
         sell_price: 0,
@@ -7873,7 +7890,7 @@ function CreateQuoteForm({
         );
         if (ok === false) return;
         inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-        setForm({ title: "", total_value: "" });
+        setForm({ title: "", total_value: "", catalog_service_id: "" });
         setSelectedAccountId("");
         setAddContactClient(true);
         setManualSiteAddress("");
@@ -8027,7 +8044,7 @@ function CreateQuoteForm({
       const ok = await Promise.resolve(onSubmit(payload, second));
       if (ok === false) return;
       inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-      setForm({ title: "", total_value: "" });
+      setForm({ title: "", total_value: "", catalog_service_id: "" });
       setSelectedAccountId("");
       setAddContactClient(true);
       setManualSiteAddress("");
@@ -8068,84 +8085,37 @@ function CreateQuoteForm({
             Saves your line items and emails the PDF to the customer — quote moves to Approval when the send succeeds.
           </p>
         </div>
-      ) : variant === "routing_minimal" ? null : (
-        <div>
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
-          Quote type <span className="text-[#ED4B00]">*</span>
-        </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Quote type">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={quoteType === "internal"}
-            onClick={() => setQuoteType("internal")}
-            className={cn(
-              "relative flex gap-3 rounded-xl border-2 p-3 text-left transition-colors",
-              quoteType === "internal"
-                ? "border-[#020040] bg-card shadow-sm"
-                : "border-neutral-200/90 bg-card hover:border-neutral-300 dark:border-border dark:hover:border-border",
-            )}
-          >
-            <span
-              className={cn(
-                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-                quoteType === "internal" ? "bg-[#020040] text-white" : "bg-[#020040]/08 text-[#020040]",
-              )}
-            >
-              <Pencil className="h-4 w-4" strokeWidth={2} aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1 pt-0.5">
-              <p className="text-sm font-semibold text-[#020040]">Build manually</p>
-              <p className="mt-0.5 text-[11px] text-text-tertiary">Enter lines yourself</p>
-            </div>
-            {quoteType === "internal" ? (
-              <span className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#020040] text-white shadow-sm" aria-hidden>
-                <Check className="h-3 w-3" strokeWidth={3} />
-              </span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={quoteType === "partner"}
-            onClick={() => setQuoteType("partner")}
-            className={cn(
-              "relative flex gap-3 rounded-xl border-2 p-3 text-left transition-colors",
-              quoteType === "partner"
-                ? "border-[#020040] bg-card shadow-sm"
-                : "border-neutral-200/90 bg-card hover:border-neutral-300 dark:border-border dark:hover:border-border",
-            )}
-          >
-            <span
-              className={cn(
-                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-                quoteType === "partner" ? "bg-[#ED4B00]/15 text-[#ED4B00]" : "bg-[#ED4B00]/10 text-[#ED4B00]",
-              )}
-            >
-              <UserPlus className="h-4 w-4" strokeWidth={2} aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1 pt-0.5">
-              <p className="text-sm font-semibold text-[#020040]">Invite partners</p>
-              <p className="mt-0.5 text-[11px] text-text-tertiary">Partners submit bids</p>
-            </div>
-            {quoteType === "partner" ? (
-              <span className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#020040] text-white shadow-sm" aria-hidden>
-                <Check className="h-3 w-3" strokeWidth={3} />
-              </span>
-            ) : null}
-          </button>
-        </div>
-        </div>
+      ) : null /* Quote type is now picked via the toggle at the top of the modal (Invite Partner / Manual Quote). */}
+      {routingCollectTrade && variant === "routing_minimal" ? (
+        // Bidding mode: the Type of Work choice anchors broadcasting to the
+        // Trade Portal — partners whose catalog_service_ids/trades cover this
+        // UUID see the bidding quote. So we render a catalog-driven select that
+        // tracks the UUID and writes the row's name back into form.title for
+        // every other piece of code that still reads the label.
+        <Select
+          label="Type of work *"
+          value={form.catalog_service_id}
+          onChange={(e) => {
+            const id = e.target.value;
+            const row = towCatalog.find((c) => c.id === id);
+            setForm((f) => ({ ...f, catalog_service_id: id, title: row?.name ?? "" }));
+          }}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...towCatalog.map((c) => ({ value: c.id, label: c.name })),
+          ]}
+        />
+      ) : (
+        <Select
+          label="Type of work *"
+          value={form.title}
+          onChange={(e) => update("title", e.target.value)}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...typeOfWorkOptions,
+          ]}
+        />
       )}
-      <Select
-        label="Type of work *"
-        value={form.title}
-        onChange={(e) => update("title", e.target.value)}
-        options={[
-          { value: "", label: "Select type of work..." },
-          ...typeOfWorkOptions,
-        ]}
-      />
       {!continuationQuote ? (
         <>
       <Select
@@ -8300,6 +8270,14 @@ function CreateQuoteForm({
                     <button
                       type="button"
                       className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                      disabled={partners.length === 0}
+                      onClick={() => setSelectedPartnerIds(new Set(partners.map((p) => p.id)))}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
                       disabled={partnersForTrade.length === 0}
                       onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
                     >
@@ -8336,7 +8314,7 @@ function CreateQuoteForm({
                     <Sparkles className="h-3.5 w-3.5" />
                   </span>
                   <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 [text-wrap:pretty]">
-                    Pick who gets the invitation — we create the bid request and send the push when you submit.
+                    Pick who gets the invitation — only the partners you select will see this quote in the Trade Portal.
                   </p>
                 </div>
               </div>
@@ -8347,12 +8325,9 @@ function CreateQuoteForm({
                   <p className="text-sm text-text-tertiary text-center py-6">No partners in Directory yet.</p>
                 ) : !form.title.trim() ? (
                   <p className="text-sm text-text-tertiary text-center py-6">Select a type of work to see matching partners.</p>
-                ) : partnersForTrade.length === 0 ? (
-                  <p className="text-sm text-text-tertiary text-center py-6">
-                    No partners match this type of work yet — add partners in Directory or choose another trade.
-                  </p>
                 ) : (
-                  partnersForTrade.map((p) => {
+                  (partnersForTrade.length > 0 ? partnersForTrade : partners).map((p) => {
+                    const isMatched = partnersForTrade.some((m) => m.id === p.id);
                     const isSelected = selectedPartnerIds.has(p.id);
                     return (
                       <label
@@ -8360,7 +8335,9 @@ function CreateQuoteForm({
                         className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                           isSelected
                             ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
-                            : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
+                            : isMatched
+                              ? "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
+                              : "border-border bg-card hover:border-border-strong hover:bg-surface-hover"
                         }`}
                       >
                         <input
@@ -8383,13 +8360,19 @@ function CreateQuoteForm({
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                            Match
-                          </span>
+                          {isMatched ? (
+                            <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                              Match
+                            </span>
+                          ) : null}
                           <span
                             aria-hidden
                             className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                              isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                              isSelected
+                                ? "border-primary bg-primary"
+                                : isMatched
+                                  ? "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                                  : "border-border bg-white dark:bg-card"
                             }`}
                           >
                             {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
