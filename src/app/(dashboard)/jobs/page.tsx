@@ -1422,7 +1422,11 @@ function JobsPageContent() {
       void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       void loadDashboardStats();
       void Promise.resolve().then(() => refreshSilent());
-      if (result.partner_id) {
+      if (result.status === "auto_assigning") {
+        void fetch(`/api/jobs/${result.id}/dispatch-auto-assign-invites`, { method: "POST" }).catch((err) =>
+          console.error("[jobs/create] auto-assign dispatch failed:", err),
+        );
+      } else if (result.partner_id) {
         fetch("/api/push/notify-partner", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

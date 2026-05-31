@@ -6,16 +6,12 @@ import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
-  buildPartnerJobConfirmationRequestEmail,
 } from "@/lib/emails/partner-job-confirmation";
-import { createPartnerJobAcceptToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
-import { appBaseUrl } from "@/lib/app-base-url";
+import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
+import { dispatchAutoAssignJobInvites, sendPushToPartners } from "@/lib/auto-assign-job-invites";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 /**
  * POST /api/webhooks/desk/job-created
@@ -241,25 +237,21 @@ export async function POST(req: NextRequest) {
   let pushSent = 0;
 
   if (assignmentMode === "auto" && matchedPartnerIds.length > 0) {
-    pushSent = await sendPushToPartners(supabase, matchedPartnerIds, {
-      title: "New job available",
-      body: `${jobRef} · ${title || serviceType} · ${propertyAddress}`,
-      data: { type: "job_assigned", jobId },
-    });
-
-    // Broadcast Zendesk side conversation invites — one Accept-link email
-    // per matched partner. Fire-and-forget so a slow Zendesk call can't
-    // block the webhook response.
-    void broadcastAutoAssignInvites({
+    void dispatchAutoAssignJobInvites({
       jobId,
       jobReference: jobRef,
       jobTitle: title || serviceType,
       clientName,
       propertyAddress,
-      scope,
+      scope: scope || "(no scope provided)",
+      scheduledDate: scheduledDate || null,
       partnerIds: matchedPartnerIds,
-      ticketId,
-    }).catch((err) => console.error("[webhook/desk/job] auto invites failed:", err));
+      zendeskTicketId: ticketId,
+    })
+      .then(({ pushSent: sent }) => {
+        pushSent = sent;
+      })
+      .catch((err) => console.error("[webhook/desk/job] auto invites failed:", err));
   } else if (assignmentMode === "specific" && partnerId) {
     pushSent = await sendPushToPartners(supabase, [partnerId], {
       title: "Job assigned",
@@ -276,6 +268,7 @@ export async function POST(req: NextRequest) {
       clientPhone: clientPhone || null,
       propertyAddress,
       scope,
+      scheduledDate: scheduledDate || null,
       partnerId,
       ticketId,
     }).catch((err) => console.error("[webhook/desk/job] zendesk side conv failed:", err));
@@ -311,63 +304,6 @@ function secretsMatch(provided: string | null, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-async function sendPushToPartners(
-  supabase: ReturnType<typeof createServiceClient>,
-  partnerIds: string[],
-  notification: { title: string; body: string; data: Record<string, unknown> },
-): Promise<number> {
-  if (!partnerIds.length) return 0;
-
-  const { data: partners } = await supabase
-    .from("partners")
-    .select("id, expo_push_token, auth_user_id")
-    .in("id", partnerIds)
-    .eq("status", "active");
-
-  const tokens: string[] = [];
-  const missingAuthIds: string[] = [];
-
-  for (const p of (partners ?? []) as { expo_push_token: string | null; auth_user_id: string | null }[]) {
-    if (p.expo_push_token) {
-      tokens.push(p.expo_push_token);
-    } else if (p.auth_user_id) {
-      missingAuthIds.push(p.auth_user_id);
-    }
-  }
-
-  if (missingAuthIds.length > 0) {
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, fcmToken")
-      .in("id", missingAuthIds)
-      .not("fcmToken", "is", null);
-    for (const u of (users ?? []) as { fcmToken: string | null }[]) {
-      if (u.fcmToken) tokens.push(u.fcmToken);
-    }
-  }
-
-  if (!tokens.length) return 0;
-
-  try {
-    const messages = tokens.map((to) => ({
-      to,
-      title: notification.title,
-      body: notification.body.slice(0, 500),
-      data: notification.data,
-      sound: "default" as const,
-    }));
-    await fetch(EXPO_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(messages),
-    });
-    return tokens.length;
-  } catch (err) {
-    console.error("[webhook/desk/job] push failed:", err);
-    return 0;
-  }
-}
-
 interface ZendeskAssignmentEmailParams {
   jobId: string;
   jobReference: string;
@@ -376,6 +312,7 @@ interface ZendeskAssignmentEmailParams {
   clientPhone: string | null;
   propertyAddress: string;
   scope: string;
+  scheduledDate: string | null;
   partnerId: string;
   ticketId: string;
 }
@@ -395,15 +332,26 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
   // Look up job_type + price for the email pill
   const { data: jobInfo } = await supabase
     .from("jobs")
-    .select("job_type, hourly_partner_rate, partner_cost")
+    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, title")
     .eq("id", params.jobId)
     .maybeSingle();
-  const ji = jobInfo as { job_type: "hourly" | "fixed" | null; hourly_partner_rate: number | null; partner_cost: number | null } | null;
-
+  const ji = jobInfo as {
+    job_type: "hourly" | "fixed" | null;
+    hourly_partner_rate: number | null;
+    partner_cost: number | null;
+    catalog_service_id: string | null;
+    title: string | null;
+  } | null;
   const isHourly = ji?.job_type === "hourly";
   const priceDisplay = isHourly
     ? `£${Number(ji?.hourly_partner_rate ?? 0).toFixed(2)}/hr`
     : `£${Number(ji?.partner_cost ?? 0).toFixed(2)}`;
+
+  const partnerNotes = await loadPartnerJobEmailNotes(supabase, {
+    catalogServiceId: ji?.catalog_service_id,
+    jobTitle: params.jobTitle || ji?.title,
+    jobType: isHourly ? "hourly" : "fixed",
+  });
 
   const partnerFirstName = (p.contact_name?.trim().split(/\s+/)[0])
     || (p.company_name?.trim() ?? "Partner");
@@ -417,9 +365,11 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobTitle: params.jobTitle,
     clientName: params.clientName,
     propertyAddress: params.propertyAddress,
+    scheduledDate: params.scheduledDate,
     scope: params.scope,
     jobType: isHourly ? "hourly" : "fixed",
     priceDisplay,
+    partnerNotes,
     reportUrl: `${partnerAppBase}/jobs/${params.jobReference}/report`,
   });
 
@@ -432,117 +382,4 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     htmlBody: email.html,
     bodyText: email.text,
   });
-}
-
-interface BroadcastAutoAssignInvitesParams {
-  jobId:           string;
-  jobReference:    string;
-  jobTitle:        string;
-  clientName:      string;
-  propertyAddress: string;
-  scope:           string;
-  partnerIds:      string[];
-  ticketId:        string;
-}
-
-/**
- * For each matched partner in an auto-assign job:
- *   1. Mint a tokenised Accept link bound to (jobId, partnerId)
- *   2. Open a Zendesk side conversation on the job's main ticket with the
- *      confirmation-request email body
- *   3. Insert a row in job_partner_invites tracking (job, partner, sc_id, status)
- *
- * Partners without an email get a row with side_conversation_id = null
- * (push-only invite).
- *
- * Errors are logged per-partner; one bad partner doesn't kill the broadcast.
- */
-async function broadcastAutoAssignInvites(params: BroadcastAutoAssignInvitesParams): Promise<void> {
-  const supabase = createServiceClient();
-
-  const { data: partners } = await supabase
-    .from("partners")
-    .select("id, contact_name, company_name, email, zendesk_user_id")
-    .in("id", params.partnerIds)
-    .eq("status", "active");
-
-  if (!partners || partners.length === 0) return;
-
-  // Look up job's price + type once — they're shared across all partner emails.
-  const { data: jobInfo } = await supabase
-    .from("jobs")
-    .select("job_type, hourly_partner_rate, partner_cost")
-    .eq("id", params.jobId)
-    .maybeSingle();
-  const ji = jobInfo as { job_type: "hourly" | "fixed" | null; hourly_partner_rate: number | null; partner_cost: number | null } | null;
-  const isHourly = ji?.job_type === "hourly";
-  const priceDisplay = isHourly
-    ? `£${Number(ji?.hourly_partner_rate ?? 0).toFixed(2)}/hr`
-    : `£${Number(ji?.partner_cost ?? 0).toFixed(2)}`;
-
-  const base = appBaseUrl();
-
-  for (const row of partners as { id: string; contact_name: string | null; company_name: string | null; email: string | null; zendesk_user_id: string | null }[]) {
-    const partnerFirstName = (row.contact_name?.trim().split(/\s+/)[0])
-      || (row.company_name?.trim() ?? "Partner");
-
-    let sideConversationId: string | null = null;
-
-    if (row.email) {
-      try {
-        const acceptToken = createPartnerJobAcceptToken(params.jobId, row.id);
-        let acceptUrl = `${base}/job/confirm?token=${encodeURIComponent(acceptToken)}`;
-        try {
-          const r = await upsertShortLink({
-            targetPath: `/job/confirm?token=${encodeURIComponent(acceptToken)}`,
-            kind:       "partner_accept",
-            entityRef:  `job:${params.jobId}:partner:${row.id}`,
-          });
-          acceptUrl = `${base}${r.shortPath}`;
-        } catch (err) {
-          console.error("[broadcast invites] short link failed, using long URL:", err);
-        }
-
-        const email = buildPartnerJobConfirmationRequestEmail({
-          partnerFirstName,
-          jobReference:    params.jobReference,
-          jobTitle:        params.jobTitle,
-          clientName:      params.clientName,
-          propertyAddress: params.propertyAddress,
-          scope:           params.scope,
-          priceDisplay,
-          acceptUrl,
-        });
-
-        const sc = await createSideConversation({
-          ticketId: params.ticketId,
-          toEmail:  row.email,
-          toName:   row.contact_name || row.company_name || undefined,
-          toUserId: row.zendesk_user_id ?? undefined,
-          subject:  email.subject,
-          htmlBody: email.html,
-          bodyText: email.text,
-        });
-
-        if (sc.ok && sc.id) {
-          sideConversationId = sc.id;
-        } else {
-          console.error(`[broadcast invites] side conv failed for partner ${row.id}:`, sc.error);
-        }
-      } catch (err) {
-        console.error(`[broadcast invites] threw for partner ${row.id}:`, err);
-      }
-    }
-
-    const { error: upErr } = await supabase
-      .from("job_partner_invites")
-      .upsert({
-        job_id:                       params.jobId,
-        partner_id:                   row.id,
-        zendesk_side_conversation_id: sideConversationId,
-        status:                       "invited",
-        invited_at:                   new Date().toISOString(),
-      }, { onConflict: "job_id,partner_id" });
-    if (upErr) console.error(`[broadcast invites] upsert failed for partner ${row.id}:`, upErr);
-  }
 }

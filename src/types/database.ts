@@ -53,6 +53,12 @@ export interface CatalogService {
   pricing_presets?: ServicePricingPreset[] | null;
   /** Stackable add-ons summed on top of selected base preset. See parsePricingAddons. */
   pricing_addons?: ServicePricingAddon[] | null;
+  /** Override hourly job note in partner confirmation emails; null = OS default. */
+  partner_email_notes_hourly?: string | null;
+  /** Override fixed job note in partner confirmation emails; null = OS default. */
+  partner_email_notes_fixed?: string | null;
+  /** Type-of-work rules appended after hourly/fixed note (e.g. Gardener). */
+  partner_email_notes_default?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;

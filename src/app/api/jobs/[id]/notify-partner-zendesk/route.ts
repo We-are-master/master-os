@@ -7,6 +7,7 @@ import { createPartnerReportToken, createPartnerJobAcceptToken } from "@/lib/quo
 import { upsertShortLink } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
+import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason")
+    .select("id, reference, title, status, client_name, property_address, scheduled_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -102,6 +103,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     status: string;
     client_name: string | null;
     property_address: string | null;
+    scheduled_date: string | null;
+    catalog_service_id: string | null;
     scope: string | null;
     partner_id: string | null;
     external_source: string | null;
@@ -173,6 +176,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     ?? (kind === "on_hold" ? job.on_hold_reason : null);
   const effectiveStatusLabel = newStatusLabel ?? humanStatusLabel(job.status);
 
+  const needsPartnerJobNotes = kind === "assigned" || kind === "confirmation_request" || kind === "booked";
+  const partnerNotes = needsPartnerJobNotes
+    ? await loadPartnerJobEmailNotes(supabase, {
+        catalogServiceId: job.catalog_service_id,
+        jobTitle: job.title,
+        jobType: isHourly ? "hourly" : "fixed",
+      })
+    : null;
+
   // ─── Email build ──────────────────────────────────────────────────
   let email: { subject: string; html: string; text: string };
   if (kind === "assigned") {
@@ -182,9 +194,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
+      scheduledDate: job.scheduled_date,
       scope: job.scope || "(no scope provided)",
       jobType: isHourly ? "hourly" : "fixed",
       priceDisplay,
+      partnerNotes,
       reportUrl,
     });
   } else if (kind === "rescheduled") {
@@ -227,8 +241,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobTitle:        job.title || "Maintenance job",
       clientName:      job.client_name || "—",
       propertyAddress: job.property_address || "—",
+      scheduledDate:   job.scheduled_date,
       scope:           job.scope || "(no scope provided)",
       priceDisplay,
+      partnerNotes,
       acceptUrl,
     });
   } else if (kind === "booked") {
@@ -241,9 +257,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
+      scheduledDate: job.scheduled_date,
       scope: job.scope || "(no scope provided)",
       jobType: isHourly ? "hourly" : "fixed",
       priceDisplay,
+      partnerNotes,
       reportUrl,
     });
   } else {
