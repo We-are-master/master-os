@@ -2,14 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
-import { safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { dispatchQuoteBidInvites } from "@/lib/quote-bid-invites";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
-
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 /**
  * POST /api/quotes
@@ -277,20 +274,29 @@ export async function POST(req: NextRequest) {
   }
 
   // Broadcast to matching partners if this is a bidding quote.
-  // Don't fail the whole request if push fails — quote is already saved.
-  let partnersNotified: { sent: number; errors: number; tokensFound: number } | undefined;
+  // Don't fail the whole request if dispatch fails — quote is already saved.
+  let partnersNotified:
+    | { partnerIds: number; pushSent: number; emailsSent: number; invitationsTracked: number }
+    | undefined;
   if (typeOfQuoting === "bidding" && serviceType) {
     try {
-      partnersNotified = await broadcastQuoteToPartners(supabase, {
-        quoteId:     String(inserted.id),
-        reference:   String(inserted.reference),
+      const dispatch = await dispatchQuoteBidInvites(supabase, {
+        quoteId: String(inserted.id),
+        quoteReference: String(inserted.reference),
         title,
         serviceType,
+        scope: description,
         startIso,
       });
+      partnersNotified = {
+        partnerIds: dispatch.partnerIds.length,
+        pushSent: dispatch.pushSent,
+        emailsSent: dispatch.emailsSent,
+        invitationsTracked: dispatch.invitationsTracked,
+      };
     } catch (err) {
-      console.error("[api/quotes] partner broadcast failed:", err);
-      partnersNotified = { sent: 0, errors: 0, tokensFound: 0 };
+      console.error("[api/quotes] partner dispatch failed:", err);
+      partnersNotified = { partnerIds: 0, pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
     }
   }
 
@@ -303,91 +309,6 @@ export async function POST(req: NextRequest) {
     },
     { status: 201 },
   );
-}
-
-/** Broadcast an Expo push to every active partner whose trades array
- *  contains `serviceType` (or the legacy single `trade` column matches).
- *  Mirrors the logic in /api/push/notify-partner but runs inline because
- *  this webhook has no user session. */
-async function broadcastQuoteToPartners(
-  supabase: SupabaseClient,
-  args: {
-    quoteId:     string;
-    reference:   string;
-    title:       string;
-    serviceType: string;
-    startIso:    string | null;
-  },
-): Promise<{ sent: number; errors: number; tokensFound: number }> {
-  const safeTrade = safePostgrestEnumValue(args.serviceType);
-  if (!safeTrade) return { sent: 0, errors: 0, tokensFound: 0 };
-
-  const { data: partners, error } = await supabase
-    .from("partners")
-    .select("id, auth_user_id, expo_push_token")
-    .or(`trades.cs.{${safeTrade}},trade.eq.${safeTrade}`)
-    .eq("status", "active");
-  if (error) {
-    console.error("[api/quotes] partners lookup failed:", error.message);
-    return { sent: 0, errors: 0, tokensFound: 0 };
-  }
-
-  const rows = partners ?? [];
-  const directTokens = rows
-    .map((r) => r.expo_push_token as string | null)
-    .filter((t): t is string => !!t);
-  const missingAuthIds = rows
-    .filter((r) => !r.expo_push_token && r.auth_user_id)
-    .map((r) => r.auth_user_id as string);
-
-  let fallbackTokens: string[] = [];
-  if (missingAuthIds.length > 0) {
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, fcmToken")
-      .in("id", missingAuthIds)
-      .not("fcmToken", "is", null);
-    fallbackTokens = (users ?? [])
-      .map((u: { fcmToken: string | null }) => u.fcmToken)
-      .filter((t): t is string => !!t);
-  }
-
-  const tokens = [...new Set([...directTokens, ...fallbackTokens])];
-  if (tokens.length === 0) return { sent: 0, errors: 0, tokensFound: 0 };
-
-  const data = {
-    type:      "quote_invite" as const,
-    quoteId:   args.quoteId,
-    reference: args.reference,
-    serviceType: args.serviceType,
-    startAt:   args.startIso,
-  };
-  const messages = tokens.map((to) => ({
-    to,
-    title: `New job available — ${args.serviceType}`,
-    body:  args.title,
-    data,
-    sound: "default",
-  }));
-
-  try {
-    const res = await fetch(EXPO_PUSH_URL, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body:    JSON.stringify(messages),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`[api/quotes] Expo push ${res.status}:`, text);
-      return { sent: 0, errors: tokens.length, tokensFound: tokens.length };
-    }
-    const json = await res.json();
-    const errors = (json?.data ?? []).filter((r: { status?: string }) => r.status === "error").length;
-    return { sent: tokens.length - errors, errors, tokensFound: tokens.length };
-  } catch (err) {
-    console.error("[api/quotes] Expo fetch failed:", err);
-    return { sent: 0, errors: tokens.length, tokensFound: tokens.length };
-  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

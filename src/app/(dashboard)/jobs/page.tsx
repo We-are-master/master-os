@@ -71,7 +71,7 @@ import {
   jobHasPartnerSet,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -1924,13 +1924,18 @@ function JobsPageContent() {
       sortOptions: jobColumnSortPack("partner_name", "Partner"),
       render: (item) => {
         const partner = item.partner_name?.trim();
+        const partnerKind = jobPartnerListKind(item);
         return (
           <div className="min-w-0">
-            {partner ? (
+            {partnerKind === "partner" ? (
               <div className="flex items-center gap-1.5 min-w-0" title={partner}>
                 <Avatar name={partner} size="xs" className="shrink-0" />
                 <span className="text-[12px] text-text-secondary truncate">{partner}</span>
               </div>
+            ) : partnerKind === "auto_assign" ? (
+              <Badge variant="info" dot className="text-[10px] font-medium normal-case">
+                Auto assign
+              </Badge>
             ) : (
               <span className="text-[11px] text-text-tertiary italic block">
                 Unassigned

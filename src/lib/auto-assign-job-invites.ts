@@ -5,7 +5,7 @@ import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationRequestEmail } from "@/lib/emails/partner-job-confirmation";
 import { createPartnerJobAcceptToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 
@@ -142,7 +142,7 @@ export async function broadcastAutoAssignInvites(
           const r = await upsertShortLink({
             targetPath: `/job/confirm?token=${encodeURIComponent(acceptToken)}`,
             kind: "partner_accept",
-            entityRef: `job:${params.jobId}:partner:${row.id}`,
+            entityRef: jobPartnerShortLinkEntityRef(params.jobId, row.id, "accept"),
           });
           acceptUrl = `${base}${r.shortPath}`;
         } catch (err) {

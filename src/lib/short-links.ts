@@ -34,6 +34,15 @@ export interface UpsertShortLinkInput {
   createdBy?: string | null;
 }
 
+/** Stable short-link keys — accept and report must not share one entity_ref. */
+export function jobPartnerShortLinkEntityRef(
+  jobId: string,
+  partnerId: string,
+  purpose: "accept" | "report",
+): string {
+  return `job:${jobId}:partner:${partnerId}:${purpose}`;
+}
+
 /**
  * Returns `{ slug, shortPath }` for a slug pointing to `targetPath`.
  * If `entityRef` is set and a row already exists for it, the existing slug
