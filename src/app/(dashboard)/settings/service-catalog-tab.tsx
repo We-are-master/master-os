@@ -52,6 +52,9 @@ const emptyForm = {
   default_hours: "1",
   partner_cost: "",
   default_description: "",
+  partner_email_notes_hourly: "",
+  partner_email_notes_fixed: "",
+  partner_email_notes_default: "",
   sort_order: "0",
   is_active: true,
   display_icon_key: "",
@@ -325,6 +328,9 @@ export function ServiceCatalogTab() {
       default_hours: String(row.default_hours ?? 1),
       partner_cost: String(row.partner_cost ?? 0),
       default_description: row.default_description ?? "",
+      partner_email_notes_hourly: row.partner_email_notes_hourly ?? "",
+      partner_email_notes_fixed: row.partner_email_notes_fixed ?? "",
+      partner_email_notes_default: row.partner_email_notes_default ?? "",
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
@@ -352,6 +358,9 @@ export function ServiceCatalogTab() {
       default_hours: String(row.default_hours ?? 1),
       partner_cost: String(row.partner_cost ?? 0),
       default_description: row.default_description ?? "",
+      partner_email_notes_hourly: row.partner_email_notes_hourly ?? "",
+      partner_email_notes_fixed: row.partner_email_notes_fixed ?? "",
+      partner_email_notes_default: row.partner_email_notes_default ?? "",
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
@@ -372,6 +381,9 @@ export function ServiceCatalogTab() {
           mode === "hourly" ? Math.max(0.25, Number(first.default_hours) || 1) : Math.max(0.25, Number(form.default_hours) || 1),
         partner_cost: Math.max(0, Number(first.partner_cost) || 0),
         default_description: form.default_description.trim() || null,
+        partner_email_notes_hourly: form.partner_email_notes_hourly.trim() || null,
+        partner_email_notes_fixed: form.partner_email_notes_fixed.trim() || null,
+        partner_email_notes_default: form.partner_email_notes_default.trim() || null,
         sort_order: Math.floor(Number(form.sort_order) || 0),
         is_active: form.is_active,
         display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
@@ -385,6 +397,9 @@ export function ServiceCatalogTab() {
       default_hours: Math.max(0.25, Number(form.default_hours) || 1),
       partner_cost: Math.max(0, Number(form.partner_cost) || 0),
       default_description: form.default_description.trim() || null,
+      partner_email_notes_hourly: form.partner_email_notes_hourly.trim() || null,
+      partner_email_notes_fixed: form.partner_email_notes_fixed.trim() || null,
+      partner_email_notes_default: form.partner_email_notes_default.trim() || null,
       sort_order: Math.floor(Number(form.sort_order) || 0),
       is_active: form.is_active,
       display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
@@ -1232,6 +1247,44 @@ export function ServiceCatalogTab() {
           placeholder="Prefills request/quote text; staff can always edit."
           className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
         />
+      </div>
+      <div className="space-y-3 rounded-xl border border-border-light bg-muted/30 p-4">
+        <div>
+          <p className="text-xs font-semibold text-text-primary">Partner job email notes</p>
+          <p className="mt-1 text-[11px] text-text-tertiary leading-relaxed">
+            Shown in job offer and booked emails. Leave hourly/fixed blank to use the OS default. Type-of-work note is appended after the hourly/fixed rule.
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Hourly override (optional)</label>
+          <textarea
+            value={form.partner_email_notes_hourly}
+            onChange={(e) => setForm((f) => ({ ...f, partner_email_notes_hourly: e.target.value }))}
+            rows={3}
+            placeholder="Blank = global hourly default (3 hours max, call office…)"
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Fixed override (optional)</label>
+          <textarea
+            value={form.partner_email_notes_fixed}
+            onChange={(e) => setForm((f) => ({ ...f, partner_email_notes_fixed: e.target.value }))}
+            rows={3}
+            placeholder="Blank = global fixed default (VAT included, max cost…)"
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Type-of-work note (optional)</label>
+          <textarea
+            value={form.partner_email_notes_default}
+            onChange={(e) => setForm((f) => ({ ...f, partner_email_notes_default: e.target.value }))}
+            rows={3}
+            placeholder="Extra rules for this trade only (e.g. Gardener bag rate)"
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+          />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>

@@ -15,14 +15,13 @@ import type {
   AccountServicePrice,
   CatalogService,
 } from "@/types/database";
+import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
-
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 /**
  * POST /api/jobs
@@ -684,17 +683,25 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ─── Push notifications (best effort) ───────────────────────────────
+  // ─── Auto-assign invites (push + Zendesk Email 1 when ticket linked) ─
   let partnersNotified: { sent: number; tokensFound: number } | undefined;
   if (autoAssign && matchedPartnerIds.length > 0) {
     try {
-      partnersNotified = await sendPushToPartners(supabase, matchedPartnerIds, {
-        title: "New job available",
-        body:  `${inserted.reference} · ${titleResolved} · ${propertyAddress}`,
-        data:  { type: "job_assigned", jobId: String(inserted.id) },
+      const { pushSent } = await dispatchAutoAssignJobInvites({
+        supabase,
+        jobId: String(inserted.id),
+        jobReference: String(inserted.reference),
+        jobTitle: titleResolved,
+        clientName,
+        propertyAddress,
+        scope: description || "(no scope provided)",
+        scheduledDate: isoDate,
+        partnerIds: matchedPartnerIds,
+        zendeskTicketId: ticketId,
       });
+      partnersNotified = { sent: pushSent, tokensFound: pushSent };
     } catch (err) {
-      console.error("[api/jobs] push failed:", err);
+      console.error("[api/jobs] auto-assign invites failed:", err);
       partnersNotified = { sent: 0, tokensFound: 0 };
     }
   }
@@ -1016,61 +1023,4 @@ function secretsMatch(provided: string | null, expected: string): boolean {
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
-}
-
-async function sendPushToPartners(
-  supabase: SupabaseClient,
-  partnerIds: string[],
-  notification: { title: string; body: string; data: Record<string, unknown> },
-): Promise<{ sent: number; tokensFound: number }> {
-  if (!partnerIds.length) return { sent: 0, tokensFound: 0 };
-
-  const { data: partners } = await supabase
-    .from("partners")
-    .select("id, expo_push_token, auth_user_id")
-    .in("id", partnerIds)
-    .eq("status", "active");
-
-  const tokens: string[] = [];
-  const missingAuthIds: string[] = [];
-  for (const p of (partners ?? []) as { expo_push_token: string | null; auth_user_id: string | null }[]) {
-    if (p.expo_push_token) tokens.push(p.expo_push_token);
-    else if (p.auth_user_id) missingAuthIds.push(p.auth_user_id);
-  }
-  if (missingAuthIds.length > 0) {
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, fcmToken")
-      .in("id", missingAuthIds)
-      .not("fcmToken", "is", null);
-    for (const u of (users ?? []) as { fcmToken: string | null }[]) {
-      if (u.fcmToken) tokens.push(u.fcmToken);
-    }
-  }
-  const dedup = [...new Set(tokens)];
-  if (!dedup.length) return { sent: 0, tokensFound: 0 };
-
-  try {
-    const messages = dedup.map((to) => ({
-      to,
-      title: notification.title,
-      body:  notification.body.slice(0, 500),
-      data:  notification.data,
-      sound: "default" as const,
-    }));
-    const res = await fetch(EXPO_PUSH_URL, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body:    JSON.stringify(messages),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`[api/jobs] Expo push ${res.status}:`, text);
-      return { sent: 0, tokensFound: dedup.length };
-    }
-    return { sent: dedup.length, tokensFound: dedup.length };
-  } catch (err) {
-    console.error("[api/jobs] Expo fetch failed:", err);
-    return { sent: 0, tokensFound: dedup.length };
-  }
 }

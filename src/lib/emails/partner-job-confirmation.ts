@@ -9,6 +9,9 @@
  * change per job.
  */
 
+import { extractUkPostcode } from "@/lib/uk-postcode";
+import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
+
 export interface PartnerJobConfirmationData {
   partnerFirstName: string;
   jobReference: string;
@@ -16,6 +19,8 @@ export interface PartnerJobConfirmationData {
   clientName: string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
+  /** YYYY-MM-DD — used in the email subject line. */
+  scheduledDate?: string | null;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
   jobType: "hourly" | "fixed";
@@ -27,6 +32,8 @@ export interface PartnerJobConfirmationData {
   supportEmail?: string;
   /** Support phone (defaults to +44 20 4538 4668). */
   supportPhone?: string;
+  /** Hourly/fixed + type-of-work rules shown in the blue notice block. */
+  partnerNotes?: string | null;
 }
 
 function escapeHtml(s: string): string {
@@ -42,6 +49,52 @@ function telHref(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
 }
 
+function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string {
+  const raw = scheduledDate?.trim();
+  if (!raw) return "TBC";
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    }
+  }
+  return raw;
+}
+
+function partnerJobEmailSubject(args: {
+  kind: "offer" | "booked";
+  jobTitle: string;
+  scheduledDate?: string | null;
+  propertyAddress: string;
+}): string {
+  const typeOfWork = args.jobTitle.trim() || "Job";
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
+  const postcode = extractUkPostcode(args.propertyAddress) ?? "—";
+  if (args.kind === "offer") {
+    return `New Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
+  }
+  return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
+}
+
+function partnerJobEmailNotesHtmlBlock(notes: string): string {
+  const safe = escapeHtml(notes);
+  return `      <!-- Partner notes -->
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#E1ECFF; border-radius:8px;">
+          <tr><td style="padding:14px 16px;">
+            <p style="margin:0 0 6px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#0B5FFF;">Important — before you start</p>
+            <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#0A3A8C; white-space:pre-wrap;">${safe}</p>
+          </td></tr>
+        </table>
+      </td></tr>`;
+}
+
 export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationData): {
   subject: string;
   html: string;
@@ -49,7 +102,12 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Job booked — ${data.jobReference}`;
+  const subject = partnerJobEmailSubject({
+    kind: "booked",
+    jobTitle: data.jobTitle,
+    scheduledDate: data.scheduledDate,
+    propertyAddress: data.propertyAddress,
+  });
 
   const safe = {
     name: escapeHtml(data.partnerFirstName || "there"),
@@ -65,6 +123,10 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
   };
+
+  const partnerNotes = data.partnerNotes?.trim() || "";
+  const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
+  const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
   /** Customer phone is intentionally NOT rendered — partner emails carry name + address only. */
   const phoneRow = "";
@@ -159,16 +221,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
         </table>
       </td></tr>
 
-      <!-- Communication notice -->
-      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#E1ECFF; border-radius:8px;">
-          <tr><td style="padding:14px 16px;">
-            <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#0A3A8C;">
-              <strong style="color:#0B5FFF;">💬 Need to discuss anything?</strong> Just reply to this email — questions, updates, schedule changes or anything else about the job will be handled right here.
-            </p>
-          </td></tr>
-        </table>
-      </td></tr>
+      ${notesBlock}
 
       <!-- CTA -->
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
@@ -181,7 +234,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 
       <!-- Helper text -->
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
-        <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#6B6B85;">Submit the report once the work is complete to release payment.</p>
+        <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
         <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#6B6B85;">Need help? Email <a href="mailto:${safe.support}" style="color:#ED4B00; text-decoration:underline;">${safe.support}</a> or call <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; text-decoration:underline;">${safe.supportTel}</a>.</p>
       </td></tr>
 
@@ -208,13 +261,14 @@ Address: ${data.propertyAddress}
 
 Scope of work
 ${data.scope}
+${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
+${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
-Submit your job report once work is complete to release payment:
-${data.reportUrl}
+Submit job report: ${data.reportUrl}
 
 Need help? Email ${supportEmail} or call ${supportPhone}.
 
-Reply to this email if you need to discuss anything about the job.
+Questions? Reply to this email.
 
 Fixfy · www.getfixfy.com`;
 
@@ -877,6 +931,8 @@ export interface PartnerJobConfirmationRequestData {
   clientName:       string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress:  string;
+  /** YYYY-MM-DD — used in the email subject line. */
+  scheduledDate?:   string | null;
   scope:            string;
   /** £ display value (e.g. "£280.00"). */
   priceDisplay:     string;
@@ -884,6 +940,8 @@ export interface PartnerJobConfirmationRequestData {
   acceptUrl:        string;
   /** Hours within which the partner is expected to accept. Default 24. */
   responseHours?:   number;
+  /** Hourly/fixed + type-of-work rules shown before the Accept CTA. */
+  partnerNotes?:    string | null;
   supportEmail?:    string;
   supportPhone?:    string;
 }
@@ -894,7 +952,12 @@ export function buildPartnerJobConfirmationRequestEmail(
   const supportEmail  = data.supportEmail  ?? "support@getfixfy.com";
   const supportPhone  = data.supportPhone  ?? "+44 20 4538 4668";
   const responseHours = data.responseHours ?? 24;
-  const subject = `Please confirm — Job ${data.jobReference}`;
+  const subject = partnerJobEmailSubject({
+    kind: "offer",
+    jobTitle: data.jobTitle,
+    scheduledDate: data.scheduledDate,
+    propertyAddress: data.propertyAddress,
+  });
 
   const safe = {
     name:    escapeHtml(data.partnerFirstName || "there"),
@@ -910,6 +973,10 @@ export function buildPartnerJobConfirmationRequestEmail(
     supportTel:     escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
   };
+
+  const partnerNotes = data.partnerNotes?.trim() || "";
+  const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
+  const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
@@ -970,10 +1037,12 @@ export function buildPartnerJobConfirmationRequestEmail(
           </td></tr>
         </table>
       </td></tr>
+      ${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
         <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">✓ Accept job</a>
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
+        <p style="margin:0 0 8px 0; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
         <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Can't take it? Reply to this email and we'll reallocate. Otherwise: <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a> · <a href="tel:${safe.supportTelHref}" style="color:#ED4B00;">${safe.supportTel}</a></p>
       </td></tr>
       <tr><td style="background-color:#F7F7FB; padding:20px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
@@ -998,6 +1067,8 @@ Address:  ${data.propertyAddress}
 
 Scope:
 ${data.scope}
+${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
+${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
 Accept this job: ${data.acceptUrl}
 
