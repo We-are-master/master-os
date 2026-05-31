@@ -5854,15 +5854,13 @@ function QuoteDetailDrawer({
 
                                     await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
 
-                                    // Open a Side Conversation on the quote's ticket and email the
-                                    // partner "Bid approved — Job booked". Fire-and-forget — bid is
-                                    // already approved in the OS, side-conv failure shouldn't block
-                                    // the rest of the flow.
-                                    void fetch(`/api/quotes/${encodeURIComponent(quote.id)}/notify-partner-bid-approved`, {
-                                      method:  "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body:    JSON.stringify({ partnerId: bid.partner_id }),
-                                    }).catch((e) => console.error("[approve-bid] notify partner failed:", e));
+                                    // Partner notification on bid approval is intentionally disabled.
+                                    // The OS used to open a Side Conversation on the quote's ticket and
+                                    // email the partner "Bid approved — Job booked"; the office now
+                                    // handles that messaging out-of-band, so firing it from here would
+                                    // duplicate the touchpoint. The endpoint itself
+                                    // (POST /api/quotes/[id]/notify-partner-bid-approved) is kept around
+                                    // for re-enabling later or for manual fire from internal tools.
 
                                     const updated = await persistProposalToQuote({
                                       lineItemsOverride: pre.lines,
