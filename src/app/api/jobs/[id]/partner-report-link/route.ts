@@ -3,7 +3,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 
 export const dynamic = "force-dynamic";
@@ -94,7 +94,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     const result = await upsertShortLink({
       targetPath,
       kind:       "partner_report",
-      entityRef:  `job:${job.id}:partner:${job.partner_id}`,
+      entityRef: jobPartnerShortLinkEntityRef(String(job.id), String(job.partner_id), "report"),
       createdBy:  auth.user.id,
     });
     shortPath = result.shortPath;

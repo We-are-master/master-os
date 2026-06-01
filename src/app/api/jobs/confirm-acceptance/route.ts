@@ -88,7 +88,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    void sendBookedSideConvReply({ job, partner, partnerName });
+    if (!alreadyConfirmed) {
+      void sendBookedSideConvReply({ supabase, job, partner, partnerName });
+    }
 
     return NextResponse.json({
       ok: true,

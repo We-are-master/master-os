@@ -55,6 +55,19 @@ export function jobStatusLabel(status: string): string {
   return JOB_STATUS_LABEL[status as JobStatus] ?? status.replace(/_/g, " ");
 }
 
+/** Partner column in Jobs list — assigned name vs auto-assign vs plain unassigned. */
+export type JobPartnerListKind = "partner" | "auto_assign" | "unassigned";
+
+export function jobPartnerListKind(job: {
+  partner_id?: string | null;
+  partner_name?: string | null;
+  status?: string | null;
+}): JobPartnerListKind {
+  if (job.partner_id || job.partner_name?.trim()) return "partner";
+  if (job.status === "auto_assigning") return "auto_assign";
+  return "unassigned";
+}
+
 /** Accent for Jobs management tabs (underline + count chip when active). */
 export type JobsManagementTabAccent =
   | "neutral"

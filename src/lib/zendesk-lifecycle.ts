@@ -32,7 +32,7 @@ import {
   buildQuoteRejectedHtml,
 } from "@/lib/zendesk-lifecycle-templates";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
@@ -130,7 +130,7 @@ export async function dispatchJobCreatedZendesk(args: {
         const r = await upsertShortLink({
           targetPath: reportTargetPath,
           kind:       "partner_report",
-          entityRef:  `job:${job.id}:partner:${job.partner_id}`,
+          entityRef: jobPartnerShortLinkEntityRef(String(job.id), String(job.partner_id), "report"),
         });
         reportShortPath = r.shortPath;
       } catch (err) {

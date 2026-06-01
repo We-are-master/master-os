@@ -137,7 +137,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="x-apple-disable-message-reformatting" />
 <meta name="color-scheme" content="light only" />
-<title>Job booked — Fixfy</title>
+<title>${escapeHtml(subject)}</title>
 <style>
   body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
   table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
@@ -790,11 +790,15 @@ export interface PartnerJobBookedFromBidData {
   clientName:       string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress:  string;
+  /** YYYY-MM-DD — used in the email subject line. */
+  scheduledDate?:   string | null;
   scope:            string;
   /** £ display value (e.g. "£280.00"). */
   priceDisplay:     string;
   /** Partner-scoped report URL — primary CTA. */
   reportUrl:        string;
+  /** Hourly/fixed + type-of-work rules shown in the blue notice block. */
+  partnerNotes?:    string | null;
   supportEmail?:    string;
   supportPhone?:    string;
 }
@@ -806,7 +810,16 @@ export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidD
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Bid approved — Job ${data.jobReference} is yours`;
+  const subject = partnerJobEmailSubject({
+    kind: "booked",
+    jobTitle: data.jobTitle,
+    scheduledDate: data.scheduledDate,
+    propertyAddress: data.propertyAddress,
+  });
+
+  const partnerNotes = data.partnerNotes?.trim() || "";
+  const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
+  const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
   const safe = {
     name:    escapeHtml(data.partnerFirstName || "there"),
@@ -826,7 +839,7 @@ export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidD
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Bid approved — Fixfy</title>
+<title>${escapeHtml(subject)}</title>
 <style>
   body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
   img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
@@ -881,8 +894,12 @@ export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidD
           </td></tr>
         </table>
       </td></tr>
+${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
         <a href="${safe.url}" target="_blank" style="display:inline-block; padding:16px 36px; background-color:#ED4B00; color:#FFFFFF; font-size:15px; font-weight:600; text-decoration:none; border-radius:8px;">Open job in app</a>
+      </td></tr>
+      <tr><td align="center" style="padding:0 40px 16px 40px;" class="px-mobile">
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;">${reportDeadlineNote}</p>
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
         <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Questions? Email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a> or call <a href="tel:${safe.supportTelHref}" style="color:#ED4B00;">${safe.supportTel}</a>.</p>
@@ -910,6 +927,9 @@ Scope:
 ${data.scope}
 
 Open the job in the app: ${data.reportUrl}
+
+${partnerNotes ? `Important — before you start:\n${partnerNotes}\n\n` : ""}${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
+
 Questions? ${supportEmail} / ${supportPhone}
 
 Fixfy · www.getfixfy.com`;
@@ -982,7 +1002,7 @@ export function buildPartnerJobConfirmationRequestEmail(
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Please confirm — Fixfy</title>
+<title>${escapeHtml(subject)}</title>
 <style>
   body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
   img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }

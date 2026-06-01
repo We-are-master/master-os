@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { extractUkPostcode } from "@/lib/uk-postcode";
+import { resolveDeskWebhookClientEmail } from "@/lib/desk-webhook-client-email";
 import { createSideConversation } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
   const ticketId        = str(body.ticket_id);
   const title           = str(body.title);
   const clientName      = str(body.client_name);
-  const clientEmail     = str(body.client_email).toLowerCase();
+  const clientEmail     = resolveDeskWebhookClientEmail(body.client_email);
   const clientPhone     = str(body.client_phone);
   const propertyAddress = str(body.property_address);
   const serviceType     = str(body.service_type);
@@ -83,9 +84,9 @@ export async function POST(req: NextRequest) {
   if (!scope) {
     return NextResponse.json({ error: "scope is required." }, { status: 400 });
   }
-  if (!clientName || !propertyAddress || !serviceType || !clientEmail) {
+  if (!clientName || !propertyAddress || !serviceType) {
     return NextResponse.json(
-      { error: "client_name, client_email, property_address and service_type are required." },
+      { error: "client_name, property_address and service_type are required." },
       { status: 400 },
     );
   }
@@ -111,32 +112,34 @@ export async function POST(req: NextRequest) {
 
   // ─── Resolve client ─────────────────────────────────────────────────
   let clientId: string | null = null;
-  const { data: clientRow } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("email", clientEmail)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (clientRow) {
-    clientId = (clientRow as { id: string }).id;
-  } else {
-    const { data: newClient } = await supabase
+  if (clientEmail) {
+    const { data: clientRow } = await supabase
       .from("clients")
-      .insert({
-        full_name: clientName,
-        email: clientEmail,
-        phone: clientPhone || null,
-        address: propertyAddress,
-        client_type: "business",
-        source: "zendesk",
-        status: "active",
-      })
       .select("id")
-      .single();
-    if (newClient) clientId = (newClient as { id: string }).id;
+      .eq("email", clientEmail)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (clientRow) {
+      clientId = (clientRow as { id: string }).id;
+    } else {
+      const { data: newClient } = await supabase
+        .from("clients")
+        .insert({
+          full_name: clientName,
+          email: clientEmail,
+          phone: clientPhone || null,
+          address: propertyAddress,
+          client_type: "business",
+          source: "zendesk",
+          status: "active",
+        })
+        .select("id")
+        .single();
+      if (newClient) clientId = (newClient as { id: string }).id;
+    }
   }
 
   // ─── Resolve partner (specific mode) ────────────────────────────────

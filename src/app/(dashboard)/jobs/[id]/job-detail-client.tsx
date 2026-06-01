@@ -165,6 +165,7 @@ import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import {
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
+  jobHasPartnerSet,
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
 import {
@@ -234,7 +235,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
-import { JOB_STATUS_BADGE_VARIANT, jobStatusLabel } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
@@ -1105,6 +1106,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingFin, setSavingFin] = useState(false);
   const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
   const [jobTypeEditTarget, setJobTypeEditTarget] = useState<"fixed" | "hourly">("fixed");
+  const [jobAssignmentEditMode, setJobAssignmentEditMode] = useState<"manual" | "auto">("manual");
   const [jobTypeEditCatalogId, setJobTypeEditCatalogId] = useState("");
   const [jobTypeEditFixedTitle, setJobTypeEditFixedTitle] = useState("");
   const [catalogServicesJobType, setCatalogServicesJobType] = useState<CatalogService[]>([]);
@@ -2427,11 +2429,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job?.id, job?.partner_id, job?.status, handleJobUpdate]);
 
+  const openJobBillingTypeEdit = useCallback(() => {
+    if (!job) return;
+    setFixedRatesInlineOpen(false);
+    setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
+    setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
+    setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
+    setJobTypeEditCatalogId(job.catalog_service_id ?? "");
+    setJobTypeEditFixedTitle(job.title ?? "");
+    setJobAssignmentEditMode(job.status === "auto_assigning" ? "auto" : "manual");
+    setJobTypeEditOpen(true);
+  }, [job]);
+
+  const jobAssignmentModePatch = useCallback(
+    (
+      current: Job,
+      mode: "manual" | "auto",
+    ): { patch: Partial<Job> & { auto_assign_invited_partner_ids?: string[] | null }; dispatchAutoAssign: boolean } | null => {
+      if (jobHasPartnerSet(current)) return null;
+      if (mode === "auto") {
+        if (current.status === "auto_assigning") return { patch: {}, dispatchAutoAssign: false };
+        return { patch: { status: "auto_assigning" }, dispatchAutoAssign: true };
+      }
+      if (current.status === "auto_assigning") {
+        return { patch: { status: "unassigned", auto_assign_invited_partner_ids: null }, dispatchAutoAssign: false };
+      }
+      return null;
+    },
+    [],
+  );
+
   const handleSaveJobTypeEdit = useCallback(async () => {
     if (!job) return;
     const extras = Number(job.extras_amount ?? 0);
     const deposit = Number(job.customer_deposit ?? 0);
     const prev = job;
+    const assignmentChange = jobAssignmentModePatch(job, jobAssignmentEditMode);
 
     if (jobTypeEditTarget === "hourly") {
       const service = catalogServicesJobType.find((c) => c.id === jobTypeEditCatalogId);
@@ -2461,6 +2494,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         title: titleOut,
         customer_final_payment,
       };
+      if (assignmentChange) Object.assign(patch, assignmentChange.patch);
       setSavingJobTypeEdit(true);
       try {
         const updated = await handleJobUpdate(job.id, patch, { silent: true });
@@ -2482,6 +2516,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             /* non-blocking */
           }
           await refreshJobFinance();
+          if (assignmentChange?.dispatchAutoAssign) {
+            try {
+              const res = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`, {
+                method: "POST",
+              });
+              if (res.ok) {
+                toast.success("Auto assign — matched partners invited");
+              } else {
+                const body = (await res.json().catch(() => null)) as { error?: string } | null;
+                toast.error(body?.error ?? "Could not send auto assign invites");
+              }
+            } catch {
+              toast.error("Could not send auto assign invites");
+            }
+          } else if (assignmentChange?.patch.status === "unassigned" && prev.status === "auto_assigning") {
+            toast.success("Switched to manual assign");
+          }
           setJobTypeEditOpen(false);
           toast.success("Job is now hourly — amounts and invoice updated.");
           toast.success(`Rates updated to ${titleOut} pricing`, { duration: 3000 });
@@ -2535,6 +2586,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ) * 100,
       ) / 100,
     };
+    if (assignmentChange) Object.assign(patch, assignmentChange.patch);
     setSavingJobTypeEdit(true);
     try {
       const updated = await handleJobUpdate(job.id, patch, { silent: true });
@@ -2556,6 +2608,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           /* non-blocking */
         }
         await refreshJobFinance();
+        if (assignmentChange?.dispatchAutoAssign) {
+          try {
+            const res = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`, {
+              method: "POST",
+            });
+            if (res.ok) {
+              toast.success("Auto assign — matched partners invited");
+            } else {
+              const body = (await res.json().catch(() => null)) as { error?: string } | null;
+              toast.error(body?.error ?? "Could not send auto assign invites");
+            }
+          } catch {
+            toast.error("Could not send auto assign invites");
+          }
+        } else if (assignmentChange?.patch.status === "unassigned" && prev.status === "auto_assigning") {
+          toast.success("Switched to manual assign");
+        }
         setJobTypeEditOpen(false);
         toast.success("Job is now fixed price.");
         if (matchedService) {
@@ -2573,6 +2642,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     fixedInlineClientRate,
     fixedInlinePartnerCost,
     catalogServicesJobType,
+    jobAssignmentEditMode,
+    jobAssignmentModePatch,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
@@ -5556,7 +5627,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {healthMissingPartner ? (
                   <span className="text-[10px] font-medium rounded-full px-2 py-0.5 border border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-100">
-                    ⚠ No partner
+                    {jobPartnerListKind(job) === "auto_assign" ? "⏳ Auto assigning" : "⚠ No partner"}
                   </span>
                 ) : null}
                 {healthMissingScope ? (
@@ -5898,13 +5969,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           type="button"
                           className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
                           disabled={job.status === "cancelled"}
-                          onClick={() => {
-                            setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
-                            setJobTypeEditCatalogId(job.catalog_service_id ?? "");
-                            setJobTypeEditFixedTitle(job.title ?? "");
-                            setJobTypeEditOpen(true);
-                          }}
-                          title="Edit type of work"
+                          onClick={openJobBillingTypeEdit}
+                          title="Edit type of work, pricing & assignment"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -6054,16 +6120,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           type="button"
                           className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
                           disabled={job.status === "cancelled"}
-                          onClick={() => {
-                            setFixedRatesInlineOpen(false);
-                            setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
-                            setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
-                            setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
-                            setJobTypeEditCatalogId(job.catalog_service_id ?? "");
-                            setJobTypeEditFixedTitle(job.title ?? "");
-                            setJobTypeEditOpen(true);
-                          }}
-                          title="Edit pricing"
+                          onClick={openJobBillingTypeEdit}
+                          title="Edit pricing & assignment"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -6078,6 +6136,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         >
                           {jobScheduleKindLabel}
                         </span>
+                        {jobPartnerListKind(job) === "auto_assign" ? (
+                          <Badge variant="info" dot size="sm" className="h-5 text-[10px] font-semibold normal-case">
+                            Auto assign
+                          </Badge>
+                        ) : null}
                       </div>
                       {job.job_type === "hourly" && hourlyTimeEditOpen ? (
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -7426,6 +7489,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </span>
                       ) : null}
                     </div>
+                  ) : jobPartnerListKind(job) === "auto_assign" ? (
+                    <Badge variant="info" dot className="text-[10px] font-medium normal-case">
+                      Auto assign
+                    </Badge>
                   ) : (
                     <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
                   )}
@@ -8691,6 +8758,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               Continue to the existing completion validation flow.
             </div>
           ) : null}
+          {!jobHasPartnerSet(job) && (job.status === "unassigned" || job.status === "auto_assigning") ? (
+            <div className="space-y-2 border-t border-border-light pt-3">
+              <p className="text-xs font-medium text-text-secondary">Partner assignment</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={savingJobTypeEdit}
+                  onClick={() => setJobAssignmentEditMode("manual")}
+                  className={cn(
+                    "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
+                    jobAssignmentEditMode === "manual"
+                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      : "border-border bg-card text-text-secondary",
+                  )}
+                >
+                  <p className="font-medium">Manual assign</p>
+                  <p className="text-xs opacity-80">Pick a partner from the sidebar</p>
+                </button>
+                <button
+                  type="button"
+                  disabled={savingJobTypeEdit}
+                  onClick={() => setJobAssignmentEditMode("auto")}
+                  className={cn(
+                    "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
+                    jobAssignmentEditMode === "auto"
+                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      : "border-border bg-card text-text-secondary",
+                  )}
+                >
+                  <p className="font-medium">Auto assign</p>
+                  <p className="text-xs opacity-80">Invite matched partners — first accept wins</p>
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-2 justify-end pt-1">
             <Button
               variant="ghost"
@@ -8741,7 +8843,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJobTypeEditOpen(false);
         }}
         title="Billing type"
-        subtitle={job.reference ? `${job.reference} — custom vs smart pricing` : "Switch custom ↔ smart pricing"}
+        subtitle={job.reference ? `${job.reference} — pricing & partner assignment` : "Switch pricing and assignment mode"}
         size="md"
       >
         <div className="p-4 space-y-4">

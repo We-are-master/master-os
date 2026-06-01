@@ -4,7 +4,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerReportToken, createPartnerJobAcceptToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const r = await upsertShortLink({
       targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
       kind:       "partner_report",
-      entityRef:  `job:${job.id}:partner:${partner.id}`,
+      entityRef:  jobPartnerShortLinkEntityRef(job.id, partner.id, "report"),
       createdBy:  auth.user.id,
     });
     reportUrl = `${base}${r.shortPath}`;
@@ -228,7 +228,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       const r = await upsertShortLink({
         targetPath: `/job/confirm?token=${encodeURIComponent(acceptToken)}`,
         kind:       "partner_accept",
-        entityRef:  `job:${job.id}:partner:${partner.id}`,
+        entityRef: jobPartnerShortLinkEntityRef(job.id, partner.id, "accept"),
         createdBy:  auth.user.id,
       });
       acceptUrl = `${base}${r.shortPath}`;

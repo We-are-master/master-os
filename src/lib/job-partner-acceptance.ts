@@ -7,7 +7,7 @@ import {
   replyToSideConversation,
 } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
-import { upsertShortLink } from "@/lib/short-links";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 
@@ -28,6 +28,7 @@ export type JobForPartnerAcceptance = {
   external_source: string | null;
   external_ref: string | null;
   zendesk_side_conversation_id: string | null;
+  partner_booked_email_sent_at?: string | null;
 };
 
 export type PartnerForAcceptance = {
@@ -39,7 +40,53 @@ export type PartnerForAcceptance = {
 };
 
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id";
+  "id, reference, title, status, partner_id, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+
+/** Atomically claim the one-time Job booked email send for this job. */
+async function tryClaimPartnerBookedEmailSend(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("jobs")
+    .update({ partner_booked_email_sent_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .is("partner_booked_email_sent_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    console.error("[booked reply] claim failed:", error);
+    return false;
+  }
+  return Boolean(data);
+}
+
+async function resolveBookedSideConversationId(
+  supabase: SupabaseClient,
+  jobId: string,
+  partnerId: string,
+  fallback: string | null,
+): Promise<string | null> {
+  if (fallback) return fallback;
+
+  const { data: jobRow } = await supabase
+    .from("jobs")
+    .select("zendesk_side_conversation_id")
+    .eq("id", jobId)
+    .maybeSingle();
+  const onJob = (jobRow as { zendesk_side_conversation_id: string | null } | null)
+    ?.zendesk_side_conversation_id;
+  if (onJob) return onJob;
+
+  const { data: inviteRow } = await supabase
+    .from("job_partner_invites")
+    .select("zendesk_side_conversation_id")
+    .eq("job_id", jobId)
+    .eq("partner_id", partnerId)
+    .maybeSingle();
+  return (inviteRow as { zendesk_side_conversation_id: string | null } | null)
+    ?.zendesk_side_conversation_id ?? null;
+}
 
 export async function loadJobForPartnerAcceptance(
   supabase: SupabaseClient,
@@ -145,6 +192,7 @@ export async function finalizeAutoAssignWinner(args: {
   }
 
   await sendBookedSideConvReply({
+    supabase,
     job: {
       ...args.job,
       status: "scheduled",
@@ -159,13 +207,19 @@ export async function finalizeAutoAssignWinner(args: {
 }
 
 export async function sendBookedSideConvReply(args: {
+  supabase?: SupabaseClient;
   job: JobForPartnerAcceptance;
   partner: PartnerForAcceptance;
   partnerName: string | null;
-}): Promise<void> {
+}): Promise<boolean> {
   const { job, partner } = args;
   const ticketId = job.external_source === "zendesk" ? job.external_ref : null;
-  if (!ticketId || !partner.email) return;
+  if (!ticketId || !partner.email) return false;
+
+  const supabase = args.supabase ?? createServiceClient();
+  if (job.partner_booked_email_sent_at) return false;
+  const claimed = await tryClaimPartnerBookedEmailSend(supabase, job.id);
+  if (!claimed) return false;
 
   const isHourly = job.job_type === "hourly";
   const priceDisplay = isHourly
@@ -182,14 +236,13 @@ export async function sendBookedSideConvReply(args: {
     const r = await upsertShortLink({
       targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
       kind: "partner_report",
-      entityRef: `job:${job.id}:partner:${partner.id}`,
+      entityRef: jobPartnerShortLinkEntityRef(job.id, partner.id, "report"),
     });
     reportUrl = `${base}${r.shortPath}`;
   } catch (err) {
     console.error("[booked reply] short link failed:", err);
   }
 
-  const supabase = createServiceClient();
   const partnerNotes = await loadPartnerJobEmailNotes(supabase, {
     catalogServiceId: job.catalog_service_id,
     jobTitle: job.title,
@@ -210,15 +263,28 @@ export async function sendBookedSideConvReply(args: {
     reportUrl,
   });
 
+  const sideConversationId = await resolveBookedSideConversationId(
+    supabase,
+    job.id,
+    partner.id,
+    job.zendesk_side_conversation_id,
+  );
+
   try {
-    if (job.zendesk_side_conversation_id) {
+    if (sideConversationId) {
       const r = await replyToSideConversation({
         ticketId,
-        sideConversationId: job.zendesk_side_conversation_id,
+        sideConversationId,
         htmlBody: email.html,
         bodyText: email.text,
       });
       if (!r.ok) console.error("[booked reply] failed:", r.error);
+      else if (!job.zendesk_side_conversation_id) {
+        await supabase
+          .from("jobs")
+          .update({ zendesk_side_conversation_id: sideConversationId })
+          .eq("id", job.id);
+      }
     } else {
       const r = await createSideConversation({
         ticketId,
@@ -241,4 +307,6 @@ export async function sendBookedSideConvReply(args: {
   } catch (err) {
     console.error("[booked reply] threw:", err);
   }
+
+  return true;
 }

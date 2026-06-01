@@ -1,25 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
-import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
-import { escapeHtmlAttr, normalizeEmailAssetUrl } from "@/lib/email-asset-url";
-import { createPartnerBidToken } from "@/lib/quote-response-token";
-import { upsertShortLink } from "@/lib/short-links";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function publicOsBaseUrl(req: NextRequest): string {
-  const env = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-  if (env) return env;
-  return req.nextUrl.origin;
-}
+import { sendQuotePartnerInviteEmails } from "@/lib/quote-partner-invite-email";
 
 /** Email selected partners when inviting to bid (includes site photo links from the linked request). */
 export async function POST(req: NextRequest) {
@@ -42,133 +24,20 @@ export async function POST(req: NextRequest) {
     const supabase = createServiceClient();
     const { data: quote, error: qErr } = await supabase
       .from("quotes")
-      .select("id, reference, title, property_address, request_id, scope")
+      .select("id")
       .eq("id", quoteId)
       .single();
     if (qErr || !quote) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
-    let photoUrls: string[] = [];
-    let requestDescription = "";
-    const quoteScope = typeof quote.scope === "string" ? quote.scope.trim() : "";
-    if (quote.request_id) {
-      const { data: sr } = await supabase
-        .from("service_requests")
-        .select("images, description")
-        .eq("id", quote.request_id)
-        .maybeSingle();
-      photoUrls = normalizeJsonImageArray(sr?.images)
-        .map((u) => normalizeEmailAssetUrl(u))
-        .filter((u): u is string => u != null);
-      requestDescription = typeof sr?.description === "string" ? sr.description : "";
-    }
+    const { sent, invited } = await sendQuotePartnerInviteEmails(supabase, {
+      quoteId,
+      partnerIds,
+      invitedBy: auth.user.id,
+    });
 
-    const invitationScope = quoteScope || requestDescription.trim();
-
-    const { data: partners } = await supabase.from("partners").select("id, email, company_name, contact_name").in("id", partnerIds);
-
-    const resendKey = process.env.RESEND_API_KEY?.trim();
-    if (!resendKey) {
-      return NextResponse.json({ ok: false, sent: 0, reason: "RESEND_API_KEY not configured" }, { status: 200 });
-    }
-
-    const resend = new Resend(resendKey);
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy <quotes@example.com>";
-
-    const imgHtml = photoUrls
-      .map((u, i) => {
-        const href = escapeHtmlAttr(u);
-        return `<p style="margin:12px 0"><a href="${href}">Site photo ${i + 1}</a></p><img src="${href}" alt="" width="560" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #e5e5e5" />`;
-      })
-      .join("");
-
-    const iosStore = process.env.PARTNER_APP_IOS_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_IOS_URL?.trim();
-    const androidStore = process.env.PARTNER_APP_ANDROID_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_ANDROID_URL?.trim();
-    const deepLink = `masterservices://invite?quoteId=${encodeURIComponent(quoteId)}`;
-    const deepEsc = escapeHtmlAttr(deepLink);
-    const storeLinks: string[] = [];
-    if (iosStore) {
-      storeLinks.push(`<a href="${escapeHtmlAttr(iosStore)}">App Store</a>`);
-    }
-    if (androidStore) {
-      storeLinks.push(`<a href="${escapeHtmlAttr(androidStore)}">Google Play</a>`);
-    }
-    const storeBlock =
-      storeLinks.length > 0
-        ? `<p style="margin:12px 0">${storeLinks.join(" · ")}</p>`
-        : `<p style="margin:12px 0;color:#444;font-size:14px">Install <strong>Fixfy</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
-
-    const officeQuoteUrl = `${publicOsBaseUrl(req)}/quotes?quoteId=${encodeURIComponent(quoteId)}&drawerTab=bids`;
-    const officeEsc = escapeHtmlAttr(officeQuoteUrl);
-
-    const sendOne = async (p: { id: string; email?: string | null; company_name?: string | null }) => {
-      const email = p.email?.trim();
-      if (!email) return false;
-      // Per-partner web bid link — bound to (quoteId, partnerId) so bids
-      // submitted via this URL are traceable to the specific invited partner.
-      // Wrapped in a short link so the email CTA + WhatsApp shares look clean.
-      const bidToken = createPartnerBidToken(quoteId, p.id);
-      const targetPath = `/quote/bid?token=${encodeURIComponent(bidToken)}`;
-      const { shortPath } = await upsertShortLink({
-        targetPath,
-        kind:      "partner_bid",
-        entityRef: `quote:${quoteId}:partner:${p.id}`,
-        createdBy: auth.user.id,
-      }).catch((err) => {
-        console.error("[partner-invite-email] short link upsert failed, falling back:", err);
-        return { shortPath: targetPath };
-      });
-      const bidWebUrl = `${publicOsBaseUrl(req)}${shortPath}`;
-      const bidWebEsc = escapeHtmlAttr(bidWebUrl);
-      const html = `
-        <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
-        <p>You have been invited to bid on <strong>${escapeHtml(quote.reference)}</strong> — ${escapeHtml(quote.title ?? "")}</p>
-        <p><strong>Property:</strong> ${escapeHtml(quote.property_address ?? "—")}</p>
-        ${invitationScope ? `<p><strong>Scope:</strong><br/>${escapeHtml(invitationScope).replace(/\n/g, "<br/>")}</p>` : ""}
-        ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
-        <p style="margin-top:20px"><strong>Submit your bid</strong></p>
-        <p style="margin:12px 0;font-size:14px"><a href="${bidWebEsc}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600">Open bid form</a></p>
-        <p style="margin:8px 0;font-size:12px;color:#666">Or open in the Fixfy partner app: <a href="${deepEsc}">in-app invitation</a></p>
-        ${storeBlock}
-        <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Fixfy OS</a></p>
-      `;
-      const { error } = await resend.emails.send({
-        from: fromEmail,
-        to: [email],
-        subject: `Quote invitation ${quote.reference} — ${quote.title ?? "Bid request"}`,
-        html,
-      });
-      return !error;
-    };
-
-    const results = await Promise.all((partners ?? []).map((p) => sendOne(p as { id: string; email?: string | null; company_name?: string | null })));
-    const sent = results.filter(Boolean).length;
-
-    // Track every invited partner in quote_partner_invitations (idempotent
-    // on (quote_id, partner_id)) so the Bids tab can list "who got the
-    // invite" with each partner's unique link. We track ALL selected
-    // partners — even those without an email get a row (the office can
-    // still copy the link manually for them).
-    const nowIso = new Date().toISOString();
-    const rows = partnerIds.map((pid) => ({
-      quote_id:        quoteId,
-      partner_id:      pid,
-      invited_by:      auth.user.id,
-      invited_at:      nowIso,
-      last_invited_at: nowIso,
-      last_channel:    "email",
-    }));
-    if (rows.length > 0) {
-      void supabase
-        .from("quote_partner_invitations")
-        .upsert(rows, { onConflict: "quote_id,partner_id" })
-        .then(({ error }) => {
-          if (error) console.error("[partner-invite-email] invitations upsert failed:", error.message);
-        });
-    }
-
-    return NextResponse.json({ ok: true, sent, invited: partnerIds.length });
+    return NextResponse.json({ ok: true, sent, invited });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }
