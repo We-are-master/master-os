@@ -620,6 +620,14 @@ export interface Job {
   on_hold_snapshot_scheduled_start_at?: string | null;
   on_hold_snapshot_scheduled_end_at?: string | null;
   on_hold_snapshot_scheduled_finish_date?: string | null;
+  /** Partner's on-hold resolution reply (notes + photo paths) submitted from the email link. */
+  on_hold_submission?: {
+    notes?: string | null;
+    photos?: string[];
+    partner_id?: string | null;
+    submitted_at?: string | null;
+  } | null;
+  on_hold_submission_at?: string | null;
   /** External system that originated the job (e.g. "zendesk"). */
   external_source?: string | null;
   /** Stable id from the external system (e.g. Zendesk ticket id). */

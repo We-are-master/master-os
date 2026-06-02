@@ -80,7 +80,7 @@ export function verifyQuoteResponseToken(token: string): string | null {
 //   Earlier prototype tied this to quoteId — switched to jobId so jobs created
 //   without a parent quote can still produce a report link.
 
-type PartnerTokenKind = "report" | "bid" | "accept";
+type PartnerTokenKind = "report" | "bid" | "accept" | "on_hold";
 
 function makePartnerToken(kind: PartnerTokenKind, entityId: string, partnerId: string): string {
   const secret = getSecret();
@@ -136,5 +136,19 @@ export function createPartnerJobAcceptToken(jobId: string, partnerId: string): s
 }
 export function verifyPartnerJobAcceptToken(token: string): { jobId: string; partnerId: string } | null {
   const v = verifyPartnerToken(token, "accept");
+  return v ? { jobId: v.entityId, partnerId: v.partnerId } : null;
+}
+
+/**
+ * On-hold resolution token → carries (jobId, partnerId). Lets the assigned
+ * partner open the public "resolve this job" form (notes + photos) from the
+ * on-hold email without logging in. Bound to the partner so a leaked link
+ * stops working once the job is reassigned.
+ */
+export function createPartnerOnHoldToken(jobId: string, partnerId: string): string {
+  return makePartnerToken("on_hold", jobId, partnerId);
+}
+export function verifyPartnerOnHoldToken(token: string): { jobId: string; partnerId: string } | null {
+  const v = verifyPartnerToken(token, "on_hold");
   return v ? { jobId: v.entityId, partnerId: v.partnerId } : null;
 }

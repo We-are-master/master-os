@@ -38,7 +38,7 @@ export interface UpsertShortLinkInput {
 export function jobPartnerShortLinkEntityRef(
   jobId: string,
   partnerId: string,
-  purpose: "accept" | "report",
+  purpose: "accept" | "report" | "on_hold",
 ): string {
   return `job:${jobId}:partner:${partnerId}:${purpose}`;
 }
