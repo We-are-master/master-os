@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { setTicketJobReference, setTicketCustomField, ZENDESK_JOB_ID_FIELD_ID } from "@/lib/zendesk";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -59,6 +60,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const admin = createServiceClient();
+
+  // Capture the previously-linked ticket so we can clear its job-id field
+  // when the user unlinks (the request body carries no ticket id on unlink).
+  const { data: prev } = await admin
+    .from("jobs")
+    .select("reference, external_source, external_ref")
+    .eq("id", jobId)
+    .maybeSingle();
+  const prevTicket = (prev as { external_source?: string | null; external_ref?: string | null } | null);
+  const prevTicketId = prevTicket?.external_source === "zendesk" ? prevTicket?.external_ref ?? null : null;
+  const jobRef = (prev as { reference?: string | null } | null)?.reference ?? null;
+
   const update = ticketRef
     ? { external_source: "zendesk", external_ref: ticketRef }
     : { external_source: null, external_ref: null };
@@ -71,6 +84,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (error) {
     console.error("[zendesk-link] update failed:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Mirror the job reference into the ticket's job-id field on link, or clear
+  // it on the previously-linked ticket on unlink. Best-effort, non-blocking.
+  if (ticketRef) {
+    void setTicketJobReference(ticketRef, jobRef).then((r) => {
+      if (!r.ok) console.error("[zendesk-link] setTicketJobReference failed:", r.error);
+    });
+  } else if (prevTicketId) {
+    void setTicketCustomField({ ticketId: prevTicketId, fieldId: ZENDESK_JOB_ID_FIELD_ID, value: null });
   }
 
   void admin.from("audit_logs").insert({

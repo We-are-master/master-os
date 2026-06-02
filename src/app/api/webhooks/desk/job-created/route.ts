@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { resolveDeskWebhookClientEmail } from "@/lib/desk-webhook-client-email";
-import { createSideConversation } from "@/lib/zendesk";
+import { createSideConversation, setTicketJobReference } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
 } from "@/lib/emails/partner-job-confirmation";
@@ -235,6 +235,12 @@ export async function POST(req: NextRequest) {
 
   const jobId = (inserted as { id: string }).id;
   const jobRef = (inserted as { reference: string }).reference;
+
+  // ─── Mirror job reference back into the Zendesk ticket field ────────
+  // Best-effort, non-blocking — the field is informational for agents.
+  void setTicketJobReference(ticketId, jobRef).then((r) => {
+    if (!r.ok) console.error("[webhook/desk/job] setTicketJobReference failed:", r.error);
+  });
 
   // ─── Push notifications ─────────────────────────────────────────────
   let pushSent = 0;

@@ -9,6 +9,7 @@ import {
   getZendeskTicketId,
   isZendeskConfigured,
   replyToSideConversation,
+  setTicketJobReference,
 } from "@/lib/zendesk";
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -131,6 +132,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
         .from("jobs")
         .update({ external_source: "zendesk", external_ref: ticketId })
         .eq("id", jobId);
+      void setTicketJobReference(ticketId, job.reference ? String(job.reference) : null);
       console.log("[send-partner-report-link] auto-created partner-scoped ticket", ticketId, "for job", job.reference);
     } else {
       failureChain.push(`auto-create: ${tCreate.error ?? "unknown"}`);
