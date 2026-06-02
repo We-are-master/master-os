@@ -73,10 +73,14 @@ export async function POST(req: NextRequest) {
   const title           = str(body.title);
   const clientName      = str(body.client_name);
   const clientEmail     = str(body.client_email).toLowerCase();
-  const description     = str(body.description) || null;
+  // `scope` is accepted as an alias for `description` (Zendesk form field name).
+  const description     = (str(body.description) || str(body.scope)) || null;
   const serviceType     = str(body.service_type) || null;
   const ticketId        = str(body.ticket_id) || null;
-  const typeOfQuotingRaw = str(body.type_of_quoting) || "manual";
+  const propertyAddress = str(body.property_address) || null;
+  const catalogServiceId = str(body.catalog_service_id) || null;
+  // `quote_mode` is an alias for `type_of_quoting` (Zendesk form field name).
+  const typeOfQuotingRaw = str(body.type_of_quoting) || str(body.quote_mode) || "manual";
   // Accept "Manual"/"Bidding"/"manual"/"bidding"/etc. — regex-anchored,
   // case-insensitive. Normalised to lowercase for the rest of the route.
   if (!/^(manual|bidding)$/i.test(typeOfQuotingRaw)) {
@@ -97,14 +101,17 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (typeOfQuoting === "bidding" && !serviceType) {
+  if (typeOfQuoting === "bidding" && !serviceType && !catalogServiceId) {
     return NextResponse.json(
-      { error: "service_type is required when type_of_quoting is 'bidding' (used to match partners)." },
+      { error: "service_type or catalog_service_id is required when bidding (used to match partners)." },
       { status: 400 },
     );
   }
   if (!isValidUUID(accountId)) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
+  }
+  if (catalogServiceId && !isValidUUID(catalogServiceId)) {
+    return NextResponse.json({ error: "catalog_service_id must be a valid UUID." }, { status: 400 });
   }
 
   // Date/hour: only validated if provided. If only one of the two is given
@@ -212,6 +219,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not generate reference." }, { status: 500 });
   }
 
+  // When only a catalog_service_id was supplied (e.g. the Zendesk form), resolve
+  // the trade label so the quote row + bid invites carry a human-readable type.
+  let resolvedServiceType = serviceType;
+  if (!resolvedServiceType && catalogServiceId) {
+    const { data: cat } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", catalogServiceId)
+      .maybeSingle();
+    resolvedServiceType = (cat as { name?: string } | null)?.name ?? null;
+  }
+
   // Insert the quote.
   const status    = typeOfQuoting === "bidding" ? "bidding"  : "draft";
   const quoteType = typeOfQuoting === "bidding" ? "partner"  : "internal";
@@ -224,7 +243,9 @@ export async function POST(req: NextRequest) {
     client_name:          clientName || null,
     client_email:         clientEmail || null,
     scope:                description,
-    service_type:         serviceType,
+    service_type:         resolvedServiceType,
+    property_address:     propertyAddress,
+    catalog_service_id:   catalogServiceId,
     start_date_option_1:  startIso,
     total_value:          0,
     cost:                 0,
@@ -278,13 +299,15 @@ export async function POST(req: NextRequest) {
   let partnersNotified:
     | { partnerIds: number; pushSent: number; emailsSent: number; invitationsTracked: number }
     | undefined;
-  if (typeOfQuoting === "bidding" && serviceType) {
+  if (typeOfQuoting === "bidding" && (resolvedServiceType || catalogServiceId)) {
     try {
       const dispatch = await dispatchQuoteBidInvites(supabase, {
         quoteId: String(inserted.id),
         quoteReference: String(inserted.reference),
         title,
-        serviceType,
+        serviceType: resolvedServiceType ?? "",
+        catalogServiceId,
+        propertyAddress,
         scope: description,
         startIso,
       });

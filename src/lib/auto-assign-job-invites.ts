@@ -259,6 +259,8 @@ type JobAutoAssignRow = {
   property_address: string | null;
   scope: string | null;
   scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
   catalog_service_id: string | null;
   external_source: string | null;
   external_ref: string | null;
@@ -266,7 +268,7 @@ type JobAutoAssignRow = {
 };
 
 const JOB_AUTO_ASSIGN_SELECT =
-  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids";
+  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids";
 
 /**
  * Match partners (when needed), persist invite list, push + Zendesk Email 1.
@@ -306,6 +308,11 @@ export async function ensureAndDispatchAutoAssignInvites(
       catalogServiceId: job.catalog_service_id,
       postcode: extractUkPostcode(job.property_address ?? ""),
       kind: "job",
+      availabilitySlot: {
+        scheduledDate: job.scheduled_date,
+        startAt: job.scheduled_start_at,
+        endAt: job.scheduled_end_at,
+      },
     });
 
     if (partnerIds.length === 0) {

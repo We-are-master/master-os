@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Partner } from "@/types/database";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import {
+  partnerAvailableForSlot,
+  type JobSlot,
+  type PartnerAvailability,
+} from "@/lib/partner-availability";
 
 // Shared partner matching for distributing work (leads / job offers) to partners.
 // Builds on partnerMatchesTypeOfWork (trade match) and adds the partner self-service
@@ -12,6 +17,7 @@ import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 type PartnerPrefsRow = Partner & {
   excluded_postcodes?: string[] | null;
   job_preferences?: { receiveLeads?: boolean; receiveEmergency?: boolean } | null;
+  availability?: PartnerAvailability | null;
 };
 
 /** Outward part of a UK postcode (e.g. "SW11 4PG" -> "SW11"); inward is always the last 3 chars. */
@@ -28,13 +34,18 @@ export interface MatchWorkArgs {
   /** "lead" honours the partner's receiveLeads opt-in; emergency honours receiveEmergency. */
   kind?: "lead" | "job";
   emergency?: boolean;
+  /**
+   * When set (job auto-assign), drop partners whose configured working days/hours
+   * don't cover the booking slot. Partners with no availability configured pass.
+   */
+  availabilitySlot?: JobSlot;
 }
 
 /** Active partners whose trade matches the work, who opted in, and aren't excluded by postcode. */
 export async function matchPartnerIdsForWork(supabase: SupabaseClient, args: MatchWorkArgs): Promise<string[]> {
   const { data } = await supabase
     .from("partners")
-    .select("id, trade, trades, catalog_service_ids, status, excluded_postcodes, job_preferences")
+    .select("id, trade, trades, catalog_service_ids, status, excluded_postcodes, job_preferences, availability")
     .eq("status", "active");
 
   const partners = (data ?? []) as unknown as PartnerPrefsRow[];
@@ -52,6 +63,9 @@ export async function matchPartnerIdsForWork(supabase: SupabaseClient, args: Mat
           return e.length > 0 && outward.startsWith(e);
         });
         if (blocked) return false;
+      }
+      if (args.availabilitySlot && !partnerAvailableForSlot(p.availability, args.availabilitySlot)) {
+        return false;
       }
       return true;
     })

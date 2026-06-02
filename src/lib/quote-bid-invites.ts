@@ -42,7 +42,9 @@ export async function dispatchQuoteBidInvites(
   params: DispatchQuoteBidInvitesParams,
 ): Promise<DispatchQuoteBidInvitesResult> {
   const serviceType = params.serviceType.trim();
-  if (!serviceType) {
+  // A catalog_service_id alone is enough to match partners (exact id match);
+  // only bail when we have neither a trade label nor a catalog id.
+  if (!serviceType && !params.catalogServiceId) {
     return { partnerIds: [], pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
   }
 

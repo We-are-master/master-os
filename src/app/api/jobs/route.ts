@@ -580,6 +580,7 @@ export async function POST(req: NextRequest) {
       serviceType,
       postcode: extractUkPostcode(propertyAddress),
       kind: "job",
+      availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
     });
   }
 
