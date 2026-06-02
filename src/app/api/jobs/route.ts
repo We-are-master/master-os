@@ -7,6 +7,7 @@ import { extractUkPostcode } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { setTicketJobReference } from "@/lib/zendesk";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
 import { resolveJobPricing } from "@/lib/job-pricing-resolver";
@@ -678,6 +679,7 @@ export async function POST(req: NextRequest) {
     void Promise.all([
       syncJobZendeskStatus(inserted.id, supabase),
       dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
+      setTicketJobReference(ticketId, inserted.reference),
     ]).catch((err) => {
       console.error("[api/jobs] Zendesk dispatch failed:", err);
     });

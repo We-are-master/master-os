@@ -298,6 +298,84 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
 }
 
 /**
+ * Zendesk custom field id that mirrors the OS job reference (e.g. "JOB-1234")
+ * back into the linked ticket, so support agents can see / search the job
+ * number without opening the OS. Overridable via env for other environments.
+ */
+export const ZENDESK_JOB_ID_FIELD_ID = Number(
+  process.env.ZENDESK_JOB_ID_FIELD_ID?.trim() || "5824403479839",
+);
+
+export interface SetCustomFieldResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+/**
+ * Set a single custom field on a Zendesk ticket via a minimal PUT (no comment,
+ * no status change). Best-effort: returns ok=false instead of throwing so
+ * callers can fire-and-forget without breaking the OS flow.
+ *
+ * Zendesk merges `custom_fields` by id, so sending just this one field leaves
+ * every other field on the ticket untouched.
+ */
+export async function setTicketCustomField(args: {
+  ticketId: string | number;
+  fieldId:  number;
+  value:    string | number | boolean | null;
+}): Promise<SetCustomFieldResult> {
+  if (!isZendeskConfigured()) {
+    return { ok: false, error: "Zendesk not configured" };
+  }
+  if (!args.ticketId || !Number.isFinite(args.fieldId)) {
+    return { ok: false, error: "ticketId and a numeric fieldId are required" };
+  }
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
+  const body = JSON.stringify({
+    ticket: { custom_fields: [{ id: args.fieldId, value: args.value }] },
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization:  authHeader(),
+        "Content-Type": "application/json",
+        Accept:         "application/json",
+      },
+      body,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`[zendesk.setTicketCustomField] field=${args.fieldId} ticket=${args.ticketId} failed (${res.status}):`, text.slice(0, 300));
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    return { ok: true, status: res.status };
+  } catch (err) {
+    console.error("[zendesk.setTicketCustomField] network error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
+ * Convenience wrapper: write the OS job reference into the linked ticket's
+ * job-id custom field. No-op (ok=false) when Zendesk isn't configured or the
+ * inputs are missing — callers should treat it as best-effort.
+ */
+export async function setTicketJobReference(
+  ticketId: string | number | null | undefined,
+  jobReference: string | null | undefined,
+): Promise<SetCustomFieldResult> {
+  const ref = jobReference?.toString().trim();
+  if (!ticketId || !ref) {
+    return { ok: false, error: "ticketId and jobReference are required" };
+  }
+  return setTicketCustomField({ ticketId, fieldId: ZENDESK_JOB_ID_FIELD_ID, value: ref });
+}
+
+/**
  * Zendesk Side Conversations API helper.
  *
  * Side conversations let us reach out to a partner via email *from inside*

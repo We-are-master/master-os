@@ -631,6 +631,14 @@ export interface PartnerJobOnHoldData {
   jobReference:     string;
   jobTitle:         string;
   propertyAddress:  string;
+  /** Partner-scoped link to the "resolve this job" form (notes + photos). Primary CTA. */
+  resolveUrl:       string;
+  /**
+   * What the customer reported (the complaint reason). Shown to the partner
+   * so they know what to address. Omitted from the email when empty or when
+   * it's only the generic system placeholder.
+   */
+  complaintReason?: string | null;
   supportEmail?:    string;
   supportPhone?:    string;
 }
@@ -642,17 +650,37 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Action required — Job ${data.jobReference} placed on hold`;
+  const subject = `Action required — a complaint was raised on Job ${data.jobReference}`;
+
+  // Only surface the reason when it's a real description, not the generic
+  // system placeholder the webhook falls back to.
+  const rawReason = (data.complaintReason ?? "").trim();
+  const showReason = rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
 
   const safe = {
     name:           escapeHtml(data.partnerFirstName || "there"),
     ref:            escapeHtml(data.jobReference),
     title:          escapeHtml(data.jobTitle),
     address:        escapeHtml(data.propertyAddress || "—"),
+    resolveUrl:     escapeHtml(data.resolveUrl),
+    reason:         escapeHtml(rawReason),
     support:        escapeHtml(supportEmail),
     supportTel:     escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
   };
+
+  // Optional "what the customer reported" block, inserted under the job card.
+  const reasonBlockHtml = showReason
+    ? `
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFF7ED; border:1px solid #F3D9A4; border-radius:10px;">
+          <tr><td style="padding:18px 20px;">
+            <p style="margin:0 0 6px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#9A6B00;">What the customer reported</p>
+            <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; white-space:pre-wrap;">${safe.reason}</p>
+          </td></tr>
+        </table>
+      </td></tr>`
+    : "";
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
@@ -686,8 +714,8 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
       </td></tr>
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, this job is on hold — we need your help to resolve</h1>
-        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">Something has come up with the job below and we need a hand to get it sorted. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
+        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, a complaint was raised on this job — we need your help to resolve</h1>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
 
       <tr><td style="padding:0 40px;" class="px-mobile">
@@ -703,7 +731,7 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
           </td></tr>
         </table>
       </td></tr>
-
+${reasonBlockHtml}
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBE3E7; border-left:3px solid #C8102E; border-radius:8px;">
           <tr><td style="padding:14px 16px;">
@@ -716,26 +744,36 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
         <p style="margin:0 0 12px 0; font-size:15px; font-weight:700; color:#0A0A1F;">What we need from you</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBEFD6; border-left:3px solid #C47A00; border-radius:6px;">
           <tr><td style="padding:16px 20px;">
-            <p style="margin:0 0 10px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Please reply to this email with the following:</p>
+            <p style="margin:0 0 10px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Tap the button below and send us:</p>
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>A short written summary</strong> of what was done and how you can resolve the issue</td></tr>
               <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Photos</strong> of the work area / completed work</td></tr>
-              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Receipts</strong> for any materials purchased</td></tr>
-              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>A short written summary</strong> of what was done and any issues you encountered</td></tr>
-              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Any relevant certificates</strong> (e.g. CP12, electrical) if applicable</td></tr>
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Anything relevant — <strong>receipts</strong> for materials, <strong>certificates</strong> (CP12, electrical), etc.</td></tr>
             </table>
           </td></tr>
         </table>
       </td></tr>
 
+      <!-- Primary CTA: open the resolution form -->
+      <tr><td align="center" style="padding:28px 40px 8px 40px;" class="px-mobile">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+          <tr><td align="center" style="border-radius:10px; background-color:#ED4B00; background-image:linear-gradient(135deg,#ED4B00 0%,#FF7A29 100%);">
+            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve this job →</a>
+          </td></tr>
+        </table>
+        <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Takes 2 minutes — add a note and snap a few photos, no app or login needed.</p>
+      </td></tr>
+
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#E1ECFF; border-radius:8px;">
           <tr><td style="padding:14px 16px;">
-            <p style="margin:0; font-size:13px; line-height:20px; color:#0A3A8C;"><strong style="color:#0B5FFF;">⏱ Please reply within 12 hours</strong> so we can resolve this for the customer in time.</p>
+            <p style="margin:0; font-size:13px; line-height:20px; color:#0A3A8C;"><strong style="color:#0B5FFF;">⏱ Please respond within 12 hours</strong> so we can resolve this for the customer in time.</p>
           </td></tr>
         </table>
       </td></tr>
 
       <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
+        <p style="margin:0 0 8px 0; font-size:12px; line-height:18px; color:#9A9AAE; word-break:break-all;">Button not working? Paste this link into your browser:<br/><a href="${safe.resolveUrl}" style="color:#ED4B00;">${safe.resolveUrl}</a></p>
         <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
       </td></tr>
 
@@ -754,21 +792,26 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 
 Hi ${data.partnerFirstName || "there"},
 
-This job has been placed on hold and we need your help to resolve it.
-We've committed to the customer that we'll resolve within 24 hours, so
-please reply within 12 hours.
+A complaint has been raised about this job, so we've placed it on hold
+while we look into it and we need your help to resolve it. We've committed
+to the customer that we'll resolve within 24 hours, so please reply within
+12 hours.
 
 Job #${data.jobReference} — ${data.jobTitle}
 Location: ${data.propertyAddress || "—"}
 Status: ON HOLD
-
+${showReason ? `\nWhat the customer reported:\n${rawReason}\n` : ""}
 Payment on hold until resolved.
 
-Please reply to this email with:
+Resolve this job (add a note + photos, no app or login needed):
+${data.resolveUrl}
+
+Please send us:
+  • A short written summary of what was done and how you can resolve the issue
   • Photos of the work area / completed work
-  • Receipts for any materials purchased
-  • A short written summary of what was done and any issues you encountered
-  • Any relevant certificates (e.g. CP12, electrical) if applicable
+  • Anything relevant — receipts for materials, certificates (CP12, electrical), etc.
+
+Please respond within 12 hours.
 
 Need to talk this through? Call ${supportPhone} or email ${supportEmail}.
 
