@@ -79,6 +79,10 @@ export type FrontendSetup = {
    * server `ZENDESK_SUBDOMAIN` env var when not set here.
    */
   zendesk_subdomain?: string;
+  /** Zendesk ticket field id — on-hold reason dropdown (option value = preset id). */
+  zendesk_on_hold_reason_field_id?: number;
+  zendesk_complaint_description_field_id?: number;
+  zendesk_complaint_solution_field_id?: number;
 
   /** Customer CCZ (congestion charge) surcharge per job when applied (GBP). */
   access_ccz_fee_gbp?: number;
@@ -394,6 +398,12 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (typeof o.zendesk_subdomain === "string") {
     base.zendesk_subdomain = normalizeZendeskSubdomain(o.zendesk_subdomain) || undefined;
   }
+  const zdReason = normalizeZendeskFieldId(o.zendesk_on_hold_reason_field_id);
+  if (zdReason) base.zendesk_on_hold_reason_field_id = zdReason;
+  const zdDesc = normalizeZendeskFieldId(o.zendesk_complaint_description_field_id);
+  if (zdDesc) base.zendesk_complaint_description_field_id = zdDesc;
+  const zdSol = normalizeZendeskFieldId(o.zendesk_complaint_solution_field_id);
+  if (zdSol) base.zendesk_complaint_solution_field_id = zdSol;
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
@@ -418,6 +428,13 @@ export function normalizeZendeskSubdomain(raw: unknown): string {
   // Final validation: 1-63 chars, letters/digits/hyphens, no leading/trailing hyphen
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(v)) return "";
   return v;
+}
+
+/** Positive Zendesk ticket custom field id from Settings or env. */
+export function normalizeZendeskFieldId(raw: unknown): number | undefined {
+  const n = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.trunc(n);
 }
 
 export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>): FrontendSetup {
@@ -489,6 +506,15 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.zendesk_subdomain !== undefined) {
     base.zendesk_subdomain = normalizeZendeskSubdomain(patch.zendesk_subdomain) || undefined;
+  }
+  if (patch.zendesk_on_hold_reason_field_id !== undefined) {
+    base.zendesk_on_hold_reason_field_id = normalizeZendeskFieldId(patch.zendesk_on_hold_reason_field_id);
+  }
+  if (patch.zendesk_complaint_description_field_id !== undefined) {
+    base.zendesk_complaint_description_field_id = normalizeZendeskFieldId(patch.zendesk_complaint_description_field_id);
+  }
+  if (patch.zendesk_complaint_solution_field_id !== undefined) {
+    base.zendesk_complaint_solution_field_id = normalizeZendeskFieldId(patch.zendesk_complaint_solution_field_id);
   }
   if (patch.access_ccz_fee_gbp !== undefined) {
     base.access_ccz_fee_gbp = clampAccessFeeGbp(patch.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);

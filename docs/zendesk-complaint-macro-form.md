@@ -20,13 +20,24 @@ Custom reasons added in Setup get a stable `id` (shown in Settings) — use that
 
 ## Zendesk custom fields (create in Admin → Objects and rules → Tickets → Fields)
 
-| Purpose | Suggested type | Env var on OS |
-|--------|----------------|---------------|
-| On-hold reason id | Dropdown (options = table above) | `ZENDESK_ON_HOLD_REASON_FIELD_ID` |
-| Complaint description | Multi-line text | `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID` |
-| Partner solution | Multi-line text | `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` |
+| Purpose | Suggested type | OS config |
+|--------|----------------|-----------|
+| On-hold reason id | Dropdown | **Settings → Setup → Integrations** → *On-hold reason field id* (or env `ZENDESK_ON_HOLD_REASON_FIELD_ID`) |
+| Complaint description | Multi-line text | *Complaint description field id* (or env `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID`) |
+| Partner solution | Multi-line text | *Partner solution field id* (or env `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID`) |
 
-Set the three env vars in Vercel/OS to the numeric field ids from Zendesk. If unset (`0`), that field is not synced.
+Copy each field’s numeric id from the Zendesk URL when editing the field.
+
+### Auto-sync dropdown options (OS → Zendesk)
+
+You do **not** need to hand-maintain dropdown options in Zendesk:
+
+1. Set the **on-hold reason field id** in Settings (or env).
+2. Edit **Jobs · On Hold Reasons** (add / remove / rename labels; `id` stays stable).
+3. **Save Setup** — the OS pushes the full option list to Zendesk (`value` = `id`, `name` = label).
+4. Or click **Sync reasons → Zendesk** on that card.
+
+Removed OS reasons are pruned from Zendesk when their `value` matches an OS-style id. Legacy Zendesk-only options are left untouched.
 
 ## Ticket form (apply with Complaint macro)
 
