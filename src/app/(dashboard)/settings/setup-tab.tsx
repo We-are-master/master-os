@@ -33,8 +33,11 @@ import {
   mergeFrontendSetup,
   normalizeOfficeJobCancellationPresets,
   parseFrontendSetup,
+  normalizeJobOnHoldPresets,
+  type JobOnHoldPresetRow,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
+import { slugifyJobOnHoldPresetId } from "@/lib/job-on-hold-reasons";
 import {
   buildDefaultPartnerDocumentRules,
   getPartnerDocumentCatalogForSetup,
@@ -70,7 +73,9 @@ export function SetupTab() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [rawSetup, setRawSetup] = useState<unknown>(null);
   const [biddingSlaHoursStr, setBiddingSlaHoursStr] = useState("8");
-  const [onHoldPresets, setOnHoldPresets] = useState<string[]>(() => [...DEFAULT_JOB_ON_HOLD_PRESETS]);
+  const [onHoldPresets, setOnHoldPresets] = useState<JobOnHoldPresetRow[]>(() =>
+    DEFAULT_JOB_ON_HOLD_PRESETS.map((r) => ({ ...r })),
+  );
 
   const [officeCancelPresets, setOfficeCancelPresets] = useState<OfficeJobCancellationPresetRow[]>(() =>
     normalizeOfficeJobCancellationPresets(null),
@@ -106,7 +111,7 @@ export function SetupTab() {
       const parsed = parseFrontendSetup(data?.frontend_setup);
       setRawSetup(data?.frontend_setup ?? null);
       setBiddingSlaHoursStr(String(parsed.bidding_sla_hours ?? 8));
-      setOnHoldPresets([...(parsed.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
+      setOnHoldPresets([...normalizeJobOnHoldPresets(parsed.job_on_hold_presets ?? null)]);
       setOfficeCancelPresets([...(parsed.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
       setWorkingDays(new Set(parsed.working_days ?? DEFAULT_WORKING_DAYS));
       setWorkStartStr(parsed.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
@@ -211,7 +216,7 @@ export function SetupTab() {
         if (error) throw error;
       }
       setRawSetup(next);
-      setOnHoldPresets([...(next.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
+      setOnHoldPresets([...normalizeJobOnHoldPresets(next.job_on_hold_presets ?? null)]);
       setOfficeCancelPresets([...(next.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
       setWorkingDays(new Set(next.working_days ?? DEFAULT_WORKING_DAYS));
       setWorkStartStr(next.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
@@ -539,24 +544,29 @@ export function SetupTab() {
             <div className="flex items-center gap-2">
               <PauseCircle className="h-4 w-4 text-text-tertiary" />
               <CardTitle>Jobs · On Hold Reasons</CardTitle>
-              <FixfyHintIcon text={`Options in the 'Reason preset' list when putting a job on hold. Add or remove up to ${MAX_JOB_ON_HOLD_PRESETS}. Use arrows to reorder.`} />
+              <FixfyHintIcon text={`On-hold reason ids (e.g. complaint) must match the Zendesk dropdown. Rename labels for staff; reorder up to ${MAX_JOB_ON_HOLD_PRESETS} options.`} />
             </div>
           </CardHeader>
           <div className="space-y-4 px-6 pb-6">
           <div className="space-y-2 max-w-xl">
             {onHoldPresets.map((row, idx) => (
-              <div key={`on-hold-${idx}`} className="flex items-center gap-2">
-                <Input
-                  value={row}
-                  maxLength={MAX_JOB_ON_HOLD_PRESET_LEN}
-                  placeholder="Reason label"
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setOnHoldPresets((prev) => prev.map((p, i) => (i === idx ? v : p)));
-                  }}
-                  className="flex-1"
-                />
-                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card">
+              <div key={row.id} className="flex items-start gap-2">
+                <div className="flex-1 min-w-0 space-y-1">
+                  <label className="block text-[10px] font-medium text-text-tertiary truncate" title={row.id}>
+                    id: <code className="text-[11px]">{row.id}</code>
+                  </label>
+                  <Input
+                    value={row.label}
+                    maxLength={MAX_JOB_ON_HOLD_PRESET_LEN}
+                    placeholder="Label shown to staff"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setOnHoldPresets((prev) => prev.map((p, i) => (i === idx ? { ...p, label: v } : p)));
+                    }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card mt-5">
                   <Button
                     type="button"
                     variant="ghost"
@@ -580,17 +590,6 @@ export function SetupTab() {
                     <ChevronDown className="h-4 w-4" />
                   </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-text-tertiary hover:text-red-600"
-                  disabled={!canEditConfig}
-                  onClick={() => setOnHoldPresets((prev) => prev.filter((_, i) => i !== idx))}
-                  aria-label="Remove preset"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
               </div>
             ))}
           </div>
@@ -601,9 +600,16 @@ export function SetupTab() {
               size="sm"
               disabled={!canEditConfig || onHoldPresets.length >= MAX_JOB_ON_HOLD_PRESETS}
               onClick={() =>
-                setOnHoldPresets((prev) =>
-                  prev.length >= MAX_JOB_ON_HOLD_PRESETS ? prev : [...prev, ""],
-                )
+                setOnHoldPresets((prev) => {
+                  if (prev.length >= MAX_JOB_ON_HOLD_PRESETS) return prev;
+                  const label = "New reason";
+                  let id = slugifyJobOnHoldPresetId(label);
+                  let n = 1;
+                  while (prev.some((p) => p.id === id)) {
+                    id = `${slugifyJobOnHoldPresetId(label)}_${n++}`;
+                  }
+                  return [...prev, { id, label }];
+                })
               }
             >
               <Plus className="h-4 w-4 mr-1.5 inline" />

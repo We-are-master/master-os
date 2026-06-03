@@ -75,7 +75,7 @@ export function JobOnHoldSubmissionCard({ jobId }: { jobId: string }) {
 
       {submission.notes && (
         <div>
-          <p className="text-xs font-medium text-text-secondary mb-1">What the partner said</p>
+          <p className="text-xs font-medium text-text-secondary mb-1">Solution</p>
           <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">{submission.notes}</p>
         </div>
       )}

@@ -20,6 +20,7 @@ import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
+import { partnerOnHoldComplaintReasonText } from "@/lib/job-on-hold-reasons";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -71,7 +72,7 @@ export async function notifyPartnerJobZendesk(
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, scheduled_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason")
+    .select("id, reference, title, status, client_name, property_address, scheduled_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -95,6 +96,8 @@ export async function notifyPartnerJobZendesk(
     partner_cost: number | null;
     cancellation_reason: string | null;
     on_hold_reason: string | null;
+    on_hold_reason_preset_id: string | null;
+    on_hold_complaint_description: string | null;
   };
   const job = jobRow as JobRow;
 
@@ -153,7 +156,7 @@ export async function notifyPartnerJobZendesk(
   // Resolve final reason / status label
   const effectiveReason = reason
     ?? (kind === "cancelled" ? job.cancellation_reason : null)
-    ?? (kind === "on_hold" ? job.on_hold_reason : null);
+    ?? (kind === "on_hold" ? partnerOnHoldComplaintReasonText(job) ?? job.on_hold_reason : null);
   const effectiveStatusLabel = newStatusLabel ?? humanStatusLabel(job.status);
 
   const needsPartnerJobNotes = kind === "assigned" || kind === "confirmation_request" || kind === "booked";

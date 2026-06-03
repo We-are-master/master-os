@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isZendeskConfigured, updateTicket, uploadAttachment } from "@/lib/zendesk";
+import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -179,6 +180,10 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.error("[on-hold-submit] zendesk internal note failed:", err);
     }
+
+    void syncJobZendeskOnHoldFields(job.id, supabase).catch((err) => {
+      console.error("[on-hold-submit] zendesk solution field sync failed:", err);
+    });
   }
 
   // ─── Audit ─────────────────────────────────────────────────────────
