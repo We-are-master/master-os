@@ -275,6 +275,9 @@ export async function sendBookedSideConvReply(args: {
       const r = await replyToSideConversation({
         ticketId,
         sideConversationId,
+        toEmail: partner.email,
+        toName: partner.contact_name || partner.company_name || undefined,
+        toUserId: partner.zendesk_user_id ?? undefined,
         htmlBody: email.html,
         bodyText: email.text,
       });

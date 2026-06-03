@@ -150,6 +150,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       const r = await replyToSideConversation({
         ticketId,
         sideConversationId: sideConvId,
+        toEmail: partnerEmail,
+        toName: partnerName,
         htmlBody: html,
         bodyText: text,
       });

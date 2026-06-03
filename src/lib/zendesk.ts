@@ -488,6 +488,11 @@ export async function replyToSideConversation(params: {
   sideConversationId: string;
   htmlBody: string;
   bodyText?: string;
+  /** Recipient email. Zendesk requires `to` on email side-conversation replies
+   *  ("Invalid parameter: to is required"), so pass the partner's email. */
+  toEmail?: string;
+  toName?: string;
+  toUserId?: string | number | null;
 }): Promise<SideConversationResult> {
   if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured" };
@@ -497,12 +502,20 @@ export async function replyToSideConversation(params: {
   }
 
   const url = `${baseUrl()}/tickets/${params.ticketId}/side_conversations/${params.sideConversationId}/reply`;
-  const body = {
-    message: {
-      body: params.bodyText ?? stripHtml(params.htmlBody),
-      html_body: params.htmlBody,
-    },
+  const message: Record<string, unknown> = {
+    body: params.bodyText ?? stripHtml(params.htmlBody),
+    html_body: params.htmlBody,
   };
+  if (params.toEmail) {
+    const recipient: Record<string, unknown> = { email: params.toEmail };
+    if (params.toName) recipient.name = params.toName;
+    if (params.toUserId != null) {
+      const n = Number(params.toUserId);
+      if (Number.isFinite(n)) recipient.user_id = n;
+    }
+    message.to = [recipient];
+  }
+  const body = { message };
 
   try {
     const res = await fetch(url, {

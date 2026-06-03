@@ -309,6 +309,9 @@ export async function notifyPartnerJobZendesk(
       const r = await replyToSideConversation({
         ticketId: zendeskTicketId,
         sideConversationId: job.zendesk_side_conversation_id,
+        toEmail:  partner.email,
+        toName:   partner.contact_name || partner.company_name || undefined,
+        toUserId: partner.zendesk_user_id ?? undefined,
         htmlBody: email.html,
         bodyText: email.text,
       });
