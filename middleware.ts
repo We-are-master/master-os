@@ -39,6 +39,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/quote/") ||
     pathname.startsWith("/job/report") ||   // partner work-report submission (rewrites to /quote/respond)
     pathname.startsWith("/r/") ||           // short-link resolver
+    pathname.startsWith("/partners") ||     // partner recruitment LP (static)
     pathname.startsWith("/portal/login") ||
     pathname.startsWith("/portal/auth/");
 
@@ -119,7 +120,7 @@ export async function middleware(request: NextRequest) {
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://*.stripe.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://*.stripe.com https://unpkg.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https: http:",
   "font-src 'self' data: https://fonts.gstatic.com",
