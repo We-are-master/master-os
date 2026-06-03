@@ -17,7 +17,8 @@ export const runtime  = "nodejs";
  * Body (JSON):
  *   {
  *     account_id:       uuid,                  // accounts.id — required
- *     title:            string,                // required
+ *     title?:           string,                // optional when catalog_service_id (or service_type)
+ *                                              //   is sent — the resolved service name becomes the title
  *     date?:            string,                // optional. YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
  *     hour?:            "HH:MM",               // optional, 24h. Combined with `date` into start_date_option_1.
  *     client_name?:     string,                // optional. When BOTH name+email are present we look up
@@ -92,12 +93,20 @@ export async function POST(req: NextRequest) {
   const typeOfQuoting   = typeOfQuotingRaw.toLowerCase() as "manual" | "bidding";
 
   // ─── Validation ──────────────────────────────────────────────────────
-  // Only `account_id` and `title` are strictly required. Date/hour and the
-  // client identity are optional — quotes can be drafted without a confirmed
-  // schedule or before a client record exists in the OS.
-  if (!accountId || !title) {
+  // Only `account_id` is strictly required. `title` is optional when a
+  // catalog_service_id (or service_type) is sent — the resolved service name
+  // becomes the quote title. Date/hour and the client identity are also
+  // optional — quotes can be drafted without a confirmed schedule or before a
+  // client record exists in the OS.
+  if (!accountId) {
     return NextResponse.json(
-      { error: "account_id and title are required." },
+      { error: "account_id is required." },
+      { status: 400 },
+    );
+  }
+  if (!title && !catalogServiceId && !serviceType) {
+    return NextResponse.json(
+      { error: "title is required (or send catalog_service_id / service_type to derive it)." },
       { status: 400 },
     );
   }
@@ -231,13 +240,24 @@ export async function POST(req: NextRequest) {
     resolvedServiceType = (cat as { name?: string } | null)?.name ?? null;
   }
 
+  // Title falls back to the resolved service name when not explicitly provided
+  // (caller sent catalog_service_id / service_type instead of a title).
+  // quotes.title is NOT NULL, so a non-empty value must exist by this point.
+  const effectiveTitle = title || resolvedServiceType;
+  if (!effectiveTitle) {
+    return NextResponse.json(
+      { error: "Could not determine a title: provide `title`, or a `catalog_service_id` that resolves to a service name." },
+      { status: 400 },
+    );
+  }
+
   // Insert the quote.
   const status    = typeOfQuoting === "bidding" ? "bidding"  : "draft";
   const quoteType = typeOfQuoting === "bidding" ? "partner"  : "internal";
 
   const baseQuoteRow = {
     reference:            ref,
-    title,
+    title:                effectiveTitle,
     status,
     client_id:            clientId,
     client_name:          clientName || null,
@@ -304,7 +324,7 @@ export async function POST(req: NextRequest) {
       const dispatch = await dispatchQuoteBidInvites(supabase, {
         quoteId: String(inserted.id),
         quoteReference: String(inserted.reference),
-        title,
+        title: effectiveTitle,
         serviceType: resolvedServiceType ?? "",
         catalogServiceId,
         propertyAddress,
