@@ -75,10 +75,13 @@ export async function approveBid(
   _partnerName: string | undefined,
   _bidAmount: number
 ): Promise<void> {
-  const supabase = getSupabase();
-  const { error } = await supabase.rpc("approve_quote_bid", {
-    p_bid_id: bidId,
-    p_quote_id: quoteId,
+  const res = await fetch("/api/quotes/approve-bid", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bidId, quoteId }),
   });
-  if (error) throw error;
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    throw new Error(json.error ?? `Failed to approve bid (${res.status})`);
+  }
 }
