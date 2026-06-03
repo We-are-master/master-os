@@ -50,6 +50,9 @@ export function FixfyLoginScreen() {
         <Link className="lg-brand" href="/" aria-label="Fixfy home">
           <img src="/logos/fixfy-wordmark.png" alt="Fixfy" className="lg-brand__logo" />
         </Link>
+        <Link className="lg-partner-link" href="/partners">
+          Become a partner
+        </Link>
         <span className="lg-status">
           <span className="lg-status__dot" />
           All systems operational

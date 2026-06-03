@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -2938,7 +2938,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [workTypeOpen, setWorkTypeOpen] = useState(false);
   const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
-  const sitePhotosInputId = useId();
+  const sitePhotosInputRef = useRef<HTMLInputElement>(null);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -3429,8 +3429,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       size="lg"
       className="max-w-[min(100%,36rem)]"
     >
-      <form onSubmit={handleSubmit} className="@container flex min-h-0 flex-col">
-        <div className="max-h-[85vh] overflow-y-auto overflow-x-hidden px-3 py-3 @sm:px-5 space-y-2.5 min-w-0">
+      <form onSubmit={handleSubmit} className="@container">
+        <div className="space-y-2.5 px-3 py-3 @sm:px-5 min-w-0">
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2">
             <p className="text-[11px] font-semibold text-text-tertiary">Rate Type</p>
             <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
@@ -3829,14 +3829,16 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   className="h-10"
                 />
               </div>
-              <div className="rounded-lg border border-border-light bg-card p-2.5 space-y-2">
+              <div className="relative rounded-lg border border-border-light bg-card p-2.5 space-y-2">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Site reference photos</p>
                 <input
-                  id={sitePhotosInputId}
+                  ref={sitePhotosInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   multiple
-                  className="sr-only"
+                  tabIndex={-1}
+                  className="hidden"
+                  aria-hidden
                   onChange={(e) => {
                     const list = e.target.files;
                     if (!list?.length) return;
@@ -3852,15 +3854,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 />
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-text-tertiary tabular-nums">{sitePhotoFiles.length}/{JOB_SITE_PHOTOS_MAX}</span>
-                  <label
-                    htmlFor={sitePhotosInputId}
-                    className={sitePhotoFiles.length >= JOB_SITE_PHOTOS_MAX ? "pointer-events-none opacity-50" : undefined}
+                  <button
+                    type="button"
+                    disabled={sitePhotoFiles.length >= JOB_SITE_PHOTOS_MAX}
+                    onClick={() => sitePhotosInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
                   >
-                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary cursor-pointer hover:bg-surface-hover">
-                      <ImagePlus className="h-4 w-4" />
-                      Add photos
-                    </span>
-                  </label>
+                    <ImagePlus className="h-4 w-4" />
+                    Add photos
+                  </button>
                   {uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" aria-hidden /> : null}
                 </div>
                 {sitePhotoFiles.length > 0 ? (
@@ -4129,7 +4131,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
         </div>
 
-        <div className="sticky bottom-0 z-10 flex flex-col gap-2 border-t border-border-light bg-card/95 px-3 py-2.5 backdrop-blur @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
+        <div className="shrink-0 flex flex-col gap-2 border-t border-border-light bg-card px-3 py-2.5 @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
           <p className="text-xs text-text-secondary shrink-0">
             Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
           </p>

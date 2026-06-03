@@ -40,6 +40,7 @@ const nextConfig: NextConfig = {
    */
   async rewrites() {
     return [
+      { source: "/partners", destination: "/partners/index.html" },
       { source: "/job/report",  destination: "/quote/respond" },
       { source: "/quote/bid",   destination: "/quote/respond" },
     ];
