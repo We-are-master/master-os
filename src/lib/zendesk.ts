@@ -306,6 +306,21 @@ export const ZENDESK_JOB_ID_FIELD_ID = Number(
   process.env.ZENDESK_JOB_ID_FIELD_ID?.trim() || "5824403479839",
 );
 
+/** Dropdown: on-hold reason id (same values as OS / Settings presets). 0 = disabled. */
+export const ZENDESK_ON_HOLD_REASON_FIELD_ID = Number(
+  process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "0",
+);
+
+/** Multiline: customer complaint description (partner email + Zendesk). 0 = disabled. */
+export const ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID = Number(
+  process.env.ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID?.trim() || "0",
+);
+
+/** Multiline: partner solution after on-hold form submit. 0 = disabled. */
+export const ZENDESK_COMPLAINT_SOLUTION_FIELD_ID = Number(
+  process.env.ZENDESK_COMPLAINT_SOLUTION_FIELD_ID?.trim() || "0",
+);
+
 export interface SetCustomFieldResult {
   ok: boolean;
   status?: number;

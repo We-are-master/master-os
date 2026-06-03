@@ -1,6 +1,14 @@
 import { ACCESS_CCZ_FEE_GBP, ACCESS_PARKING_FEE_GBP } from "@/lib/ccz";
 import { OFFICE_JOB_CANCELLATION_REASONS } from "@/lib/job-office-cancellation";
 import {
+  JOB_ON_HOLD_REASONS,
+  type JobOnHoldPresetRow,
+  resolveJobOnHoldReasonIdFromLabel,
+  slugifyJobOnHoldPresetId,
+} from "@/lib/job-on-hold-reasons";
+
+export type { JobOnHoldPresetRow };
+import {
   mergePartnerDocumentRules,
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
@@ -12,8 +20,8 @@ import {
 export type FrontendSetup = {
   /** Wall-clock hours from `bidding_started_at` until the SLA deadline in the UI. */
   bidding_sla_hours?: number;
-  /** Presets for the “Put job on hold” modal (reason dropdown). */
-  job_on_hold_presets?: string[];
+  /** Presets for the “Put job on hold” modal — stable `id` matches Zendesk dropdown values. */
+  job_on_hold_presets?: JobOnHoldPresetRow[];
   /**
    * Office cancel preset list: same fixed ids as code defaults; order and label text are configurable in Settings → Setup.
    */
@@ -100,15 +108,10 @@ export type TimeFormatId = "24h" | "12h";
 export type OfficeJobCancellationPresetRow = { id: string; label: string };
 
 /** Default presets shown in "Put job on hold" until Settings → Setup overrides. */
-export const DEFAULT_JOB_ON_HOLD_PRESETS: string[] = [
-  "Waiting for materials",
-  "Client rescheduled",
-  "Access issue",
-  "Partner unavailable",
-  "Awaiting confirmation",
-  "Complaint",
-  "Other",
-];
+export const DEFAULT_JOB_ON_HOLD_PRESETS: JobOnHoldPresetRow[] = JOB_ON_HOLD_REASONS.map((r) => ({
+  id: r.id,
+  label: r.label,
+}));
 
 export const MAX_JOB_ON_HOLD_PRESETS = 40;
 export const MAX_JOB_ON_HOLD_PRESET_LEN = 160;
@@ -171,7 +174,7 @@ export function resolveAccessFees(setup?: FrontendSetup | null): AccessFees {
 
 export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   bidding_sla_hours: 8,
-  job_on_hold_presets: [...DEFAULT_JOB_ON_HOLD_PRESETS],
+  job_on_hold_presets: DEFAULT_JOB_ON_HOLD_PRESETS.map((r) => ({ ...r })),
   working_days: [...DEFAULT_WORKING_DAYS],
   working_hours: { ...DEFAULT_WORKING_HOURS },
   sla_arrival_grace_hours: DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
@@ -235,28 +238,50 @@ export function clampBiddingSlaHours(raw: unknown): number {
   return Math.min(MAX_BIDDING_SLA_HOURS, Math.max(MIN_BIDDING_SLA_HOURS, n));
 }
 
-export function normalizeJobOnHoldPresets(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [...(DEFAULT_FRONTEND_SETUP.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)];
-  const trimmed: string[] = [];
+export function normalizeJobOnHoldPresets(raw: unknown): JobOnHoldPresetRow[] {
+  const bySavedOrder: JobOnHoldPresetRow[] = [];
   const seen = new Set<string>();
-  for (const x of raw) {
-    if (typeof x !== "string") continue;
-    const s = x.trim().slice(0, MAX_JOB_ON_HOLD_PRESET_LEN);
-    if (!s) continue;
-    const key = s.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    trimmed.push(s);
-    if (trimmed.length >= MAX_JOB_ON_HOLD_PRESETS) break;
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") {
+        const label = item.trim().slice(0, MAX_JOB_ON_HOLD_PRESET_LEN);
+        if (!label) continue;
+        const id = resolveJobOnHoldReasonIdFromLabel(label) ?? slugifyJobOnHoldPresetId(label);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        bySavedOrder.push({ id, label });
+        continue;
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const idRaw = typeof (item as { id?: unknown }).id === "string" ? (item as { id: string }).id.trim() : "";
+      const labelRaw =
+        typeof (item as { label?: unknown }).label === "string" ? (item as { label: string }).label.trim() : "";
+      const id = idRaw || (labelRaw ? resolveJobOnHoldReasonIdFromLabel(labelRaw) ?? slugifyJobOnHoldPresetId(labelRaw) : "");
+      const label = (labelRaw || JOB_ON_HOLD_REASONS.find((r) => r.id === id)?.label || id).slice(
+        0,
+        MAX_JOB_ON_HOLD_PRESET_LEN,
+      );
+      if (!id || !label || seen.has(id)) continue;
+      seen.add(id);
+      bySavedOrder.push({ id, label });
+      if (bySavedOrder.length >= MAX_JOB_ON_HOLD_PRESETS) break;
+    }
   }
-  if (trimmed.length === 0) return [...(DEFAULT_FRONTEND_SETUP.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)];
-  return trimmed;
+
+  const merged: JobOnHoldPresetRow[] = [...bySavedOrder];
+  for (const canon of JOB_ON_HOLD_REASONS) {
+    if (!seen.has(canon.id)) {
+      merged.push({ id: canon.id, label: canon.label });
+    }
+  }
+  return merged.length > 0 ? merged : DEFAULT_JOB_ON_HOLD_PRESETS.map((r) => ({ ...r }));
 }
 
-/** Dropdown options for “Put job on hold” — order matches Settings → Setup. */
-export function jobOnHoldPresetSelectOptions(presets: string[]): { value: string; label: string }[] {
+/** Dropdown options for “Put job on hold” — value = stable id for Zendesk. */
+export function jobOnHoldPresetSelectOptions(presets: JobOnHoldPresetRow[]): { value: string; label: string }[] {
   const normalized = normalizeJobOnHoldPresets(presets);
-  return [{ value: "", label: "Select a reason..." }, ...normalized.map((r) => ({ value: r, label: r }))];
+  return [{ value: "", label: "Select a reason..." }, ...normalized.map((r) => ({ value: r.id, label: r.label }))];
 }
 
 const ALLOWED_OFFICE_CANCEL_IDS = new Set<string>(OFFICE_JOB_CANCELLATION_REASONS.map((r) => r.id));
@@ -600,7 +625,7 @@ export function formatCurrencyForSetup(amount: number, setup?: FrontendSetup | n
   }).format(amount);
 }
 
-export function resolveJobOnHoldPresets(setup?: FrontendSetup | null): string[] {
+export function resolveJobOnHoldPresets(setup?: FrontendSetup | null): JobOnHoldPresetRow[] {
   return normalizeJobOnHoldPresets(setup?.job_on_hold_presets ?? null);
 }
 

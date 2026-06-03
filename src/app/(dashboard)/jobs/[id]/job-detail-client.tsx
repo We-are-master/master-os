@@ -102,6 +102,10 @@ import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { useCancelJob } from "@/hooks/use-cancel-job";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { jobOnHoldPresetSelectOptions } from "@/lib/frontend-setup";
+import {
+  buildJobOnHoldReasonText,
+  jobOnHoldComplaintDescriptionRequired,
+} from "@/lib/job-on-hold-reasons";
 import { JOB_DETAIL_MULTI_VISITS_UI_ENABLED } from "@/lib/constants";
 import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -989,6 +993,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
   const [putOnHoldOpen, setPutOnHoldOpen] = useState(false);
   const [putOnHoldReason, setPutOnHoldReason] = useState("");
+  const [putOnHoldComplaintDescription, setPutOnHoldComplaintDescription] = useState("");
   const [putOnHoldPreset, setPutOnHoldPreset] = useState<string | null>(null);
   const [putOnHoldSaving, setPutOnHoldSaving] = useState(false);
   const putOnHoldReasonRef = useRef<HTMLTextAreaElement>(null);
@@ -3189,7 +3194,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               : newStatus === "completed"
                 ? "completed"
                 : "status_changed";
-        const reason = newStatus === "on_hold" ? (updated.on_hold_reason ?? null) : null;
+        const reason =
+          newStatus === "on_hold"
+            ? (updated.on_hold_complaint_description?.trim() || updated.on_hold_reason || null)
+            : null;
         void notifyPartnerJobChange({
           jobId: updated.id,
           jobReference: updated.reference,
@@ -3208,9 +3216,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const confirmPutOnHold = useCallback(async () => {
     if (!job) return;
-    const reason = putOnHoldReason.trim();
+    const presetId = putOnHoldPreset?.trim() || "";
+    if (!presetId) {
+      toast.error("Select an on-hold reason.");
+      return;
+    }
+    const complaintDesc = putOnHoldComplaintDescription.trim();
+    if (jobOnHoldComplaintDescriptionRequired(presetId) && !complaintDesc) {
+      toast.error("Add a complaint description for the partner.");
+      return;
+    }
+    const reason = buildJobOnHoldReasonText(
+      presetId,
+      presetId === "other" ? putOnHoldReason : complaintDesc || putOnHoldReason,
+      jobOnHoldPresets,
+    ).trim();
     if (!reason) {
       toast.error("Add a short reason for on hold.");
+      return;
+    }
+    if (presetId === "other" && !putOnHoldReason.trim()) {
+      toast.error("Add details for Other.");
       return;
     }
     setPutOnHoldSaving(true);
@@ -3218,6 +3244,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const extraPatch: Partial<Job> = {
         on_hold_previous_status: job.status,
         on_hold_at: new Date().toISOString(),
+        on_hold_reason_preset_id: presetId,
+        on_hold_complaint_description: complaintDesc || null,
         on_hold_reason: reason,
         on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
         on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
@@ -3239,6 +3267,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         });
         setPutOnHoldOpen(false);
         setPutOnHoldReason("");
+        setPutOnHoldComplaintDescription("");
         setPutOnHoldPreset(null);
         try {
           await bumpLinkedInvoiceAmountsToJobSchedule(updated);
@@ -3249,7 +3278,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setPutOnHoldSaving(false);
     }
-  }, [job, putOnHoldReason, handleStatusChange, profile?.id, profile?.full_name]);
+  }, [job, putOnHoldReason, putOnHoldComplaintDescription, putOnHoldPreset, jobOnHoldPresets, handleStatusChange, profile?.id, profile?.full_name]);
 
   const openResumeJobModal = useCallback(() => {
     if (!job || job.status !== "on_hold") return;
@@ -3349,6 +3378,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       on_hold_previous_status: null,
       on_hold_at: null,
       on_hold_reason: null,
+      on_hold_reason_preset_id: null,
+      on_hold_complaint_description: null,
       on_hold_snapshot_scheduled_date: null,
       on_hold_snapshot_scheduled_start_at: null,
       on_hold_snapshot_scheduled_end_at: null,
@@ -8493,6 +8524,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           if (!putOnHoldSaving) {
             setPutOnHoldOpen(false);
             setPutOnHoldReason("");
+            setPutOnHoldComplaintDescription("");
             setPutOnHoldPreset(null);
           }
         }}
@@ -8513,23 +8545,50 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 const preset = e.target.value;
                 setPutOnHoldPreset(preset || null);
                 if (!preset) return;
-                if (preset.trim().toLowerCase() === "other") {
+                const row = jobOnHoldPresets.find((p) => p.id === preset);
+                if (preset === "other") {
+                  setPutOnHoldReason("");
                   putOnHoldReasonRef.current?.focus();
                   return;
                 }
-                setPutOnHoldReason(preset);
+                if (preset === "complaint") {
+                  setPutOnHoldReason(row?.label ?? "Complaint");
+                  return;
+                }
+                setPutOnHoldReason(row?.label ?? preset);
+                setPutOnHoldComplaintDescription("");
               }}
               className="mb-3 h-10"
             />
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason *</label>
-            <textarea
-              ref={putOnHoldReasonRef}
-              value={putOnHoldReason}
-              onChange={(e) => setPutOnHoldReason(e.target.value)}
-              rows={3}
-              placeholder="Why is this job on hold?"
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
-            />
+            {putOnHoldPreset === "complaint" ? (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Complaint description * <span className="font-normal text-text-tertiary">(sent to partner)</span>
+                </label>
+                <textarea
+                  value={putOnHoldComplaintDescription}
+                  onChange={(e) => setPutOnHoldComplaintDescription(e.target.value)}
+                  rows={4}
+                  placeholder="What did the customer report? This appears in the partner email."
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[88px]"
+                />
+              </div>
+            ) : null}
+            {putOnHoldPreset === "other" || !putOnHoldPreset ? (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  {putOnHoldPreset === "other" ? "Details *" : "Notes (optional)"}
+                </label>
+                <textarea
+                  ref={putOnHoldReasonRef}
+                  value={putOnHoldReason}
+                  onChange={(e) => setPutOnHoldReason(e.target.value)}
+                  rows={3}
+                  placeholder={putOnHoldPreset === "other" ? "Why is this job on hold?" : "Internal notes if needed"}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+                />
+              </div>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2 justify-end pt-1">
             <Button
@@ -8539,6 +8598,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               onClick={() => {
                 setPutOnHoldOpen(false);
                 setPutOnHoldReason("");
+                setPutOnHoldComplaintDescription("");
                 setPutOnHoldPreset(null);
               }}
             >
@@ -8587,6 +8647,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : (
                 <p className="text-text-tertiary italic">No reason recorded.</p>
               )}
+              {job.on_hold_complaint_description?.trim() ? (
+                <p>
+                  <span className="font-semibold text-text-primary">Complaint:</span>{" "}
+                  <span className="whitespace-pre-wrap">{job.on_hold_complaint_description.trim()}</span>
+                </p>
+              ) : null}
             </div>
           ) : null}
           <p className="text-sm text-text-secondary">

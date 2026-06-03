@@ -231,6 +231,27 @@ curl -X POST "$BASE/api/webhooks/desk/job-created" \
 
 ---
 
+## 4b. POST `/api/webhooks/desk/job-on-hold` — Complaint / on hold (Zendesk macro + form)
+
+```bash
+curl -X POST "$BASE/api/webhooks/desk/job-on-hold" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $DESK_KEY" \
+  -d '{
+    "ticket_id": "8472",
+    "on_hold_reason_id": "complaint",
+    "description": "Customer reports the leak was not fixed and wants a revisit."
+  }'
+```
+
+- `on_hold_reason_id` — stable id (same as OS Settings / Zendesk dropdown), e.g. `complaint`, `waiting_materials`.
+- `description` — complaint detail; sent to the partner email and synced to Zendesk (`ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID`).
+- Legacy: `reason` (label text) if id omitted.
+
+See [zendesk-complaint-macro-form.md](./zendesk-complaint-macro-form.md) for macro + form setup.
+
+---
+
 ## 5. POST `/api/join/register` — cadastro de partner (página `/join`)
 
 **Auth**: público (rate-limited por IP).
@@ -416,6 +437,9 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `ZENDESK_WEBHOOK_API_KEY` (ou `ZOHO_DESK_WEBHOOK_API_KEY`) | `/api/webhooks/desk/*` |
 | `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status` |
 | `ZENDESK_SUBDOMAIN`, `ZENDESK_EMAIL`, `ZENDESK_API_TOKEN` | Comentários no ticket + side conversations |
+| `ZENDESK_ON_HOLD_REASON_FIELD_ID` | Dropdown: on-hold reason id on ticket |
+| `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID` | Complaint description (partner email + Zendesk) |
+| `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` | Partner solution after on-hold form submit |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Emails Resend (fallback quando não há Zendesk) |
 | `CRON_SECRET` | `/api/cron/*` (`Authorization: Bearer …`) |
 | `QUOTE_RESPONSE_SECRET` | Assinar tokens de accept/reject |

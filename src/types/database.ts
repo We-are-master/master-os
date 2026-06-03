@@ -616,6 +616,10 @@ export interface Job {
   on_hold_previous_status?: string | null;
   on_hold_at?: string | null;
   on_hold_reason?: string | null;
+  /** Stable id (complaint, waiting_materials, …) — matches Zendesk on-hold reason dropdown. */
+  on_hold_reason_preset_id?: string | null;
+  /** Complaint detail for partner email + Zendesk Description field. */
+  on_hold_complaint_description?: string | null;
   on_hold_snapshot_scheduled_date?: string | null;
   on_hold_snapshot_scheduled_start_at?: string | null;
   on_hold_snapshot_scheduled_end_at?: string | null;

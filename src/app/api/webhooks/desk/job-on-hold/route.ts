@@ -3,6 +3,14 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
+import {
+  buildJobOnHoldReasonText,
+  jobOnHoldReasonLabel,
+  resolveJobOnHoldReasonIdFromLabel,
+} from "@/lib/job-on-hold-reasons";
+import { resolveJobOnHoldPresets } from "@/lib/frontend-setup";
+import { getCompanySettings } from "@/services/company";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,29 +18,25 @@ export const runtime = "nodejs";
 /** Statuses that are terminal / can't be paused — putting them on hold is a no-op. */
 const NON_HOLDABLE = new Set(["completed", "cancelled", "deleted", "on_hold"]);
 
+const DEFAULT_PRESET_ID = "complaint";
 const DEFAULT_REASON = "Customer complaint (raised via Zendesk).";
 
 /**
  * POST /api/webhooks/desk/job-on-hold
  *
- * Inbound webhook from Zendesk. Triggered by a macro / automation when a
- * complaint comes in and the job must be paused. Puts the linked job On Hold:
- * snapshots its current schedule + status (so it can be resumed later from the
- * office), records the hold reason, then notifies the assigned partner and
- * syncs the ticket's custom status to "Customer On Hold".
+ * Inbound webhook from Zendesk (Complaint macro + ticket form). Puts the linked
+ * job On Hold, stores reason id + complaint description, notifies the partner,
+ * and syncs Zendesk ticket status + custom fields.
  *
- * Auth: header `x-api-key` must match env `ZENDESK_WEBHOOK_API_KEY`
- * (or legacy `ZOHO_DESK_WEBHOOK_API_KEY`) — same secret as the other desk
- * webhooks.
+ * Auth: `x-api-key` = `ZENDESK_WEBHOOK_API_KEY` (or `ZOHO_DESK_WEBHOOK_API_KEY`).
  *
  * Expected JSON body:
  *   {
- *     ticket_id: string (required — the Zendesk ticket linked to the job)
- *     reason:    string (optional — shown to the office on resume; defaults
- *                        to a generic "Customer complaint" line)
+ *     ticket_id: string (required)
+ *     on_hold_reason_id: string (optional — e.g. complaint; default complaint)
+ *     description: string (optional — complaint detail for partner email + Zendesk)
+ *     reason: string (legacy — label or free text; used when id omitted)
  *   }
- *
- * Idempotent: a job already On Hold returns ok:true with action "already_on_hold".
  */
 export async function POST(req: NextRequest) {
   const provided = req.headers.get("x-api-key");
@@ -56,11 +60,24 @@ export async function POST(req: NextRequest) {
   if (!ticketId) {
     return NextResponse.json({ error: "ticket_id is required." }, { status: 400 });
   }
-  const reason = str(body.reason) || DEFAULT_REASON;
+
+  const companySettings = await getCompanySettings().catch(() => null);
+  const presets = resolveJobOnHoldPresets(companySettings?.frontend_setup ?? null);
+
+  const presetId =
+    str(body.on_hold_reason_id)
+    || str(body.on_hold_reason_preset_id)
+    || resolveJobOnHoldReasonIdFromLabel(str(body.reason))
+    || DEFAULT_PRESET_ID;
+
+  const description = str(body.description) || str(body.complaint_description) || null;
+  const reasonText =
+    buildJobOnHoldReasonText(presetId, description, presets)
+    || str(body.reason)
+    || DEFAULT_REASON;
 
   const supabase = createServiceClient();
 
-  // ─── Resolve the job from the Zendesk ticket ──────────────────────
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
     .select("id, reference, status, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date")
@@ -86,7 +103,6 @@ export async function POST(req: NextRequest) {
     scheduled_finish_date: string | null;
   };
 
-  // ─── Idempotency / guard rails ────────────────────────────────────
   if (job.status === "on_hold") {
     return NextResponse.json({
       ok: true,
@@ -105,16 +121,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ─── Put on hold (mirrors the office "Put on hold" action) ────────
-  // Snapshot the current schedule + status so the office can resume the
-  // job later from where it was (see migration 137_jobs_on_hold.sql).
   const { error: upErr } = await supabase
     .from("jobs")
     .update({
       status: "on_hold",
       on_hold_previous_status: job.status,
       on_hold_at: new Date().toISOString(),
-      on_hold_reason: reason,
+      on_hold_reason_preset_id: presetId,
+      on_hold_complaint_description: description,
+      on_hold_reason: reasonText,
       on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
       on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
       on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
@@ -127,9 +142,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to put job on hold." }, { status: 500 });
   }
 
-  // ─── Audit trail ──────────────────────────────────────────────────
-  // System actor (created_by null) — this came from the Zendesk macro, not
-  // a logged-in office user.
   await supabase.from("audit_logs").insert([
     {
       entity_type: "job",
@@ -139,7 +151,7 @@ export async function POST(req: NextRequest) {
       field_name: "status",
       old_value: job.status,
       new_value: "on_hold",
-      metadata: { source: "zendesk_on_hold_webhook", ticket_id: ticketId },
+      metadata: { source: "zendesk_on_hold_webhook", ticket_id: ticketId, on_hold_reason_id: presetId },
     },
     {
       entity_type: "job",
@@ -147,20 +159,14 @@ export async function POST(req: NextRequest) {
       entity_ref: job.reference,
       action: "updated",
       field_name: "on_hold_reason",
-      new_value: reason,
+      new_value: reasonText,
       metadata: { source: "zendesk_on_hold_webhook", ticket_id: ticketId },
     },
   ]).then(() => {}, (e) => console.error("[webhook/desk/job-on-hold] audit insert failed:", e));
 
-  // ─── Notify the assigned partner (push) + sync the ticket status ──
-  // notifyPartnerJobZendesk maps on_hold → "Customer On Hold" custom status
-  // and pushes the assigned partner. Best-effort: a notification failure must
-  // not fail the webhook (the job is already on hold). If the job has no
-  // partner / isn't fully Zendesk-linked, we still ensure the ticket status
-  // is synced directly.
   const notify = await notifyPartnerJobZendesk(supabase, job.id, {
     kind: "on_hold",
-    reason,
+    reason: description || reasonText,
     newStatusLabel: "On Hold",
     actorUserId: null,
   }).catch((err) => {
@@ -168,12 +174,16 @@ export async function POST(req: NextRequest) {
     return null;
   });
 
-  void syncJobZendeskStatus(job.id, supabase).then(
-    (r) => {
-      if (!r.ok) console.error("[webhook/desk/job-on-hold] status sync failed:", r.error ?? r.skip);
-    },
-    (err) => console.error("[webhook/desk/job-on-hold] status sync threw:", err),
-  );
+  const [statusSync, fieldsSync] = await Promise.all([
+    syncJobZendeskStatus(job.id, supabase).catch((err) => {
+      console.error("[webhook/desk/job-on-hold] status sync threw:", err);
+      return { ok: false, error: String(err) };
+    }),
+    syncJobZendeskOnHoldFields(job.id, supabase).catch((err) => {
+      console.error("[webhook/desk/job-on-hold] on-hold fields sync threw:", err);
+      return { ok: false, errors: [String(err)] };
+    }),
+  ]);
 
   return NextResponse.json({
     ok: true,
@@ -181,11 +191,13 @@ export async function POST(req: NextRequest) {
     jobId: job.id,
     reference: job.reference,
     previousStatus: job.status,
+    onHoldReasonId: presetId,
+    onHoldReasonLabel: jobOnHoldReasonLabel(presetId, presets),
+    zendeskStatusSync: statusSync,
+    zendeskFieldsSync: fieldsSync,
     notify: notify?.body ?? null,
   });
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
