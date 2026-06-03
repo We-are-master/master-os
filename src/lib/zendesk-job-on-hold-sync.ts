@@ -4,14 +4,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import {
-  getZendeskTicketId,
-  isZendeskConfigured,
-  setTicketCustomField,
-  ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID,
-  ZENDESK_COMPLAINT_SOLUTION_FIELD_ID,
-  ZENDESK_ON_HOLD_REASON_FIELD_ID,
-} from "@/lib/zendesk";
+import type { FrontendSetup } from "@/lib/frontend-setup";
+import { getZendeskTicketId, isZendeskConfigured, setTicketCustomField } from "@/lib/zendesk";
+import { resolveZendeskComplaintFieldIds } from "@/lib/zendesk-field-ids";
 import { partnerOnHoldComplaintReasonText, partnerOnHoldSolutionText } from "@/lib/job-on-hold-reasons";
 
 export interface ZendeskOnHoldFieldsSyncResult {
@@ -22,9 +17,19 @@ export interface ZendeskOnHoldFieldsSyncResult {
   errors?: string[];
 }
 
+async function loadFrontendSetup(client: SupabaseClient): Promise<FrontendSetup | null> {
+  const { data } = await client
+    .from("company_settings")
+    .select("frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  return (data?.frontend_setup ?? null) as FrontendSetup | null;
+}
+
 export async function syncJobZendeskOnHoldFields(
   jobId: string,
   client?: SupabaseClient,
+  setup?: FrontendSetup | null,
 ): Promise<ZendeskOnHoldFieldsSyncResult> {
   const supabase = client ?? createServiceClient();
   const syncedFields: string[] = [];
@@ -33,6 +38,9 @@ export async function syncJobZendeskOnHoldFields(
   if (!isZendeskConfigured()) {
     return { ok: true, syncedFields, skipped: "zendesk_not_configured" };
   }
+
+  const resolvedSetup = setup ?? (await loadFrontendSetup(supabase));
+  const fieldIds = resolveZendeskComplaintFieldIds(resolvedSetup);
 
   const { data: job, error } = await supabase
     .from("jobs")
@@ -55,32 +63,32 @@ export async function syncJobZendeskOnHoldFields(
   const complaintText = partnerOnHoldComplaintReasonText(job as Parameters<typeof partnerOnHoldComplaintReasonText>[0]);
   const solutionText = partnerOnHoldSolutionText(job as Parameters<typeof partnerOnHoldSolutionText>[0]);
 
-  if (ZENDESK_ON_HOLD_REASON_FIELD_ID > 0) {
+  if (fieldIds.onHoldReasonFieldId > 0) {
     const value = job.status === "on_hold" ? presetId : null;
     const r = await setTicketCustomField({
       ticketId,
-      fieldId: ZENDESK_ON_HOLD_REASON_FIELD_ID,
+      fieldId: fieldIds.onHoldReasonFieldId,
       value,
     });
     if (r.ok) syncedFields.push("on_hold_reason_id");
     else if (r.error) errors.push(`on_hold_reason_id: ${r.error}`);
   }
 
-  if (ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID > 0) {
+  if (fieldIds.complaintDescriptionFieldId > 0) {
     const value = job.status === "on_hold" ? complaintText : null;
     const r = await setTicketCustomField({
       ticketId,
-      fieldId: ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID,
+      fieldId: fieldIds.complaintDescriptionFieldId,
       value,
     });
     if (r.ok) syncedFields.push("complaint_description");
     else if (r.error) errors.push(`complaint_description: ${r.error}`);
   }
 
-  if (ZENDESK_COMPLAINT_SOLUTION_FIELD_ID > 0) {
+  if (fieldIds.complaintSolutionFieldId > 0) {
     const r = await setTicketCustomField({
       ticketId,
-      fieldId: ZENDESK_COMPLAINT_SOLUTION_FIELD_ID,
+      fieldId: fieldIds.complaintSolutionFieldId,
       value: solutionText,
     });
     if (r.ok) syncedFields.push("complaint_solution");
