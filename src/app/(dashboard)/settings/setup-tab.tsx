@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,12 +94,57 @@ export function SetupTab() {
   const [lowMarginPctStr, setLowMarginPctStr] = useState(String(DEFAULT_PULSE_LOW_MARGIN_PCT));
 
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
+  const [zendeskOnHoldReasonFieldId, setZendeskOnHoldReasonFieldId] = useState("");
+  const [zendeskComplaintDescriptionFieldId, setZendeskComplaintDescriptionFieldId] = useState("");
+  const [zendeskComplaintSolutionFieldId, setZendeskComplaintSolutionFieldId] = useState("");
+  const [onHoldZendeskSyncing, setOnHoldZendeskSyncing] = useState(false);
   const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
   const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
     buildDefaultPartnerDocumentRules(),
   );
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
+
+  const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
+    setOnHoldZendeskSyncing(true);
+    try {
+      const res = await fetch("/api/admin/job-on-hold/zendesk-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: opts?.dryRun === true }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        skipped?: string;
+        error?: string;
+        stats?: { append?: number; prune?: number; rename?: number };
+      };
+      if (!res.ok || json.ok === false) {
+        if (!opts?.silent) {
+          toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
+        }
+        return false;
+      }
+      if (json.skipped) {
+        if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
+        return false;
+      }
+      if (!opts?.silent && json.stats) {
+        const { append = 0, prune = 0, rename = 0 } = json.stats;
+        toast.success(
+          opts?.dryRun
+            ? `Preview: +${append} / −${prune} / rename ${rename} (dry run)`
+            : `Zendesk on-hold reasons synced (+${append}, −${prune}, rename ${rename})`,
+        );
+      }
+      return true;
+    } catch {
+      if (!opts?.silent) toast.error("Zendesk sync failed");
+      return false;
+    } finally {
+      setOnHoldZendeskSyncing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -122,6 +167,17 @@ export function SetupTab() {
       setTargetMarginPctStr(String(parsed.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(parsed.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
+      setZendeskOnHoldReasonFieldId(
+        parsed.zendesk_on_hold_reason_field_id ? String(parsed.zendesk_on_hold_reason_field_id) : "",
+      );
+      setZendeskComplaintDescriptionFieldId(
+        parsed.zendesk_complaint_description_field_id
+          ? String(parsed.zendesk_complaint_description_field_id)
+          : "",
+      );
+      setZendeskComplaintSolutionFieldId(
+        parsed.zendesk_complaint_solution_field_id ? String(parsed.zendesk_complaint_solution_field_id) : "",
+      );
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
@@ -190,6 +246,15 @@ export function SetupTab() {
         target_margin_pct: targetMargin,
         pulse_low_margin_pct: lowMargin,
         zendesk_subdomain: zendeskSubdomain,
+        zendesk_on_hold_reason_field_id: zendeskOnHoldReasonFieldId.trim()
+          ? Number(zendeskOnHoldReasonFieldId.trim())
+          : undefined,
+        zendesk_complaint_description_field_id: zendeskComplaintDescriptionFieldId.trim()
+          ? Number(zendeskComplaintDescriptionFieldId.trim())
+          : undefined,
+        zendesk_complaint_solution_field_id: zendeskComplaintSolutionFieldId.trim()
+          ? Number(zendeskComplaintSolutionFieldId.trim())
+          : undefined,
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
@@ -227,11 +292,25 @@ export function SetupTab() {
       setTargetMarginPctStr(String(next.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(next.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
+      setZendeskOnHoldReasonFieldId(
+        next.zendesk_on_hold_reason_field_id ? String(next.zendesk_on_hold_reason_field_id) : "",
+      );
+      setZendeskComplaintDescriptionFieldId(
+        next.zendesk_complaint_description_field_id
+          ? String(next.zendesk_complaint_description_field_id)
+          : "",
+      );
+      setZendeskComplaintSolutionFieldId(
+        next.zendesk_complaint_solution_field_id ? String(next.zendesk_complaint_solution_field_id) : "",
+      );
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
+      if (next.zendesk_on_hold_reason_field_id) {
+        void syncOnHoldReasonsToZendesk({ silent: true });
+      }
     } catch (e) {
       console.error("[setup-tab] save failed", e);
       const msg = (() => {
@@ -617,6 +696,16 @@ export function SetupTab() {
             </Button>
             <Button
               type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              loading={onHoldZendeskSyncing}
+              onClick={() => void syncOnHoldReasonsToZendesk()}
+            >
+              Sync reasons → Zendesk
+            </Button>
+            <Button
+              type="button"
               onClick={() => void handleSave()}
               disabled={!canEditConfig || saving}
               icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
@@ -624,6 +713,10 @@ export function SetupTab() {
               {saving ? "Saving…" : "Save Setup"}
             </Button>
           </div>
+          <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
+            After you save, reasons auto-sync to Zendesk when the on-hold reason field id is set under Integrations.
+            Option <code className="text-[11px]">value</code> in Zendesk = the <code className="text-[11px]">id</code> shown above.
+          </p>
         </div>
       </Card>
 
@@ -839,7 +932,7 @@ export function SetupTab() {
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
             <CardTitle>Integrations · Zendesk</CardTitle>
-            <FixfyHintIcon text="Subdomain used to deep-link to Zendesk tickets from the Zendesk badge popover. Falls back to the server ZENDESK_SUBDOMAIN env when blank." />
+            <FixfyHintIcon text="Zendesk subdomain + complaint ticket field ids. Field ids can also be set via env vars (see docs). Dropdown options sync from On Hold Reasons when you save." />
           </div>
         </CardHeader>
         <div className="space-y-4 px-6 pb-6">
@@ -861,6 +954,47 @@ export function SetupTab() {
                 Accepts plain subdomain, full domain, or full URL — we normalize on save.
               </p>
             </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                On-hold reason field id
+              </label>
+              <Input
+                value={zendeskOnHoldReasonFieldId}
+                onChange={(e) => setZendeskOnHoldReasonFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Zendesk dropdown field id"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Complaint description field id
+              </label>
+              <Input
+                value={zendeskComplaintDescriptionFieldId}
+                onChange={(e) => setZendeskComplaintDescriptionFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Multiline field id"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Partner solution field id
+              </label>
+              <Input
+                value={zendeskComplaintSolutionFieldId}
+                onChange={(e) => setZendeskComplaintSolutionFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Multiline field id"
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
+            In Zendesk Admin → Ticket fields, open each field and copy the numeric id from the URL
+            (e.g. <code className="text-[11px]">.../ticket_fields/1234567890123</code>). Map the complaint form fields to the same ids.
+          </p>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               onClick={() => void handleSave()}
@@ -868,6 +1002,15 @@ export function SetupTab() {
               icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
             >
               {saving ? "Saving…" : "Save Setup"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              loading={onHoldZendeskSyncing}
+              onClick={() => void syncOnHoldReasonsToZendesk()}
+            >
+              Sync on-hold reasons → Zendesk
             </Button>
           </div>
         </div>
