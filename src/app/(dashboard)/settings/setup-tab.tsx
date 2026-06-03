@@ -105,46 +105,55 @@ export function SetupTab() {
   );
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
 
-  const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
-    setOnHoldZendeskSyncing(true);
-    try {
-      const res = await fetch("/api/admin/job-on-hold/zendesk-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun: opts?.dryRun === true }),
-      });
-      const json = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        skipped?: string;
-        error?: string;
-        stats?: { append?: number; prune?: number; rename?: number };
-      };
-      if (!res.ok || json.ok === false) {
-        if (!opts?.silent) {
-          toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
+  const syncOnHoldReasonsToZendesk = useCallback(
+    async (opts?: { dryRun?: boolean; silent?: boolean }) => {
+      setOnHoldZendeskSyncing(true);
+      try {
+        const res = await fetch("/api/admin/job-on-hold/zendesk-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: opts?.dryRun === true, presets: onHoldPresets }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          skipped?: string;
+          error?: string;
+          userMessage?: string | null;
+          stats?: { append?: number; prune?: number; rename?: number };
+        };
+        if (!res.ok || json.ok === false) {
+          if (!opts?.silent) {
+            toast.error(json.userMessage ?? json.error ?? json.skipped ?? "Zendesk sync failed");
+          }
+          return false;
         }
+        if (json.skipped) {
+          if (!opts?.silent) {
+            toast.error(
+              json.userMessage
+                ?? "Configure the on-hold reason field id under Integrations · Zendesk, then Save Setup.",
+            );
+          }
+          return false;
+        }
+        if (!opts?.silent && json.stats) {
+          const { append = 0, prune = 0, rename = 0 } = json.stats;
+          toast.success(
+            opts?.dryRun
+              ? `Preview: +${append} / −${prune} / rename ${rename} (dry run)`
+              : `Zendesk on-hold reasons synced (+${append}, −${prune}, rename ${rename})`,
+          );
+        }
+        return true;
+      } catch {
+        if (!opts?.silent) toast.error("Zendesk sync failed");
         return false;
+      } finally {
+        setOnHoldZendeskSyncing(false);
       }
-      if (json.skipped) {
-        if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
-        return false;
-      }
-      if (!opts?.silent && json.stats) {
-        const { append = 0, prune = 0, rename = 0 } = json.stats;
-        toast.success(
-          opts?.dryRun
-            ? `Preview: +${append} / −${prune} / rename ${rename} (dry run)`
-            : `Zendesk on-hold reasons synced (+${append}, −${prune}, rename ${rename})`,
-        );
-      }
-      return true;
-    } catch {
-      if (!opts?.silent) toast.error("Zendesk sync failed");
-      return false;
-    } finally {
-      setOnHoldZendeskSyncing(false);
-    }
-  }, []);
+    },
+    [onHoldPresets],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -698,7 +707,7 @@ export function SetupTab() {
               type="button"
               variant="outline"
               size="sm"
-              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              disabled={!canEditConfig || onHoldZendeskSyncing}
               loading={onHoldZendeskSyncing}
               onClick={() => void syncOnHoldReasonsToZendesk()}
             >
@@ -714,8 +723,9 @@ export function SetupTab() {
             </Button>
           </div>
           <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
-            After you save, reasons auto-sync to Zendesk when the on-hold reason field id is set under Integrations.
-            Option <code className="text-[11px]">value</code> in Zendesk = the <code className="text-[11px]">id</code> shown above.
+            Sync uses the list above (no need to save first). First time: paste the{" "}
+            <strong>On-hold reason field id</strong> under <strong>Integrations · Zendesk</strong> below and Save Setup.
+            Zendesk option <code className="text-[11px]">value</code> = the <code className="text-[11px]">id</code> on each row.
           </p>
         </div>
       </Card>
@@ -1006,7 +1016,7 @@ export function SetupTab() {
             <Button
               type="button"
               variant="outline"
-              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              disabled={!canEditConfig || onHoldZendeskSyncing}
               loading={onHoldZendeskSyncing}
               onClick={() => void syncOnHoldReasonsToZendesk()}
             >
