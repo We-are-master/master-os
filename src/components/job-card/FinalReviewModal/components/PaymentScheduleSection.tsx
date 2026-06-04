@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  dueDateSourceLabel,
-  ORG_PARTNER_PAYOUT_STANDARD_TERMS,
-  type DueDateSource,
-} from "@/lib/partner-payout-schedule";
+import { dueDateSourceLabel, type DueDateSource } from "@/lib/partner-payout-schedule";
 
 type Props = {
   invoiceDueYmd: string;
@@ -15,6 +11,7 @@ type Props = {
   partnerDueSource: DueDateSource;
   showPartner: boolean;
   partnerTermsLabel: string | null;
+  orgStandardTerms: string;
   loading?: boolean;
 };
 
@@ -44,6 +41,7 @@ export function PaymentScheduleSection({
   partnerDueSource,
   showPartner,
   partnerTermsLabel,
+  orgStandardTerms,
   loading,
 }: Props) {
   return (
@@ -100,7 +98,7 @@ export function PaymentScheduleSection({
             <p className="text-[10px] mt-1" style={{ color: "#9A9AA0" }}>
               {partnerTermsLabel?.trim()
                 ? `Partner schedule: ${partnerTermsLabel.trim()}`
-                : `Standard: ${ORG_PARTNER_PAYOUT_STANDARD_TERMS}`}
+                : `Standard: ${orgStandardTerms}`}
             </p>
           </div>
         ) : null}

@@ -12,6 +12,10 @@ import {
   mergePartnerDocumentRules,
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
+import {
+  normalizePartnerPayoutStandardTerms,
+  ORG_PARTNER_PAYOUT_STANDARD_TERMS,
+} from "@/lib/partner-payout-schedule";
 
 /**
  * Parsed from `company_settings.frontend_setup` (Settings → Setup).
@@ -94,6 +98,12 @@ export type FrontendSetup = {
    * Controls which docs are requested and which are mandatory for compliance.
    */
   partner_document_rules?: PartnerDocRuleRow[];
+
+  /**
+   * Org-wide default partner self-bill payout schedule (Settings → Setup).
+   * Used when a partner has no `payment_terms` on their profile — same “Standard” chip as Final review.
+   */
+  partner_payout_standard_terms?: string;
 };
 
 export type AccessFees = {
@@ -201,6 +211,7 @@ export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   greeting_evening_from: DEFAULT_GREETING_EVENING_FROM,
   access_ccz_fee_gbp: DEFAULT_ACCESS_CCZ_FEE_GBP,
   access_parking_fee_gbp: DEFAULT_ACCESS_PARKING_FEE_GBP,
+  partner_payout_standard_terms: ORG_PARTNER_PAYOUT_STANDARD_TERMS,
 };
 
 const PULSE_PRESET_IDS: PulsePresetId[] = ["1d", "wtd", "mtd", "qtd", "all"];
@@ -407,7 +418,14 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
+  if (o.partner_payout_standard_terms !== undefined) {
+    base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(o.partner_payout_standard_terms);
+  }
   return base;
+}
+
+export function resolvePartnerPayoutStandardTerms(setup?: FrontendSetup | null): string {
+  return normalizePartnerPayoutStandardTerms(setup?.partner_payout_standard_terms);
 }
 
 /**
@@ -524,6 +542,9 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.partner_document_rules !== undefined) {
     base.partner_document_rules = mergePartnerDocumentRules(patch.partner_document_rules);
+  }
+  if (patch.partner_payout_standard_terms !== undefined) {
+    base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(patch.partner_payout_standard_terms);
   }
   return base;
 }

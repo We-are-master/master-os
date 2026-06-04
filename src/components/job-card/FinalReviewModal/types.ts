@@ -93,6 +93,7 @@ export type FinalReviewModalProps = {
     partnerDueSource: DueDateSource;
     showPartner: boolean;
     partnerTermsLabel: string | null;
+    orgStandardTerms: string;
     loading?: boolean;
   };
 
