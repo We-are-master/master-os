@@ -64,7 +64,10 @@ import {
   COVERAGE_CITY_LONDON_ID,
   defaultLondonIncludedPostcodes,
 } from "@/lib/coverage-cities";
-import { formatPartnerCoverageSummary } from "@/lib/partner-coverage";
+import {
+  clearedCoverageFieldsForMode,
+  formatPartnerCoverageSummary,
+} from "@/lib/partner-coverage";
 import type { PartnerCoverageMode } from "@/types/database";
 import {
   computeProfileCompletenessScore,
@@ -1262,23 +1265,17 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       const coveragePatch =
         createCoverageMode === "radius"
           ? {
-              coverage_mode: "radius" as const,
+              ...clearedCoverageFieldsForMode("radius"),
               service_radius_miles: createRadiusMiles,
               coverage_latitude: createCoverageLat,
               coverage_longitude: createCoverageLng,
               coverage_base_postcode: createCoverageAddress.trim() || null,
-              included_postcodes: null,
-              coverage_cities: null,
               location: createCoverageAddress.trim() || "UK",
             }
           : {
-              coverage_mode: "postcodes" as const,
+              ...clearedCoverageFieldsForMode("postcodes"),
               included_postcodes: [...createCoverageOutward],
               coverage_cities: [createCoverageCityId],
-              service_radius_miles: null,
-              coverage_latitude: null,
-              coverage_longitude: null,
-              coverage_base_postcode: null,
               location: "London",
             };
       const created = await createPartner({
@@ -2123,7 +2120,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             </div>
             <PartnerCoverageEditor
               mode={createCoverageMode}
-              onModeChange={setCreateCoverageMode}
+              onModeChange={(next) => {
+                if (next === createCoverageMode) return;
+                setCreateCoverageMode(next);
+                if (next === "radius") {
+                  setCreateCoverageOutward(new Set());
+                } else {
+                  setCreateCoverageAddress("");
+                  setCreateCoverageLat(null);
+                  setCreateCoverageLng(null);
+                  setCreateCoverageOutward(new Set(defaultLondonIncludedPostcodes()));
+                }
+              }}
               radiusMiles={createRadiusMiles}
               onRadiusMilesChange={setCreateRadiusMiles}
               baseAddress={createCoverageAddress}

@@ -3,11 +3,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment, useId } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
-import {
-  DEFAULT_DATE_FILTER,
-  resolveDateFilter,
-  type DateFilterValue,
-} from "@/lib/date-range-filter";
+import { resolveDateFilter, type DateFilterValue } from "@/lib/date-range-filter";
+
+/** Quotes list: show every quote by default (period chip "All"). */
+const QUOTES_DEFAULT_DATE_FILTER: DateFilterValue = {
+  mode: "all",
+  customFrom: "",
+  customTo: "",
+};
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
@@ -779,7 +782,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterAccountId, setFilterAccountId] = useState<string>("all");
   const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
   /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". */
-  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>(QUOTES_DEFAULT_DATE_FILTER);
   const buFilter = useBuFilter();
   const { biddingSlaMs, biddingSlaHours } = useFrontendSetup();
   const biddingSlaHoursLabelPretty = formatBiddingSlaHoursLabel(biddingSlaHours);
@@ -4633,6 +4636,16 @@ function QuoteDetailDrawer({
       open={!!quote}
       onClose={onClose}
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
+      titleAddon={
+        quote.external_source === "zendesk" && quote.external_ref?.trim() ? (
+          <ZendeskTicketBadge
+            source={quote.external_source}
+            ref={quote.external_ref}
+            size="sm"
+            zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+          />
+        ) : null
+      }
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
       width="w-full max-w-[440px]"
       footer={quoteDrawerFooter}

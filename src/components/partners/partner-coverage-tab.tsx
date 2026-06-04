@@ -10,11 +10,13 @@ import {
   COVERAGE_CITIES,
   COVERAGE_CITY_LONDON_ID,
   coverageCityById,
+  defaultLondonIncludedPostcodes,
   normalizeOutwardCode,
 } from "@/lib/coverage-cities";
 import {
   DEFAULT_COVERAGE_MODE,
   SERVICE_RADIUS_MILE_OPTIONS,
+  clearedCoverageFieldsForMode,
   effectiveCoverageMode,
   effectiveIncludedPostcodes,
   formatPartnerCoverageSummary,
@@ -30,7 +32,20 @@ type Props = {
   canEdit?: boolean;
 };
 
-function ModeToggle({
+const COVERAGE_MODE_OPTIONS = [
+  {
+    id: "postcodes" as const,
+    label: "Postcode districts",
+    hint: "Pick London outward codes (e.g. SW11, E1).",
+  },
+  {
+    id: "radius" as const,
+    label: "Radius (miles)",
+    hint: "Base pin on the map + max distance in miles.",
+  },
+] as const;
+
+function CoverageModePicker({
   mode,
   onChange,
   disabled,
@@ -40,31 +55,74 @@ function ModeToggle({
   disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5" role="group" aria-label="Coverage mode">
-      {(
-        [
-          { id: "postcodes" as const, label: "Postcodes" },
-          { id: "radius" as const, label: "Radius (miles)" },
-        ] as const
-      ).map((opt) => (
-        <button
-          key={opt.id}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(opt.id)}
-          className={cn(
-            "px-3 py-[5px] rounded text-[12.5px] font-medium transition-colors",
-            mode === opt.id
-              ? "bg-card text-text-primary shadow-fx-1"
-              : "bg-transparent text-fx-mute hover:text-text-primary",
-            disabled && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <fieldset className="space-y-2 border-0 p-0 m-0">
+      <legend className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+        Coverage method (choose one)
+      </legend>
+      <p className="text-[11px] text-text-tertiary -mt-1">
+        Postcodes and radius are mutually exclusive — only the selected method is saved and used for job matching.
+      </p>
+      <div
+        className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+        role="radiogroup"
+        aria-label="Coverage method"
+      >
+        {COVERAGE_MODE_OPTIONS.map((opt) => {
+          const selected = mode === opt.id;
+          return (
+            <label
+              key={opt.id}
+              className={cn(
+                "flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors",
+                selected
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : "border-border-light bg-card hover:border-border",
+                disabled && "opacity-50 cursor-not-allowed pointer-events-none",
+              )}
+            >
+              <input
+                type="radio"
+                name="partner-coverage-mode"
+                value={opt.id}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => onChange(opt.id)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-text-primary">{opt.label}</span>
+                <span className="block text-[11px] text-text-tertiary mt-0.5">{opt.hint}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
+}
+
+function applyCoverageModeSwitch(
+  next: PartnerCoverageMode,
+  current: PartnerCoverageMode,
+  setters: {
+    setMode: (m: PartnerCoverageMode) => void;
+    setSelectedOutward: (s: Set<string>) => void;
+    setSearch: (s: string) => void;
+    setBaseAddress: (s: string) => void;
+    setBaseLat: (l: number | null) => void;
+    setBaseLng: (l: number | null) => void;
+  },
+) {
+  if (next === current) return;
+  setters.setMode(next);
+  if (next === "radius") {
+    setters.setSelectedOutward(new Set());
+    setters.setSearch("");
+  } else {
+    setters.setBaseAddress("");
+    setters.setBaseLat(null);
+    setters.setBaseLng(null);
+  }
 }
 
 export function PartnerCoverageTab({ partner, onPartnerUpdate, canEdit = true }: Props) {
@@ -86,15 +144,38 @@ export function PartnerCoverageTab({ partner, onPartnerUpdate, canEdit = true }:
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    setMode(effectiveCoverageMode(partner) ?? DEFAULT_COVERAGE_MODE);
+    const m = effectiveCoverageMode(partner) ?? DEFAULT_COVERAGE_MODE;
+    setMode(m);
     setRadiusMiles(Number(partner.service_radius_miles) || 15);
-    setBaseAddress(partner.coverage_base_postcode ?? "");
-    setBaseLat(partner.coverage_latitude ?? null);
-    setBaseLng(partner.coverage_longitude ?? null);
     setCityId(partner.coverage_cities?.[0] ?? COVERAGE_CITY_LONDON_ID);
-    const inc = effectiveIncludedPostcodes(partner);
-    setSelectedOutward(new Set(inc));
+    setSearch("");
+    if (m === "radius") {
+      setBaseAddress(partner.coverage_base_postcode ?? "");
+      setBaseLat(partner.coverage_latitude ?? null);
+      setBaseLng(partner.coverage_longitude ?? null);
+      setSelectedOutward(new Set());
+    } else {
+      setBaseAddress("");
+      setBaseLat(null);
+      setBaseLng(null);
+      const inc = effectiveIncludedPostcodes(partner);
+      setSelectedOutward(new Set(inc.length ? inc : defaultLondonIncludedPostcodes()));
+    }
   }, [partner.id]);
+
+  function handleModeChange(next: PartnerCoverageMode) {
+    applyCoverageModeSwitch(next, mode, {
+      setMode,
+      setSelectedOutward,
+      setSearch,
+      setBaseAddress,
+      setBaseLat,
+      setBaseLng,
+    });
+    if (next === "postcodes" && selectedOutward.size === 0) {
+      setSelectedOutward(new Set(defaultLondonIncludedPostcodes()));
+    }
+  }
 
   const city = coverageCityById(cityId) ?? COVERAGE_CITIES[0];
   const filteredDistricts = useMemo(() => {
@@ -117,13 +198,11 @@ export function PartnerCoverageTab({ partner, onPartnerUpdate, canEdit = true }:
         }
         const pc = extractUkPostcode(baseAddress) ?? (baseAddress.trim() || null);
         const updated = await updatePartner(partner.id, {
-          coverage_mode: "radius",
+          ...clearedCoverageFieldsForMode("radius"),
           service_radius_miles: radiusMiles,
           coverage_latitude: baseLat,
           coverage_longitude: baseLng,
           coverage_base_postcode: pc,
-          included_postcodes: null,
-          coverage_cities: null,
           location: pc ?? partner.location,
         });
         onPartnerUpdate(updated);
@@ -135,13 +214,9 @@ export function PartnerCoverageTab({ partner, onPartnerUpdate, canEdit = true }:
           return;
         }
         const updated = await updatePartner(partner.id, {
-          coverage_mode: "postcodes",
+          ...clearedCoverageFieldsForMode("postcodes"),
           included_postcodes: list,
           coverage_cities: [cityId],
-          service_radius_miles: null,
-          coverage_latitude: null,
-          coverage_longitude: null,
-          coverage_base_postcode: null,
           location: city.label,
         });
         onPartnerUpdate(updated);
@@ -191,7 +266,7 @@ export function PartnerCoverageTab({ partner, onPartnerUpdate, canEdit = true }:
         </p>
       </div>
 
-      <ModeToggle mode={mode} onChange={setMode} />
+      <CoverageModePicker mode={mode} onChange={handleModeChange} />
 
       {mode === "radius" ? (
         <div className="space-y-4 rounded-xl border border-border-light bg-card p-4">
@@ -371,7 +446,13 @@ export function PartnerCoverageEditor({
   return (
     <div className="space-y-3 rounded-xl border border-border-light bg-surface-hover/30 p-4">
       <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Coverage area</p>
-      <ModeToggle mode={mode} onChange={onModeChange} />
+      <CoverageModePicker
+        mode={mode}
+        onChange={(next) => {
+          if (next === mode) return;
+          onModeChange(next);
+        }}
+      />
       {mode === "radius" ? (
         <>
           <LocationPicker
