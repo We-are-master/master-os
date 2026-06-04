@@ -64,6 +64,53 @@ async function sitePhotoAttachments(photoUrls: string[]): Promise<SitePhotoAttac
   return results.filter((r): r is SitePhotoAttachment => r !== null);
 }
 
+/**
+ * Resolve a company logo URL into a data URI for the PDF.
+ *
+ * Why: `@react-pdf/renderer` fetches a remote `<Image src>` synchronously
+ * during render with NO timeout and NO cross-request cache — on a serverless
+ * runtime every send re-downloads the logo, and a slow/large asset blocks the
+ * whole render for many seconds (the dominant cost behind slow quote sends).
+ *
+ * This pre-fetches the logo once with a hard timeout, caches the result in
+ * module scope (survives warm invocations), and hands react-pdf an inline
+ * data URI it never has to fetch. On timeout/failure we return `undefined`
+ * so the PDF renders logo-less — identical to the existing no-logo fallback.
+ */
+const LOGO_FETCH_TIMEOUT_MS = 4000;
+const logoDataUriCache = new Map<string, string | undefined>();
+
+async function resolveLogoDataUri(logoUrl: string | undefined): Promise<string | undefined> {
+  if (!logoUrl || !isHttpsUrl(logoUrl)) return undefined;
+  if (logoDataUriCache.has(logoUrl)) return logoDataUriCache.get(logoUrl);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOGO_FETCH_TIMEOUT_MS);
+  try {
+    const r = await fetch(logoUrl, { signal: controller.signal });
+    if (!r.ok) {
+      logoDataUriCache.set(logoUrl, undefined);
+      return undefined;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    // Guard against an unexpectedly huge asset blowing up the PDF/email size.
+    if (buf.length > 4 * 1024 * 1024) {
+      logoDataUriCache.set(logoUrl, undefined);
+      return undefined;
+    }
+    const ct = (r.headers.get("content-type") || "image/png").split(";")[0].trim() || "image/png";
+    const dataUri = `data:${ct};base64,${buf.toString("base64")}`;
+    logoDataUriCache.set(logoUrl, dataUri);
+    return dataUri;
+  } catch (err) {
+    console.warn("[send-pdf] logo prefetch failed/timed out — rendering without logo:", err);
+    logoDataUriCache.set(logoUrl, undefined);
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function renderQuotePdfToBuffer(
   data: QuotePDFData,
   branding: CompanyBranding,
@@ -85,7 +132,9 @@ async function renderQuotePdfToBuffer(
 export async function POST(req: NextRequest) {
   const startedAt = nowMs();
   const marks: Array<[string, number]> = [];
+  const tAuth = nowMs();
   const auth = await requireAuth();
+  marks.push(["auth", nowMs() - tAuth]);
   if (auth instanceof NextResponse) return auth;
 
   try {
@@ -123,13 +172,26 @@ export async function POST(req: NextRequest) {
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
 
-    // Fetch line items (if not pre-provided) and company settings in parallel.
+    // Fetch line items (if not pre-provided), company settings AND resolve the
+    // nominal billing party — all in parallel. The billing-party resolution is
+    // 1–2 independent DB round-trips that previously ran serially after this
+    // block; folding it in here removes that serial latency from the critical
+    // path. It only depends on the quote (already fetched above).
+    const qForBill = quote as { client_id?: string | null; client_name?: string; client_email?: string | null };
+    const qCid = qForBill.client_id?.trim() ?? "";
     const tDeps = nowMs();
-    const [lineItemResult, settingsResult] = await Promise.all([
+    const [lineItemResult, settingsResult, docParty] = await Promise.all([
       items?.length
         ? Promise.resolve(null)
         : supabase.from("quote_line_items").select("description, quantity, unit_price").eq("quote_id", quoteId).order("sort_order"),
       supabase.from("company_settings").select("*").limit(1).single(),
+      qCid.length > 0
+        ? resolveNominalBillingParty(supabase, {
+            clientId: qCid,
+            fallbackName: qForBill.client_name,
+            fallbackEmail: qForBill.client_email,
+          })
+        : Promise.resolve(null),
     ]);
     marks.push(["deps_fetch", nowMs() - tDeps]);
 
@@ -172,16 +234,6 @@ export async function POST(req: NextRequest) {
         ? Number(settings.vat_percent)
         : 20;
 
-    const qForBill = quote as { client_id?: string | null; client_name?: string; client_email?: string | null };
-    const qCid = qForBill.client_id?.trim() ?? "";
-    const docParty =
-      qCid.length > 0
-        ? await resolveNominalBillingParty(supabase, {
-            clientId: qCid,
-            fallbackName: qForBill.client_name,
-            fallbackEmail: qForBill.client_email,
-          })
-        : null;
     const pdfClientName = String(
       (docParty ? docParty.displayName : (recipientName ?? qForBill.client_name)) ?? "",
     );
@@ -228,21 +280,12 @@ export async function POST(req: NextRequest) {
 
     const pdfAttachmentBase = String(quote.reference ?? "quote").replace(/\//g, "-");
 
-    const tPdf = nowMs();
-    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, branding);
-    marks.push(["pdf_render", nowMs() - tPdf]);
-
-    // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
-    const responseToken = createQuoteResponseToken(quoteId);
-    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
-    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
-
-    // ─── Choose delivery channel ────────────────────────────────────────────
+    // ─── Choose delivery channel (computed up-front) ────────────────────────
     // Zendesk takes priority when the quote came from a ticket — the customer
     // already receives ticket replies through Zendesk, so duplicating the same
     // PDF via Resend would land twice in their inbox. Resend is only used
-    // for quotes with no Zendesk linkage.
+    // for quotes with no Zendesk linkage. Deciding this here (before the PDF
+    // render) lets the Resend-only site-photo fetch overlap the render.
     const zdTicketId = getZendeskTicketId(quote as { external_source?: string | null; external_ref?: string | null });
     const zdConfigured = isZendeskConfigured();
     const useZendesk = Boolean(zdTicketId && zdConfigured);
@@ -256,10 +299,45 @@ export async function POST(req: NextRequest) {
       `zendeskConfigured=${zdConfigured}`,
       `→ ${useZendesk ? "ZENDESK" : "RESEND"}`,
     );
-
     if (zdTicketId && !zdConfigured) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
+
+    // Kick off the Resend-only site-photo fetch concurrently with the logo
+    // prefetch + PDF render below. Only the Resend path attaches these, so we
+    // skip the work entirely for Zendesk-delivered quotes. Awaited later in the
+    // Resend branch.
+    const useRequestPhotos =
+      typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
+    const sitePhotosPromise: Promise<SitePhotoAttachment[]> =
+      !useZendesk && useRequestPhotos && quote.request_id
+        ? (async () => {
+            const { data: sr } = await supabase
+              .from("service_requests")
+              .select("images")
+              .eq("id", quote.request_id)
+              .maybeSingle();
+            const urls = normalizeJsonImageArray(sr?.images);
+            return sitePhotoAttachments(urls);
+          })()
+        : Promise.resolve([]);
+
+    // Pre-fetch the logo (bounded + cached) so react-pdf renders from an inline
+    // data URI instead of issuing its own unbounded fetch during layout.
+    const tLogo = nowMs();
+    const logoDataUri = await resolveLogoDataUri(branding.logoUrl);
+    marks.push(["logo_fetch", nowMs() - tLogo]);
+    const brandingForPdf: CompanyBranding = { ...branding, logoUrl: logoDataUri };
+
+    const tPdf = nowMs();
+    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, brandingForPdf);
+    marks.push(["pdf_render", nowMs() - tPdf]);
+
+    // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
+    const responseToken = createQuoteResponseToken(quoteId);
+    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
+    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
 
     if (useZendesk) {
       // ─── Zendesk delivery (awaited — sole channel) ────────────────────────
@@ -381,8 +459,6 @@ export async function POST(req: NextRequest) {
     }
     const resend = new Resend(resendKey);
 
-    const useRequestPhotos =
-      typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
     const emailAttachments: { filename: string; content: Buffer; contentType?: string }[] = [
       {
         filename: `${pdfAttachmentBase}_quote.pdf`,
@@ -390,17 +466,15 @@ export async function POST(req: NextRequest) {
         contentType: "application/pdf",
       },
     ];
+    // Site photos were fetched concurrently with the PDF render (see above) —
+    // just await the already-running promise here instead of fetching serially.
     if (useRequestPhotos && quote.request_id) {
       const tPhotos = nowMs();
-      const { data: sr } = await supabase
-        .from("service_requests")
-        .select("images")
-        .eq("id", quote.request_id)
-        .maybeSingle();
-      const urls = normalizeJsonImageArray(sr?.images);
-      const extras = await sitePhotoAttachments(urls);
+      const extras = await sitePhotosPromise;
       emailAttachments.push(...extras);
-      marks.push(["photos_attach", nowMs() - tPhotos]);
+      // Time spent blocked on photos AFTER render — usually ~0 since the fetch
+      // ran concurrently with the render/logo above.
+      marks.push(["photos_wait", nowMs() - tPhotos]);
     }
 
     const tEmail = nowMs();
