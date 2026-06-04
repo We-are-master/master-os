@@ -356,6 +356,16 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     ? `<div style="margin-top:14px; padding:14px; background:#FFF5EE; border:1px solid #FEE5D6; border-radius:6px; font-size:13px; color:#9A2A00;"><strong>Reason:</strong> ${safe.reason}</div>`
     : "";
 
+  const bodyFont =
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const titleBlock =
+    data.kind === "cancelled"
+      ? `<h1 class="h1-mobile" style="margin:0 0 12px 0; ${bodyFont}; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name},</h1>
+        <p style="margin:0 0 12px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">This job has been cancelled.</p>
+        <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">The following job has been cancelled and will no longer be going ahead.</p>`
+      : `<h1 class="h1-mobile" style="margin:0 0 12px 0; ${bodyFont}; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, ${safe.headline.toLowerCase()}</h1>
+        <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">${safe.intro}</p>`;
+
   const ctaBlock = data.kind === "cancelled"
     ? "" // No CTA for cancelled — nothing for the partner to do
     : `<tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
@@ -382,8 +392,7 @@ ${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 8px 40px;" class="px-mobile">
         <div style="display:inline-block; background-color:${pillColor}; color:#FFFFFF; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; margin-bottom:16px;">${safe.status}</div>
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, ${safe.headline.toLowerCase()}</h1>
-        <p style="margin:0 0 16px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">${safe.intro}</p>
+        ${titleBlock}
         ${reasonBlock}
       </td></tr>
 
@@ -429,7 +438,15 @@ ${partnerEmailLogoHeaderRow()}
 </body></html>`;
 
   const reasonText = data.reason ? `\nReason: ${data.reason}\n` : "";
-  const text = `Hi ${data.partnerFirstName || "there"}, ${headline.toLowerCase()}.
+  const name = data.partnerFirstName || "there";
+  const introText =
+    data.kind === "cancelled"
+      ? `Hi ${name},
+
+This job has been cancelled.
+The following job has been cancelled and will no longer be going ahead.`
+      : `Hi ${name}, ${headline.toLowerCase()}.`;
+  const text = `${introText}
 
 Status: ${data.newStatusLabel}
 ${reasonText}
