@@ -9,7 +9,7 @@ import {
   partnerEmailBodyOpen,
   partnerEmailHeadBlock,
   partnerEmailLogoHeaderRow,
-  partnerEmailLogoUrl,
+  partnerEmailHeaderBandUrl,
   partnerEmailPreheaderHtml,
 } from "@/lib/emails/partner-email-layout";
 import { extractUkPostcode } from "@/lib/uk-postcode";
@@ -133,7 +133,7 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
-    logo: escapeHtml(partnerEmailLogoUrl()),
+    headerBand: escapeHtml(partnerEmailHeaderBandUrl()),
   };
 
   const scopeBlock = data.scope.trim()
@@ -233,8 +233,8 @@ ${buildPhotoSection(data.photoUrls)}
         </table>
       </td></tr>
 
-      <tr><td bgcolor="#020040" align="center" style="background-color:#020040; padding:24px 40px; text-align:center;" class="px-mobile">
-        <img src="${safe.logo}" alt="Fixfy" width="70" style="display:inline-block; width:70px; max-width:70px; height:auto; margin-bottom:10px; border:0;" />
+      <tr><td bgcolor="#020040" align="center" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:24px 40px; text-align:center;">
+        <img src="${safe.headerBand}" alt="Fixfy" width="200" class="partner-email-header-img" style="display:block; margin:0 auto 10px; width:200px; max-width:100%; height:auto; border:0;" />
         <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">
           Getfixfy Ltd &middot; Co. No. 15406523<br>
           124 City Road, London EC1V 2NX, United Kingdom<br>

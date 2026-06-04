@@ -22,6 +22,15 @@ export const ZENDESK_FIELD_CLIENT_PRICE = envNum(process.env.NEXT_PUBLIC_ZENDESK
 export const ZENDESK_FIELD_SCOPE        = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_SCOPE,        "5687121072927");
 export const ZENDESK_FIELD_REPORT_LINK  = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_REPORT_LINK,  "5754991026207");
 
+/** Reply Status tagger — OS create → Sent (`reply_replied`). 0 = skip. */
+export const ZENDESK_FIELD_REPLY_STATUS = envNum(
+  process.env.NEXT_PUBLIC_ZENDESK_REPLY_STATUS_FIELD_ID,
+  "5698641403423",
+);
+
+/** Zendesk option value for Reply Status = Sent. */
+export const ZENDESK_REPLY_STATUS_SENT_VALUE = "reply_replied";
+
 /** Build a Zendesk `custom_fields` array, dropping empty values. */
 export function buildZendeskCustomFields(
   pairs: Array<[number, unknown]>,

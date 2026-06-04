@@ -452,6 +452,8 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `ZENDESK_PROPERTY_ADDRESS_FIELD_ID` | `jobs.property_address` |
 | `ZENDESK_CLIENT_PHONE_FIELD_ID` | `clients.phone` |
 | `ZENDESK_SCOPE_FIELD_ID` | `jobs.scope` (work brief) |
+| `ZENDESK_REPLY_STATUS_FIELD_ID` | Tagger Reply Status — OS create/sync → `reply_replied` (Sent); default field `5698641403423` |
+| `ZENDESK_REPLY_STATUS_SENT_VALUE` | Override Sent option value (default `reply_replied`) |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Emails Resend (fallback quando não há Zendesk) |
 | `CRON_SECRET` | `/api/cron/*` (`Authorization: Bearer …`) |
 | `QUOTE_RESPONSE_SECRET` | Assinar tokens de accept/reject |

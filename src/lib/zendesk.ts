@@ -528,6 +528,15 @@ export const ZENDESK_SCOPE_FIELD_ID = Number(
   process.env.ZENDESK_SCOPE_FIELD_ID?.trim() || "0",
 );
 
+/** Tagger: Reply Status — OS-created jobs/quotes use the “Sent” option (`reply_replied`). 0 = disabled. */
+export const ZENDESK_REPLY_STATUS_FIELD_ID = Number(
+  process.env.ZENDESK_REPLY_STATUS_FIELD_ID?.trim() || "5698641403423",
+);
+
+/** Zendesk dropdown value for Reply Status = Sent (🟢 Sent). */
+export const ZENDESK_REPLY_STATUS_SENT_VALUE =
+  process.env.ZENDESK_REPLY_STATUS_SENT_VALUE?.trim() || "reply_replied";
+
 export interface SetCustomFieldResult {
   ok: boolean;
   status?: number;

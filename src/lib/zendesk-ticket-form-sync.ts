@@ -21,6 +21,8 @@ import {
   ZENDESK_RATE_TYPE_FIELD_ID,
   ZENDESK_SCOPE_FIELD_ID,
   ZENDESK_TYPE_OF_WORK_FIELD_ID,
+  ZENDESK_REPLY_STATUS_FIELD_ID,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
   type TicketCustomFieldEntry,
 } from "@/lib/zendesk";
 import {
@@ -159,6 +161,13 @@ function buildCommonZendeskFormFieldEntries(input: CommonFormInput): TicketCusto
   pushText(fields, ZENDESK_CLIENT_PHONE_FIELD_ID, input.client_phone);
   pushText(fields, ZENDESK_SCOPE_FIELD_ID, input.scope);
 
+  if (ZENDESK_REPLY_STATUS_FIELD_ID > 0) {
+    fields.push({
+      fieldId: ZENDESK_REPLY_STATUS_FIELD_ID,
+      value: ZENDESK_REPLY_STATUS_SENT_VALUE,
+    });
+  }
+
   return fields;
 }
 
@@ -250,6 +259,7 @@ const JOB_FIELD_KEYS: { id: number; key: string }[] = [
   { id: ZENDESK_PROPERTY_ADDRESS_FIELD_ID, key: "property_address" },
   { id: ZENDESK_CLIENT_PHONE_FIELD_ID, key: "client_phone" },
   { id: ZENDESK_SCOPE_FIELD_ID, key: "scope" },
+  { id: ZENDESK_REPLY_STATUS_FIELD_ID, key: "reply_status" },
 ];
 
 const QUOTE_FIELD_KEYS: { id: number; key: string }[] = [
