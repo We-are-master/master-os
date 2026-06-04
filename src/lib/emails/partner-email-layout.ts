@@ -7,9 +7,17 @@
 
 import { appBaseUrl } from "@/lib/app-base-url";
 
-/** White wordmark on navy header — served from /public/logos. */
+/** White wordmark (transparent) — legacy / footer strips. */
 export function partnerEmailLogoUrl(): string {
   return `${appBaseUrl()}/logos/fixfy-wordmark.png`;
+}
+
+/**
+ * Full-width header band (navy + white logo baked in) — survives Gmail/iOS dark-mode
+ * inversion better than transparent wordmark on a separate bgcolor cell.
+ */
+export function partnerEmailHeaderBandUrl(): string {
+  return `${appBaseUrl()}/logos/fixfy-email-header.png`;
 }
 
 function escapeHtml(s: string): string {
@@ -47,6 +55,8 @@ export function partnerEmailBaseStyles(extra = ""): string {
   @media (prefers-color-scheme: dark) {
     body, .email-bg { background-color: #F7F7FB !important; }
     .email-card { background-color: #FFFFFF !important; }
+    .partner-email-header-td { background-color: #020040 !important; }
+    .partner-email-header-img { filter: none !important; opacity: 1 !important; }
   }
   @media screen and (max-width: 600px) {
     .container { width: 100% !important; }
@@ -61,11 +71,19 @@ export function partnerEmailBaseStyles(extra = ""): string {
 </style>`;
 }
 
-/** Navy header row with hosted logo (replaces plain-text "fixfy"). */
-export function partnerEmailLogoHeaderRow(padding = "32px 40px"): string {
-  const logo = escapeHtml(partnerEmailLogoUrl());
-  return `      <tr><td align="center" bgcolor="#020040" style="background-color:#020040; padding:${padding};" class="px-mobile">
-        <img src="${logo}" alt="" width="128" style="display:block; margin:0 auto; width:128px; max-width:128px; height:auto; border:0; outline:none; text-decoration:none;" />
+/** Navy header band — single image (logo + background) for legibility on mobile Gmail. */
+export function partnerEmailLogoHeaderRow(_padding = "32px 40px"): string {
+  const band = escapeHtml(partnerEmailHeaderBandUrl());
+  return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:0; line-height:0; font-size:0; mso-line-height-rule:exactly;">
+        <!--[if mso]>
+        <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;height:88px;">
+          <v:fill type="tile" color="#020040" />
+          <v:textbox inset="0,0,0,0" style="mso-fit-shape-to-text:true">
+        <![endif]-->
+        <div style="background-color:#020040; background-image:linear-gradient(#020040,#020040); max-height:88px; overflow:hidden;">
+          <img src="${band}" alt="Fixfy" width="600" class="partner-email-header-img" style="display:block; width:100%; max-width:600px; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; color:#020040;" />
+        </div>
+        <!--[if mso]></v:textbox></v:rect><![endif]-->
       </td></tr>`;
 }
 
