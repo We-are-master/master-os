@@ -283,6 +283,13 @@ export async function POST(req: NextRequest) {
 
     const pdfAttachmentBase = String(quote.reference ?? "quote").replace(/\//g, "-");
 
+    // Accept/reject URLs — declared before any delivery branch so both the
+    // Zendesk and Resend paths can reference them regardless of block order.
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
+    const responseToken = createQuoteResponseToken(quoteId);
+    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
+    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
+
     // ─── Choose delivery channel (computed up-front) ────────────────────────
     // Zendesk takes priority when the quote came from a ticket — the customer
     // already receives ticket replies through Zendesk, so duplicating the same
@@ -305,6 +312,36 @@ export async function POST(req: NextRequest) {
     if (zdTicketId && !zdConfigured) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
+
+    // Kick off the Resend-only site-photo fetch concurrently with the logo
+    // prefetch + PDF render below. Only the Resend path attaches these, so we
+    // skip the work entirely for Zendesk-delivered quotes. Awaited later in the
+    // Resend branch.
+    const useRequestPhotos =
+      typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
+    const sitePhotosPromise: Promise<SitePhotoAttachment[]> =
+      !useZendesk && useRequestPhotos && quote.request_id
+        ? (async () => {
+            const { data: sr } = await supabase
+              .from("service_requests")
+              .select("images")
+              .eq("id", quote.request_id)
+              .maybeSingle();
+            const urls = normalizeJsonImageArray(sr?.images);
+            return sitePhotoAttachments(urls);
+          })()
+        : Promise.resolve([]);
+
+    // Pre-fetch the logo (bounded + cached) so react-pdf renders from an inline
+    // data URI instead of issuing its own unbounded fetch during layout.
+    const tLogo = nowMs();
+    const logoDataUri = await resolveLogoDataUri(branding.logoUrl);
+    marks.push(["logo_fetch", nowMs() - tLogo]);
+    const brandingForPdf: CompanyBranding = { ...branding, logoUrl: logoDataUri };
+
+    const tPdf = nowMs();
+    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, brandingForPdf);
+    marks.push(["pdf_render", nowMs() - tPdf]);
 
     // Track what we did to the ticket ownership for the audit log below.
     let requesterReassigned = false;
