@@ -81,7 +81,7 @@ export async function fetchBeaconBoardJobs(
   const byId = new Map<string, Record<string, unknown>>();
   for (const row of [...(pipeline ?? []), ...(terminal ?? [])]) {
     const id = (row as { id?: string }).id;
-    if (id) byId.set(id, row as Record<string, unknown>);
+    if (id) byId.set(id, row as unknown as Record<string, unknown>);
   }
   return [...byId.values()];
 }

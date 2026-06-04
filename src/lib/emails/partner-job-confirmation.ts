@@ -9,6 +9,13 @@
  * change per job.
  */
 
+import {
+  partnerEmailBaseStyles,
+  partnerEmailBodyOpen,
+  partnerEmailHeadBlock,
+  partnerEmailLogoHeaderRow,
+  partnerEmailPreheaderHtml,
+} from "@/lib/emails/partner-email-layout";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
 
@@ -133,38 +140,17 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="x-apple-disable-message-reformatting" />
-<meta name="color-scheme" content="light only" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .info-row td { display: block !important; width: 100% !important; padding: 4px 0 !important; }
-    .info-label { padding-bottom: 2px !important; }
-    .btn-mobile a { display: block !important; }
-    .price-mobile { font-size: 32px !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Job booked. Here's everything you need to get started.</div>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml("Job booked. Here's everything you need to get started.")}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <!-- Header -->
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
 
       <!-- Title -->
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
@@ -174,12 +160,12 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 
       <!-- Price -->
       <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
+          <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td>
-                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
+                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
                   <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:36px; line-height:42px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
                 </td>
                 <td align="right" valign="top">
@@ -382,30 +368,17 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${safe.headline} — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .info-row td { display: block !important; width: 100% !important; padding: 4px 0 !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`${headline} — ${data.jobReference}`)}
 
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding: 32px 16px;">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+
+${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 8px 40px;" class="px-mobile">
         <div style="display:inline-block; background-color:${pillColor}; color:#FFFFFF; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; margin-bottom:16px;">${safe.status}</div>
@@ -521,32 +494,18 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Booking rescheduled — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .schedule-stack td { display: block !important; width: 100% !important; padding: 12px 0 !important; }
-    .schedule-arrow { display: none !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Your booking ${safe.ref} has been rescheduled to ${safe.newDate}${safe.newTime ? " at " + safe.newTime : ""}.</div>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles(`    .schedule-stack td { display: block !important; width: 100% !important; padding: 12px 0 !important; }
+    .schedule-arrow { display: none !important; }`)}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`Your booking ${safe.ref} has been rescheduled to ${safe.newDate}${safe.newTime ? " at " + safe.newTime : ""}.`)}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <tr><td align="center" style="background-color:#020040; padding:16px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:22px; font-weight:700; color:#FFFFFF; letter-spacing:-0.6px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow("16px 40px")}
 
       <tr><td style="padding:36px 40px 20px 40px;" class="px-mobile">
         <h1 class="h1-mobile" style="margin:0 0 10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:26px; line-height:34px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your booking has been rescheduled 🗓</h1>
@@ -684,34 +643,21 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Job on hold — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Job ${safe.ref} is on hold. We need your help to resolve within 12 hours — please reply with the evidence requested.</div>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`Job ${safe.ref} is on hold. We need your help to resolve within 12 hours — please reply with the evidence requested.`)}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <tr><td style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
+      <tr><td bgcolor="#C8102E" style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required — respond within 12 hours</p>
       </td></tr>
 
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
         <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, a complaint was raised on this job — we need your help to resolve</h1>
@@ -880,39 +826,27 @@ export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidD
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml("Your bid was approved — you're booked for this job.")}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
-      <tr><td style="background-color:#0E8A5F; padding:10px 40px; text-align:center;" class="px-mobile">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td bgcolor="#0E8A5F" style="background-color:#0E8A5F; padding:10px 40px; text-align:center;" class="px-mobile">
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">✓ Bid approved — job booked</p>
       </td></tr>
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
         <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your bid was approved 🎉</h1>
         <p style="margin:0 0 8px 0; font-size:16px; line-height:24px; color:#3A3A55;">You've been booked for the job below. We'll handle the customer side from here — no need to confirm anything else.</p>
       </td></tr>
       <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
+          <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
             <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
           </td></tr>
         </table>
@@ -1043,39 +977,27 @@ export function buildPartnerJobConfirmationRequestEmail(
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`Please confirm job ${safe.ref} within ${safe.hours} hours.`)}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
-      <tr><td style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td bgcolor="#0B5FFF" style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required — respond within ${safe.hours} hours</p>
       </td></tr>
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
         <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, please confirm this job</h1>
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the job below to you. Tap <strong style="color:#0A0A1F;">Accept job</strong> within ${safe.hours} hours so we can confirm the booking with the customer.</p>
       </td></tr>
       <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
+          <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
             <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
           </td></tr>
         </table>

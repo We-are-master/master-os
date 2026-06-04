@@ -308,6 +308,20 @@ export async function notifyPartnerJobZendesk(
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
+    } else if (kind === "on_hold") {
+      // Always a new side conversation so the partner gets a distinct inbox
+      // subject (action required / complaint). Do not overwrite
+      // zendesk_side_conversation_id — booked/completed keep the original thread.
+      const r = await createSideConversation({
+        ticketId: zendeskTicketId,
+        toEmail:  partner.email,
+        toName:   partner.contact_name || partner.company_name || undefined,
+        toUserId: partner.zendesk_user_id ?? undefined,
+        subject:  email.subject,
+        htmlBody: email.html,
+        bodyText: email.text,
+      });
+      zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
     } else if (job.zendesk_side_conversation_id) {
       const r = await replyToSideConversation({
         ticketId: zendeskTicketId,
@@ -331,7 +345,7 @@ export async function notifyPartnerJobZendesk(
       });
       zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
       if (r.ok && r.id) {
-        // Persist for future replies
+        // Persist for future replies (booked / assigned thread)
         await supabase
           .from("jobs")
           .update({ zendesk_side_conversation_id: r.id })
