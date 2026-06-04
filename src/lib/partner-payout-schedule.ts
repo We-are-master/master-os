@@ -1,5 +1,5 @@
 import { addDays, isValid, parseISO } from "date-fns";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import { dueDateIsoFromPaymentTerms, nextFridayOnOrAfter } from "@/lib/invoice-payment-terms";
 import type { FrontendSetup } from "@/lib/frontend-setup";
 import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { getSupabase } from "@/services/base";
@@ -89,12 +89,24 @@ export function computeOrgStandardPartnerDueIso(
   orgStandardTerms?: string | null,
   orgReferenceYmd?: string | null,
 ): string {
-  const terms = applyOrgPayoutReferenceToTerms(
-    normalizePartnerPayoutStandardTerms(orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS),
-    orgReferenceYmd,
+  const normalized = normalizePartnerPayoutStandardTerms(
+    orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS,
   );
+  if (isBiweeklyFridayTerms(normalized)) {
+    return biweeklyFridayForWeekEnd(weekEndYmd, orgReferenceYmd);
+  }
+  if (isWeeklyFridayTerms(normalized)) {
+    const we = parseISO(`${weekEndYmd}T12:00:00`);
+    return nextFridayOnOrAfter(isValid(we) ? addDays(we, 1) : new Date());
+  }
+  const terms = applyOrgPayoutReferenceToTerms(normalized, orgReferenceYmd);
   return dueDateIsoFromPaymentTerms(partnerPayoutAnchorFromWeekEnd(weekEndYmd), terms);
 }
+
+export type PartnerPayoutSchedulePreviewRow = {
+  payoutDueYmd: string;
+  weekEndYmd: string;
+};
 
 function localYmd(d: Date): string {
   const y = d.getFullYear();
@@ -103,12 +115,106 @@ function localYmd(d: Date): string {
   return `${y}-${mo}-${day}`;
 }
 
+function addDaysYmd(ymd: string, days: number): string {
+  const d = parseISO(`${ymd}T12:00:00`);
+  return isValid(d) ? localYmd(addDays(d, days)) : ymd;
+}
+
+function isBiweeklyFridayTerms(terms: string): boolean {
+  return /every\s+2\s*weeks\s+on\s+friday/i.test(terms.trim());
+}
+
+function isWeeklyFridayTerms(terms: string): boolean {
+  return /every\s+friday/i.test(terms.trim()) && !/2\s*weeks/i.test(terms.trim());
+}
+
+/** Work week (Mon–Sun) that closes the Sunday before payout Friday. */
+function workWeekEndForPayoutFriday(payoutFridayYmd: string): string {
+  const fri = parseISO(`${payoutFridayYmd}T12:00:00`);
+  if (!isValid(fri)) return payoutFridayYmd;
+  return getWeekBoundsForDate(addDays(fri, -5)).weekEnd;
+}
+
+/** Pay Fridays every 14 days (optional anchor); used in Setup preview + Use calculated. */
+function biweeklyFridayCadencePayDates(
+  from: Date,
+  count: number,
+  anchorYmd?: string | null,
+): PartnerPayoutSchedulePreviewRow[] {
+  const todayYmd = localYmd(from);
+  const anchor = normalizePartnerPayoutReferenceYmd(anchorYmd);
+  let pay: string;
+
+  if (anchor) {
+    pay = anchor;
+    if (pay < todayYmd) {
+      const periods = Math.ceil(
+        (parseISO(`${todayYmd}T12:00:00`).getTime() - parseISO(`${anchor}T12:00:00`).getTime()) /
+          86_400_000 /
+          14,
+      );
+      pay = addDaysYmd(anchor, Math.max(0, periods) * 14);
+    }
+  } else {
+    pay = nextFridayOnOrAfter(from);
+    while (pay < todayYmd) pay = addDaysYmd(pay, 14);
+  }
+
+  const rows: PartnerPayoutSchedulePreviewRow[] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push({ payoutDueYmd: pay, weekEndYmd: workWeekEndForPayoutFriday(pay) });
+    pay = addDaysYmd(pay, 14);
+  }
+  return rows;
+}
+
+function weeklyFridayCadencePayDates(from: Date, count: number): PartnerPayoutSchedulePreviewRow[] {
+  const todayYmd = localYmd(from);
+  let pay = nextFridayOnOrAfter(from);
+  while (pay < todayYmd) pay = addDaysYmd(pay, 7);
+
+  const rows: PartnerPayoutSchedulePreviewRow[] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push({ payoutDueYmd: pay, weekEndYmd: workWeekEndForPayoutFriday(pay) });
+    pay = addDaysYmd(pay, 7);
+  }
+  return rows;
+}
+
+/** Self-bill week end → pay Friday on the org biweekly grid (reference anchor when set). */
+function biweeklyFridayForWeekEnd(weekEndYmd: string, anchorYmd?: string | null): string {
+  const we = parseISO(`${weekEndYmd}T12:00:00`);
+  const minPay = nextFridayOnOrAfter(isValid(we) ? addDays(we, 1) : new Date());
+  const ref = normalizePartnerPayoutReferenceYmd(anchorYmd);
+
+  if (!ref) {
+    let pay = nextFridayOnOrAfter(isValid(we) ? addDays(we, 1) : new Date());
+    while (pay < minPay) pay = addDaysYmd(pay, 14);
+    return pay;
+  }
+
+  let pay = ref;
+  while (pay < weekEndYmd) pay = addDaysYmd(pay, 14);
+  while (pay < minPay) pay = addDaysYmd(pay, 14);
+  return pay;
+}
+
 /** Auto next payout from schedule only (no stored reference override). */
 export function getCalculatedPartnerPayoutReference(
   terms: string | null | undefined,
   from: Date = new Date(),
 ): { weekEndYmd: string; payoutDueYmd: string } {
   const normalized = normalizePartnerPayoutStandardTerms(terms);
+
+  if (isBiweeklyFridayTerms(normalized)) {
+    const row = biweeklyFridayCadencePayDates(from, 1, null)[0]!;
+    return { weekEndYmd: row.weekEndYmd, payoutDueYmd: row.payoutDueYmd };
+  }
+  if (isWeeklyFridayTerms(normalized)) {
+    const row = weeklyFridayCadencePayDates(from, 1)[0]!;
+    return { weekEndYmd: row.weekEndYmd, payoutDueYmd: row.payoutDueYmd };
+  }
+
   const todayYmd = localYmd(from);
   let probe = from;
 
@@ -141,7 +247,49 @@ export function getNextPartnerPayoutReference(
   const ref = normalizePartnerPayoutReferenceYmd(storedReferenceYmd);
   const todayYmd = localYmd(from);
   const payoutDueYmd = ref && ref >= todayYmd ? ref : calculated.payoutDueYmd;
-  return { ...calculated, payoutDueYmd, calculatedPayoutDueYmd: calculated.payoutDueYmd };
+  const weekEndYmd =
+    ref && ref >= todayYmd ? workWeekEndForPayoutFriday(ref) : calculated.weekEndYmd;
+  return { weekEndYmd, payoutDueYmd, calculatedPayoutDueYmd: calculated.payoutDueYmd };
+}
+
+/** Next N distinct payout dates from the org schedule (Setup preview table). */
+export function listUpcomingPartnerPayoutSchedule(
+  terms: string | null | undefined,
+  count: number,
+  from: Date = new Date(),
+  storedReferenceYmd?: string | null,
+): PartnerPayoutSchedulePreviewRow[] {
+  const limit = Math.max(1, Math.min(count, 12));
+  const normalized = normalizePartnerPayoutStandardTerms(terms);
+
+  if (isBiweeklyFridayTerms(normalized)) {
+    return biweeklyFridayCadencePayDates(from, limit, storedReferenceYmd);
+  }
+  if (isWeeklyFridayTerms(normalized)) {
+    return weeklyFridayCadencePayDates(from, limit);
+  }
+
+  const first = getNextPartnerPayoutReference(terms, from, storedReferenceYmd);
+  const rows: PartnerPayoutSchedulePreviewRow[] = [
+    { payoutDueYmd: first.payoutDueYmd, weekEndYmd: first.weekEndYmd },
+  ];
+  const seen = new Set<string>([first.payoutDueYmd]);
+  let probe = parseISO(`${first.weekEndYmd}T12:00:00`);
+  probe = isValid(probe) ? addDays(probe, 1) : addDays(from, 7);
+
+  for (let i = 0; i < 52 && rows.length < limit; i++) {
+    const { weekEnd } = getWeekBoundsForDate(probe);
+    const payoutDueYmd = computeOrgStandardPartnerDueIso(weekEnd, terms, storedReferenceYmd);
+    const lastPay = rows[rows.length - 1]!.payoutDueYmd;
+    if (!seen.has(payoutDueYmd) && payoutDueYmd > lastPay) {
+      seen.add(payoutDueYmd);
+      rows.push({ payoutDueYmd, weekEndYmd: weekEnd });
+    }
+    const end = parseISO(`${weekEnd}T12:00:00`);
+    probe = isValid(end) ? addDays(end, 1) : addDays(probe, 7);
+  }
+
+  return rows;
 }
 
 /** Partner self-bill due: partner terms when set, otherwise org standard (not legacy Friday+5). */
