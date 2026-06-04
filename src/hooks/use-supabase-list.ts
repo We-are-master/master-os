@@ -189,21 +189,29 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
       return;
     }
     let debounce: ReturnType<typeof setTimeout> | undefined;
-    const channel = supabase
-      .channel(`list:${realtimeTable}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: realtimeTable },
-        () => {
-          if (debounce) clearTimeout(debounce);
-          debounce = setTimeout(() => refreshSilentRef.current(), 350);
-        }
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | undefined;
+    try {
+      channel = supabase
+        .channel(`list:${realtimeTable}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: realtimeTable },
+          () => {
+            if (debounce) clearTimeout(debounce);
+            debounce = setTimeout(() => refreshSilentRef.current(), 350);
+          }
+        )
+        .subscribe();
+    } catch (err) {
+      // `.subscribe()` constructs the WebSocket synchronously — if it's blocked
+      // (e.g. CSP), it throws a SecurityError. Don't let that crash the page;
+      // just run without realtime (manual refresh still works).
+      console.warn("[use-supabase-list] realtime subscribe failed:", err);
+    }
 
     return () => {
       if (debounce) clearTimeout(debounce);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [realtimeTable]);
 
