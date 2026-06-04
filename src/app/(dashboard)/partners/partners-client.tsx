@@ -114,6 +114,7 @@ import {
   getPartnerPortalAllowlistOptions,
 } from "@/lib/partner-portal-allowlist";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { PARTNER_PAYOUT_TERM_OPTIONS } from "@/lib/partner-payout-schedule";
 import type { PartnerDocRuleRow } from "@/lib/partner-required-docs";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -3205,6 +3206,11 @@ function PartnerDetailDrawer({
   onPartnerUpdate?: (updated: Partner) => void;
   onTeamChanged?: () => void;
 }) {
+  const { partnerPayoutStandardTerms } = useFrontendSetup();
+  const orgPayoutStandardLabel =
+    PARTNER_PAYOUT_TERM_OPTIONS.find((o) => o.value === partnerPayoutStandardTerms)?.label ??
+    partnerPayoutStandardTerms;
+
   const [tab, setTab] = useState("overview");
   const [documents, setDocuments] = useState<PartnerDoc[]>([]);
   const [notes, setNotes] = useState<PartnerNote[]>([]);
@@ -5126,15 +5132,16 @@ function PartnerDetailDrawer({
                   onChange={(e) => setPartnerPaymentTerms(e.target.value)}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
-                  <option value="">Default (Friday after week close)</option>
-                  <option value="Net 7">Net 7 — 7 days after week end</option>
-                  <option value="Net 14">Net 14 — 14 days after week end</option>
-                  <option value="Net 30">Net 30 — 30 days after week end</option>
-                  <option value="Every Friday">Weekly — every Friday</option>
-                  <option value="Every 2 weeks on Friday">Biweekly — every 2nd Friday</option>
-                  <option value="Monthly cutoff 26 pay Friday">Monthly — cutoff 26th, pay Friday</option>
-                  <option value="Monthly cutoff 15 pay Friday">Monthly — cutoff 15th, pay Friday</option>
+                  <option value="">{`Standard — ${orgPayoutStandardLabel}`}</option>
+                  {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
+                <p className="text-[10px] text-text-tertiary mt-1">
+                  Blank uses the org standard from Settings → Setup (same Standard chip as Final review).
+                </p>
               </div>
               <div>
                 <label htmlFor="partner-default-cancel-fee" className="block text-xs font-medium text-text-secondary mb-1">

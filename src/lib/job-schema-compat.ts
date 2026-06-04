@@ -58,6 +58,15 @@ export function isJobOperationalSchemaEnabled(): boolean {
   return process.env.NEXT_PUBLIC_JOB_OPERATIONAL_SCHEMA === "true";
 }
 
+/** Present on `Job` type only — not in Postgres (use `final_report_submitted` from migration 070). */
+const JOB_GHOST_PATCH_KEYS = ["report_submitted", "report_submitted_at"] as const;
+
+function stripGhostJobPatchKeys(out: Record<string, unknown>): void {
+  for (const k of JOB_GHOST_PATCH_KEYS) {
+    if (k in out) delete out[k];
+  }
+}
+
 function stripOperationalFlowKeysIfDisabled(out: Record<string, unknown>): void {
   if (isJobOperationalSchemaEnabled()) return;
   for (const k of JOB_OPERATIONAL_FLOW_STRIP_KEYS) {
@@ -78,6 +87,7 @@ export function applyJobDbCompat(row: Record<string, unknown>): Record<string, u
   /** Only map unassigned→scheduled when legacy env is on. Otherwise retry would wrongly force "scheduled" with no partner. */
   if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   stripOperationalFlowKeysIfDisabled(out);
+  stripGhostJobPatchKeys(out);
   return out;
 }
 
@@ -102,6 +112,7 @@ export function prepareJobRowForInsert(row: Record<string, unknown>): Record<str
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
+  stripGhostJobPatchKeys(out);
   normalizeCatalogPricingAddonIds(out);
   return out;
 }
@@ -137,6 +148,7 @@ export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<s
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
+  stripGhostJobPatchKeys(out);
   normalizeCatalogPricingAddonIds(out);
   return out;
 }

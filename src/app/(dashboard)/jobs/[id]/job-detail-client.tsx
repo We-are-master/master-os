@@ -139,6 +139,7 @@ import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import {
   computePartnerSelfBillDueIso,
+  fetchPartnerPaymentTermsSafe,
   inferInvoiceDueDateSource,
   inferPartnerDueDateSource,
   type DueDateSource,
@@ -156,6 +157,7 @@ import {
   getJobStatusActions,
   jobStatusAfterResumeFromOnHold,
   normalizeTotalPhases,
+  buildJobReviewApprovalPatch,
   reportPhaseIndices,
   reportPhaseLabel,
   shouldAutoAdvanceToFinalCheckAfterMerge,
@@ -936,7 +938,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const router = useRouter();
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
-  const { jobOnHoldPresets, officeCancellationPresets, accessFees } = useFrontendSetup();
+  const {
+    jobOnHoldPresets,
+    officeCancellationPresets,
+    accessFees,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+  } = useFrontendSetup();
   const cancelJob = useCancelJob();
   const putOnHoldReasonOptions = useMemo(
     () => jobOnHoldPresetSelectOptions(jobOnHoldPresets),
@@ -1335,20 +1343,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         jobSelfBill?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(jobSelfBill.week_end.trim())
           ? jobSelfBill.week_end.trim()
           : getWeekBoundsForDate(financeAnchorDate).weekEnd;
-      let partnerTerms: string | null = null;
-      if (job.partner_id?.trim()) {
-        const { data } = await getSupabase()
-          .from("partners")
-          .select("payment_terms")
-          .eq("id", job.partner_id.trim())
-          .maybeSingle();
-        partnerTerms = (data as { payment_terms?: string | null } | null)?.payment_terms?.trim() || null;
-      }
+      const partnerTerms = job.partner_id?.trim()
+        ? await fetchPartnerPaymentTermsSafe(job.partner_id)
+        : null;
       const [invoiceDue] = await Promise.all([
         getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate),
       ]);
       const partnerDue = job.partner_id?.trim()
-        ? computePartnerSelfBillDueIso(weekEnd, partnerTerms)
+        ? computePartnerSelfBillDueIso(
+            weekEnd,
+            partnerTerms,
+            partnerPayoutStandardTerms,
+            partnerPayoutReferenceYmd,
+          )
         : "";
       if (cancelled) return;
       setApprovalWeekEndYmd(weekEnd);
@@ -1359,7 +1366,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setApprovalPartnerDueYmd(partnerDue);
       setApprovalInvoiceDueSource(inferInvoiceDueDateSource(invoiceDue, invoiceDue));
       setApprovalPartnerDueSource(
-        partnerDue ? inferPartnerDueDateSource(partnerDue, weekEnd, partnerTerms) : "standard",
+        partnerDue
+          ? inferPartnerDueDateSource(
+              partnerDue,
+              weekEnd,
+              partnerTerms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
+          : "standard",
       );
       setApprovalDueDatesLoading(false);
     })().catch(() => {
@@ -1368,7 +1383,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [validateCompleteOpen, job, jobSelfBill?.week_end, job?.partner_id, job?.client_id, job?.scheduled_date]);
+  }, [
+    validateCompleteOpen,
+    job,
+    jobSelfBill?.week_end,
+    job?.partner_id,
+    job?.client_id,
+    job?.scheduled_date,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+  ]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -2481,8 +2505,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         }
       }
       return updated;
-    } catch {
-      toast.error("Failed to update");
+    } catch (err) {
+      if (opts?.silent) throw err;
+      toast.error(err instanceof Error ? err.message : "Failed to update");
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
@@ -3292,7 +3317,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       }
       return updated;
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+      if (!opts?.silent) {
+        toast.error(err instanceof Error ? err.message : "Failed");
+      }
       return null;
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
@@ -4504,14 +4531,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     const updated = await handleJobUpdate(
       j.id,
-      {
-        report_submitted: true,
-        report_submitted_at: new Date().toISOString(),
-        internal_report_approved: true,
-        internal_invoice_approved: true,
-        ...(opts?.reviewSentAt ? { review_sent_at: opts.reviewSentAt } : {}),
-        ...(opts?.reviewSendMethod ? { review_send_method: opts.reviewSendMethod } : {}),
-      } as Partial<Job>,
+      buildJobReviewApprovalPatch({
+        reviewSentAt: opts?.reviewSentAt,
+        reviewSendMethod: opts?.reviewSendMethod,
+      }),
       { notifyPartner: false },
     );
     if (!updated) return;
@@ -4532,17 +4555,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         linkedSbForDue?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(linkedSbForDue.week_end.trim())
           ? linkedSbForDue.week_end.trim()
           : getWeekBoundsForDate(financeAnchorDate).weekEnd;
-      let partnerTermsForDue: string | null = null;
-      if (updated.partner_id?.trim()) {
-        const { data: pRow } = await getSupabase()
-          .from("partners")
-          .select("payment_terms")
-          .eq("id", updated.partner_id.trim())
-          .maybeSingle();
-        partnerTermsForDue = (pRow as { payment_terms?: string | null } | null)?.payment_terms?.trim() || null;
-      }
+      const partnerTermsForDue = updated.partner_id?.trim()
+        ? await fetchPartnerPaymentTermsSafe(updated.partner_id)
+        : null;
       const partnerDueForAnchor = updated.partner_id?.trim()
-        ? computePartnerSelfBillDueIso(weekEndForDue, partnerTermsForDue)
+        ? computePartnerSelfBillDueIso(
+            weekEndForDue,
+            partnerTermsForDue,
+            partnerPayoutStandardTerms,
+            partnerPayoutReferenceYmd,
+          )
         : null;
       const primaryInvoice =
         (updated.invoice_id ? linked.find((i) => i.id === updated.invoice_id) : undefined) ??
@@ -4685,10 +4707,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       /** One round-trip instead of 2–3 sequential updates (each updateJob did 2× getJob + self-bill sync). */
       const mergedApprovalPatch: Partial<Job> = {
-        report_submitted: true,
-        report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
-        internal_report_approved: true,
-        internal_invoice_approved: true,
+        ...buildJobReviewApprovalPatch({
+          submittedAt: current.report_1_approved_at ?? undefined,
+        }),
         extras_amount: extrasFromForm,
         materials_cost: materialsFromForm,
         customer_deposit: depositFromForm,
@@ -4880,12 +4901,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const statusOpts = { skipHourlyRecalc: current.job_type === "hourly", silent: true, skipSelfBillSync: true, extraPatch: linkPatch };
       let approvalToast: string;
       if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
-        const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
-        if (next) current = next;
+        const next = await handleStatusChange(current, "awaiting_payment", { ...statusOpts, silent: true });
+        if (!next) {
+          throw new Error("Could not move the job to Awaiting payment after approval.");
+        }
+        current = next;
         approvalToast = "Approved. Job moved to Awaiting payment.";
       } else {
-        const next = await handleStatusChange(current, "completed", statusOpts);
-        if (next) current = next;
+        const next = await handleStatusChange(current, "completed", { ...statusOpts, silent: true });
+        if (!next) {
+          throw new Error("Could not mark the job Completed after approval.");
+        }
+        current = next;
         approvalToast = "Approved. Job marked Completed & paid.";
       }
       /** Self-bill sync after status change — fire-and-forget to keep critical path lean. */
@@ -4956,7 +4983,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setIncludeInvoiceInEmail(true);
       setIncludeReportInEmail(true);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
+      const detail =
+        err instanceof Error
+          ? err.message
+          : postgrestFullErrorText(err) || "Failed to validate and complete job";
+      toast.error(detail.trim() || "Failed to validate and complete job");
+      console.error("handleValidateAndComplete", err);
     } finally {
       setValidatingComplete(false);
     }
@@ -5435,12 +5467,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** V2 reports progress: counts only the reports the partner has actually
    *  submitted (denominator = 0/1/2). Pre-mig-162 jobs without V2 payloads
    *  fall back to the legacy phase counters. */
-  const v2StartSubmitted = !!(job.start_report && Object.keys(job.start_report).length > 0);
   const v2FinalSubmitted = !!(job.final_report && Object.keys(job.final_report).length > 0);
-  const v2SubmittedCount = (v2StartSubmitted ? 1 : 0) + (v2FinalSubmitted ? 1 : 0);
-  const v2ApprovedCount =
-    (v2StartSubmitted && job.start_report_approved_at ? 1 : 0) +
-    (v2FinalSubmitted && job.final_report_approved_at ? 1 : 0);
+  /** Reports tab tracks final report only (start report hidden from office UI). */
+  const v2SubmittedCount = v2FinalSubmitted ? 1 : 0;
+  const v2ApprovedCount = v2FinalSubmitted && job.final_report_approved_at ? 1 : 0;
   const reportsValidatedCount = v2SubmittedCount > 0
     ? v2ApprovedCount
     : reportPhaseIndices(phaseCount).filter((n) => Boolean(job[`report_${n}_approved` as keyof Job])).length;
@@ -7120,33 +7150,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 jobId={job.id}
                 hasPartner={!!job.partner_id}
                 isZendeskLinked={job.external_source === "zendesk" && !!job.external_ref}
-                bothReportsSubmitted={v2StartSubmitted && v2FinalSubmitted}
+                bothReportsSubmitted={v2FinalSubmitted}
               />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
-                <JobReportV2Card
-                  jobId={job.id}
-                  kind="start"
-                  rawReport={job.start_report}
-                  approvedAt={job.start_report_approved_at ?? null}
-                  onApprovalChange={() => router.refresh()}
-                />
-                <JobReportV2Card
-                  jobId={job.id}
-                  kind="final"
-                  rawReport={job.final_report}
-                  approvedAt={job.final_report_approved_at ?? null}
-                  onApprovalChange={() => router.refresh()}
-                />
-              </div>
+              <JobReportV2Card
+                jobId={job.id}
+                kind="final"
+                rawReport={job.final_report}
+                approvedAt={job.final_report_approved_at ?? null}
+                onApprovalChange={() => router.refresh()}
+              />
               <JobPartnerMediaCard jobId={job.id} />
               <JobOnHoldSubmissionCard jobId={job.id} />
-              {(v2StartSubmitted || v2FinalSubmitted) ? (
+              {v2FinalSubmitted ? (
                 <div
                   className="flex items-center justify-between gap-2 pt-[12px]"
                   style={{ borderTop: "0.5px solid #E4E4E8" }}
                 >
                   <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-                    {v2ApprovedCount}/{v2SubmittedCount} report{v2SubmittedCount === 1 ? "" : "s"} validated
+                    {v2ApprovedCount}/{v2SubmittedCount} final report validated
                   </p>
                   <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
                 </div>
@@ -8614,12 +8635,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           onPartnerDueYmdChange: (v) => {
             setApprovalPartnerDueYmd(v);
             setApprovalPartnerDueSource(
-              inferPartnerDueDateSource(v, approvalWeekEndYmd, approvalPartnerTerms),
+              inferPartnerDueDateSource(
+                v,
+                approvalWeekEndYmd,
+                approvalPartnerTerms,
+                partnerPayoutStandardTerms,
+                partnerPayoutReferenceYmd,
+              ),
             );
           },
           partnerDueSource: approvalPartnerDueSource,
           showPartner: Boolean(job.partner_id?.trim()),
           partnerTermsLabel: approvalPartnerTerms,
+          orgStandardTerms: partnerPayoutStandardTerms,
+          orgPayoutReferenceYmd: partnerPayoutReferenceYmd,
           loading: approvalDueDatesLoading,
         }}
         hourlySlot={

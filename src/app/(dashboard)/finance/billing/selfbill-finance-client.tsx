@@ -55,6 +55,7 @@ import {
   inferPartnerDueDateSource,
   type DueDateSource,
 } from "@/lib/partner-payout-schedule";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import {
   BillingPageActions,
   useBillingCreatedAtFilter,
@@ -283,6 +284,7 @@ export function SelfBillFinanceClient() {
 }
 
 function SelfBillPageInner() {
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const [activeTab, setActiveTab] = useState<SelfBillTab>("ready_to_pay");
   const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
   /** Table: group Ready to Pay by week (default) or flat list. */
@@ -838,7 +840,13 @@ function SelfBillPageInner() {
         const weekEnd = item.week_end?.trim() ?? "";
         const terms = item.partner_id ? partnerTermsById[item.partner_id] ?? null : null;
         const source: DueDateSource = weekEnd
-          ? inferPartnerDueDateSource(due, weekEnd, terms)
+          ? inferPartnerDueDateSource(
+              due,
+              weekEnd,
+              terms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
           : "standard";
         return (
           <div className="space-y-0.5">
@@ -961,7 +969,15 @@ function SelfBillPageInner() {
         const due = selfBillDueYmd(row.sb);
         const weekEnd = row.sb.week_end?.trim() ?? "";
         const terms = row.sb.partner_id ? partnerTermsById[row.sb.partner_id] ?? null : null;
-        const source = weekEnd ? inferPartnerDueDateSource(due, weekEnd, terms) : "standard";
+        const source = weekEnd
+          ? inferPartnerDueDateSource(
+              due,
+              weekEnd,
+              terms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
+          : "standard";
         return (
           <div>
             <span className="text-sm text-text-secondary">{due ? formatDate(due) : "—"}</span>

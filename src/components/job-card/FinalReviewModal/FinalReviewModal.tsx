@@ -146,6 +146,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   partnerDueSource={paymentSchedule.partnerDueSource}
                   showPartner={paymentSchedule.showPartner}
                   partnerTermsLabel={paymentSchedule.partnerTermsLabel}
+                  orgStandardTerms={paymentSchedule.orgStandardTerms}
+                  orgPayoutReferenceYmd={paymentSchedule.orgPayoutReferenceYmd}
                   loading={paymentSchedule.loading}
                 />
               ) : null}
