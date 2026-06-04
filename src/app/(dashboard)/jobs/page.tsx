@@ -3010,7 +3010,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
   const { pricing, loading: pricingResolving } = useResolvedJobPricing({
     accountId: effectiveAccountId,
-    partnerId: form.assignment_mode === "manual" ? form.partner_id : null,
+    // Custom Price (fixed): client/catalog/account only — partner cost is manual or margin hint.
+    partnerId:
+      form.job_type === "hourly" && form.assignment_mode === "manual" ? form.partner_id : null,
     catalogServiceId: isStackablePricing ? null : form.catalog_service_id,
     pricingPresetId: isStackablePricing ? null : form.catalog_pricing_preset_id,
   });
@@ -3083,7 +3085,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
   const applyPartnerPricing = (partnerId: string) => {
     lastAutoPartnerCost.current = null;
-    setForm((prev) => ({ ...prev, partner_id: partnerId }));
+    setForm((prev) => ({
+      ...prev,
+      partner_id: partnerId,
+      ...(prev.job_type === "fixed" ? { partner_cost: "" } : {}),
+    }));
   };
 
   // Auto-fill prices whenever the resolver returns a fresh `pricing` object.
@@ -3096,14 +3102,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (!pricing) return;
     lastAutoPartnerCost.current = null;
     queueMicrotask(() =>
-      setForm((prev) => ({
-        ...prev,
-        hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
-        hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
-        billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
-        client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
-        partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
-      })),
+      setForm((prev) => {
+        const next = {
+          ...prev,
+          hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
+          hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
+          billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
+          client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
+        };
+        // Smart Pricing (hourly) auto-fills partner from rates; Custom Price leaves partner manual.
+        if (prev.job_type === "hourly") {
+          return {
+            ...next,
+            partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
+          };
+        }
+        return next;
+      }),
     );
   }, [pricing, isStackablePricing]);
   const catalogPricingPresetOptions = useMemo(() => {
@@ -3408,10 +3423,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
       lastAutoPartnerCost.current = null;
       return;
     }
-    if (form.assignment_mode === "manual" && form.partner_id.trim()) {
-      lastAutoPartnerCost.current = null;
-      return;
-    }
     const client = Number(form.client_price) || 0;
     const materials = Number(form.materials_cost) || 0;
     const revenue = client + accessSurchargePreview;
@@ -3464,7 +3475,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <button
                 type="button"
                 title="Set prices on this job"
-                onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
+                onClick={() => {
+                  lastAutoPartnerCost.current = null;
+                  setForm((p) => ({ ...p, job_type: "fixed", partner_cost: "" }));
+                }}
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "fixed"
@@ -3879,11 +3893,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     ? "Auto from package"
                     : form.job_type === "hourly"
                       ? "Auto from rates × hours"
-                      : form.partner_id && form.assignment_mode === "manual"
-                        ? "From partner rates"
-                        : form.catalog_service_id
-                          ? "From catalogue"
-                          : "Manual entry"}
+                      : form.catalog_service_id
+                        ? "Client from catalogue · partner manual"
+                        : "Manual entry"}
               </span>
             </div>
             {isStackablePricing && stackableLinePricing ? (
@@ -3931,11 +3943,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <div className="min-w-0">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">
                   Partner Cost £
-                  {!isStackablePricing && pricing ? (
+                  {form.job_type === "hourly" && !isStackablePricing && pricing ? (
                     <span className="ml-1.5">
-                      <PricingSourceChip
-                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
-                      />
+                      <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
                     </span>
                   ) : null}
                 </label>
