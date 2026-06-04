@@ -70,7 +70,12 @@ export async function POST(req: NextRequest) {
     subject,
     commentBody:   commentBody || undefined,
     htmlBody:      htmlBody    || undefined,
-    publicComment: true,
+    // Private internal note: this is an OS-created placeholder ticket (requester
+    // team@getfixfy.com). When the quote is later sent, the requester flips to
+    // the customer — so the opening "created from OS" comment must NOT be public,
+    // or the customer would see internal phrasing. The proposal is their first
+    // public-facing message.
+    publicComment: false,
     requesterEmail: TEAM_REQUESTER_EMAIL,
     requesterName:  TEAM_REQUESTER_NAME,
     tags,

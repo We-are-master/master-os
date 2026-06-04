@@ -298,6 +298,104 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
 }
 
 /**
+ * Read a ticket's current requester (id + email). Best-effort: returns
+ * `ok:false` on any failure so callers can decide conservatively (e.g. never
+ * reassign a requester we couldn't read). Uses `?include=users` so the
+ * requester's email comes back in one round-trip.
+ */
+export async function getTicketRequester(
+  ticketId: string | number,
+): Promise<{ ok: boolean; requesterId?: number; requesterEmail?: string; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json?include=users`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authHeader() },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      ticket?: { requester_id?: number };
+      users?: Array<{ id?: number; email?: string }>;
+    };
+    const requesterId = json.ticket?.requester_id;
+    if (requesterId == null) return { ok: false, status: res.status, error: "no requester_id on ticket" };
+    const match = (json.users ?? []).find((u) => u.id === requesterId);
+    return {
+      ok: true,
+      status: res.status,
+      requesterId,
+      requesterEmail: match?.email ? match.email.trim().toLowerCase() : undefined,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
+ * Reassign an existing ticket's requester to `email` (and optionally file it
+ * under a Zendesk organization). Updating the requester on an existing ticket
+ * uses `ticket.requester_id` — the inline `requester` object only works on
+ * create — so we upsert the user first to obtain their id.
+ *
+ * Best-effort: returns `ok:false` (no throw) so the caller can continue the
+ * send even if the reassignment fails.
+ */
+export async function setTicketRequester(args: {
+  ticketId:        string | number;
+  email:           string;
+  name?:           string | null;
+  /** OS entity id used for the user's stable external_id (client/account id). */
+  entityId?:       string;
+  /** Zendesk org id (string) — when set, the user joins it and the ticket is filed under it. */
+  organizationId?: string;
+}): Promise<{ ok: boolean; requesterId?: number; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+  const email = args.email?.trim();
+  if (!email || !email.includes("@")) return { ok: false, error: "valid email is required" };
+
+  // Step A — upsert the customer user (also places them under the org).
+  const user = await createOrUpdateZendeskUser({
+    kind:           "account",
+    name:           args.name?.trim() || email.split("@")[0] || email,
+    email,
+    entityId:       args.entityId ?? email,
+    organizationId: args.organizationId,
+  });
+  if (!user.ok || !user.id) {
+    return { ok: false, status: user.status, error: `user upsert: ${user.error ?? "unknown"}` };
+  }
+  const requesterId = Number(user.id);
+  if (!Number.isFinite(requesterId)) return { ok: false, error: "user id not numeric" };
+
+  // Step B — PUT requester_id (+ organization_id) only.
+  const ticketPayload: Record<string, unknown> = { requester_id: requesterId };
+  if (args.organizationId) {
+    const orgNum = Number(args.organizationId);
+    if (Number.isFinite(orgNum)) ticketPayload.organization_id = orgNum;
+  }
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: authHeader() },
+      body: JSON.stringify({ ticket: ticketPayload }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    return { ok: true, status: res.status, requesterId };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
  * Zendesk custom field id that mirrors the OS job reference (e.g. "JOB-1234")
  * back into the linked ticket, so support agents can see / search the job
  * number without opening the OS. Overridable via env for other environments.

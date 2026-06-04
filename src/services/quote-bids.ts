@@ -68,20 +68,15 @@ export async function getBidsByQuoteId(quoteId: string): Promise<QuoteBid[]> {
   })) as QuoteBid[];
 }
 
-export async function approveBid(
-  bidId: string,
-  quoteId: string,
-  _partnerId: string,
-  _partnerName: string | undefined,
-  _bidAmount: number
-): Promise<void> {
-  const res = await fetch("/api/quotes/approve-bid", {
+/** Internal selection for customer proposal — does not approve bids or notify partners. */
+export async function selectBidForProposal(bidId: string, quoteId: string): Promise<void> {
+  const res = await fetch("/api/quotes/select-bid-for-proposal", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bidId, quoteId }),
   });
   const json = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) {
-    throw new Error(json.error ?? `Failed to approve bid (${res.status})`);
+    throw new Error(json.error ?? `Failed to select bid (${res.status})`);
   }
 }
