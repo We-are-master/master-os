@@ -638,7 +638,8 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Action Required: Job ${data.jobReference} Complaint`;
+  const jobShortRef = data.jobReference.replace(/^JOB-/i, "").trim() || data.jobReference;
+  const subject = `${jobShortRef} - Action Required: Complaint`;
 
   // Only surface the reason when it's a real description, not the generic
   // system placeholder the webhook falls back to.

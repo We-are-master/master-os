@@ -464,6 +464,16 @@ export function zendeskQuoteRefFieldId(): number {
   return ZENDESK_QUOTE_REF_FIELD_ID > 0 ? ZENDESK_QUOTE_REF_FIELD_ID : ZENDESK_JOB_ID_FIELD_ID;
 }
 
+/** Dropdown: office cancellation reason (`cancel_{osId}`). 0 = disabled. */
+export const ZENDESK_CANCELLATION_REASON_FIELD_ID = Number(
+  process.env.ZENDESK_CANCELLATION_REASON_FIELD_ID?.trim() || "5834334215583",
+);
+
+/** Multiline: cancellation notes (required when reason = cancel_other). 0 = disabled. */
+export const ZENDESK_CANCELLATION_NOTES_FIELD_ID = Number(
+  process.env.ZENDESK_CANCELLATION_NOTES_FIELD_ID?.trim() || "5834293455647",
+);
+
 /** Dropdown: on-hold reason id (same values as OS / Settings presets). 0 = disabled. */
 export const ZENDESK_ON_HOLD_REASON_FIELD_ID = Number(
   process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "0",

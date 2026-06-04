@@ -1,5 +1,7 @@
 import type { FrontendSetup } from "@/lib/frontend-setup";
 import {
+  ZENDESK_CANCELLATION_NOTES_FIELD_ID,
+  ZENDESK_CANCELLATION_REASON_FIELD_ID,
   ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID,
   ZENDESK_COMPLAINT_SOLUTION_FIELD_ID,
   ZENDESK_ON_HOLD_REASON_FIELD_ID,
@@ -9,6 +11,11 @@ export type ZendeskComplaintFieldIds = {
   onHoldReasonFieldId: number;
   complaintDescriptionFieldId: number;
   complaintSolutionFieldId: number;
+};
+
+export type ZendeskCancellationFieldIds = {
+  cancellationReasonFieldId: number;
+  cancellationNotesFieldId: number;
 };
 
 function positiveFieldId(raw: unknown): number | null {
@@ -32,4 +39,17 @@ export function resolveZendeskComplaintFieldIds(setup?: FrontendSetup | null): Z
 
 export function zendeskOnHoldReasonFieldConfigured(setup?: FrontendSetup | null): boolean {
   return resolveZendeskComplaintFieldIds(setup).onHoldReasonFieldId > 0;
+}
+
+export function resolveZendeskCancellationFieldIds(setup?: FrontendSetup | null): ZendeskCancellationFieldIds {
+  return {
+    cancellationReasonFieldId:
+      positiveFieldId(setup?.zendesk_cancellation_reason_field_id) ?? ZENDESK_CANCELLATION_REASON_FIELD_ID,
+    cancellationNotesFieldId:
+      positiveFieldId(setup?.zendesk_cancellation_notes_field_id) ?? ZENDESK_CANCELLATION_NOTES_FIELD_ID,
+  };
+}
+
+export function zendeskCancellationReasonFieldConfigured(setup?: FrontendSetup | null): boolean {
+  return resolveZendeskCancellationFieldIds(setup).cancellationReasonFieldId > 0;
 }

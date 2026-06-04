@@ -88,6 +88,10 @@ export type FrontendSetup = {
   zendesk_on_hold_reason_field_id?: number;
   zendesk_complaint_description_field_id?: number;
   zendesk_complaint_solution_field_id?: number;
+  /** Cancellation reason dropdown (`cancel_{osId}`). */
+  zendesk_cancellation_reason_field_id?: number;
+  /** Cancellation notes textarea (required when reason = other). */
+  zendesk_cancellation_notes_field_id?: number;
 
   /** Customer CCZ (congestion charge) surcharge per job when applied (GBP). */
   access_ccz_fee_gbp?: number;
@@ -418,6 +422,10 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (zdDesc) base.zendesk_complaint_description_field_id = zdDesc;
   const zdSol = normalizeZendeskFieldId(o.zendesk_complaint_solution_field_id);
   if (zdSol) base.zendesk_complaint_solution_field_id = zdSol;
+  const zdCancelReason = normalizeZendeskFieldId(o.zendesk_cancellation_reason_field_id);
+  if (zdCancelReason) base.zendesk_cancellation_reason_field_id = zdCancelReason;
+  const zdCancelNotes = normalizeZendeskFieldId(o.zendesk_cancellation_notes_field_id);
+  if (zdCancelNotes) base.zendesk_cancellation_notes_field_id = zdCancelNotes;
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
@@ -543,6 +551,12 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.zendesk_complaint_solution_field_id !== undefined) {
     base.zendesk_complaint_solution_field_id = normalizeZendeskFieldId(patch.zendesk_complaint_solution_field_id);
+  }
+  if (patch.zendesk_cancellation_reason_field_id !== undefined) {
+    base.zendesk_cancellation_reason_field_id = normalizeZendeskFieldId(patch.zendesk_cancellation_reason_field_id);
+  }
+  if (patch.zendesk_cancellation_notes_field_id !== undefined) {
+    base.zendesk_cancellation_notes_field_id = normalizeZendeskFieldId(patch.zendesk_cancellation_notes_field_id);
   }
   if (patch.access_ccz_fee_gbp !== undefined) {
     base.access_ccz_fee_gbp = clampAccessFeeGbp(patch.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
