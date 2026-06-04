@@ -58,7 +58,15 @@ function telHref(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
 }
 
-function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string {
+/** JOB-9265 → 9265 */
+export function partnerJobEmailShortRef(jobReference: string): string {
+  return jobReference.replace(/^JOB-/i, "").trim() || jobReference.trim();
+}
+
+function formatPartnerJobEmailSubjectDate(
+  scheduledDate?: string | null,
+  opts?: { includeYear?: boolean },
+): string {
   const raw = scheduledDate?.trim();
   if (!raw) return "TBC";
   const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -68,7 +76,7 @@ function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string
       return d.toLocaleDateString("en-GB", {
         day: "numeric",
         month: "short",
-        year: "numeric",
+        ...(opts?.includeYear !== false ? { year: "numeric" } : {}),
         timeZone: "UTC",
       });
     }
@@ -83,12 +91,23 @@ function partnerJobEmailSubject(args: {
   propertyAddress: string;
 }): string {
   const typeOfWork = args.jobTitle.trim() || "Job";
-  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
   const postcode = extractUkPostcode(args.propertyAddress) ?? "—";
   if (args.kind === "offer") {
-    return `New Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
+    const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
+    return `Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
   }
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
   return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
+}
+
+/** e.g. Job Cancelled: General Maintenance - 1 Jun */
+export function partnerJobCancelledEmailSubject(args: {
+  jobTitle: string;
+  scheduledDate?: string | null;
+}): string {
+  const typeOfWork = args.jobTitle.trim() || "Job";
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
+  return `Job Cancelled: ${typeOfWork} - ${date}`;
 }
 
 function partnerJobEmailNotesHtmlBlock(notes: string): string {
@@ -277,6 +296,8 @@ export interface PartnerJobStatusUpdateData {
   partnerFirstName: string;
   jobReference: string;
   jobTitle: string;
+  /** YYYY-MM-DD — used in cancelled email subject. */
+  scheduledDate?: string | null;
   clientName: string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
@@ -337,7 +358,13 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
   const headline = KIND_HEADLINE[data.kind];
   const intro = KIND_INTRO[data.kind];
   const pillColor = KIND_PILL_COLOR[data.kind];
-  const subject = `${headline} — ${data.jobReference}`;
+  const subject =
+    data.kind === "cancelled"
+      ? partnerJobCancelledEmailSubject({
+          jobTitle: data.jobTitle,
+          scheduledDate: data.scheduledDate,
+        })
+      : `${headline} — ${data.jobReference}`;
 
   const safe = {
     name: escapeHtml(data.partnerFirstName || "there"),

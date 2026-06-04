@@ -1,22 +1,22 @@
 # Zendesk — Complaint macro + ticket form
 
-Use this with the OS webhook `POST /api/webhooks/desk/job-on-hold` so a **Complaint** macro and ticket form stay aligned with OS on-hold reasons, partner email copy, and Zendesk custom fields.
+Use this with the OS webhook `POST /api/holds` (legacy: `POST /api/webhooks/desk/job-on-hold`) so a **Complaint** macro and ticket form stay aligned with OS on-hold reasons, partner email copy, and Zendesk custom fields.
 
 ## OS on-hold reason ids (dropdown values)
 
-These ids are defined in code (`src/lib/job-on-hold-reasons.ts`) and in **Settings → Setup → Jobs · On Hold Reasons**. Zendesk dropdown option **values** must match exactly:
+These ids are defined in code (`src/lib/job-on-hold-reasons.ts`) and in **Settings → Setup → Jobs · On Hold Reasons**. OS stores bare ids; Zendesk dropdown option **values** use prefix `hold_` (e.g. `hold_complaint`):
 
-| Value (`on_hold_reason_id`) | Label (default) |
-|----------------------------|-----------------|
-| `waiting_materials` | Waiting for materials |
-| `client_rescheduled` | Client rescheduled |
-| `access_issue` | Access issue |
-| `partner_unavailable` | Partner unavailable |
-| `awaiting_confirmation` | Awaiting confirmation |
-| `complaint` | Complaint |
-| `other` | Other |
+| Zendesk value | OS id | Label (default) |
+|---------------|-------|-----------------|
+| `hold_waiting_materials` | `waiting_materials` | Waiting for materials |
+| `hold_client_rescheduled` | `client_rescheduled` | Client rescheduled |
+| `hold_access_issue` | `access_issue` | Access issue |
+| `hold_partner_unavailable` | `partner_unavailable` | Partner unavailable |
+| `hold_awaiting_confirmation` | `awaiting_confirmation` | Awaiting confirmation |
+| `hold_complaint` | `complaint` | Complaint |
+| `hold_other` | `other` | Other |
 
-Custom reasons added in Setup get a stable `id` (shown in Settings) — use that same id as the Zendesk option value.
+Custom reasons added in Setup get a stable `id` (shown in Settings) — Zendesk value = `hold_{id}`. Webhooks accept bare id or `hold_*` tag.
 
 ## Zendesk custom fields (create in Admin → Objects and rules → Tickets → Fields)
 
@@ -34,7 +34,7 @@ You do **not** need to hand-maintain dropdown options in Zendesk:
 
 1. Set the **on-hold reason field id** in Settings (or env).
 2. Edit **Jobs · On Hold Reasons** (add / remove / rename labels; `id` stays stable).
-3. **Save Setup** — the OS pushes the full option list to Zendesk (`value` = `id`, `name` = label).
+3. **Save Setup** — the OS pushes the full option list to Zendesk (`value` = `hold_{id}`, `name` = label).
 4. Or click **Sync reasons → Zendesk** on that card.
 
 Removed OS reasons are pruned from Zendesk when their `value` matches an OS-style id. Legacy Zendesk-only options are left untouched.
@@ -66,10 +66,10 @@ Legacy alias: `reason` (free text label) still accepted if `on_hold_reason_id` i
    - Apply the complaint ticket form (or set fields: reason = `complaint`, clear description for agent to fill).
    - Optional: add internal note “Complaint raised — job paused in OS.”
 
-2. **Trigger** (after macro / on form submit):
-   - **URL:** `POST https://<os-host>/api/webhooks/desk/job-on-hold`
+2. **Trigger** (tag `on_hold`, exclude `sent-hold-os`; add `sent-hold-os` after success):
+   - **URL:** `POST https://<os-host>/api/holds`
    - **Header:** `X-API-Key: <ZENDESK_WEBHOOK_API_KEY>`
-   - **Body:** JSON above.
+   - **Body:** JSON above (`on_hold_notes` instead of `description` is preferred).
 
 ## What the OS does
 

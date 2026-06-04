@@ -272,6 +272,7 @@ export async function notifyPartnerJobZendesk(
       partnerFirstName,
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
+      scheduledDate: job.scheduled_date,
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
       scope: job.scope || "(no scope provided)",
@@ -317,7 +318,7 @@ export async function notifyPartnerJobZendesk(
       zendeskResult = { ok: false, error: "partner_has_no_email" };
     } else if (kind === "on_hold" || kind === "cancelled") {
       // New side conversation — distinct subject in Zendesk sidebar + partner inbox
-      // (e.g. "9264 - Action Required: Complaint", "Job cancelled — JOB-9263").
+      // (e.g. "9264 - Action Required: Complaint", "Job Cancelled: … - 1 Jun").
       // Do not overwrite zendesk_side_conversation_id — booked thread stays canonical.
       const r = await createSideConversation({
         ticketId: zendeskTicketId,

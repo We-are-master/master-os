@@ -74,28 +74,32 @@ export async function POST(req: NextRequest) {
   const partnerName = partner.contact_name?.trim() || partner.company_name?.trim() || null;
   const now = new Date().toISOString();
 
-  if (!job.partner_confirmed_at) {
-    await supabase
-      .from("jobs")
-      .update({
-        partner_confirmed_at: now,
-        partner_name: partnerName,
-      })
-      .eq("id", jobId);
-  }
+  await supabase
+    .from("jobs")
+    .update({
+      partner_id: partnerId,
+      partner_name: partnerName,
+      partner_confirmed_at: job.partner_confirmed_at ?? now,
+    })
+    .eq("id", jobId);
 
-  await finalizeAutoAssignWinner({
+  const freshJob = (await loadJobForPartnerAcceptance(supabase, jobId)) ?? job;
+
+  const { bookedEmail } = await finalizeAutoAssignWinner({
     supabase,
     jobId,
     partnerId,
-    job,
+    job: freshJob,
     partner,
     partnerName,
   });
 
   return NextResponse.json({
     ok: true,
-    jobReference: job.reference,
+    jobReference: freshJob.reference,
     partnerLabel: partnerDisplayName(partner),
+    partnerId,
+    partnerName,
+    bookedEmail,
   });
 }

@@ -891,7 +891,7 @@ export function SetupTab() {
           </div>
           <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
             After you save, reasons auto-sync to Zendesk when the on-hold reason field id is set under Integrations.
-            Option <code className="text-[11px]">value</code> in Zendesk = the <code className="text-[11px]">id</code> shown above.
+            Zendesk option <code className="text-[11px]">value</code> = <code className="text-[11px]">hold_</code> + id (e.g. <code className="text-[11px]">hold_complaint</code>).
           </p>
         </div>
       </Card>
