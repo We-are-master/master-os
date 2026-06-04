@@ -28,6 +28,11 @@ export const ZD_STATUS_LOST = 5709657746335;
 /** 🔴 Unassigned — job exists, no partner assigned yet (waiting on auto-assign or manual). */
 export const ZD_STATUS_UNASSIGNED = 5688450872991;
 
+/** 🟡 Auto-Assigning — job is broadcasting to partners for auto-assignment.
+ *  Distinct from Unassigned. Overridable via env; falls back to Unassigned. */
+export const ZD_STATUS_AUTO_ASSIGNING =
+  Number(process.env.ZENDESK_STATUS_AUTO_ASSIGNING_ID?.trim() || "5838176584223") || ZD_STATUS_UNASSIGNED;
+
 /** 🟢 Schedule — job is assigned & scheduled. */
 export const ZD_STATUS_SCHEDULED = 5688453749919;
 
@@ -82,6 +87,7 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_BIDDING]:           "open",
   [ZD_STATUS_AWAITING_APPROVAL]: "open",
   [ZD_STATUS_UNASSIGNED]:        "open",
+  [ZD_STATUS_AUTO_ASSIGNING]:    "open",
   [ZD_STATUS_SCHEDULED]:         "open",
   [ZD_STATUS_IN_PROGRESS]:       "open",
   [ZD_STATUS_FINAL_CHECKS]:      "open",
