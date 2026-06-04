@@ -315,10 +315,10 @@ export async function notifyPartnerJobZendesk(
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
-    } else if (kind === "on_hold") {
-      // Always a new side conversation so the partner gets a distinct inbox
-      // subject (action required / complaint). Do not overwrite
-      // zendesk_side_conversation_id — booked/completed keep the original thread.
+    } else if (kind === "on_hold" || kind === "cancelled") {
+      // New side conversation — distinct subject in Zendesk sidebar + partner inbox
+      // (e.g. "Action Required: … Complaint", "Job cancelled — JOB-9263").
+      // Do not overwrite zendesk_side_conversation_id — booked thread stays canonical.
       const r = await createSideConversation({
         ticketId: zendeskTicketId,
         toEmail:  partner.email,

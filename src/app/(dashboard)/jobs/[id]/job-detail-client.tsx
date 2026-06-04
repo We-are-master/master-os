@@ -3337,18 +3337,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           statusLabel,
         });
         // Map OS status → Zendesk email kind so the partner gets the right copy.
-        const zdKind: "on_hold" | "resumed" | "completed" | "status_changed" =
+        const zdKind: "on_hold" | "resumed" | "completed" | "cancelled" | "status_changed" =
           newStatus === "on_hold"
             ? "on_hold"
-            : j.status === "on_hold"
-              ? "resumed"
-              : newStatus === "completed"
-                ? "completed"
-                : "status_changed";
+            : newStatus === "cancelled"
+              ? "cancelled"
+              : j.status === "on_hold"
+                ? "resumed"
+                : newStatus === "completed"
+                  ? "completed"
+                  : "status_changed";
         const reason =
           newStatus === "on_hold"
             ? (updated.on_hold_complaint_description?.trim() || updated.on_hold_reason || null)
-            : null;
+            : newStatus === "cancelled"
+              ? (updated.cancellation_reason?.trim() || null)
+              : null;
         void notifyPartnerJobChange({
           jobId: updated.id,
           jobReference: updated.reference,

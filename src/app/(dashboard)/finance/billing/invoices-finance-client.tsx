@@ -65,6 +65,7 @@ import {
   type InvoiceFinanceTab,
 } from "@/lib/invoice-finance-tab";
 import { weekPeriodHelpText } from "@/lib/self-bill-period";
+import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
@@ -2265,9 +2266,23 @@ function InvoiceDetailDrawer({
       await updateInvoice(invoice.id, { status: "cancelled", cancellation_reason: reason } as Partial<Invoice>);
       await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
       if (cancelWithJob && linkedJob?.id && invoice.job_reference?.trim()) {
-        await updateJob(linkedJob.id, { status: "cancelled" } as Partial<Job>);
+        await updateJob(linkedJob.id, {
+          status: "cancelled",
+          cancellation_reason: reason,
+        } as Partial<Job>);
         await cancelOpenSelfBillsForJobCancellation({ jobReference: invoice.job_reference.trim(), primarySelfBillId: linkedJob.self_bill_id });
         await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } });
+        if (linkedJob.partner_id?.trim()) {
+          void notifyPartnerJobChange({
+            jobId: linkedJob.id,
+            jobReference: linkedJob.reference,
+            kind: "cancelled",
+            reason,
+            newStatusLabel: "Cancelled",
+            skipPush: true,
+            silent: true,
+          });
+        }
       }
       onStatusChange(invoice, "cancelled");
       setCancelModalOpen(false);

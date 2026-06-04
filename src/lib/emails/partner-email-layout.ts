@@ -102,3 +102,52 @@ export function partnerEmailOuterTableClose(): string {
 export function partnerEmailBodyOpen(): string {
   return `<body class="email-bg" bgcolor="#F7F7FB" style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">`;
 }
+
+const PARTNER_EMAIL_TITLE_FONT =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+function partnerEmailTitleInlineStyle(fontSize: string, lineHeight: string): string {
+  return `font-family:${PARTNER_EMAIL_TITLE_FONT}; font-size:${fontSize}; line-height:${lineHeight}; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px`;
+}
+
+/** Greeting only — e.g. "Hi Victor," on its own line. */
+export function partnerEmailGreetingH1Html(
+  nameEsc: string,
+  opts?: { marginBottom?: string; fontSize?: string; lineHeight?: string },
+): string {
+  const mb = opts?.marginBottom ?? "8px";
+  const fs = opts?.fontSize ?? "28px";
+  const lh = opts?.lineHeight ?? "36px";
+  return `<h1 class="h1-mobile" style="margin:0 0 ${mb} 0; ${partnerEmailTitleInlineStyle(fs, lh)};">Hi ${nameEsc},</h1>`;
+}
+
+/** Bold headline after the greeting (same visual weight as the h1). */
+export function partnerEmailHeadlineAfterGreetingHtml(
+  headlineEsc: string,
+  opts?: { marginBottom?: string; fontSize?: string; lineHeight?: string },
+): string {
+  const mb = opts?.marginBottom ?? "12px";
+  const fs = opts?.fontSize ?? "28px";
+  const lh = opts?.lineHeight ?? "36px";
+  return `<p class="h1-mobile" style="margin:0 0 ${mb} 0; ${partnerEmailTitleInlineStyle(fs, lh)};">${headlineEsc}</p>`;
+}
+
+/** Two-line title: greeting, then headline. */
+export function partnerEmailSplitTitleHtml(
+  nameEsc: string,
+  headlineEsc: string,
+  opts?: { marginBottomAfterHeadline?: string; fontSize?: string; lineHeight?: string },
+): string {
+  return (
+    partnerEmailGreetingH1Html(nameEsc, {
+      marginBottom: "8px",
+      fontSize: opts?.fontSize,
+      lineHeight: opts?.lineHeight,
+    }) +
+    partnerEmailHeadlineAfterGreetingHtml(headlineEsc, {
+      marginBottom: opts?.marginBottomAfterHeadline ?? "12px",
+      fontSize: opts?.fontSize,
+      lineHeight: opts?.lineHeight,
+    })
+  );
+}
