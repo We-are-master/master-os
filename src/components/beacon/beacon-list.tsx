@@ -5,22 +5,23 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getSupabase } from "@/services/base";
 import { FxAvatar, MicroLabel, Pill } from "@/components/fx/primitives";
 import type { JobStatus } from "@/types/database";
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
-  getDateRangeForMode,
-  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
+import { fetchBeaconBoardJobs } from "@/lib/beacon-jobs";
+import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 
 type ListJob = {
   id: string;
   reference: string;
   title: string;
   status: JobStatus;
+  partner_id: string | null;
+  partner_ids: string[] | null;
   client_name: string;
   property_address: string | null;
   partner_name: string | null;
@@ -59,47 +60,19 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
       if (!cancelled) setLoading(true);
     });
     void (async () => {
-      const supabase = getSupabase();
-
-      // Account → client_ids lookup (null = no filter; [] = empty result short-circuit).
-      const accountClientIds = await resolveAccountClientIds(filters.accountId);
-      if (cancelled) return;
-      if (accountClientIds !== null && accountClientIds.length === 0) {
-        setJobs([]);
-        setLoading(false);
-        return;
+      try {
+        const rows = await fetchBeaconBoardJobs(
+          filters,
+          "id, reference, title, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
+          { includeCancelled: false },
+        );
+        if (cancelled) return;
+        setJobs(rows as unknown as ListJob[]);
+      } catch {
+        if (!cancelled) setJobs([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      let query = supabase
-        .from("jobs")
-        .select(
-          "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount",
-        )
-        .neq("status", "cancelled")
-        .neq("status", "deleted")
-        .is("deleted_at", null);
-
-      const range = getDateRangeForMode(filters);
-      if (range) {
-        query = query
-          .gte("scheduled_start_at", range.fromIso)
-          .lte("scheduled_start_at", range.toIso);
-      }
-
-      if (filters.partnerId === "__unassigned__") {
-        query = query.is("partner_id", null);
-      } else if (filters.partnerId !== "all") {
-        query = query.eq("partner_id", filters.partnerId);
-      }
-
-      if (accountClientIds !== null) {
-        query = query.in("client_id", accountClientIds);
-      }
-
-      const { data } = await query.order("scheduled_start_at", { ascending: true }).limit(200);
-      if (cancelled) return;
-      setJobs((data ?? []) as unknown as ListJob[]);
-      setLoading(false);
     })();
     return () => {
       cancelled = true;
@@ -111,7 +84,7 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
       GROUPS.map((g) => [g.id, { items: [], revenue: 0 }]),
     );
     for (const j of jobs) {
-      const group = GROUPS.find((g) => g.matches(j.status));
+      const group = GROUPS.find((g) => g.matches(effectiveJobStatusForDisplay(j)));
       if (!group) continue;
       const bucket = out.get(group.id)!;
       bucket.items.push(j);
