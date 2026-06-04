@@ -9,6 +9,7 @@ import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
+import type { BidAutoSelectStrategy } from "@/services/company";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import {
   DEFAULT_ACCESS_CCZ_FEE_GBP,
@@ -73,6 +74,7 @@ export function SetupTab() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [rawSetup, setRawSetup] = useState<unknown>(null);
   const [biddingSlaHoursStr, setBiddingSlaHoursStr] = useState("8");
+  const [bidStrategy, setBidStrategy] = useState<BidAutoSelectStrategy>("best_value");
   const [onHoldPresets, setOnHoldPresets] = useState<JobOnHoldPresetRow[]>(() =>
     DEFAULT_JOB_ON_HOLD_PRESETS.map((r) => ({ ...r })),
   );
@@ -150,9 +152,10 @@ export function SetupTab() {
     let alive = true;
     void (async () => {
       const supabase = getSupabase();
-      const { data } = await supabase.from("company_settings").select("id, frontend_setup").limit(1).maybeSingle();
+      const { data } = await supabase.from("company_settings").select("id, frontend_setup, bid_auto_select_strategy").limit(1).maybeSingle();
       if (!alive) return;
       if (data?.id) setSettingsId(data.id);
+      if (data?.bid_auto_select_strategy) setBidStrategy(data.bid_auto_select_strategy as BidAutoSelectStrategy);
       const parsed = parseFrontendSetup(data?.frontend_setup);
       setRawSetup(data?.frontend_setup ?? null);
       setBiddingSlaHoursStr(String(parsed.bidding_sla_hours ?? 8));
@@ -271,13 +274,17 @@ export function SetupTab() {
             phone: "",
             email: "",
             frontend_setup: next,
+            bid_auto_select_strategy: bidStrategy,
           })
           .select("id")
           .single();
         if (insertErr) throw insertErr;
         if (created?.id) setSettingsId(created.id);
       } else {
-        const { error } = await supabase.from("company_settings").update({ frontend_setup: next }).eq("id", settingsId);
+        const { error } = await supabase
+          .from("company_settings")
+          .update({ frontend_setup: next, bid_auto_select_strategy: bidStrategy })
+          .eq("id", settingsId);
         if (error) throw error;
       }
       setRawSetup(next);
@@ -605,6 +612,21 @@ export function SetupTab() {
                   onChange={(e) => setBiddingSlaHoursStr(e.target.value)}
                   className="w-28"
                 />
+              </div>
+              <div>
+                <div className="flex items-center gap-1 mb-1.5">
+                  <label className="block text-xs font-medium text-text-secondary">Bid auto-selection</label>
+                  <FixfyHintIcon text="Which partner bid the OS pre-selects to fill the customer proposal. Best value balances price and partner rating (falls back to cheapest when a partner has no rating yet); Soonest start picks the earliest offered start date." />
+                </div>
+                <select
+                  value={bidStrategy}
+                  onChange={(e) => setBidStrategy(e.target.value as BidAutoSelectStrategy)}
+                  disabled={!canEditConfig}
+                  className="h-9 rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+                >
+                  <option value="best_value">Best value (price + rating)</option>
+                  <option value="soonest_start">Soonest start date</option>
+                </select>
               </div>
               <Button
                 type="button"

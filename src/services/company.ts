@@ -49,8 +49,13 @@ export interface CompanySettings {
   compliance_score_excluded_doc_ids?: string[] | null;
   /** Settings → Setup (UI labels, SLA windows, future keys). */
   frontend_setup?: FrontendSetup | null;
+  /** Auto-pick strategy for partner bids driving the customer proposal. */
+  bid_auto_select_strategy?: BidAutoSelectStrategy | null;
   updated_at: string;
 }
+
+/** How the OS auto-picks a partner bid to fill the customer proposal. */
+export type BidAutoSelectStrategy = "best_value" | "soonest_start" | "cheapest";
 
 export async function getCompanySettings(): Promise<CompanySettings | null> {
   const supabase = getSupabase();

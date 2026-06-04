@@ -11,6 +11,9 @@ export interface QuoteBid {
   status: "submitted" | "approved" | "rejected";
   created_at: string;
   updated_at: string;
+  /** Joined from `partners` — drives the "best value" auto-select strategy. */
+  partner_rating?: number | null;
+  partner_jobs_completed?: number | null;
 }
 
 /**
@@ -50,22 +53,28 @@ export async function getBidsByQuoteId(quoteId: string): Promise<QuoteBid[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("quote_bids")
-    .select("*")
+    .select("*, partners ( rating, jobs_completed )")
     .eq("quote_id", quoteId)
     .order("bid_amount", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map((row: Record<string, unknown>) => ({
-    id: String(row.id),
-    quote_id: String(row.quote_id),
-    partner_id: String(row.partner_id),
-    partner_name: row.partner_name as string | undefined,
-    bid_amount: Number(row.bid_amount),
-    job_type: (row.job_type as "fixed" | "hourly" | undefined) ?? "fixed",
-    notes: row.notes as string | undefined,
-    status: row.status as QuoteBid["status"],
-    created_at: String(row.created_at),
-    updated_at: String(row.updated_at),
-  })) as QuoteBid[];
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const partnerRel = row.partners as { rating?: number | null; jobs_completed?: number | null } | { rating?: number | null; jobs_completed?: number | null }[] | null | undefined;
+    const partner = Array.isArray(partnerRel) ? partnerRel[0] : partnerRel;
+    return {
+      id: String(row.id),
+      quote_id: String(row.quote_id),
+      partner_id: String(row.partner_id),
+      partner_name: row.partner_name as string | undefined,
+      bid_amount: Number(row.bid_amount),
+      job_type: (row.job_type as "fixed" | "hourly" | undefined) ?? "fixed",
+      notes: row.notes as string | undefined,
+      status: row.status as QuoteBid["status"],
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+      partner_rating: partner?.rating != null ? Number(partner.rating) : null,
+      partner_jobs_completed: partner?.jobs_completed != null ? Number(partner.jobs_completed) : null,
+    };
+  }) as QuoteBid[];
 }
 
 /** Internal selection for customer proposal — does not approve bids or notify partners. */

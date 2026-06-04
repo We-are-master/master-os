@@ -126,6 +126,18 @@ export async function POST(req: NextRequest) {
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
 
+    // Idempotency window — guard against duplicate sends (e.g. double-clicks that
+    // slipped past the client guard). If a proposal was emailed in the last ~8s,
+    // skip rather than send the customer a second copy.
+    const lastSentAt = (quote as { customer_pdf_sent_at?: string | null }).customer_pdf_sent_at;
+    if (lastSentAt && Date.now() - new Date(lastSentAt).getTime() < 8000) {
+      return withServerTiming(
+        { pdfGenerated: false, emailSent: false, reason: "A proposal was just sent for this quote — duplicate skipped." },
+        200,
+        marks,
+      );
+    }
+
     // Fetch line items (if not pre-provided) and company settings in parallel.
     const tDeps = nowMs();
     const [lineItemResult, settingsResult] = await Promise.all([
@@ -231,9 +243,14 @@ export async function POST(req: NextRequest) {
 
     const pdfAttachmentBase = String(quote.reference ?? "quote").replace(/\//g, "-");
 
+    // Kick off the PDF render now but don't block on it — the Zendesk branch's
+    // requester/org calls run while it renders; we await the buffer only at the
+    // point it's attached. Saves the overlap vs rendering then calling Zendesk.
     const tPdf = nowMs();
-    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, branding);
-    marks.push(["pdf_render", nowMs() - tPdf]);
+    const pdfBufferPromise = renderQuotePdfToBuffer(safePdfData, branding).then((buf) => {
+      marks.push(["pdf_render", nowMs() - tPdf]);
+      return buf;
+    });
 
     // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
@@ -342,6 +359,7 @@ export async function POST(req: NextRequest) {
           acceptUrl,
           rejectUrl,
         });
+        const pdfBuffer = await pdfBufferPromise;
         await zdSendCustomerComment({
           ticketId:       zdTicketId!,
           customStatusId: ZD_STATUS_AWAITING_APPROVAL,
@@ -460,6 +478,7 @@ export async function POST(req: NextRequest) {
 
     const useRequestPhotos =
       typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
+    const pdfBuffer = await pdfBufferPromise;
     const emailAttachments: { filename: string; content: Buffer; contentType?: string }[] = [
       {
         filename: `${pdfAttachmentBase}_quote.pdf`,
