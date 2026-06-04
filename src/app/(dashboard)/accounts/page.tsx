@@ -1891,13 +1891,13 @@ function AccountDetailDrawer({
             <div className="rounded-2xl border border-border-light bg-card p-5 space-y-4">
               <div className="flex items-center gap-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-text-primary">Billing</p>
-                <FixfyHintIcon text="Changes apply to new invoices only." placement="bottom-end" />
+                <FixfyHintIcon text="Governs who receives quotes, job confirmations and invoices for this account." placement="bottom-end" />
               </div>
 
               <div>
                 <div className="flex items-center gap-1 mb-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                    Bill invoices to
+                    Send customer emails to
                   </span>
                   <span className="text-[#ED4B00]" aria-hidden>*</span>
                 </div>
@@ -1926,15 +1926,15 @@ function AccountDetailDrawer({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <p className="text-sm font-semibold text-text-primary leading-tight">
-                                {bt === "end_client" ? "End client" : "This account"}
+                                {bt === "end_client" ? "End customer" : "This account"}
                               </p>
                               <FixfyHintIcon
                                 placement="bottom-end"
                                 label={bt === "end_client" ? "B2C" : "B2B2C"}
                                 text={
                                   bt === "end_client"
-                                    ? "Invoice goes to the final customer. Example: Checkatrade."
-                                    : "Invoice goes to this account. Example: Housekeep."
+                                    ? "Quotes, job updates & invoices go to the final customer (their own email). Example: Checkatrade."
+                                    : "Quotes, job updates & invoices go to this account (finance/main email). Example: Housekeep."
                                 }
                               />
                             </div>
@@ -2021,8 +2021,8 @@ function AccountDetailDrawer({
                     <FixfyHintIcon
                       text={
                         billingType === "account"
-                          ? "Required for account-direct billing; also used for customer sends when \"This account\" is selected."
-                          : "Optional for some invoice outputs. With \"End client\", job completion emails go to each contact's email on the client record — not this field."
+                          ? "With \"This account\", quotes, job confirmations and invoices all go here (falls back to the main account email if empty)."
+                          : "With \"End customer\", quotes, job confirmations and invoices go to each contact's own email on the client record — not this field."
                       }
                     />
                   </div>
