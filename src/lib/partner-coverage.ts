@@ -75,8 +75,39 @@ export function haversineMiles(
 export function effectiveCoverageMode(partner: PartnerCoverageFields): PartnerCoverageMode | null {
   const m = partner.coverage_mode;
   if (m === "radius" || m === "postcodes") return m;
+
+  const hasRadius =
+    Number(partner.service_radius_miles ?? 0) > 0 &&
+    partner.coverage_latitude != null &&
+    partner.coverage_longitude != null;
+  const hasPostcodes = (partner.included_postcodes?.length ?? 0) > 0;
+  if (hasRadius && !hasPostcodes) return "radius";
+  if (hasPostcodes && !hasRadius) return "postcodes";
+
   if (partner.uk_coverage_regions?.length || partner.location?.trim()) return "postcodes";
   return null;
+}
+
+/** Fields cleared on save so only one coverage method is stored. */
+export function clearedCoverageFieldsForMode(
+  mode: PartnerCoverageMode,
+): Partial<PartnerCoverageFields> {
+  if (mode === "radius") {
+    return {
+      coverage_mode: "radius",
+      included_postcodes: null,
+      coverage_cities: null,
+      uk_coverage_regions: null,
+    };
+  }
+  return {
+    coverage_mode: "postcodes",
+    service_radius_miles: null,
+    coverage_latitude: null,
+    coverage_longitude: null,
+    coverage_base_postcode: null,
+    uk_coverage_regions: null,
+  };
 }
 
 export function effectiveIncludedPostcodes(partner: PartnerCoverageFields): string[] {
