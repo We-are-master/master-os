@@ -43,6 +43,7 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import { getCompanySettings, type BidAutoSelectStrategy } from "@/services/company";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { resolveCorporateAccountIdForClient } from "@/services/clients";
@@ -354,6 +355,59 @@ function compareBidsForCheapest(a: QuoteBid, b: QuoteBid): number {
   const pb = Number(b.bid_amount) || 0;
   if (pa !== pb) return pa - pb;
   return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+}
+
+/** Earliest start date (ms) the partner offered in their bid; Infinity when none. */
+function bidEarliestStartMs(bid: QuoteBid): number {
+  const p = parseBidProposalFromNotes(bid.notes);
+  const days = [p?.start_date_option_1, p?.start_date_option_2]
+    .map((d) => normalizeCalendarDateToYmd(bidPayloadTrimmedString(d as unknown)))
+    .filter((d): d is string => Boolean(d))
+    .map((d) => new Date(d).getTime())
+    .filter((t) => Number.isFinite(t));
+  return days.length ? Math.min(...days) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Pick the auto-selected bid from the submitted set per the configured strategy.
+ * - cheapest: lowest price (legacy).
+ * - soonest_start: earliest offered start date; tie → cheapest.
+ * - best_value: balance price (lower better) + partner rating (higher better),
+ *   normalised within the set. When ratings are absent/equal it reduces to cheapest.
+ */
+function pickAutoSelectBid(
+  submitted: QuoteBid[],
+  strategy: BidAutoSelectStrategy,
+): QuoteBid | null {
+  if (submitted.length === 0) return null;
+  if (strategy === "cheapest") return [...submitted].sort(compareBidsForCheapest)[0];
+
+  if (strategy === "soonest_start") {
+    return [...submitted].sort((a, b) => {
+      const da = bidEarliestStartMs(a);
+      const db = bidEarliestStartMs(b);
+      if (da !== db) return da - db;
+      return compareBidsForCheapest(a, b);
+    })[0];
+  }
+
+  // best_value
+  const prices = submitted.map((b) => Number(b.bid_amount) || 0);
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const priceScore = (b: QuoteBid) =>
+    maxP === minP ? 1 : (maxP - (Number(b.bid_amount) || 0)) / (maxP - minP);
+  const ratingScore = (b: QuoteBid) => {
+    const r = b.partner_rating;
+    return r != null && Number.isFinite(Number(r)) ? Math.max(0, Math.min(1, Number(r) / 5)) : 0;
+  };
+  const score = (b: QuoteBid) => 0.5 * priceScore(b) + 0.5 * ratingScore(b);
+  return [...submitted].sort((a, b) => {
+    const sa = score(a);
+    const sb = score(b);
+    if (sb !== sa) return sb - sa;
+    return compareBidsForCheapest(a, b);
+  })[0];
 }
 
 type BidPriceRankLabel = "Lowest" | "Mid" | "Highest";
@@ -777,8 +831,17 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   /** "all" · account_id (corporate account). Filters by `quote.source_account_id`. */
   const [filterAccountId, setFilterAccountId] = useState<string>("all");
   const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
-  /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". */
-  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
+  /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". Defaults to All-time. */
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>({ mode: "all" });
+  /** Auto-select strategy for partner bids (company setting); defaults to best value. */
+  const [bidAutoSelectStrategy, setBidAutoSelectStrategy] = useState<BidAutoSelectStrategy>("best_value");
+  useEffect(() => {
+    let alive = true;
+    void getCompanySettings().then((s) => {
+      if (alive && s?.bid_auto_select_strategy) setBidAutoSelectStrategy(s.bid_auto_select_strategy);
+    });
+    return () => { alive = false; };
+  }, []);
   const buFilter = useBuFilter();
   const { biddingSlaMs, biddingSlaHours } = useFrontendSetup();
   const biddingSlaHoursLabelPretty = formatBiddingSlaHoursLabel(biddingSlaHours);
@@ -2601,6 +2664,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         onStatusChange={handleStatusChange}
         onQuoteUpdate={handleQuoteDrawerUpdate}
         onPromotionToApprovalTab={onPromotionToApprovalTab}
+        bidAutoSelectStrategy={bidAutoSelectStrategy}
         onApproveQuote={handleApproveQuoteRequest}
       />
       ) : null}
@@ -2999,6 +3063,7 @@ function QuoteDetailDrawer({
   onQuoteUpdate,
   onPromotionToApprovalTab,
   onApproveQuote,
+  bidAutoSelectStrategy,
 }: {
   quote: Quote;
   pendingInitialTab?: "overview" | "bids" | null;
@@ -3013,6 +3078,8 @@ function QuoteDetailDrawer({
   onPromotionToApprovalTab?: () => void;
   /** Approval (`awaiting_customer`) — **Approved** button: deposit gate or create job (parent). */
   onApproveQuote: (quoteRow: Quote) => void;
+  /** Company setting: which bid the auto-select picks to fill the proposal. */
+  bidAutoSelectStrategy?: BidAutoSelectStrategy;
 }) {
   const { profile } = useProfile();
   const [tab, setTab] = useState("overview");
@@ -4249,10 +4316,11 @@ function QuoteDetailDrawer({
     }
     const submitted = bids.filter((b) => b.status === "submitted");
     if (submitted.length === 0) return;
-    const lowest = [...submitted].sort(compareBidsForCheapest)[0];
+    const picked = pickAutoSelectBid(submitted, bidAutoSelectStrategy ?? "best_value");
+    if (!picked) return;
     autoSelectedProposalBidQuoteRef.current = quote.id;
-    void selectBidForReview(lowest, { silent: true });
-  }, [quote.id, quote.status, quote.partner_id, bids, selectedReviewBidId, selectBidForReview]);
+    void selectBidForReview(picked, { silent: true });
+  }, [quote.id, quote.status, quote.partner_id, bids, selectedReviewBidId, selectBidForReview, bidAutoSelectStrategy]);
 
   const saveProposalDraft = async () => {
     setProposalSaving(true);
@@ -4285,6 +4353,9 @@ function QuoteDetailDrawer({
   };
 
   const handleSendToCustomer = async (overrideEmail?: string) => {
+    // Re-entry guard: the send takes a few seconds (PDF + Zendesk). Without this
+    // a second click would fire another send-pdf → a duplicate customer email.
+    if (sendState === "sending") return;
     const resolved =
       bidPayloadTrimmedString(overrideEmail as unknown) ||
       bidPayloadTrimmedString(sendEmail as unknown) ||
@@ -4343,6 +4414,9 @@ function QuoteDetailDrawer({
       setSendState("sent");
       if (data.emailSent) {
         if (quote.status === "draft" || quote.status === "in_survey" || quote.status === "bidding") {
+          // Move the open drawer to Approval immediately so the stepper updates
+          // before the refetch lands (send-pdf already set status server-side).
+          onQuoteUpdate?.({ ...quote, status: "awaiting_customer" } as Quote);
           onPromotionToApprovalTab?.();
         }
         if (onQuoteUpdate) {
@@ -4587,7 +4661,8 @@ function QuoteDetailDrawer({
                   <Button
                     variant={action.primary ? "primary" : "outline"}
                     size="sm"
-                    disabled={proposalSaving}
+                    disabled={proposalSaving || (action.status === "awaiting_customer" && sendState === "sending")}
+                    loading={action.status === "awaiting_customer" && sendState === "sending"}
                     icon={<action.icon className="h-3.5 w-3.5" />}
                     onClick={async () => {
                       if (action.status === "approve_quote") {
@@ -4602,7 +4677,7 @@ function QuoteDetailDrawer({
                       await sendToCustomerClick();
                     }}
                   >
-                    {action.label}
+                    {action.status === "awaiting_customer" && sendState === "sending" ? "Sending…" : action.label}
                   </Button>
                   {showMarkAsSent ? (
                     <Button
@@ -6645,12 +6720,14 @@ function QuoteDetailDrawer({
               type="button"
               icon={<Send className="h-3.5 w-3.5" />}
               disabled={
+                sendState === "sending" ||
                 !emailPromptValue.trim().includes("@") ||
                 emailPromptConfirm.trim().toLowerCase() !== emailPromptValue.trim().toLowerCase()
               }
+              loading={sendState === "sending"}
               onClick={confirmEmailPromptAndSend}
             >
-              Send proposal
+              {sendState === "sending" ? "Sending…" : "Send proposal"}
             </Button>
           </div>
         </div>
