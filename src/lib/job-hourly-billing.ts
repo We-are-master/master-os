@@ -20,6 +20,47 @@ export function computeHourlyTotals(params: {
   return { billedHours, clientTotal, partnerTotal };
 }
 
+/** Create-job / form: user-entered initial billed hours × rates (no timer 1h minimum). */
+export function computeInitialHourlyJobTotals(params: {
+  billedHours: number;
+  clientHourlyRate: number;
+  partnerHourlyRate: number;
+}) {
+  const billedHours = Math.max(0, Number(params.billedHours) || 0);
+  const clientTotal =
+    Math.round(Math.max(0, params.clientHourlyRate) * billedHours * 100) / 100;
+  const partnerTotal =
+    Math.round(Math.max(0, params.partnerHourlyRate) * billedHours * 100) / 100;
+  return { billedHours, clientTotal, partnerTotal };
+}
+
+/** Empty string = missing; "0" and other non-negative numbers are valid. */
+export function parseRequiredHourlyField(raw: string): number | null {
+  const t = raw.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+export function resolveInitialHourlyJobTotalsFromForm(fields: {
+  hourly_client_rate: string;
+  hourly_partner_rate: string;
+  billed_hours: string;
+}): ReturnType<typeof computeInitialHourlyJobTotals> | null {
+  const clientHourlyRate = parseRequiredHourlyField(fields.hourly_client_rate);
+  const partnerHourlyRate = parseRequiredHourlyField(fields.hourly_partner_rate);
+  const billedHours = parseRequiredHourlyField(fields.billed_hours);
+  if (clientHourlyRate === null || partnerHourlyRate === null || billedHours === null) {
+    return null;
+  }
+  return computeInitialHourlyJobTotals({
+    billedHours,
+    clientHourlyRate,
+    partnerHourlyRate,
+  });
+}
+
 export function partnerHourlyRateFromCatalogBundle(
   partnerBundleCost: number | null | undefined,
   defaultHours: number | null | undefined,
