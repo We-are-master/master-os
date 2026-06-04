@@ -39,16 +39,16 @@ import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue, partnerSelfBillGrossAmount } from "@/lib/job-financials";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
-import { applyInvoicePeriodBoundsToQuery, getSupabase } from "@/services/base";
-import { fetchJobReferencesOverlappingPeriod } from "@/services/job-period-overlap-queries";
-import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
-import {
-  DEFAULT_FINANCE_PERIOD_MODE,
-  getFinancePeriodClosedBounds,
-  formatFinancePeriodKpiDescription,
-  type FinancePeriodMode,
-} from "@/lib/finance-period";
+import { getSupabase } from "@/services/base";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
+import {
+  BillingPageActions,
+  useBillingCreatedAtFilter,
+} from "@/components/finance/billing-filter-context";
+import {
+  billingCreatedAtFilterDescription,
+  resolveBillingCreatedAtYmdBounds,
+} from "@/lib/billing-created-at-filter";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -77,14 +77,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 };
 
 const PAGE_SIZE = 10;
-
-const PERIOD_HEADER_LABEL: Record<FinancePeriodMode, string> = {
-  all: "All",
-  day: "Day",
-  month: "Month",
-  week: "Week",
-  range: "Range",
-};
 
 function accountHeaderAvatarBg(accountName: string): string {
   const n = accountName.toLowerCase();
@@ -332,10 +324,8 @@ function computeInvoiceKpis(
   };
 }
 
-/** Date used for period KPIs and the Date column (weekly batch → billing week; else created). */
-function invoiceEffectiveDateValue(inv: Pick<Invoice, "billing_week_start" | "created_at">): string {
-  const b = inv.billing_week_start?.trim();
-  if (b && /^\d{4}-\d{2}-\d{2}$/.test(b)) return b;
+/** Issued / created timestamp for display (period filter uses `created_at` only). */
+function invoiceEffectiveDateValue(inv: Pick<Invoice, "created_at">): string {
   return inv.created_at;
 }
 
@@ -402,13 +392,7 @@ function invoiceDrawerSyncSignature(inv: Invoice): string {
 }
 
 export function InvoicesFinanceClient() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
-  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
-  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
-  const [rangeFrom, setRangeFrom] = useState("");
-  const [rangeTo, setRangeTo] = useState("");
-  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
-  const periodMenuRef = useRef<HTMLDivElement>(null);
+  const { filter: createdAtFilter } = useBillingCreatedAtFilter();
 
   const [financeTab, setFinanceTab] = useState<InvoiceFinanceTab>("awaiting_payment");
   /** When true, list shows only `audit_required` rows (from banner "Review now"). Cleared when changing tab. */
@@ -423,7 +407,7 @@ export function InvoicesFinanceClient() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   /** Grouped by account (default) or flat list of all invoices. */
-  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("grouped");
+  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("flat");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -445,7 +429,7 @@ export function InvoicesFinanceClient() {
   const loadPageData = useCallback(async () => {
     setLoading(true);
     try {
-      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
+      const bounds = resolveBillingCreatedAtYmdBounds(createdAtFilter);
       const supabase = getSupabase();
       const chunkSize = 500;
 
@@ -457,12 +441,7 @@ export function InvoicesFinanceClient() {
           else q = q.is("deleted_at", null);
           if (bounds) {
             const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
-            q = applyInvoicePeriodBoundsToQuery(q, {
-              from: bounds.from,
-              to: bounds.to,
-              startIso,
-              endIso,
-            });
+            q = q.gte("created_at", startIso).lte("created_at", endIso);
           }
           const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + chunkSize - 1);
           if (error) throw error;
@@ -474,40 +453,7 @@ export function InvoicesFinanceClient() {
         return acc;
       }
 
-      async function mergeInvoicesForLinkedJobsInPeriod(
-        initial: Invoice[],
-        onlyDeleted: boolean,
-      ): Promise<Invoice[]> {
-        if (!bounds) return initial;
-        const byId = new Map(initial.map((i) => [i.id, i]));
-        const loadedRefs = new Set(
-          initial.map((i) => i.job_reference?.trim()).filter((x): x is string => Boolean(x)),
-        );
-        const overlappingRefs = await fetchJobReferencesOverlappingPeriod(bounds);
-        const needRefs = overlappingRefs.filter((r) => !loadedRefs.has(r));
-        if (needRefs.length === 0) return initial;
-        const REF_CHUNK = 90;
-        for (let i = 0; i < needRefs.length; i += REF_CHUNK) {
-          const slice = needRefs.slice(i, i + REF_CHUNK);
-          let q = supabase.from("invoices").select("*").in("job_reference", slice);
-          if (onlyDeleted) q = q.not("deleted_at", "is", null);
-          else q = q.is("deleted_at", null);
-          const { data, error } = await q;
-          if (error) continue;
-          for (const inv of (data ?? []) as Invoice[]) {
-            if (!byId.has(inv.id)) byId.set(inv.id, inv);
-          }
-        }
-        return [...byId.values()].sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-        );
-      }
-
-      const [activeRaw, deletedRaw] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
-      const [active, deleted] = await Promise.all([
-        mergeInvoicesForLinkedJobsInPeriod(activeRaw, false),
-        mergeInvoicesForLinkedJobsInPeriod(deletedRaw, true),
-      ]);
+      const [active, deleted] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
       const refs = [
         ...new Set(
           [...active, ...deleted].map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
@@ -528,7 +474,7 @@ export function InvoicesFinanceClient() {
     } finally {
       setLoading(false);
     }
-  }, [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
+  }, [createdAtFilter]);
 
   useEffect(() => {
     void loadPageData();
@@ -582,11 +528,6 @@ export function InvoicesFinanceClient() {
     [allInvoices],
   );
 
-  const allInvoicesForAux = useMemo(
-    () => [...allInvoices, ...deletedInvoices],
-    [allInvoices, deletedInvoices],
-  );
-
   const awaitingPaymentKpi = useMemo(() => {
     let sum = 0;
     let n = 0;
@@ -630,108 +571,15 @@ export function InvoicesFinanceClient() {
 
   useEffect(() => {
     setPage(1);
-  }, [financeTab, search, periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
+  }, [financeTab, search, createdAtFilter]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  // Single effect: resolves job→client→account and direct account lookups in one async flow,
-  // then flushes all four maps in one setState batch — eliminates the intermediate "Loading account..." flicker.
-  useEffect(() => {
-    let cancelled = false;
-    const CHUNK = 100;
-    (async () => {
-      const refMap: Record<string, string> = {};
-      const nameMap: Record<string, string> = {};
-      const nameById: Record<string, string> = {};
-      const logoById: Record<string, string | null> = {};
-      try {
-        const supabase = getSupabase();
-
-        const refs = [...new Set(
-          allInvoicesForAux.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
-        )];
-        const namesNeeding = [...new Set(
-          allInvoicesForAux
-            .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
-            .map((inv) => inv.client_name.trim())
-            .filter(Boolean),
-        )];
-        const directAccountIds = [...new Set(
-          allInvoicesForAux.map((inv) => inv.source_account_id?.trim()).filter((x): x is string => Boolean(x)),
-        )];
-
-        // ── Step 1: jobs + client-name lookup in parallel ─────────────────────
-        const [jobRows, clientNameRows] = await Promise.all([
-          (async () => {
-            const all: Array<{ reference: string; client_id: string | null }> = [];
-            for (let i = 0; i < refs.length; i += CHUNK) {
-              const { data } = await supabase.from("jobs").select("reference, client_id").in("reference", refs.slice(i, i + CHUNK));
-              if (data) all.push(...(data as typeof all));
-            }
-            return all;
-          })(),
-          (async () => {
-            const all: Array<{ full_name: string; source_account_id: string | null }> = [];
-            for (let i = 0; i < namesNeeding.length; i += CHUNK) {
-              const { data } = await supabase.from("clients").select("full_name, source_account_id").in("full_name", namesNeeding.slice(i, i + CHUNK)).is("deleted_at", null);
-              if (data) all.push(...(data as typeof all));
-            }
-            return all;
-          })(),
-        ]);
-
-        for (const r of clientNameRows) {
-          const fn = r.full_name?.trim(); const aid = r.source_account_id?.trim();
-          if (fn && aid) nameMap[fn] = aid;
-        }
-
-        // ── Step 2: clients for job client_ids ────────────────────────────────
-        const cids = [...new Set(jobRows.map((j) => j.client_id?.trim()).filter((x): x is string => Boolean(x)))];
-        const clientRows: Array<{ id: string; source_account_id: string | null }> = [];
-        for (let i = 0; i < cids.length; i += CHUNK) {
-          const { data } = await supabase.from("clients").select("id, source_account_id").in("id", cids.slice(i, i + CHUNK));
-          if (data) clientRows.push(...(data as typeof clientRows));
-        }
-        const cidToAcc = new Map<string, string>();
-        for (const c of clientRows) { const aid = c.source_account_id?.trim(); if (c.id && aid) cidToAcc.set(c.id, aid); }
-        for (const j of jobRows) {
-          const ref = j.reference?.trim(); const cid = j.client_id?.trim();
-          if (!ref || !cid) continue;
-          const acc = cidToAcc.get(cid); if (acc) refMap[ref] = acc;
-        }
-
-        // ── Step 3: fetch all accounts in one pass ────────────────────────────
-        const allAccountIds = [...new Set([...directAccountIds, ...Object.values(refMap), ...Object.values(nameMap)])];
-        for (let i = 0; i < allAccountIds.length; i += CHUNK) {
-          const { data } = await supabase.from("accounts").select("id, company_name, logo_url").in("id", allAccountIds.slice(i, i + CHUNK));
-          for (const r of data ?? []) {
-            const row = r as { id: string; company_name?: string | null; logo_url?: string | null };
-            nameById[row.id] = (row.company_name ?? "").trim() || "—";
-            logoById[row.id] = (row.logo_url ?? "").trim() || null;
-          }
-        }
-
-        if (!cancelled) {
-          setJobRefToSourceAccountId(refMap);
-          setClientNameToSourceAccountId(nameMap);
-          setAccountNameById((prev) => ({ ...prev, ...nameById }));
-          setAccountLogoById((prev) => ({ ...prev, ...logoById }));
-        }
-      } catch {
-        if (!cancelled) {
-          setJobRefToSourceAccountId({});
-          setClientNameToSourceAccountId({});
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [allInvoicesForAux]);
-
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
-    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
+    () => billingCreatedAtFilterDescription(createdAtFilter),
+    [createdAtFilter],
   );
 
   const handleStatusChange = useCallback(async (invoice: Invoice, newStatus: InvoiceStatus) => {
@@ -1184,6 +1032,106 @@ export function InvoicesFinanceClient() {
 
   const [expandedAccountGroups, setExpandedAccountGroups] = useState<Record<string, boolean>>({});
 
+  const invoicesForAccountLookup = useMemo(() => {
+    if (listGroupMode === "flat") return pagedData;
+    const visible: Invoice[] = [];
+    for (const g of groupedInvoicesByAccount) {
+      if (expandedAccountGroups[g.key]) visible.push(...g.invoices);
+    }
+    if (visible.length === 0 && groupedInvoicesByAccount[0]) {
+      visible.push(...groupedInvoicesByAccount[0].invoices.slice(0, PAGE_SIZE));
+    }
+    return visible;
+  }, [listGroupMode, pagedData, groupedInvoicesByAccount, expandedAccountGroups]);
+
+  // Lazy account resolution: only invoices visible on the current page (flat) or expanded groups.
+  useEffect(() => {
+    let cancelled = false;
+    const CHUNK = 100;
+    (async () => {
+      const refMap: Record<string, string> = {};
+      const nameMap: Record<string, string> = {};
+      const nameById: Record<string, string> = {};
+      const logoById: Record<string, string | null> = {};
+      try {
+        const supabase = getSupabase();
+
+        const refs = [...new Set(
+          invoicesForAccountLookup.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
+        )];
+        const namesNeeding = [...new Set(
+          invoicesForAccountLookup
+            .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
+            .map((inv) => inv.client_name.trim())
+            .filter(Boolean),
+        )];
+        const directAccountIds = [...new Set(
+          invoicesForAccountLookup.map((inv) => inv.source_account_id?.trim()).filter((x): x is string => Boolean(x)),
+        )];
+
+        const [jobRows, clientNameRows] = await Promise.all([
+          (async () => {
+            const all: Array<{ reference: string; client_id: string | null }> = [];
+            for (let i = 0; i < refs.length; i += CHUNK) {
+              const { data } = await supabase.from("jobs").select("reference, client_id").in("reference", refs.slice(i, i + CHUNK));
+              if (data) all.push(...(data as typeof all));
+            }
+            return all;
+          })(),
+          (async () => {
+            const all: Array<{ full_name: string; source_account_id: string | null }> = [];
+            for (let i = 0; i < namesNeeding.length; i += CHUNK) {
+              const { data } = await supabase.from("clients").select("full_name, source_account_id").in("full_name", namesNeeding.slice(i, i + CHUNK)).is("deleted_at", null);
+              if (data) all.push(...(data as typeof all));
+            }
+            return all;
+          })(),
+        ]);
+
+        for (const r of clientNameRows) {
+          const fn = r.full_name?.trim(); const aid = r.source_account_id?.trim();
+          if (fn && aid) nameMap[fn] = aid;
+        }
+
+        const cids = [...new Set(jobRows.map((j) => j.client_id?.trim()).filter((x): x is string => Boolean(x)))];
+        const clientRows: Array<{ id: string; source_account_id: string | null }> = [];
+        for (let i = 0; i < cids.length; i += CHUNK) {
+          const { data } = await supabase.from("clients").select("id, source_account_id").in("id", cids.slice(i, i + CHUNK));
+          if (data) clientRows.push(...(data as typeof clientRows));
+        }
+        const cidToAcc = new Map<string, string>();
+        for (const c of clientRows) { const aid = c.source_account_id?.trim(); if (c.id && aid) cidToAcc.set(c.id, aid); }
+        for (const j of jobRows) {
+          const ref = j.reference?.trim(); const cid = j.client_id?.trim();
+          if (!ref || !cid) continue;
+          const acc = cidToAcc.get(cid); if (acc) refMap[ref] = acc;
+        }
+
+        const allAccountIds = [...new Set([...directAccountIds, ...Object.values(refMap), ...Object.values(nameMap)])];
+        for (let i = 0; i < allAccountIds.length; i += CHUNK) {
+          const { data } = await supabase.from("accounts").select("id, company_name, logo_url").in("id", allAccountIds.slice(i, i + CHUNK));
+          for (const r of data ?? []) {
+            const row = r as { id: string; company_name?: string | null; logo_url?: string | null };
+            nameById[row.id] = (row.company_name ?? "").trim() || "—";
+            logoById[row.id] = (row.logo_url ?? "").trim() || null;
+          }
+        }
+
+        if (!cancelled) {
+          setJobRefToSourceAccountId((prev) => ({ ...prev, ...refMap }));
+          setClientNameToSourceAccountId((prev) => ({ ...prev, ...nameMap }));
+          setAccountNameById((prev) => ({ ...prev, ...nameById }));
+          setAccountLogoById((prev) => ({ ...prev, ...logoById }));
+        }
+      } catch {
+        if (!cancelled) {
+          /* keep prior maps on transient errors */
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [invoicesForAccountLookup]);
+
   /** Stable signature of group keys + order — when it changes, reset accordion: só o 1.º aberto. */
   const accountGroupKeysSig = useMemo(
     () => groupedInvoicesByAccount.map((g) => g.key).join("|"),
@@ -1203,84 +1151,39 @@ export function InvoicesFinanceClient() {
     });
   }, [accountGroupKeysSig, groupedInvoicesByAccount]);
 
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      const el = periodMenuRef.current;
-      if (!el || el.contains(e.target as Node)) return;
-      setPeriodMenuOpen(false);
-    };
-    if (periodMenuOpen) document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [periodMenuOpen]);
-
   return (
     <PageTransition>
+      <BillingPageActions>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+          onClick={() => void loadPageData()}
+          title="Reload invoices from the server"
+        >
+          Refresh
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleSyncAll}
+          loading={syncingAll}
+          disabled={loading || syncingAll || filteredInvoices.length === 0}
+          icon={<RefreshCw className={cn("h-3.5 w-3.5", syncingAll && "animate-spin")} />}
+          aria-label="Sync all visible invoices from their jobs"
+          title="Recompute amount, amount_paid, status and dates for every invoice in view using its linked job ledger"
+        >
+          {syncingAll ? "Syncing…" : "Sync all"}
+        </Button>
+        <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
+          Export
+        </Button>
+        <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>
+          Create Invoice
+        </Button>
+      </BillingPageActions>
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative" ref={periodMenuRef}>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<CalendarRange className="h-3.5 w-3.5" />}
-                onClick={() => setPeriodMenuOpen((o) => !o)}
-                className={cn(periodMode !== "all" && "border-primary/40 bg-primary/5")}
-              >
-                {periodMode === "all" ? "Period" : PERIOD_HEADER_LABEL[periodMode]}
-              </Button>
-              {periodMenuOpen ? (
-                <div className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-1.5rem),24rem)] rounded-xl border border-border bg-card p-3 shadow-lg">
-                  <FinanceWeekRangeBar
-                    mode={periodMode}
-                    onModeChange={setPeriodMode}
-                    weekAnchor={weekAnchor}
-                    onWeekAnchorChange={setWeekAnchor}
-                    monthAnchor={monthAnchor}
-                    onMonthAnchorChange={setMonthAnchor}
-                    rangeFrom={rangeFrom}
-                    rangeTo={rangeTo}
-                    onRangeFromChange={setRangeFrom}
-                    onRangeToChange={setRangeTo}
-                    hideAllDescription
-                    className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none sm:!p-0 max-h-[min(70vh,520px)] overflow-y-auto overflow-x-hidden"
-                  />
-                </div>
-              ) : null}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
-              onClick={() => void loadPageData()}
-              title="Reload invoices from the server"
-            >
-              Refresh
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleSyncAll}
-              loading={syncingAll}
-              disabled={loading || syncingAll || filteredInvoices.length === 0}
-              icon={<RefreshCw className={cn("h-3.5 w-3.5", syncingAll && "animate-spin")} />}
-              aria-label="Sync all visible invoices from their jobs"
-              title="Recompute amount, amount_paid, status and dates for every invoice in view using its linked job ledger"
-            >
-              {syncingAll ? "Syncing…" : "Sync all"}
-            </Button>
-            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
-              Export
-            </Button>
-            <Button
-              size="sm"
-              className="bg-[#ED4B00] text-white border-transparent hover:bg-[#ED4B00]/92 shadow-sm"
-              icon={<Plus className="h-3.5 w-3.5" />}
-              onClick={() => setCreateOpen(true)}
-            >
-              Create Invoice
-            </Button>
-          </div>
-
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">

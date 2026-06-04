@@ -24,6 +24,13 @@ const PARTNER_PROFILE_WRITABLE_FIELDS = new Set<string>([
   "bank_account_number",
   "bank_account_holder",
   "bank_name",
+  "coverage_mode",
+  "service_radius_miles",
+  "coverage_latitude",
+  "coverage_longitude",
+  "coverage_base_postcode",
+  "included_postcodes",
+  "coverage_cities",
 ]);
 
 function pickAllowedFields(patch: Record<string, unknown>): Record<string, unknown> {

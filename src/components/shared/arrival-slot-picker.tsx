@@ -16,6 +16,8 @@ type Props = {
   className?: string;
   /** Compact variant for tight spots (used in Rate Type row alongside Type of Work). */
   compact?: boolean;
+  /** One row of four slots, h-10 — pairs with Start Date on the same row. */
+  rowLayout?: boolean;
   /** Hide the "Arrival time *" label when the parent renders one already. */
   hideLabel?: boolean;
   /** Display-only — shows active slot without allowing changes. */
@@ -33,6 +35,7 @@ export function ArrivalSlotPicker({
   onPick,
   className,
   compact = false,
+  rowLayout = false,
   hideLabel = false,
   readOnly = false,
 }: Props) {
@@ -50,16 +53,18 @@ export function ArrivalSlotPicker({
       <div
         className={cn(
           "grid min-w-0 gap-1.5",
-          compact ? "grid-cols-2" : "grid-cols-2 @md:grid-cols-4",
+          rowLayout ? "grid-cols-4" : compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4",
         )}
       >
         {ARRIVAL_SLOTS.map((slot) => {
           const active = activeSlotId === slot.id;
           const className = cn(
             "w-full rounded-md border font-semibold tabular-nums text-center",
-            compact
-              ? "px-1.5 py-1 text-[11px] leading-tight"
-              : "px-1.5 py-2 text-[10px] leading-tight sm:px-2 sm:text-xs",
+            rowLayout
+              ? "flex h-10 min-h-10 items-center justify-center px-1 text-[10px] leading-tight sm:text-[11px]"
+              : compact
+                ? "px-1.5 py-1 text-[11px] leading-tight"
+                : "px-1.5 py-2 text-[10px] leading-tight sm:px-2 sm:text-xs",
             active
               ? "border-primary bg-primary/10 text-primary shadow-[0_0_0_1px_var(--color-primary)_inset]"
               : "border-border-light bg-card text-text-secondary",

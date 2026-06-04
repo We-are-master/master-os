@@ -706,6 +706,16 @@ export interface JobPayment {
 /** Directory partner: sole trader vs UK limited company (CRN vs UTR). */
 export type PartnerLegalType = "self_employed" | "limited_company";
 
+export type PartnerCoverageMode = "radius" | "postcodes";
+
+export interface PartnerJobPreferences {
+  receiveLeads?: boolean;
+  receiveEmergency?: boolean;
+}
+
+/** Re-export shape used by Trade Portal availability JSON (see `partner-availability.ts`). */
+export type PartnerAvailability = import("@/lib/partner-availability").PartnerAvailability;
+
 export interface Partner {
   id: string;
   company_name: string;
@@ -733,10 +743,24 @@ export interface Partner {
   total_earnings: number;
   compliance_score: number;
   location: string;
-  /** UK areas this partner covers (see `partner-uk-coverage`). */
+  /** @deprecated Replaced by `coverage_mode` + postcodes/radius fields. Kept for legacy rows. */
   uk_coverage_regions?: string[] | null;
   /** Home or registered business address (distinct from coverage). */
   partner_address?: string | null;
+  /** `radius` = miles from base pin; `postcodes` = included outward list. */
+  coverage_mode?: PartnerCoverageMode | null;
+  service_radius_miles?: number | null;
+  coverage_latitude?: number | null;
+  coverage_longitude?: number | null;
+  coverage_base_postcode?: string | null;
+  /** Outward codes covered when `coverage_mode` is `postcodes`. */
+  included_postcodes?: string[] | null;
+  /** City ids from OS catalogue (e.g. `london`). */
+  coverage_cities?: string[] | null;
+  /** Outward prefixes the partner refuses (Trade Portal). */
+  excluded_postcodes?: string[] | null;
+  job_preferences?: PartnerJobPreferences | null;
+  availability?: PartnerAvailability | null;
   verified: boolean;
   internal_notes?: string;
   role?: string;

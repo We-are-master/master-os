@@ -6,31 +6,30 @@ import {
   type JobSlot,
   type PartnerAvailability,
 } from "@/lib/partner-availability";
+import {
+  isPartnerExcludedByPostcode,
+  outwardFromPostcode,
+  partnerCoversJob,
+  type JobCoverageTarget,
+  type PartnerCoverageFields,
+} from "@/lib/partner-coverage";
+import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
 
 // Shared partner matching for distributing work (leads / job offers) to partners.
-// Builds on partnerMatchesTypeOfWork (trade match) and adds the partner self-service
-// preferences set in the Trade Portal: lead/emergency opt-in and excluded postcodes.
-//
-// NOTE: distance from base postcode (partners.service_radius_miles) is NOT enforced here —
-// that needs lat/long geocoding we don't have; only outward-code exclusion is applied.
+// Trade match + portal prefs + positive coverage (radius or postcodes) + excluded postcodes.
 
-type PartnerPrefsRow = Partner & {
-  excluded_postcodes?: string[] | null;
+type PartnerPrefsRow = Partner &
+  PartnerCoverageFields & {
   job_preferences?: { receiveLeads?: boolean; receiveEmergency?: boolean } | null;
   availability?: PartnerAvailability | null;
 };
-
-/** Outward part of a UK postcode (e.g. "SW11 4PG" -> "SW11"); inward is always the last 3 chars. */
-function outwardCode(pc?: string | null): string {
-  if (!pc) return "";
-  const s = pc.toUpperCase().replace(/\s+/g, "");
-  return s.length > 3 ? s.slice(0, s.length - 3) : s;
-}
 
 export interface MatchWorkArgs {
   serviceType?: string | null;
   catalogServiceId?: string | null;
   postcode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   /** "lead" honours the partner's receiveLeads opt-in; emergency honours receiveEmergency. */
   kind?: "lead" | "job";
   emergency?: boolean;
@@ -41,15 +40,32 @@ export interface MatchWorkArgs {
   availabilitySlot?: JobSlot;
 }
 
-/** Active partners whose trade matches the work, who opted in, and aren't excluded by postcode. */
+const PARTNER_MATCH_SELECT =
+  "id, trade, trades, catalog_service_ids, status, excluded_postcodes, job_preferences, availability, coverage_mode, service_radius_miles, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, uk_coverage_regions, location";
+
+/** Active partners whose trade matches the work, who opted in, and whose coverage includes the job. */
 export async function matchPartnerIdsForWork(supabase: SupabaseClient, args: MatchWorkArgs): Promise<string[]> {
   const { data } = await supabase
     .from("partners")
-    .select("id, trade, trades, catalog_service_ids, status, excluded_postcodes, job_preferences, availability")
+    .select(PARTNER_MATCH_SELECT)
     .eq("status", "active");
 
   const partners = (data ?? []) as unknown as PartnerPrefsRow[];
-  const outward = outwardCode(args.postcode);
+  const outward = outwardFromPostcode(args.postcode);
+  let lat = args.latitude ?? null;
+  let lng = args.longitude ?? null;
+  if ((lat == null || lng == null) && args.postcode?.trim()) {
+    const coords = await geocodeUkAddressServer(args.postcode);
+    if (coords) {
+      lat = coords.latitude;
+      lng = coords.longitude;
+    }
+  }
+  const target: JobCoverageTarget = {
+    postcode: args.postcode,
+    latitude: lat,
+    longitude: lng,
+  };
 
   return partners
     .filter((p) => {
@@ -57,13 +73,8 @@ export async function matchPartnerIdsForWork(supabase: SupabaseClient, args: Mat
       const prefs = p.job_preferences ?? null;
       if (args.kind === "lead" && prefs && prefs.receiveLeads === false) return false;
       if (args.emergency && prefs && prefs.receiveEmergency === false) return false;
-      if (outward && Array.isArray(p.excluded_postcodes)) {
-        const blocked = p.excluded_postcodes.some((ex) => {
-          const e = String(ex ?? "").toUpperCase().replace(/\s+/g, "");
-          return e.length > 0 && outward.startsWith(e);
-        });
-        if (blocked) return false;
-      }
+      if (outward && isPartnerExcludedByPostcode(p, outward)) return false;
+      if (!partnerCoversJob(p, target)) return false;
       if (args.availabilitySlot && !partnerAvailableForSlot(p.availability, args.availabilitySlot)) {
         return false;
       }

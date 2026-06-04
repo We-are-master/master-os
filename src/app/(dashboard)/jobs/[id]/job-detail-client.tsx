@@ -85,11 +85,19 @@ import { getClient } from "@/services/clients";
 import { getAccount } from "@/services/accounts";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
-import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange, updateSelfBillStatus } from "@/services/self-bills";
+import {
+  createSelfBillFromJob,
+  getSelfBill,
+  listSelfBillsLinkedToJob,
+  syncSelfBillAfterJobChange,
+  updateSelfBill,
+} from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
+import { partnerCoversJob } from "@/lib/partner-coverage";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { uploadManualJobReport } from "@/services/job-report-storage";
 import {
   createSignedJobReportAssetUrl,
@@ -128,6 +136,13 @@ import type {
 } from "@/types/database";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
+import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import {
+  computePartnerSelfBillDueIso,
+  inferInvoiceDueDateSource,
+  inferPartnerDueDateSource,
+  type DueDateSource,
+} from "@/lib/partner-payout-schedule";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -204,11 +219,12 @@ import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submission-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
-import { normalizeTypeOfWork, typeOfWorkLabelsFromCatalog, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { getAccountServicePrice } from "@/services/account-service-prices";
 import { resolveCatalogAddonChargeOptions } from "@/lib/catalog-line-pricing";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
@@ -1055,6 +1071,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
   const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
+  const [approvalInvoiceDueYmd, setApprovalInvoiceDueYmd] = useState("");
+  const [approvalPartnerDueYmd, setApprovalPartnerDueYmd] = useState("");
+  const [approvalPartnerTerms, setApprovalPartnerTerms] = useState<string | null>(null);
+  const [approvalDueDatesLoading, setApprovalDueDatesLoading] = useState(false);
+  const [approvalInvoiceDueSource, setApprovalInvoiceDueSource] = useState<DueDateSource>("standard");
+  const [approvalPartnerDueSource, setApprovalPartnerDueSource] = useState<DueDateSource>("standard");
+  const [approvalComputedInvoiceDue, setApprovalComputedInvoiceDue] = useState("");
+  const [approvalComputedPartnerDue, setApprovalComputedPartnerDue] = useState("");
+  const [approvalWeekEndYmd, setApprovalWeekEndYmd] = useState("");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -1299,6 +1324,51 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       cancelled = true;
     };
   }, [validateCompleteOpen, job?.client_id, job?.client_name]);
+
+  useEffect(() => {
+    if (!validateCompleteOpen || !job) return;
+    let cancelled = false;
+    setApprovalDueDatesLoading(true);
+    void (async () => {
+      const financeAnchorDate = job.scheduled_date ? new Date(job.scheduled_date) : new Date();
+      const weekEnd =
+        jobSelfBill?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(jobSelfBill.week_end.trim())
+          ? jobSelfBill.week_end.trim()
+          : getWeekBoundsForDate(financeAnchorDate).weekEnd;
+      let partnerTerms: string | null = null;
+      if (job.partner_id?.trim()) {
+        const { data } = await getSupabase()
+          .from("partners")
+          .select("payment_terms")
+          .eq("id", job.partner_id.trim())
+          .maybeSingle();
+        partnerTerms = (data as { payment_terms?: string | null } | null)?.payment_terms?.trim() || null;
+      }
+      const [invoiceDue] = await Promise.all([
+        getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate),
+      ]);
+      const partnerDue = job.partner_id?.trim()
+        ? computePartnerSelfBillDueIso(weekEnd, partnerTerms)
+        : "";
+      if (cancelled) return;
+      setApprovalWeekEndYmd(weekEnd);
+      setApprovalPartnerTerms(partnerTerms);
+      setApprovalComputedInvoiceDue(invoiceDue);
+      setApprovalComputedPartnerDue(partnerDue);
+      setApprovalInvoiceDueYmd(invoiceDue);
+      setApprovalPartnerDueYmd(partnerDue);
+      setApprovalInvoiceDueSource(inferInvoiceDueDateSource(invoiceDue, invoiceDue));
+      setApprovalPartnerDueSource(
+        partnerDue ? inferPartnerDueDateSource(partnerDue, weekEnd, partnerTerms) : "standard",
+      );
+      setApprovalDueDatesLoading(false);
+    })().catch(() => {
+      if (!cancelled) setApprovalDueDatesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [validateCompleteOpen, job, jobSelfBill?.week_end, job?.partner_id, job?.client_id, job?.scheduled_date]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -1604,8 +1674,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       await updateInvoice(documentId, payload as Partial<Invoice>);
       return;
     }
-    if (typeof payload.status === "string") {
-      await updateSelfBillStatus(documentId, payload.status as SelfBill["status"]);
+    const patch: Partial<Pick<SelfBill, "status" | "due_date">> = {};
+    if (typeof payload.status === "string") patch.status = payload.status as SelfBill["status"];
+    if (typeof payload.due_date === "string" && payload.due_date.trim()) {
+      patch.due_date = payload.due_date.trim().slice(0, 10);
+    }
+    if (Object.keys(patch).length > 0) {
+      await updateSelfBill(documentId, patch);
     }
   }, []);
 
@@ -2108,7 +2183,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return jobTypeTokens.some((token) => haystack.includes(token));
     };
     const q = partnerPickerSearch.trim().toLowerCase();
-    const eligible = partners.filter((p) => isPartnerEligibleForWork(p));
+    const eligible = partners.filter((p) => {
+      if (!isPartnerEligibleForWork(p)) return false;
+      if (!job) return true;
+      return partnerCoversJob(p, {
+        postcode: extractUkPostcode(job.property_address),
+        latitude: job.latitude ?? null,
+        longitude: job.longitude ?? null,
+      });
+    });
     const filtered = !q
       ? eligible
       : eligible.filter((p) => {
@@ -4441,6 +4524,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ? listSelfBillsLinkedToJob(updated.reference, updated.self_bill_id ?? null)
           : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
       ]);
+      const linkedSbForDue =
+        updated.self_bill_id
+          ? linkedSelfBills.find((s) => s.id === updated.self_bill_id)
+          : linkedSelfBills[0];
+      const weekEndForDue =
+        linkedSbForDue?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(linkedSbForDue.week_end.trim())
+          ? linkedSbForDue.week_end.trim()
+          : getWeekBoundsForDate(financeAnchorDate).weekEnd;
+      let partnerTermsForDue: string | null = null;
+      if (updated.partner_id?.trim()) {
+        const { data: pRow } = await getSupabase()
+          .from("partners")
+          .select("payment_terms")
+          .eq("id", updated.partner_id.trim())
+          .maybeSingle();
+        partnerTermsForDue = (pRow as { payment_terms?: string | null } | null)?.payment_terms?.trim() || null;
+      }
+      const partnerDueForAnchor = updated.partner_id?.trim()
+        ? computePartnerSelfBillDueIso(weekEndForDue, partnerTermsForDue)
+        : null;
       const primaryInvoice =
         (updated.invoice_id ? linked.find((i) => i.id === updated.invoice_id) : undefined) ??
         linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
@@ -4475,7 +4578,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           });
           invoiceDone = true;
         }
-        if (selfBillId) {
+        if (selfBillId && partnerDueForAnchor) {
+          await finalizeDocument("selfbill", selfBillId, {
+            status: "awaiting_payment",
+            due_date: partnerDueForAnchor,
+          });
+          selfBillDone = true;
+        } else if (selfBillId) {
           await finalizeDocument("selfbill", selfBillId, { status: "awaiting_payment" });
           selfBillDone = true;
         }
@@ -4643,12 +4752,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 
       /** Read all linked documents before deciding draft/final transitions. */
-      const [linked, linkedSelfBills, dueForAnchor] = await Promise.all([
+      const invoiceDueYmd =
+        approvalInvoiceDueYmd.trim() && /^\d{4}-\d{2}-\d{2}$/.test(approvalInvoiceDueYmd.trim())
+          ? approvalInvoiceDueYmd.trim()
+          : approvalComputedInvoiceDue;
+      const partnerDueYmd =
+        approvalPartnerDueYmd.trim() && /^\d{4}-\d{2}-\d{2}$/.test(approvalPartnerDueYmd.trim())
+          ? approvalPartnerDueYmd.trim()
+          : approvalComputedPartnerDue;
+
+      const [linked, linkedSelfBills] = await Promise.all([
         listInvoicesLinkedToJob(current.reference, current.invoice_id),
         wantsSelfBill
           ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
           : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
-        getInvoiceDueDateIsoForClient(current.client_id ?? null, financeAnchorDate),
       ]);
 
       // Default path is internal; optional client email runs when `completionDelivery === "email"`.
@@ -4681,7 +4798,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         createDocumentAsDraft("invoice", current, {
           amount: Math.max(customerDue, Math.max(0, jobBillableRevenue(current))),
           financeAnchorDate,
-          dueDate: dueForAnchor,
+          dueDate: invoiceDueYmd,
         }),
         shouldCreateSelfBill
           ? createDocumentAsDraft("selfbill", current, { financeAnchorDate, selfBillIdHint: primarySelfBillId })
@@ -4710,12 +4827,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             status: finalInvoiceStatus,
             paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
             collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
-            due_date: dueForAnchor,
+            due_date: invoiceDueYmd,
           });
           invoiceFinalized = true;
         }
         if (draftSelfBillId) {
-          await finalizeDocument("selfbill", draftSelfBillId, { status: finalSelfBillStatus });
+          await finalizeDocument("selfbill", draftSelfBillId, {
+            status: finalSelfBillStatus,
+            ...(partnerDueYmd ? { due_date: partnerDueYmd } : {}),
+          });
           selfBillFinalized = true;
         }
       } catch (error) {
@@ -4862,6 +4982,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     includeInvoiceInEmail,
     includeReportInEmail,
     accountEmailPolicy,
+    approvalInvoiceDueYmd,
+    approvalPartnerDueYmd,
+    approvalComputedInvoiceDue,
+    approvalComputedPartnerDue,
   ]);
 
   const billableRevenueForApproval = job ? jobCustomerBillableRevenueForCollections(job) : 0;
@@ -4933,14 +5057,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
     });
   }, [job?.id, job?.job_type, finForm.client_price, finForm.extras_amount, finForm.materials_cost]);
-
-  const jobTypeEditFixedSelectOptions = useMemo(
-    () => [
-      { value: "", label: "Select type of work..." },
-      ...typeOfWorkLabelsFromCatalog(catalogServicesJobType, job?.title).map((name) => ({ value: name, label: name })),
-    ],
-    [job?.title, catalogServicesJobType],
-  );
 
   const fixedSwitchPreview = useMemo(() => {
     if (!job || jobTypeEditTarget !== "fixed" || job.job_type !== "hourly") return null;
@@ -8434,6 +8550,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setForceApprovalReason("");
           setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
+          setApprovalInvoiceDueYmd("");
+          setApprovalPartnerDueYmd("");
+          setApprovalPartnerTerms(null);
+          setApprovalDueDatesLoading(false);
           setCompletionDelivery(null);
           setIncludeInvoiceInEmail(true);
           setIncludeReportInEmail(true);
@@ -8483,6 +8603,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           void handleValidateAndComplete();
         }}
         onForceApprove={() => void handleValidateAndComplete()}
+        paymentSchedule={{
+          invoiceDueYmd: approvalInvoiceDueYmd,
+          onInvoiceDueYmdChange: (v) => {
+            setApprovalInvoiceDueYmd(v);
+            setApprovalInvoiceDueSource(inferInvoiceDueDateSource(v, approvalComputedInvoiceDue));
+          },
+          invoiceDueSource: approvalInvoiceDueSource,
+          partnerDueYmd: approvalPartnerDueYmd,
+          onPartnerDueYmdChange: (v) => {
+            setApprovalPartnerDueYmd(v);
+            setApprovalPartnerDueSource(
+              inferPartnerDueDateSource(v, approvalWeekEndYmd, approvalPartnerTerms),
+            );
+          },
+          partnerDueSource: approvalPartnerDueSource,
+          showPartner: Boolean(job.partner_id?.trim()),
+          partnerTermsLabel: approvalPartnerTerms,
+          loading: approvalDueDatesLoading,
+        }}
         hourlySlot={
           job.job_type === "hourly" ? (
             <div
@@ -8697,37 +8836,63 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 If the saved arrival date is no longer in the future, choose a valid date/time before resuming.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className={cn(isOneOffScheduleUi && "sm:col-span-2")}>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Date *</label>
-                  <Input
-                    type="date"
-                    value={resumeArrivalDate}
-                    disabled={resumeSaving}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setResumeArrivalDate(v);
-                      if (isRecurringSeriesJob && resumeExpectedFinishDate.trim() && v && resumeExpectedFinishDate < v) {
-                        setResumeExpectedFinishDate(v);
-                      }
-                    }}
-                    className="h-10"
-                  />
-                </div>
                 {isOneOffScheduleUi ? (
                   <div
                     className={cn(
-                      "sm:col-span-2",
+                      "flex min-w-0 flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-end sm:gap-3",
                       resumeSaving && "pointer-events-none opacity-60",
                     )}
                   >
-                    <ArrivalSlotPicker
-                      arrivalFrom={resumeArrivalTime}
-                      arrivalWindowMins={resumeArrivalWindowMins}
-                      onPick={(from, mins) => {
-                        setResumeArrivalTime(from);
-                        setResumeArrivalWindowMins(mins);
+                    <div className="w-full shrink-0 sm:w-[9.5rem]">
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        Start Date *
+                      </label>
+                      <Input
+                        type="date"
+                        value={resumeArrivalDate}
+                        disabled={resumeSaving}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setResumeArrivalDate(v);
+                          if (isRecurringSeriesJob && resumeExpectedFinishDate.trim() && v && resumeExpectedFinishDate < v) {
+                            setResumeExpectedFinishDate(v);
+                          }
+                        }}
+                        className="h-10 w-full"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <ArrivalSlotPicker
+                        rowLayout
+                        arrivalFrom={resumeArrivalTime}
+                        arrivalWindowMins={resumeArrivalWindowMins}
+                        onPick={(from, mins) => {
+                          setResumeArrivalTime(from);
+                          setResumeArrivalWindowMins(mins);
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival Date *</label>
+                    <Input
+                      type="date"
+                      value={resumeArrivalDate}
+                      disabled={resumeSaving}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setResumeArrivalDate(v);
+                        if (isRecurringSeriesJob && resumeExpectedFinishDate.trim() && v && resumeExpectedFinishDate < v) {
+                          setResumeExpectedFinishDate(v);
+                        }
                       }}
+                      className="h-10"
                     />
+                  </div>
+                )}
+                {isOneOffScheduleUi ? (
+                  <div className="sm:col-span-2">
                     {(() => {
                       const preview = jobModalClientArrivalPreview(
                         resumeArrivalDate,
@@ -8950,12 +9115,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
           ) : (
             <div className="space-y-3">
-              <Select
+              <TypeOfWorkPicker
                 label="Type Of Work *"
+                catalog={catalogServicesJobType}
                 value={jobTypeEditFixedTitle}
+                currentFallback={job?.title}
                 disabled={savingJobTypeEdit}
-                onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
-                options={jobTypeEditFixedSelectOptions}
+                onChange={(name) => setJobTypeEditFixedTitle(name)}
               />
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
@@ -9867,43 +10033,67 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </p>
           ) : null}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className={cn(isOneOffScheduleUi && "sm:col-span-2")}>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival Date *</label>
-              <Input
-                type="date"
-                className="h-10"
-                value={qrDate}
-                disabled={quickRescheduleSaving}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setQrDate(v);
-                  if (isRecurringSeriesJob && qrExpectedFinish.trim() && v && qrExpectedFinish < v) {
-                    setQrExpectedFinish(v);
-                  }
-                }}
-              />
-            </div>
             {isOneOffScheduleUi ? (
               <div
                 className={cn(
-                  "sm:col-span-2",
+                  "flex min-w-0 flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-end sm:gap-3",
                   quickRescheduleSaving && "pointer-events-none opacity-60",
                 )}
               >
-                <ArrivalSlotPicker
-                  arrivalFrom={qrTime}
-                  arrivalWindowMins={qrWindowMins}
-                  onPick={(from, mins) => {
-                    setQrTime(from);
-                    setQrWindowMins(mins);
+                <div className="w-full shrink-0 sm:w-[9.5rem]">
+                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Start Date *</label>
+                  <Input
+                    type="date"
+                    className="h-10 w-full"
+                    value={qrDate}
+                    disabled={quickRescheduleSaving}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setQrDate(v);
+                      if (isRecurringSeriesJob && qrExpectedFinish.trim() && v && qrExpectedFinish < v) {
+                        setQrExpectedFinish(v);
+                      }
+                    }}
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <ArrivalSlotPicker
+                    rowLayout
+                    arrivalFrom={qrTime}
+                    arrivalWindowMins={qrWindowMins}
+                    onPick={(from, mins) => {
+                      setQrTime(from);
+                      setQrWindowMins(mins);
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival Date *</label>
+                <Input
+                  type="date"
+                  className="h-10"
+                  value={qrDate}
+                  disabled={quickRescheduleSaving}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setQrDate(v);
+                    if (isRecurringSeriesJob && qrExpectedFinish.trim() && v && qrExpectedFinish < v) {
+                      setQrExpectedFinish(v);
+                    }
                   }}
                 />
+              </div>
+            )}
+            {isOneOffScheduleUi ? (
+              <div className="sm:col-span-2">
                 {(() => {
                   const preview = jobModalClientArrivalPreview(qrDate, qrTime, qrWindowMins, {
                     useArrivalSlots: isOneOffScheduleUi,
                   });
                   return preview ? (
-                    <p className="mt-2 text-[11px] font-medium text-text-secondary">{preview}</p>
+                    <p className="text-[11px] font-medium text-text-secondary">{preview}</p>
                   ) : null;
                 })()}
               </div>

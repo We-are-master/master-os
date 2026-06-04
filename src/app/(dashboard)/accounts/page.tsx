@@ -28,6 +28,7 @@ import type { Account, CatalogService, Client, Job, Invoice } from "@/types/data
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { catalogServiceLabelsForIds } from "@/lib/catalog-trade-ids";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
+import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
 import {
@@ -1055,60 +1056,6 @@ function AccountsGridView({
   );
 }
 
-function AccountServicesOfferedPicker({
-  catalogServices,
-  selectedIds,
-  onToggle,
-  readOnlyLabels,
-  isAdmin,
-  saving,
-}: {
-  catalogServices: CatalogService[];
-  selectedIds: string[];
-  onToggle: (serviceId: string) => void;
-  readOnlyLabels: string[];
-  isAdmin: boolean;
-  saving: boolean;
-}) {
-  return (
-    <div>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
-        Services we offer this account
-      </p>
-      <p className="text-[10px] text-text-tertiary mb-2">
-        Select all catalogue services this account can use. Service rates and new jobs only include these.
-      </p>
-      {isAdmin ? (
-        <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto [scrollbar-width:thin]">
-          {catalogServices.map((s) => {
-            const active = selectedIds.includes(s.id);
-            return (
-              <button
-                key={s.id}
-                type="button"
-                disabled={saving}
-                onClick={() => onToggle(s.id)}
-                className={cn(
-                  "px-2.5 py-1 rounded-lg text-xs font-medium border transition-all text-left",
-                  active
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border-light bg-card text-text-secondary hover:border-border",
-                )}
-              >
-                {s.name}
-              </button>
-            );
-          })}
-        </div>
-      ) : readOnlyLabels.length > 0 ? (
-        <PartnerTradesIconStrip trades={readOnlyLabels} catalogServices={catalogServices} />
-      ) : (
-        <p className="text-xs text-text-tertiary">—</p>
-      )}
-    </div>
-  );
-}
-
 function AccountDetailDrawer({
   account,
   loading,
@@ -1210,14 +1157,6 @@ function AccountDetailDrawer({
     () => catalogServiceLabelsForIds(editCatalogServiceIds, catalogServices),
     [editCatalogServiceIds, catalogServices],
   );
-
-  const toggleAccountCatalogService = (serviceId: string) => {
-    setEditCatalogServiceIds((prev) => {
-      const has = prev.includes(serviceId);
-      if (has) return prev.filter((id) => id !== serviceId);
-      return [...prev, serviceId];
-    });
-  };
 
   const editOwnerLabel = useMemo(
     () => accountOwnerLabel(edit.account_owner_id, account?.owner_name, drawerAssignableUsers),
@@ -1388,7 +1327,7 @@ function AccountDetailDrawer({
       return;
     }
     if (editCatalogServiceIds.length === 0) {
-      toast.error("Select at least one service this account is offered.");
+      toast.error("Enable at least one trade in Trades & skills.");
       return;
     }
     setSaving(true);
@@ -1493,10 +1432,11 @@ function AccountDetailDrawer({
           onChange={setTab}
           tabs={[
             { id: "overview", label: "Overview" },
+            { id: "trades", label: "Trades & skills" },
             { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
             { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
             { id: "finance",  label: "Finance",   count: invoices.length || undefined },
-            { id: "rates",    label: "Service rates" },
+            { id: "rates",    label: "Rate card" },
             { id: "portal",   label: "Portal users" },
           ]}
         />
@@ -1607,15 +1547,6 @@ function AccountDetailDrawer({
                 />
                 <p className="text-[10px] text-text-tertiary mt-1">Suggested in Cancel job for clients linked to this account.</p>
               </div>
-
-              <AccountServicesOfferedPicker
-                catalogServices={catalogServices}
-                selectedIds={editCatalogServiceIds}
-                onToggle={toggleAccountCatalogService}
-                readOnlyLabels={accountServiceLabels}
-                isAdmin={isAdmin}
-                saving={saving}
-              />
 
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Address</label>
@@ -2131,7 +2062,20 @@ function AccountDetailDrawer({
           </div>
         )}
 
-        {/* ── Service rates tab ────────────────────────────────────── */}
+        {/* ── Trades & skills tab ──────────────────────────────────── */}
+        {tab === "trades" && account && (
+          <CatalogTradesSkillsTab
+            kind="account"
+            account={account}
+            canEdit={isAdmin}
+            onAccountUpdate={(a) => {
+              onAccountUpdated(a);
+              setEditCatalogServiceIds(a.catalog_service_ids ?? []);
+            }}
+          />
+        )}
+
+        {/* ── Rate card tab ────────────────────────────────────────── */}
         {tab === "rates" && account && (
           <AccountServiceRatesTabSection
             accountId={account.id}

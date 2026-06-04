@@ -136,11 +136,16 @@ export function JobModalScheduleFields({
         <>
           <div
             className={cn(
-              "grid grid-cols-1 gap-2 min-w-0",
-              !hideArrivalSlot && "@lg:grid-cols-[minmax(7.5rem,9rem)_minmax(0,1fr)] @lg:gap-3",
+              "flex min-w-0 flex-col gap-2",
+              !hideArrivalSlot && "sm:flex-row sm:items-end sm:gap-3",
             )}
           >
-            <div>
+            <div
+              className={cn(
+                "min-w-0",
+                !hideArrivalSlot && "w-full shrink-0 sm:w-[9.5rem]",
+              )}
+            >
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Start Date{startDateRequired ? " *" : ""}
               </label>
@@ -152,16 +157,19 @@ export function JobModalScheduleFields({
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
-            {!hideArrivalSlot && (
-              <ArrivalSlotPicker
-                arrivalFrom={arrivalFrom}
-                arrivalWindowMins={arrivalWindowMins}
-                onPick={(from, mins) => {
-                  onChange("arrival_from", from);
-                  onChange("arrival_window_mins", mins);
-                }}
-              />
-            )}
+            {!hideArrivalSlot ? (
+              <div className="min-w-0 w-full flex-1">
+                <ArrivalSlotPicker
+                  rowLayout
+                  arrivalFrom={arrivalFrom}
+                  arrivalWindowMins={arrivalWindowMins}
+                  onPick={(from, mins) => {
+                    onChange("arrival_from", from);
+                    onChange("arrival_window_mins", mins);
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
           <p className="text-[10px] text-text-tertiary -mt-1">

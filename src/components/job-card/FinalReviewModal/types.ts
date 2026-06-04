@@ -1,4 +1,5 @@
 import type { AccountFinalEmailPolicy } from "@/lib/account-final-email-policy";
+import type { DueDateSource } from "@/lib/partner-payout-schedule";
 
 /** Presentational types for the Final review modal — display-only, no DB shape mapping. */
 
@@ -81,6 +82,19 @@ export type FinalReviewModalProps = {
 
   /** Optional slot for hourly-job billed-hours input (rendered before the attestation section). */
   hourlySlot?: React.ReactNode;
+
+  /** Payment due dates confirmed at approve (optional — hidden when omitted). */
+  paymentSchedule?: {
+    invoiceDueYmd: string;
+    onInvoiceDueYmdChange: (v: string) => void;
+    invoiceDueSource: DueDateSource;
+    partnerDueYmd: string;
+    onPartnerDueYmdChange: (v: string) => void;
+    partnerDueSource: DueDateSource;
+    showPartner: boolean;
+    partnerTermsLabel: string | null;
+    loading?: boolean;
+  };
 
   /** Wired to existing mutation handler */
   onApprove: () => void;

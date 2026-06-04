@@ -59,10 +59,11 @@ import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { cn, formatCurrency, isUuid, parseIsoDateOnly } from "@/lib/utils";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
-import { typeOfWorkLabelsFromCatalog, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
 import {
   defaultPricingPresetId,
@@ -1248,15 +1249,23 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                         }}
                       />
                     ) : (
-                      <Select
+                      <TypeOfWorkPicker
                         label="Type of work"
+                        catalog={catalogServices}
                         value={drawerFields.service_type}
-                        onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
-                        options={[
-                          { value: "", label: "Select type of work..." },
-                          ...typeOfWorkLabelsFromCatalog(catalogServices, drawerFields.service_type)
-                            .map((name) => ({ value: name, label: name })),
-                        ]}
+                        currentFallback={drawerFields.service_type}
+                        onChange={(name, { catalogServiceId, service }) => {
+                          setDrawerFields((f) => ({
+                            ...f,
+                            service_type: name,
+                            catalog_service_id: catalogServiceId ?? f.catalog_service_id,
+                            ...(service
+                              ? {
+                                  description: (service.default_description?.trim() || f.description) ?? "",
+                                }
+                              : {}),
+                          }));
+                        }}
                       />
                     )}
                     <div>
@@ -3524,11 +3533,6 @@ function CreateRequestModal({
     });
   }, [open]);
 
-  const typeOfWorkOptions = useMemo(
-    () => typeOfWorkLabelsFromCatalog(catalogServices, form.service_type),
-    [catalogServices, form.service_type],
-  );
-
   useEffect(() => {
     const ex = extractUkPostcode(clientAddress.property_address);
     queueMicrotask(() => {
@@ -3733,14 +3737,21 @@ function CreateRequestModal({
               <label className={labelNavy} style={labelStyle}>
                 Service name <span style={{ color: "#ED4B00" }}>*</span>
               </label>
-              <Select
+              <TypeOfWorkPicker
+                hideLabel
+                aria-label="Service name"
+                catalog={catalogServices}
                 value={form.service_type}
-                onChange={(e) => update("service_type", e.target.value)}
-                options={[
-                  { value: "", label: "Select type of work…" },
-                  ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
-                ]}
+                currentFallback={form.service_type}
+                placeholder="Select type of work…"
                 className="mt-[6px]"
+                onChange={(name, { catalogServiceId }) => {
+                  setForm((prev) => ({
+                    ...prev,
+                    service_type: name,
+                    catalog_service_id: catalogServiceId ?? prev.catalog_service_id,
+                  }));
+                }}
               />
             </div>
           ) : (

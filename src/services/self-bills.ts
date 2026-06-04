@@ -661,10 +661,17 @@ export async function getSelfBill(id: string): Promise<SelfBill | null> {
 }
 
 export async function updateSelfBillStatus(id: string, status: SelfBillStatus): Promise<SelfBill> {
+  return updateSelfBill(id, { status });
+}
+
+export async function updateSelfBill(
+  id: string,
+  patch: Partial<Pick<SelfBill, "status" | "due_date">>,
+): Promise<SelfBill> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("self_bills")
-    .update({ status })
+    .update(patch)
     .eq("id", id)
     .select("*")
     .single();

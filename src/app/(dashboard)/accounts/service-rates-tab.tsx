@@ -148,13 +148,13 @@ export function AccountServiceRatesTabSection({
       <div className="rounded-xl border border-dashed border-border-light p-8 text-center text-sm text-text-tertiary">
         {(account.catalog_service_ids?.filter(Boolean).length ?? 0) === 0 ? (
           <>
-            No services selected for this account. Open <strong>Overview</strong> and choose which catalogue
-            services you offer them — only those appear here for pricing.
+            No trades enabled for this account. Open <strong>Trades &amp; skills</strong> and enable at least one
+            trade — only matching services appear here for pricing.
           </>
         ) : (
           <>
-            No catalogue rows match the selected services. Check <strong>Settings → Services</strong>, then save
-            Overview again.
+            No catalogue rows match this account&apos;s trades. Check <strong>Settings → Services</strong>, then save
+            <strong> Trades &amp; skills</strong> again.
           </>
         )}
       </div>
@@ -166,11 +166,11 @@ export function AccountServiceRatesTabSection({
       <div>
         <h4 className="text-sm font-bold text-text-primary flex items-center gap-2">
           <Wallet className="h-4 w-4 text-text-tertiary" />
-          Service rates
+          Rate card
         </h4>
         <p className="text-xs text-text-tertiary mt-0.5">
-          What THIS account pays per service they are offered (from Overview). Toggle &quot;Custom&quot; to override
-          the catalog default — base options and additionals when defined. Affects only NEW jobs from now on.
+          What this account pays per service. Use the Fixfy standard or set your own — toggle off &quot;Use standard&quot; for
+          a custom rate. Presets and additionals appear below when custom. Affects only NEW jobs from now on.
         </p>
       </div>
 

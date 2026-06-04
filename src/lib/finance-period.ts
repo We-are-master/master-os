@@ -96,8 +96,8 @@ export function getFinanceListCreatedAtFilter(
 }
 
 /**
- * Invoices page: KPIs, tab counts, and table use the same period as the visible invoice date
- * (`billing_week_start` for weekly batch rows, otherwise `created_at` local calendar day).
+ * @deprecated Finance Billing now filters invoices by `created_at` only. Prefer
+ * {@link getFinanceListCreatedAtFilter} for new code.
  */
 export function getFinanceListInvoicePeriodFilter(
   mode: FinancePeriodMode,
@@ -122,26 +122,28 @@ export function formatFinancePeriodKpiDescription(
   rangeTo: string,
   monthAnchor?: Date
 ): string {
-  if (mode === "all") return "All periods";
+  if (mode === "all") return "All periods · created date";
   if (mode === "day") {
     const pad = (n: number) => String(n).padStart(2, "0");
     const d = weekAnchor;
     const s = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    return s;
+    return `Created ${s}`;
   }
   if (mode === "week") {
     const { weekStart, weekEnd } = getWeekBoundsForDate(weekAnchor);
     const start = parseISO(weekStart);
     const calYear = isValid(start) ? format(start, "yyyy") : "";
     const weekNum = isValid(start) ? getISOWeek(start) : 0;
-    return calYear ? `${calYear} · Week ${weekNum} · ${weekStart}–${weekEnd}` : `${weekStart}–${weekEnd}`;
+    const span = calYear ? `${calYear} · Week ${weekNum} · ${weekStart}–${weekEnd}` : `${weekStart}–${weekEnd}`;
+    return `Created ${span}`;
   }
   if (mode === "month") {
     const a = monthAnchor ?? weekAnchor;
     const { from, to, monthLabel } = getMonthBoundsForDate(a);
-    return `${monthLabel} · ${from}–${to}`;
+    return `Created ${monthLabel} · ${from}–${to}`;
   }
   const bounds = getFinancePeriodClosedBounds(mode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
   if (!bounds) return "Pick from/to dates";
-  return bounds.from === bounds.to ? bounds.from : `${bounds.from} – ${bounds.to}`;
+  const span = bounds.from === bounds.to ? bounds.from : `${bounds.from} – ${bounds.to}`;
+  return `Created ${span}`;
 }
