@@ -234,7 +234,7 @@ ${buildPhotoSection(data.photoUrls)}
       </td></tr>
 
       <tr><td bgcolor="#020040" align="center" style="background-color:#020040; padding:24px 40px; text-align:center;" class="px-mobile">
-        <img src="${safe.logo}" alt="Fixfy" width="70" style="display:inline-block; width:70px; max-width:70px; height:auto; margin-bottom:10px; border:0;" />
+        <img src="${safe.logo}" alt="" width="70" style="display:inline-block; width:70px; max-width:70px; height:auto; margin-bottom:10px; border:0;" />
         <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">
           Getfixfy Ltd &middot; Co. No. 15406523<br>
           124 City Road, London EC1V 2NX, United Kingdom<br>

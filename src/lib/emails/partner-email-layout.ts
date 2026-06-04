@@ -2,7 +2,7 @@
  * Shared layout helpers for partner-facing transactional emails (Zendesk side conv).
  * - Absolute logo URL (email clients block relative paths)
  * - `color-scheme: light` to reduce Gmail/iOS dark-mode inversion
- * - Neutral `<title>` so mobile clients don't render the subject line inside the body
+ * - Empty `<title>` so mobile clients don't inject the subject (or a brand name) into the body
  */
 
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -33,7 +33,7 @@ export function partnerEmailHeadBlock(): string {
 <meta name="x-apple-disable-message-reformatting" />
 <meta name="color-scheme" content="light only" />
 <meta name="supported-color-schemes" content="light" />
-<title>Fixfy</title>`;
+<title>&#8203;</title>`;
 }
 
 export function partnerEmailBaseStyles(extra = ""): string {
@@ -65,7 +65,7 @@ export function partnerEmailBaseStyles(extra = ""): string {
 export function partnerEmailLogoHeaderRow(padding = "32px 40px"): string {
   const logo = escapeHtml(partnerEmailLogoUrl());
   return `      <tr><td align="center" bgcolor="#020040" style="background-color:#020040; padding:${padding};" class="px-mobile">
-        <img src="${logo}" alt="Fixfy" width="128" style="display:block; margin:0 auto; width:128px; max-width:128px; height:auto; border:0; outline:none; text-decoration:none;" />
+        <img src="${logo}" alt="" width="128" style="display:block; margin:0 auto; width:128px; max-width:128px; height:auto; border:0; outline:none; text-decoration:none;" />
       </td></tr>`;
 }
 
