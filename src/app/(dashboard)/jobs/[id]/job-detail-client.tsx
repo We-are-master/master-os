@@ -144,7 +144,6 @@ import {
   inferPartnerDueDateSource,
   type DueDateSource,
 } from "@/lib/partner-payout-schedule";
-import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -939,8 +938,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const router = useRouter();
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
-  const { jobOnHoldPresets, officeCancellationPresets, accessFees, partnerPayoutStandardTerms } =
-    useFrontendSetup();
+  const {
+    jobOnHoldPresets,
+    officeCancellationPresets,
+    accessFees,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+  } = useFrontendSetup();
   const cancelJob = useCancelJob();
   const putOnHoldReasonOptions = useMemo(
     () => jobOnHoldPresetSelectOptions(jobOnHoldPresets),
@@ -1346,7 +1350,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate),
       ]);
       const partnerDue = job.partner_id?.trim()
-        ? computePartnerSelfBillDueIso(weekEnd, partnerTerms, partnerPayoutStandardTerms)
+        ? computePartnerSelfBillDueIso(
+            weekEnd,
+            partnerTerms,
+            partnerPayoutStandardTerms,
+            partnerPayoutReferenceYmd,
+          )
         : "";
       if (cancelled) return;
       setApprovalWeekEndYmd(weekEnd);
@@ -1358,7 +1367,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setApprovalInvoiceDueSource(inferInvoiceDueDateSource(invoiceDue, invoiceDue));
       setApprovalPartnerDueSource(
         partnerDue
-          ? inferPartnerDueDateSource(partnerDue, weekEnd, partnerTerms, partnerPayoutStandardTerms)
+          ? inferPartnerDueDateSource(
+              partnerDue,
+              weekEnd,
+              partnerTerms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
           : "standard",
       );
       setApprovalDueDatesLoading(false);
@@ -1376,6 +1391,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job?.client_id,
     job?.scheduled_date,
     partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
   ]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
@@ -4543,7 +4559,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? await fetchPartnerPaymentTermsSafe(updated.partner_id)
         : null;
       const partnerDueForAnchor = updated.partner_id?.trim()
-        ? computePartnerSelfBillDueIso(weekEndForDue, partnerTermsForDue, partnerPayoutStandardTerms)
+        ? computePartnerSelfBillDueIso(
+            weekEndForDue,
+            partnerTermsForDue,
+            partnerPayoutStandardTerms,
+            partnerPayoutReferenceYmd,
+          )
         : null;
       const primaryInvoice =
         (updated.invoice_id ? linked.find((i) => i.id === updated.invoice_id) : undefined) ??
@@ -8619,6 +8640,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 approvalWeekEndYmd,
                 approvalPartnerTerms,
                 partnerPayoutStandardTerms,
+                partnerPayoutReferenceYmd,
               ),
             );
           },
@@ -8626,6 +8648,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           showPartner: Boolean(job.partner_id?.trim()),
           partnerTermsLabel: approvalPartnerTerms,
           orgStandardTerms: partnerPayoutStandardTerms,
+          orgPayoutReferenceYmd: partnerPayoutReferenceYmd,
           loading: approvalDueDatesLoading,
         }}
         hourlySlot={

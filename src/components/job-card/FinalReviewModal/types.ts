@@ -94,6 +94,7 @@ export type FinalReviewModalProps = {
     showPartner: boolean;
     partnerTermsLabel: string | null;
     orgStandardTerms: string;
+    orgPayoutReferenceYmd?: string | null;
     loading?: boolean;
   };
 

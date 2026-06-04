@@ -1,6 +1,7 @@
 "use client";
 
 import { dueDateSourceLabel, type DueDateSource } from "@/lib/partner-payout-schedule";
+import { formatDate } from "@/lib/utils";
 
 type Props = {
   invoiceDueYmd: string;
@@ -12,6 +13,7 @@ type Props = {
   showPartner: boolean;
   partnerTermsLabel: string | null;
   orgStandardTerms: string;
+  orgPayoutReferenceYmd?: string | null;
   loading?: boolean;
 };
 
@@ -42,6 +44,7 @@ export function PaymentScheduleSection({
   showPartner,
   partnerTermsLabel,
   orgStandardTerms,
+  orgPayoutReferenceYmd,
   loading,
 }: Props) {
   return (
@@ -98,7 +101,9 @@ export function PaymentScheduleSection({
             <p className="text-[10px] mt-1" style={{ color: "#9A9AA0" }}>
               {partnerTermsLabel?.trim()
                 ? `Partner schedule: ${partnerTermsLabel.trim()}`
-                : `Standard: ${orgStandardTerms}`}
+                : orgPayoutReferenceYmd?.trim()
+                  ? `Standard: ${orgStandardTerms} (ref ${formatDate(orgPayoutReferenceYmd.trim().slice(0, 10))})`
+                  : `Standard: ${orgStandardTerms}`}
             </p>
           </div>
         ) : null}

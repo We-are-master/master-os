@@ -13,6 +13,7 @@ import {
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
 import {
+  normalizePartnerPayoutReferenceYmd,
   normalizePartnerPayoutStandardTerms,
   ORG_PARTNER_PAYOUT_STANDARD_TERMS,
 } from "@/lib/partner-payout-schedule";
@@ -104,6 +105,8 @@ export type FrontendSetup = {
    * Used when a partner has no `payment_terms` on their profile — same “Standard” chip as Final review.
    */
   partner_payout_standard_terms?: string;
+  /** Editable next payout date (YYYY-MM-DD) — anchors biweekly rhythm + Setup display. */
+  partner_payout_reference_ymd?: string | null;
 };
 
 export type AccessFees = {
@@ -421,11 +424,18 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (o.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(o.partner_payout_standard_terms);
   }
+  if (o.partner_payout_reference_ymd !== undefined) {
+    base.partner_payout_reference_ymd = normalizePartnerPayoutReferenceYmd(o.partner_payout_reference_ymd);
+  }
   return base;
 }
 
 export function resolvePartnerPayoutStandardTerms(setup?: FrontendSetup | null): string {
   return normalizePartnerPayoutStandardTerms(setup?.partner_payout_standard_terms);
+}
+
+export function resolvePartnerPayoutReferenceYmd(setup?: FrontendSetup | null): string | null {
+  return normalizePartnerPayoutReferenceYmd(setup?.partner_payout_reference_ymd);
 }
 
 /**
@@ -545,6 +555,9 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(patch.partner_payout_standard_terms);
+  }
+  if (patch.partner_payout_reference_ymd !== undefined) {
+    base.partner_payout_reference_ymd = normalizePartnerPayoutReferenceYmd(patch.partner_payout_reference_ymd);
   }
   return base;
 }

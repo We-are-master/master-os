@@ -147,6 +147,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   showPartner={paymentSchedule.showPartner}
                   partnerTermsLabel={paymentSchedule.partnerTermsLabel}
                   orgStandardTerms={paymentSchedule.orgStandardTerms}
+                  orgPayoutReferenceYmd={paymentSchedule.orgPayoutReferenceYmd}
                   loading={paymentSchedule.loading}
                 />
               ) : null}

@@ -49,11 +49,13 @@ import {
   normalizeOfficeJobCancellationPresets,
   parseFrontendSetup,
   normalizeJobOnHoldPresets,
+  resolvePartnerPayoutReferenceYmd,
   resolvePartnerPayoutStandardTerms,
   type JobOnHoldPresetRow,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
 import {
+  getCalculatedPartnerPayoutReference,
   getNextPartnerPayoutReference,
   ORG_PARTNER_PAYOUT_STANDARD_TERMS,
   PARTNER_PAYOUT_TERM_OPTIONS,
@@ -128,6 +130,8 @@ export function SetupTab() {
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
   const [partnerPayoutStandard, setPartnerPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
   const [savedPayoutStandard, setSavedPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
+  const [partnerPayoutReferenceYmd, setPartnerPayoutReferenceYmd] = useState("");
+  const [savedPayoutReferenceYmd, setSavedPayoutReferenceYmd] = useState("");
   const [syncPayoutLoading, setSyncPayoutLoading] = useState(false);
 
   const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
@@ -207,8 +211,13 @@ export function SetupTab() {
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
       const payoutStd = resolvePartnerPayoutStandardTerms(parsed);
+      const payoutRef =
+        resolvePartnerPayoutReferenceYmd(parsed) ??
+        getCalculatedPartnerPayoutReference(payoutStd).payoutDueYmd;
       setPartnerPayoutStandard(payoutStd);
       setSavedPayoutStandard(payoutStd);
+      setPartnerPayoutReferenceYmd(payoutRef);
+      setSavedPayoutReferenceYmd(payoutRef);
       setLoading(false);
     })();
     return () => {
@@ -287,6 +296,7 @@ export function SetupTab() {
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
         partner_payout_standard_terms: partnerPayoutStandard,
+        partner_payout_reference_ymd: partnerPayoutReferenceYmd.trim() || null,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -336,8 +346,13 @@ export function SetupTab() {
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
       const payoutStd = resolvePartnerPayoutStandardTerms(next);
+      const payoutRef =
+        resolvePartnerPayoutReferenceYmd(next) ??
+        getCalculatedPartnerPayoutReference(payoutStd).payoutDueYmd;
       setPartnerPayoutStandard(payoutStd);
       setSavedPayoutStandard(payoutStd);
+      setPartnerPayoutReferenceYmd(payoutRef);
+      setSavedPayoutReferenceYmd(payoutRef);
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
       if (next.zendesk_on_hold_reason_field_id) {
@@ -357,12 +372,17 @@ export function SetupTab() {
     }
   };
 
-  const payoutStandardDirty = partnerPayoutStandard !== savedPayoutStandard;
+  const payoutStandardDirty =
+    partnerPayoutStandard !== savedPayoutStandard ||
+    partnerPayoutReferenceYmd !== savedPayoutReferenceYmd;
 
   const partnerPayoutReference = useMemo(
-    () => getNextPartnerPayoutReference(partnerPayoutStandard),
-    [partnerPayoutStandard],
+    () => getNextPartnerPayoutReference(partnerPayoutStandard, new Date(), partnerPayoutReferenceYmd),
+    [partnerPayoutStandard, partnerPayoutReferenceYmd],
   );
+
+  const payoutReferenceDiffersFromCalculated =
+    partnerPayoutReferenceYmd !== partnerPayoutReference.calculatedPayoutDueYmd;
 
   const handleSyncPartnerPayoutStandard = async () => {
     if (!canEditConfig) return;
@@ -884,7 +904,11 @@ export function SetupTab() {
               id="partner-payout-standard"
               disabled={!canEditConfig}
               value={partnerPayoutStandard}
-              onChange={(e) => setPartnerPayoutStandard(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPartnerPayoutStandard(v);
+                setPartnerPayoutReferenceYmd(getCalculatedPartnerPayoutReference(v).payoutDueYmd);
+              }}
               className="w-full max-w-xl rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
             >
               {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
@@ -893,20 +917,58 @@ export function SetupTab() {
                 </option>
               ))}
             </select>
-            <div
-              className="mt-3 rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5 max-w-xl"
-              aria-live="polite"
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                Next payout (reference)
-              </p>
-              <p className="text-sm font-semibold text-text-primary mt-0.5 tabular-nums">
-                {formatDate(partnerPayoutReference.payoutDueYmd)}
-              </p>
-              <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
-                For work in the week ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun). Final review uses
-                the same <span className="font-medium">Standard</span> rule when the partner has no custom terms.
-              </p>
+            <div className="mt-3 max-w-xl space-y-2">
+              <label htmlFor="partner-payout-reference" className="block text-xs font-medium text-text-secondary">
+                Next payout date (reference)
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  id="partner-payout-reference"
+                  type="date"
+                  disabled={!canEditConfig}
+                  value={partnerPayoutReferenceYmd}
+                  onChange={(e) => setPartnerPayoutReferenceYmd(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canEditConfig}
+                  onClick={() =>
+                    setPartnerPayoutReferenceYmd(
+                      getCalculatedPartnerPayoutReference(partnerPayoutStandard).payoutDueYmd,
+                    )
+                  }
+                >
+                  Use calculated
+                </Button>
+              </div>
+              <div
+                className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5"
+                aria-live="polite"
+              >
+                <p className="text-[11px] text-text-tertiary leading-relaxed">
+                  {payoutReferenceDiffersFromCalculated ? (
+                    <>
+                      Custom reference — schedule alone would suggest{" "}
+                      <span className="font-medium tabular-nums">
+                        {formatDate(partnerPayoutReference.calculatedPayoutDueYmd)}
+                      </span>
+                      . Biweekly payouts align to this reference Friday after you save.
+                    </>
+                  ) : (
+                    <>
+                      Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Work week
+                      ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun).
+                    </>
+                  )}
+                </p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                  Final review uses the same <span className="font-medium">Standard</span> rule when the partner has no
+                  custom terms.
+                </p>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">

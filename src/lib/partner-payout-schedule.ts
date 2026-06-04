@@ -39,6 +39,24 @@ export function partnerUsesOrgPayoutStandard(partnerTerms: string | null | undef
   return !partnerTerms?.trim();
 }
 
+export function normalizePartnerPayoutReferenceYmd(raw: unknown): string | null {
+  const s = typeof raw === "string" ? raw.trim().slice(0, 10) : "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+/** Biweekly Friday rhythm: anchor payouts on a stored reference Friday (Setup). */
+export function applyOrgPayoutReferenceToTerms(
+  terms: string,
+  referenceYmd?: string | null,
+): string {
+  const ref = normalizePartnerPayoutReferenceYmd(referenceYmd);
+  if (!ref) return terms;
+  if (/every\s+2\s*weeks\s+on\s+friday/i.test(terms)) {
+    return `Every 2 weeks cutoff friday pay friday ref ${ref}`;
+  }
+  return terms;
+}
+
 /** Best-effort read — never throws (missing column / RLS → null). */
 export async function fetchPartnerPaymentTermsSafe(partnerId: string | null | undefined): Promise<string | null> {
   const id = partnerId?.trim();
@@ -69,9 +87,11 @@ export function partnerPayoutAnchorFromWeekEnd(weekEndYmd: string): Date {
 export function computeOrgStandardPartnerDueIso(
   weekEndYmd: string,
   orgStandardTerms?: string | null,
+  orgReferenceYmd?: string | null,
 ): string {
-  const terms = normalizePartnerPayoutStandardTerms(
-    orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS,
+  const terms = applyOrgPayoutReferenceToTerms(
+    normalizePartnerPayoutStandardTerms(orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS),
+    orgReferenceYmd,
   );
   return dueDateIsoFromPaymentTerms(partnerPayoutAnchorFromWeekEnd(weekEndYmd), terms);
 }
@@ -83,11 +103,8 @@ function localYmd(d: Date): string {
   return `${y}-${mo}-${day}`;
 }
 
-/**
- * Next payout due date for Setup / copy — same math as Final review Standard,
- * anchored on the self-bill week that contains `from` (Mon–Sun), then future weeks if due is past.
- */
-export function getNextPartnerPayoutReference(
+/** Auto next payout from schedule only (no stored reference override). */
+export function getCalculatedPartnerPayoutReference(
   terms: string | null | undefined,
   from: Date = new Date(),
 ): { weekEndYmd: string; payoutDueYmd: string } {
@@ -97,7 +114,7 @@ export function getNextPartnerPayoutReference(
 
   for (let i = 0; i < 8; i++) {
     const { weekEnd } = getWeekBoundsForDate(probe);
-    const payoutDueYmd = computeOrgStandardPartnerDueIso(weekEnd, normalized);
+    const payoutDueYmd = computeOrgStandardPartnerDueIso(weekEnd, normalized, null);
     if (payoutDueYmd >= todayYmd) {
       return { weekEndYmd: weekEnd, payoutDueYmd };
     }
@@ -108,8 +125,23 @@ export function getNextPartnerPayoutReference(
   const { weekEnd } = getWeekBoundsForDate(from);
   return {
     weekEndYmd: weekEnd,
-    payoutDueYmd: computeOrgStandardPartnerDueIso(weekEnd, normalized),
+    payoutDueYmd: computeOrgStandardPartnerDueIso(weekEnd, normalized, null),
   };
+}
+
+/**
+ * Next payout for Setup — calculated from schedule, overridable via stored reference YMD.
+ */
+export function getNextPartnerPayoutReference(
+  terms: string | null | undefined,
+  from: Date = new Date(),
+  storedReferenceYmd?: string | null,
+): { weekEndYmd: string; payoutDueYmd: string; calculatedPayoutDueYmd: string } {
+  const calculated = getCalculatedPartnerPayoutReference(terms, from);
+  const ref = normalizePartnerPayoutReferenceYmd(storedReferenceYmd);
+  const todayYmd = localYmd(from);
+  const payoutDueYmd = ref && ref >= todayYmd ? ref : calculated.payoutDueYmd;
+  return { ...calculated, payoutDueYmd, calculatedPayoutDueYmd: calculated.payoutDueYmd };
 }
 
 /** Partner self-bill due: partner terms when set, otherwise org standard (not legacy Friday+5). */
@@ -117,10 +149,11 @@ export function computePartnerSelfBillDueIso(
   weekEndYmd: string,
   partnerTerms: string | null | undefined,
   orgStandardTerms?: string | null,
+  orgReferenceYmd?: string | null,
 ): string {
   const terms = partnerTerms?.trim();
   if (terms) return partnerFieldSelfBillPaymentDueDate(weekEndYmd, terms);
-  return computeOrgStandardPartnerDueIso(weekEndYmd, orgStandardTerms);
+  return computeOrgStandardPartnerDueIso(weekEndYmd, orgStandardTerms, orgReferenceYmd);
 }
 
 export function inferPartnerDueDateSource(
@@ -128,10 +161,11 @@ export function inferPartnerDueDateSource(
   weekEndYmd: string,
   partnerTerms: string | null | undefined,
   orgStandardTerms?: string | null,
+  orgReferenceYmd?: string | null,
 ): DueDateSource {
   const stored = normalizeYmd(storedDue);
-  const standard = computeOrgStandardPartnerDueIso(weekEndYmd, orgStandardTerms);
-  const partner = computePartnerSelfBillDueIso(weekEndYmd, partnerTerms, orgStandardTerms);
+  const standard = computeOrgStandardPartnerDueIso(weekEndYmd, orgStandardTerms, orgReferenceYmd);
+  const partner = computePartnerSelfBillDueIso(weekEndYmd, partnerTerms, orgStandardTerms, orgReferenceYmd);
   if (!stored) return partnerTerms?.trim() ? "partner" : "standard";
   if (partnerTerms?.trim() && stored === partner) return "partner";
   if (stored === standard) return "standard";
