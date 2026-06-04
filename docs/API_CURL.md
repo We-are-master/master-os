@@ -231,22 +231,24 @@ curl -X POST "$BASE/api/webhooks/desk/job-created" \
 
 ---
 
-## 4b. POST `/api/webhooks/desk/job-on-hold` — Complaint / on hold (Zendesk macro + form)
+## 4b. POST `/api/holds` — On hold (Zendesk → OS)
+
+Configure a Zendesk trigger when tag `on_hold` is added (and not `sent-hold-os`). Action: notify webhook + add tag `sent-hold-os`.
 
 ```bash
-curl -X POST "$BASE/api/webhooks/desk/job-on-hold" \
+curl -X POST "$BASE/api/holds" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $DESK_KEY" \
   -d '{
     "ticket_id": "8472",
-    "on_hold_reason_id": "complaint",
-    "description": "Customer reports the leak was not fixed and wants a revisit."
+    "on_hold_reason_id": "hold_complaint",
+    "on_hold_notes": "Customer reports the leak was not fixed and wants a revisit."
   }'
 ```
 
-- `on_hold_reason_id` — stable id (same as OS Settings / Zendesk dropdown), e.g. `complaint`, `waiting_materials`.
-- `description` — complaint detail; sent to the partner email and synced to Zendesk (`ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID`).
-- Legacy: `reason` (label text) if id omitted.
+- `on_hold_reason_id` — bare OS id (`complaint`, …) or Zendesk tag (`hold_complaint`).
+- `on_hold_notes` — complaint detail; required when reason is `complaint`. Aliases: `description`, `complaint_description`.
+- Legacy path: `POST /api/webhooks/desk/job-on-hold` (same handler).
 
 See [zendesk-complaint-macro-form.md](./zendesk-complaint-macro-form.md) for macro + form setup.
 
@@ -274,6 +276,17 @@ curl -X POST "$BASE/api/cancellations" \
 - Idempotent: same ticket already cancelled → `200` with `{ action: "existing" }`.
 
 Zendesk dropdown values use prefix `cancel_*` (synced from Settings → Cancellation Reasons).
+
+### Zendesk reason tag prefixes
+
+Zendesk requires unique tag values across all custom fields. OS stores bare ids; Zendesk option values are prefixed:
+
+| Field | Prefix | Default field ID |
+|-------|--------|------------------|
+| Cancellation reason | `cancel_` | `5834334215583` |
+| On-hold reason | `hold_` | `5834320428319` |
+
+Both are synced from Settings when you save (or use **Sync … → Zendesk** under Integrations).
 
 ---
 

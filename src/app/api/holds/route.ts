@@ -7,15 +7,23 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * POST /api/webhooks/desk/job-on-hold
+ * POST /api/holds
  *
- * Legacy path — same handler as POST /api/holds.
+ * Inbound webhook from Zendesk when an agent puts a ticket on hold.
+ * Configure trigger on tag `on_hold` (+ idempotency tag e.g. `sent-hold-os`).
+ *
+ * Auth: `x-api-key` = `ZENDESK_WEBHOOK_API_KEY`
+ *
+ * Body:
+ *   ticket_id: string (required)
+ *   on_hold_reason_id: string (bare id or hold_* tag)
+ *   on_hold_notes?: string (complaint detail; required when reason = complaint)
  */
 export async function POST(req: NextRequest) {
   const provided = req.headers.get("x-api-key");
   const expected = (process.env.ZENDESK_WEBHOOK_API_KEY ?? process.env.ZOHO_DESK_WEBHOOK_API_KEY)?.trim();
   if (!expected) {
-    console.error("[webhook/desk/job-on-hold] ZENDESK_WEBHOOK_API_KEY not configured");
+    console.error("[api/holds] ZENDESK_WEBHOOK_API_KEY not configured");
     return NextResponse.json({ error: "Webhook not configured." }, { status: 500 });
   }
   if (!secretsMatch(provided, expected)) {
@@ -30,6 +38,11 @@ export async function POST(req: NextRequest) {
   }
 
   const ticketId = str(body.ticket_id);
+  const onHoldReasonId =
+    str(body.on_hold_reason_id)
+    || str(body.on_hold_reason_preset_id)
+    || str(body.reason);
+
   if (!ticketId) {
     return NextResponse.json({ error: "ticket_id is required." }, { status: 400 });
   }
@@ -38,12 +51,12 @@ export async function POST(req: NextRequest) {
   const result = await putJobOnHoldFromZendesk(
     {
       ticketId,
-      onHoldReasonId:
-        str(body.on_hold_reason_id)
-        || str(body.on_hold_reason_preset_id)
-        || str(body.reason)
-        || "complaint",
-      onHoldNotes: str(body.description) || str(body.complaint_description) || str(body.on_hold_notes) || null,
+      onHoldReasonId: onHoldReasonId || "complaint",
+      onHoldNotes:
+        str(body.on_hold_notes)
+        || str(body.description)
+        || str(body.complaint_description)
+        || null,
     },
     { setup: companySettings?.frontend_setup ?? null },
   );
@@ -54,20 +67,21 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    action: result.action,
-    jobId: result.jobId,
+    id: result.jobId,
     reference: result.reference,
-    previousStatus: result.previousStatus,
-    onHoldReasonId: result.onHoldReasonId,
-    onHoldReasonLabel: result.onHoldReasonLabel,
-    zendeskStatusSync: result.zendeskStatusSync,
-    zendeskFieldsSync: result.zendeskFieldsSync,
+    status: "on_hold",
+    action: result.action,
+    on_hold_reason_id: result.onHoldReasonId,
+    on_hold_reason_label: result.onHoldReasonLabel,
+    previous_status: result.previousStatus,
+    zendesk_status_sync: result.zendeskStatusSync,
+    zendesk_fields_sync: result.zendeskFieldsSync,
     notify: result.notify,
   });
 }
 
 function str(v: unknown): string {
-  return typeof v === "string" ? v.trim() : "";
+  return typeof v === "string" ? v.trim() : v != null ? String(v).trim() : "";
 }
 
 function secretsMatch(provided: string | null, expected: string): boolean {

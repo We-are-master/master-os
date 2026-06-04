@@ -39,8 +39,14 @@ export type PartnerForAcceptance = {
   zendesk_user_id: string | null;
 };
 
+export type BookedEmailResult = {
+  sent: boolean;
+  skipped?: string;
+  error?: string;
+};
+
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
 
 /** Atomically claim the one-time Job booked email send for this job. */
 async function tryClaimPartnerBookedEmailSend(
@@ -59,6 +65,13 @@ async function tryClaimPartnerBookedEmailSend(
     return false;
   }
   return Boolean(data);
+}
+
+async function clearPartnerBookedEmailClaim(supabase: SupabaseClient, jobId: string): Promise<void> {
+  await supabase
+    .from("jobs")
+    .update({ partner_booked_email_sent_at: null })
+    .eq("id", jobId);
 }
 
 async function resolveBookedSideConversationId(
@@ -91,9 +104,9 @@ async function resolveBookedSideConversationId(
 export async function loadJobForPartnerAcceptance(
   supabase: SupabaseClient,
   jobId: string,
-): Promise<(JobForPartnerAcceptance & { partner_confirmed_at: string | null; auto_assign_invited_partner_ids: string[] | null }) | null> {
+): Promise<(JobForPartnerAcceptance & { partner_name: string | null; partner_confirmed_at: string | null; auto_assign_invited_partner_ids: string[] | null }) | null> {
   const { data } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
-  return data as (JobForPartnerAcceptance & { partner_confirmed_at: string | null; auto_assign_invited_partner_ids: string[] | null }) | null;
+  return data as (JobForPartnerAcceptance & { partner_name: string | null; partner_confirmed_at: string | null; auto_assign_invited_partner_ids: string[] | null }) | null;
 }
 
 export async function loadPartnerForAcceptance(
@@ -120,7 +133,7 @@ export async function finalizeAutoAssignWinner(args: {
   job: JobForPartnerAcceptance;
   partner: PartnerForAcceptance;
   partnerName?: string | null;
-}): Promise<{ winnerSideConvId: string | null }> {
+}): Promise<{ winnerSideConvId: string | null; bookedEmail: BookedEmailResult }> {
   const supabase = args.supabase ?? createServiceClient();
   const now = new Date().toISOString();
   const partnerName =
@@ -191,7 +204,7 @@ export async function finalizeAutoAssignWinner(args: {
     sideConvId = winnerSideConvId;
   }
 
-  await sendBookedSideConvReply({
+  const bookedEmail = await sendBookedSideConvReply({
     supabase,
     job: {
       ...args.job,
@@ -203,7 +216,7 @@ export async function finalizeAutoAssignWinner(args: {
     partnerName,
   });
 
-  return { winnerSideConvId: sideConvId };
+  return { winnerSideConvId: sideConvId, bookedEmail };
 }
 
 export async function sendBookedSideConvReply(args: {
@@ -211,15 +224,16 @@ export async function sendBookedSideConvReply(args: {
   job: JobForPartnerAcceptance;
   partner: PartnerForAcceptance;
   partnerName: string | null;
-}): Promise<boolean> {
+}): Promise<BookedEmailResult> {
   const { job, partner } = args;
   const ticketId = job.external_source === "zendesk" ? job.external_ref : null;
-  if (!ticketId || !partner.email) return false;
+  if (!ticketId) return { sent: false, skipped: "no_zendesk_ticket" };
+  if (!partner.email?.trim()) return { sent: false, skipped: "no_partner_email" };
 
   const supabase = args.supabase ?? createServiceClient();
-  if (job.partner_booked_email_sent_at) return false;
+  if (job.partner_booked_email_sent_at) return { sent: false, skipped: "already_sent" };
   const claimed = await tryClaimPartnerBookedEmailSend(supabase, job.id);
-  if (!claimed) return false;
+  if (!claimed) return { sent: false, skipped: "claim_lost" };
 
   const isHourly = job.job_type === "hourly";
   const priceDisplay = isHourly
@@ -270,6 +284,15 @@ export async function sendBookedSideConvReply(args: {
     job.zendesk_side_conversation_id,
   );
 
+  const persistSuccess = async (sideConvId: string | null) => {
+    const patch: Record<string, unknown> = {};
+    if (sideConvId) patch.zendesk_side_conversation_id = sideConvId;
+    if (args.partnerName) patch.partner_name = args.partnerName;
+    if (Object.keys(patch).length > 0) {
+      await supabase.from("jobs").update(patch).eq("id", job.id);
+    }
+  };
+
   try {
     if (sideConversationId) {
       const r = await replyToSideConversation({
@@ -281,35 +304,35 @@ export async function sendBookedSideConvReply(args: {
         htmlBody: email.html,
         bodyText: email.text,
       });
-      if (!r.ok) console.error("[booked reply] failed:", r.error);
-      else if (!job.zendesk_side_conversation_id) {
-        await supabase
-          .from("jobs")
-          .update({ zendesk_side_conversation_id: sideConversationId })
-          .eq("id", job.id);
+      if (r.ok) {
+        await persistSuccess(sideConversationId);
+        return { sent: true };
       }
-    } else {
-      const r = await createSideConversation({
-        ticketId,
-        toEmail: partner.email,
-        toName: partner.contact_name || partner.company_name || undefined,
-        toUserId: partner.zendesk_user_id ?? undefined,
-        subject: email.subject,
-        htmlBody: email.html,
-        bodyText: email.text,
-      });
-      if (r.ok && r.id) {
-        await supabase
-          .from("jobs")
-          .update({ zendesk_side_conversation_id: r.id })
-          .eq("id", job.id);
-      } else {
-        console.error("[booked reply] create side conv failed:", r.error);
-      }
+      console.error("[booked reply] reply failed, trying new side conv:", r.error);
     }
-  } catch (err) {
-    console.error("[booked reply] threw:", err);
-  }
 
-  return true;
+    const created = await createSideConversation({
+      ticketId,
+      toEmail: partner.email,
+      toName: partner.contact_name || partner.company_name || undefined,
+      toUserId: partner.zendesk_user_id ?? undefined,
+      subject: email.subject,
+      htmlBody: email.html,
+      bodyText: email.text,
+    });
+    if (created.ok && created.id) {
+      await persistSuccess(created.id);
+      return { sent: true };
+    }
+
+    await clearPartnerBookedEmailClaim(supabase, job.id);
+    const err = created.error ?? "zendesk_send_failed";
+    console.error("[booked reply] create side conv failed:", err);
+    return { sent: false, error: err };
+  } catch (err) {
+    await clearPartnerBookedEmailClaim(supabase, job.id);
+    const msg = err instanceof Error ? err.message : "unknown_error";
+    console.error("[booked reply] threw:", err);
+    return { sent: false, error: msg };
+  }
 }

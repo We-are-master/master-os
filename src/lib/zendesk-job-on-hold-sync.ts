@@ -8,6 +8,7 @@ import type { FrontendSetup } from "@/lib/frontend-setup";
 import { getZendeskTicketId, isZendeskConfigured, setTicketCustomField } from "@/lib/zendesk";
 import { resolveZendeskComplaintFieldIds } from "@/lib/zendesk-field-ids";
 import { partnerOnHoldComplaintReasonText, partnerOnHoldSolutionText } from "@/lib/job-on-hold-reasons";
+import { toZendeskTag } from "@/lib/zendesk-reason-tags";
 
 export interface ZendeskOnHoldFieldsSyncResult {
   ok: boolean;
@@ -64,7 +65,8 @@ export async function syncJobZendeskOnHoldFields(
   const solutionText = partnerOnHoldSolutionText(job as Parameters<typeof partnerOnHoldSolutionText>[0]);
 
   if (fieldIds.onHoldReasonFieldId > 0) {
-    const value = job.status === "on_hold" ? presetId : null;
+    const value =
+      job.status === "on_hold" && presetId ? toZendeskTag(presetId, "hold") : null;
     const r = await setTicketCustomField({
       ticketId,
       fieldId: fieldIds.onHoldReasonFieldId,

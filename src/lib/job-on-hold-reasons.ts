@@ -1,4 +1,6 @@
-/** Canonical on-hold reason ids — must match Zendesk dropdown option values. */
+import { fromZendeskTag } from "@/lib/zendesk-reason-tags";
+
+/** Canonical on-hold reason ids — Zendesk dropdown values use `hold_{id}`. */
 export const JOB_ON_HOLD_REASONS = [
   { id: "waiting_materials", label: "Waiting for materials" },
   { id: "client_rescheduled", label: "Client rescheduled" },
@@ -31,6 +33,18 @@ export function resolveJobOnHoldReasonIdFromLabel(label: string): string | null 
   const key = label.trim().toLowerCase();
   if (!key) return null;
   return CANONICAL_BY_LABEL.get(key) ?? null;
+}
+
+/** Validate bare OS id or Zendesk `hold_*` tag against canonical + optional Settings presets. */
+export function parseJobOnHoldReasonId(
+  raw: string,
+  presets?: readonly JobOnHoldPresetRow[],
+): string | null {
+  const id = fromZendeskTag(raw, "hold");
+  if (!id) return null;
+  if (presets?.some((p) => p.id === id)) return id;
+  if (CANONICAL_BY_ID.has(id as JobOnHoldReasonId)) return id;
+  return null;
 }
 
 export function slugifyJobOnHoldPresetId(label: string): string {
