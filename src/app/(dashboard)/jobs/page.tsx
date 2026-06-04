@@ -106,8 +106,10 @@ import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import {
-  computeHourlyTotals,
+  computeInitialHourlyJobTotals,
+  parseRequiredHourlyField,
   partnerHourlyRateFromCatalogBundle,
+  resolveInitialHourlyJobTotalsFromForm,
 } from "@/lib/job-hourly-billing";
 import {
   defaultPricingPresetId,
@@ -2915,7 +2917,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
-    billed_hours: "1",
+    billed_hours: "",
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -3062,14 +3064,20 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (!pricing) return;
     lastAutoPartnerCost.current = null;
     queueMicrotask(() =>
-      setForm((prev) => ({
-        ...prev,
-        hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
-        hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
-        billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
-        client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
-        partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
-      })),
+      setForm((prev) => {
+        if (prev.job_type === "hourly") {
+          // Smart Pricing totals come only from explicit rate × hours fields — never fixed catalogue partner_cost.
+          return { ...prev, client_price: "", partner_cost: "" };
+        }
+        return {
+          ...prev,
+          hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
+          hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
+          billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
+          client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
+          partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
+        };
+      }),
     );
   }, [pricing, isStackablePricing]);
   const catalogPricingPresetOptions = useMemo(() => {
@@ -3184,6 +3192,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
       toast.error("For hourly jobs, select a Call Out type from Services.");
       return;
     }
+    const hourlyTotalsFromForm =
+      form.job_type === "hourly" ? resolveInitialHourlyJobTotalsFromForm(form) : null;
+    if (form.job_type === "hourly" && !hourlyTotalsFromForm) {
+      toast.error("Enter client rate, partner rate, and initial billed hours (0 is allowed for each).");
+      return;
+    }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     if (!isZendeskTicketFieldValid(zendesk)) {
       toast.error("Paste the Zendesk ticket id or tick 'No ticket — create a new one'.");
@@ -3221,20 +3235,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const job_kind: JobKind = schedV2.payload.job_kind;
 
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
-    const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
-    const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
-    const initialBilledHours = Math.max(1, Number(form.billed_hours) || 1);
-    const hourlyTotals = computeHourlyTotals({
-      elapsedSeconds: initialBilledHours * 3600,
-      clientHourlyRate: hourlyClientRate,
-      partnerHourlyRate: hourlyPartnerRate,
-    });
     const isHourly = form.job_type === "hourly";
+    const hourlyTotals = isHourly ? hourlyTotalsFromForm! : null;
+    const hourlyClientRate = isHourly ? parseRequiredHourlyField(form.hourly_client_rate)! : 0;
+    const hourlyPartnerRate = isHourly ? parseRequiredHourlyField(form.hourly_partner_rate)! : 0;
     const cczEligibleAddr = !isHousekeepJob && isLikelyCczAddress(clientAddress.property_address);
     const inCczOut = cczEligibleAddr && form.in_ccz;
     const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: inCczOut, hasFreeParking: form.has_free_parking });
-    const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
-    const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
+    const clientPriceOut = isHourly && hourlyTotals ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
+    const partnerCostOut = isHourly && hourlyTotals ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
     let uploadedImageUrls: string[] = [];
     if (sitePhotoFiles.length > 0) {
@@ -3275,7 +3284,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
-      billed_hours: isHourly ? hourlyTotals.billedHours : null,
+      billed_hours: isHourly && hourlyTotals ? hourlyTotals.billedHours : null,
       in_ccz: isHousekeepJob ? false : inCczOut,
       has_free_parking: isHousekeepJob ? true : form.has_free_parking,
       client_price: clientPriceOut,
@@ -3319,7 +3328,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       report_link: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
-      billed_hours: "1",
+      billed_hours: "",
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -3338,21 +3347,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
         cczFeeGbp: accessFees.cczFeeGbp,
         parkingFeeGbp: accessFees.parkingFeeGbp,
       });
-  const hourlyPreview = computeHourlyTotals({
-    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
-    clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
-    partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
-  });
-  const hourlyMarginPct = hourlyPreview.clientTotal > 0
-    ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
-    : 0;
+  const hourlyPreview = resolveInitialHourlyJobTotalsFromForm(form);
+  const hourlyMarginPct =
+    hourlyPreview && hourlyPreview.clientTotal > 0
+      ? Math.round(
+          ((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000,
+        ) / 10
+      : 0;
   const estimatedMarginPct = useMemo(() => {
     const clientTotal =
-      form.job_type === "hourly"
+      form.job_type === "hourly" && hourlyPreview
         ? hourlyPreview.clientTotal + accessSurchargePreview
         : (Number(form.client_price) || 0) + accessSurchargePreview;
     if (clientTotal <= 0) return 0;
-    const partnerTotal = form.job_type === "hourly" ? hourlyPreview.partnerTotal : (Number(form.partner_cost) || 0);
+    const partnerTotal =
+      form.job_type === "hourly" && hourlyPreview
+        ? hourlyPreview.partnerTotal
+        : (Number(form.partner_cost) || 0);
     const materialsTotal = Number(form.materials_cost) || 0;
     return Math.round(((clientTotal - partnerTotal - materialsTotal) / clientTotal) * 1000) / 10;
   }, [
@@ -3360,8 +3371,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
     form.client_price,
     form.partner_cost,
     form.materials_cost,
-    hourlyPreview.clientTotal,
-    hourlyPreview.partnerTotal,
+    hourlyPreview?.clientTotal,
+    hourlyPreview?.partnerTotal,
     accessSurchargePreview,
   ]);
 
@@ -3444,7 +3455,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <button
                 type="button"
                 title="From services, accounts and partners"
-                onClick={() => update("job_type", "hourly")}
+                onClick={() =>
+                  setForm((p) => ({
+                    ...p,
+                    job_type: "hourly",
+                    client_price: "",
+                    partner_cost: "",
+                    hourly_client_rate: "",
+                    hourly_partner_rate: "",
+                    billed_hours: "",
+                  }))
+                }
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "hourly"
@@ -3487,8 +3508,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         const hrs = Math.max(1, Number(eff.default_hours) || 1);
                         const clientRate = Number(eff.hourly_rate) || 0;
                         const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
-                        const totals = computeHourlyTotals({
-                          elapsedSeconds: hrs * 3600,
+                        const totals = computeInitialHourlyJobTotals({
+                          billedHours: hrs,
                           clientHourlyRate: clientRate,
                           partnerHourlyRate: partnerRate,
                         });
@@ -3497,11 +3518,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
                           catalog_service_id: id,
                           catalog_pricing_preset_id: presetId,
                           title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
-                          hourly_client_rate: String(clientRate || ""),
-                          hourly_partner_rate: String(partnerRate || ""),
+                          hourly_client_rate: String(clientRate),
+                          hourly_partner_rate: String(partnerRate),
                           billed_hours: String(hrs),
-                          client_price: String(totals.clientTotal),
-                          partner_cost: String(totals.partnerTotal),
+                          client_price: "",
+                          partner_cost: "",
                         }));
                       }}
                     />
@@ -3886,7 +3907,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </label>
                 <Input
                   type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
+                  value={
+                    form.job_type === "hourly"
+                      ? hourlyPreview
+                        ? String(hourlyPreview.clientTotal + accessSurchargePreview)
+                        : ""
+                      : form.client_price
+                  }
+                  placeholder={form.job_type === "hourly" && !hourlyPreview ? "Enter rates × hours below" : undefined}
                   onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("client_price", e.target.value)}
                   readOnly={form.job_type === "hourly" || isStackablePricing}
                   className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
@@ -3907,7 +3935,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </label>
                 <Input
                   type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
+                  value={
+                    form.job_type === "hourly"
+                      ? hourlyPreview
+                        ? String(hourlyPreview.partnerTotal)
+                        : ""
+                      : form.partner_cost
+                  }
+                  placeholder={form.job_type === "hourly" && !hourlyPreview ? "Enter rates × hours below" : undefined}
                   onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("partner_cost", e.target.value)}
                   readOnly={form.job_type === "hourly" || isStackablePricing}
                   className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
@@ -3938,20 +3973,54 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <>
                 <div className="grid grid-cols-2 @lg:grid-cols-3 gap-2 pt-1 border-t border-border-light/50 min-w-0">
                   <div className="min-w-0">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Client hourly rate (£/h) *
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.hourly_client_rate}
+                      onChange={(e) => update("hourly_client_rate", e.target.value)}
+                      min="0"
+                      step="0.01"
+                      required
+                      placeholder="0"
+                      className={requiredFieldClass}
+                    />
                   </div>
                   <div className="min-w-0">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Partner hourly rate (£/h) *
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.hourly_partner_rate}
+                      onChange={(e) => update("hourly_partner_rate", e.target.value)}
+                      min="0"
+                      step="0.01"
+                      required
+                      placeholder="0"
+                      className={requiredFieldClass}
+                    />
                   </div>
                   <div className="col-span-2 @lg:col-span-1 min-w-0 max-w-full @lg:max-w-[10rem]">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label>
-                    <Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Initial billed hours *
+                    </label>
+                    <Input
+                      type="number"
+                      value={form.billed_hours}
+                      onChange={(e) => update("billed_hours", e.target.value)}
+                      min="0"
+                      step="0.5"
+                      required
+                      placeholder="0"
+                      className={requiredFieldClass}
+                    />
                   </div>
                 </div>
                 <p className="text-[10px] text-text-tertiary leading-snug">
-                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
+                  All three fields are required (enter 0 if needed). Totals above update only after rates and hours are set.
+                  On-site timer billing still uses 1h minimum, then 30-min increments.
                 </p>
               </>
             ) : null}
