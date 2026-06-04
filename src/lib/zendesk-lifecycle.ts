@@ -20,6 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   createSideConversation,
+  replyToSideConversation,
   getZendeskTicketId,
   getTicketRequester,
   setTicketRequester,
@@ -261,9 +262,10 @@ async function dispatchJobTerminalNotice(args: {
     .from("jobs")
     .select(`
       id, reference, title, status,
-      external_source, external_ref,
+      external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
-      clients ( name )
+      clients ( name ),
+      partners ( name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -302,6 +304,65 @@ async function dispatchJobTerminalNotice(args: {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+
+  // The public ticket comment above only reaches the customer. On cancellation
+  // (e.g. an on-hold job being scrapped) the assigned partner must also be told
+  // in their own side-conversation thread, otherwise they keep expecting the
+  // job. Reply on the existing thread, or open one if none exists yet.
+  // Non-fatal: a side-conv failure must not block marking the notice as sent.
+  if (args.status === "cancelled" && job.partner_id) {
+    const partnerRow = (job as unknown as {
+      partners?:
+        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }
+        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }[]
+        | null;
+    }).partners;
+    const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
+    const partnerEmail = partner?.email?.trim() ?? "";
+    const partnerName = partner?.name?.trim() ?? "";
+    const partnerUserId =
+      partner?.zendesk_user_id != null ? String(partner.zendesk_user_id) : undefined;
+
+    if (partnerEmail) {
+      const partnerHtml = buildJobCancelledHtml({
+        customerName: partnerName,
+        reference: String(job.reference ?? ""),
+        title: String(job.title ?? ""),
+        reason: (job.cancellation_reason as string | null) ?? null,
+      });
+      const existingScId =
+        (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
+      try {
+        if (existingScId) {
+          await replyToSideConversation({
+            ticketId,
+            sideConversationId: existingScId,
+            toEmail: partnerEmail,
+            toName: partnerName || undefined,
+            toUserId: partnerUserId,
+            htmlBody: partnerHtml,
+          });
+        } else {
+          const created = await createSideConversation({
+            ticketId,
+            toEmail: partnerEmail,
+            toName: partnerName || undefined,
+            toUserId: partnerUserId,
+            subject: `Job cancelled — #${job.reference}`,
+            htmlBody: partnerHtml,
+          });
+          if (created.ok && created.id) {
+            await supabase
+              .from("jobs")
+              .update({ zendesk_side_conversation_id: created.id })
+              .eq("id", args.jobId);
+          }
+        }
+      } catch (err) {
+        console.error("[zendesk-lifecycle] cancel partner side conv failed:", err);
+      }
+    }
   }
 
   await supabase.from("jobs").update({ [sentColumn]: new Date().toISOString() }).eq("id", args.jobId);

@@ -228,22 +228,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not generate reference." }, { status: 500 });
   }
 
-  // When only a catalog_service_id was supplied (e.g. the Zendesk form), resolve
-  // the trade label so the quote row + bid invites carry a human-readable type.
-  let resolvedServiceType = serviceType;
-  if (!resolvedServiceType && catalogServiceId) {
+  // Always resolve the catalog service NAME when an id is supplied. The name is
+  // the authoritative, human-readable label — the raw catalog UUID must never
+  // surface in the quote title or partner emails (it reads as gibberish). The
+  // resolved name wins over a free-text `service_type`, so even a caller that
+  // mistakenly puts the id in `service_type` still gets the proper name.
+  let catalogName: string | null = null;
+  if (catalogServiceId) {
     const { data: cat } = await supabase
       .from("service_catalog")
       .select("name")
       .eq("id", catalogServiceId)
       .maybeSingle();
-    resolvedServiceType = (cat as { name?: string } | null)?.name ?? null;
+    catalogName = (cat as { name?: string } | null)?.name ?? null;
   }
+  const resolvedServiceType = catalogName || serviceType || null;
 
-  // Title falls back to the resolved service name when not explicitly provided
-  // (caller sent catalog_service_id / service_type instead of a title).
-  // quotes.title is NOT NULL, so a non-empty value must exist by this point.
-  const effectiveTitle = title || resolvedServiceType;
+  // Title: prefer an explicit human title, but never accept the catalog UUID
+  // itself (some integrations send the id in `title`). Fall back to the
+  // resolved service name. quotes.title is NOT NULL, so this must be non-empty.
+  const titleIsId = !!title && (title === catalogServiceId || isValidUUID(title));
+  const effectiveTitle = (title && !titleIsId ? title : null) || resolvedServiceType;
   if (!effectiveTitle) {
     return NextResponse.json(
       { error: "Could not determine a title: provide `title`, or a `catalog_service_id` that resolves to a service name." },
