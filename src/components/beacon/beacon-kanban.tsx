@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
-import { updateJob } from "@/services/jobs";
+import { jobRowMatchesJobsManagementTab, updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
@@ -45,7 +45,7 @@ type KanbanJob = {
   cancelled_extras_amount: number | null;
 };
 
-type StageId = "unassigned" | "scheduled" | "in_progress" | "final_checks" | "completed" | "cancelled";
+type StageId = "action_required" | "scheduled" | "in_progress" | "final_checks" | "completed" | "cancelled";
 
 type Stage = {
   id: StageId;
@@ -66,10 +66,10 @@ type Stage = {
 
 const STAGES: Stage[] = [
   {
-    id: "unassigned",
-    title: "Unassigned",
+    id: "action_required",
+    title: "Action Required",
     tone: "red",
-    matches: (s) => s === "unassigned" || s === "auto_assigning",
+    matches: (s) => s === "unassigned" || s === "auto_assigning" || s === "on_hold",
     dropStatus: "unassigned",
   },
   {
@@ -122,7 +122,32 @@ const STAGE_DOT: Record<Stage["tone"], string> = {
   danger: "bg-fx-red",
 };
 
-const COLLAPSE_STORAGE_KEY = "beacon_kanban_collapsed_v1";
+const COLLAPSE_STORAGE_KEY = "beacon_kanban_collapsed_v2";
+
+/** Same bucket as Jobs → Action Required (unassigned, auto-assign, on hold, booked w/o partner). */
+function resolveBeaconKanbanStage(job: KanbanJob): Stage | undefined {
+  if (jobRowMatchesJobsManagementTab(job, "action_required")) {
+    return STAGES.find((s) => s.id === "action_required");
+  }
+  if (jobRowMatchesJobsManagementTab(job, "scheduled")) {
+    return STAGES.find((s) => s.id === "scheduled");
+  }
+  if (jobRowMatchesJobsManagementTab(job, "in_progress")) {
+    return STAGES.find((s) => s.id === "in_progress");
+  }
+  if (jobRowMatchesJobsManagementTab(job, "final_check")) {
+    return STAGES.find((s) => s.id === "final_checks");
+  }
+  if (job.status === "completed") return STAGES.find((s) => s.id === "completed");
+  if (job.status === "cancelled") return STAGES.find((s) => s.id === "cancelled");
+  return undefined;
+}
+
+function dropStatusForActionRequiredColumn(job: Pick<KanbanJob, "status">): JobStatus {
+  if (job.status === "on_hold") return "on_hold";
+  if (job.status === "auto_assigning") return "auto_assigning";
+  return "unassigned";
+}
 
 export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: BeaconFilters }) {
   const { marginThresholds } = useFrontendSetup();
@@ -174,7 +199,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
     // No-op if dropped on its own column.
-    if (stage.matches(effectiveJobStatusForDisplay(job))) return;
+    if (resolveBeaconKanbanStage(job)?.id === stage.id) return;
 
     // Cancel: open the in-place modal with the same validation + side effects
     // as the Jobs detail flow. Approve still navigates because FinalReviewModal
@@ -190,11 +215,13 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     }
 
     const previousStatus = job.status;
+    const nextStatus =
+      stage.id === "action_required" ? dropStatusForActionRequiredColumn(job) : stage.dropStatus;
     // Optimistic: update local state immediately so the card jumps columns.
-    setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: stage.dropStatus } : j)));
+    setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: nextStatus } : j)));
     setPendingIds((prev) => new Set(prev).add(jobId));
     try {
-      await updateJob(jobId, { status: stage.dropStatus });
+      await updateJob(jobId, { status: nextStatus });
       toast.success(`${job.reference} → ${stage.title}`);
     } catch (e) {
       // Rollback on error.
@@ -341,7 +368,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
       STAGES.map((s) => [s.id, { items: [], revenue: 0, lostRevenue: 0 }]),
     );
     for (const j of jobs) {
-      const stage = STAGES.find((s) => s.matches(effectiveJobStatusForDisplay(j)));
+      const stage = resolveBeaconKanbanStage(j);
       if (!stage) continue;
       const bucket = out.get(stage.id)!;
       bucket.items.push(j);
