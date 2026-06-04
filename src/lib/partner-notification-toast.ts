@@ -37,8 +37,15 @@ const KIND_TITLE: Record<NotifyPartnerJobChangeKind, string> = {
   booked:               "Job booked",
 };
 
-/** Zendesk auto-email to partners — only when you assign them or mark the job done. */
-const ZENDESK_AUTO_EMAIL_KINDS = new Set<NotifyPartnerJobChangeKind>(["assigned", "completed", "confirmation_request", "booked"]);
+/** Zendesk auto-email to partners (not policy-skipped). */
+const ZENDESK_AUTO_EMAIL_KINDS = new Set<NotifyPartnerJobChangeKind>([
+  "assigned",
+  "booked",
+  "completed",
+  "confirmation_request",
+  "cancelled",
+  "on_hold",
+]);
 
 function jobRef(jobReference?: string): string {
   return jobReference?.trim() ? ` · ${jobReference.trim()}` : "";
@@ -98,7 +105,7 @@ function describeZendesk(status: ReturnType<typeof zendeskStatus>): string | nul
     case "sent":
       return "Email: sent from the Zendesk ticket.";
     case "policy_skip":
-      return "Email: not sent — we only auto-email when you assign the job or mark it finished.";
+      return "Email: not sent — this update type does not trigger a partner email.";
     case "no_email":
       return "Email: not sent — this partner has no email saved.";
     case "failed":

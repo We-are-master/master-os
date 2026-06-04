@@ -35,7 +35,8 @@ interface NotifyBody {
  * Behaviour:
  *   - First call for a job → creates a new side conversation, stores its id
  *     on jobs.zendesk_side_conversation_id
- *   - Subsequent calls → reply on the existing thread
+ *   - Subsequent calls → reply on the existing booked thread
+ *   - on_hold / cancelled → new side conversation (distinct subject in sidebar)
  *   - For cancelled / on_hold the email body includes the reason
  *
  * No-ops (returns ok:true with `skipped`) when:

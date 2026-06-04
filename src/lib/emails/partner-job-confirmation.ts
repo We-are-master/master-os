@@ -12,9 +12,11 @@
 import {
   partnerEmailBaseStyles,
   partnerEmailBodyOpen,
+  partnerEmailGreetingH1Html,
   partnerEmailHeadBlock,
   partnerEmailLogoHeaderRow,
   partnerEmailPreheaderHtml,
+  partnerEmailSplitTitleHtml,
 } from "@/lib/emails/partner-email-layout";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
@@ -154,7 +156,7 @@ ${partnerEmailLogoHeaderRow()}
 
       <!-- Title -->
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, new job booked for you →</h1>
+        ${partnerEmailSplitTitleHtml(safe.name, "New job booked for you →")}
         <p style="margin:0 0 16px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">Here's everything you need to get started.</p>
       </td></tr>
 
@@ -235,7 +237,9 @@ ${partnerEmailLogoHeaderRow()}
 </table>
 </body></html>`;
 
-  const text = `Hi ${data.partnerFirstName || "there"}, new job booked for you.
+  const text = `Hi ${data.partnerFirstName || "there"},
+
+New job booked for you.
 
 Job #${data.jobReference}
 ${data.jobTitle}
@@ -360,10 +364,10 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
   const titleBlock =
     data.kind === "cancelled"
-      ? `<h1 class="h1-mobile" style="margin:0 0 12px 0; ${bodyFont}; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name},</h1>
+      ? `${partnerEmailGreetingH1Html(safe.name, { marginBottom: "12px" })}
         <p style="margin:0 0 12px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">This job has been cancelled.</p>
         <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">The following job has been cancelled and will no longer be going ahead.</p>`
-      : `<h1 class="h1-mobile" style="margin:0 0 12px 0; ${bodyFont}; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, ${safe.headline.toLowerCase()}</h1>
+      : `${partnerEmailSplitTitleHtml(safe.name, safe.headline)}
         <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">${safe.intro}</p>`;
 
   const ctaBlock = data.kind === "cancelled"
@@ -445,7 +449,9 @@ ${partnerEmailLogoHeaderRow()}
 
 This job has been cancelled.
 The following job has been cancelled and will no longer be going ahead.`
-      : `Hi ${name}, ${headline.toLowerCase()}.`;
+      : `Hi ${name},
+
+${headline}.`;
   const text = `${introText}
 
 Status: ${data.newStatusLabel}
@@ -525,7 +531,11 @@ ${partnerEmailPreheaderHtml(`Your booking ${safe.ref} has been rescheduled to ${
 ${partnerEmailLogoHeaderRow("16px 40px")}
 
       <tr><td style="padding:36px 40px 20px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:26px; line-height:34px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your booking has been rescheduled 🗓</h1>
+        ${partnerEmailSplitTitleHtml(safe.name, "Your booking has been rescheduled 🗓", {
+          marginBottomAfterHeadline: "10px",
+          fontSize: "26px",
+          lineHeight: "34px",
+        })}
         <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Just a quick heads up — your job has been moved to a new date. Please check the updated schedule below and save it to your calendar.</p>
       </td></tr>
 
@@ -576,7 +586,9 @@ ${partnerEmailLogoHeaderRow("16px 40px")}
 </table>
 </body></html>`;
 
-  const text = `Hi ${data.recipientFirstName || "there"}, your booking has been rescheduled.
+  const text = `Hi ${data.recipientFirstName || "there"},
+
+Your booking has been rescheduled.
 
 Was: ${data.oldDateLine}${data.oldTimeLine ? " · " + data.oldTimeLine : ""}
 Now: ${data.newDateLine}${data.newTimeLine ? " · " + data.newTimeLine : ""}
@@ -677,7 +689,10 @@ ${partnerEmailPreheaderHtml(`Job ${safe.ref} is on hold. We need your help to re
 ${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, a complaint was raised on this job — we need your help to resolve</h1>
+        ${partnerEmailSplitTitleHtml(
+          safe.name,
+          "A complaint was raised on this job — we need your help to resolve.",
+        )}
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
 
@@ -755,8 +770,10 @@ ${reasonBlockHtml}
 
 Hi ${data.partnerFirstName || "there"},
 
-A complaint has been raised about this job, so we've placed it on hold
-while we look into it and we need your help to resolve it. We've committed
+A complaint was raised on this job — we need your help to resolve.
+
+A complaint has come in about the job below, so we've placed it on hold
+while we look into it. We've committed
 to the customer that we'll resolve within 24 hours, so please reply within
 12 hours.
 
@@ -860,7 +877,7 @@ ${partnerEmailPreheaderHtml(`Please confirm job ${safe.ref} within ${safe.hours}
       </td></tr>
 ${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, please confirm this job</h1>
+        ${partnerEmailSplitTitleHtml(safe.name, "Please confirm this job")}
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the job below to you. Tap <strong style="color:#0A0A1F;">Accept job</strong> within ${safe.hours} hours so we can confirm the booking with the customer.</p>
       </td></tr>
       <tr><td style="padding:0 40px;" class="px-mobile">
@@ -911,6 +928,8 @@ ${partnerEmailLogoHeaderRow()}
 `ACTION REQUIRED — RESPOND WITHIN ${responseHours} HOURS
 
 Hi ${data.partnerFirstName || "there"},
+
+Please confirm this job.
 
 We've allocated this job to you. Please confirm within ${responseHours} hours:
 
