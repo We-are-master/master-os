@@ -57,6 +57,7 @@ import {
 import {
   getCalculatedPartnerPayoutReference,
   getNextPartnerPayoutReference,
+  listUpcomingPartnerPayoutSchedule,
   ORG_PARTNER_PAYOUT_STANDARD_TERMS,
   PARTNER_PAYOUT_TERM_OPTIONS,
 } from "@/lib/partner-payout-schedule";
@@ -383,6 +384,11 @@ export function SetupTab() {
 
   const payoutReferenceDiffersFromCalculated =
     partnerPayoutReferenceYmd !== partnerPayoutReference.calculatedPayoutDueYmd;
+
+  const upcomingPayoutPreview = useMemo(
+    () => listUpcomingPartnerPayoutSchedule(partnerPayoutStandard, 4, new Date(), partnerPayoutReferenceYmd),
+    [partnerPayoutStandard, partnerPayoutReferenceYmd],
+  );
 
   const handleSyncPartnerPayoutStandard = async () => {
     if (!canEditConfig) return;
@@ -896,81 +902,118 @@ export function SetupTab() {
           </p>
         </CardHeader>
         <div className="px-6 pb-6 space-y-4">
-          <div>
-            <label htmlFor="partner-payout-standard" className="block text-xs font-medium text-text-secondary mb-1">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+            <div className="flex-1 min-w-0 space-y-4">
+              <div>
+                <label htmlFor="partner-payout-standard" className="block text-xs font-medium text-text-secondary mb-1">
               Org standard schedule
-            </label>
-            <select
-              id="partner-payout-standard"
-              disabled={!canEditConfig}
-              value={partnerPayoutStandard}
-              onChange={(e) => {
-                const v = e.target.value;
-                setPartnerPayoutStandard(v);
-                setPartnerPayoutReferenceYmd(getCalculatedPartnerPayoutReference(v).payoutDueYmd);
-              }}
-              className="w-full max-w-xl rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
-            >
-              {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <div className="mt-3 max-w-xl space-y-2">
-              <label htmlFor="partner-payout-reference" className="block text-xs font-medium text-text-secondary">
-                Next payout date (reference)
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  id="partner-payout-reference"
-                  type="date"
+                </label>
+                <select
+                  id="partner-payout-standard"
                   disabled={!canEditConfig}
-                  value={partnerPayoutReferenceYmd}
-                  onChange={(e) => setPartnerPayoutReferenceYmd(e.target.value)}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!canEditConfig}
-                  onClick={() =>
-                    setPartnerPayoutReferenceYmd(
-                      getCalculatedPartnerPayoutReference(partnerPayoutStandard).payoutDueYmd,
-                    )
-                  }
+                  value={partnerPayoutStandard}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPartnerPayoutStandard(v);
+                    setPartnerPayoutReferenceYmd(getCalculatedPartnerPayoutReference(v).payoutDueYmd);
+                  }}
+                  className="w-full max-w-xl rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
                 >
-                  Use calculated
-                </Button>
-              </div>
-              <div
-                className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5"
-                aria-live="polite"
-              >
-                <p className="text-[11px] text-text-tertiary leading-relaxed">
-                  {payoutReferenceDiffersFromCalculated ? (
-                    <>
-                      Custom reference — schedule alone would suggest{" "}
-                      <span className="font-medium tabular-nums">
-                        {formatDate(partnerPayoutReference.calculatedPayoutDueYmd)}
-                      </span>
-                      . Biweekly payouts align to this reference Friday after you save.
-                    </>
-                  ) : (
-                    <>
-                      Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Work week
-                      ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun).
-                    </>
-                  )}
-                </p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
-                  Final review uses the same <span className="font-medium">Standard</span> rule when the partner has no
-                  custom terms.
-                </p>
+                  {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-3 max-w-xl space-y-2">
+                  <label htmlFor="partner-payout-reference" className="block text-xs font-medium text-text-secondary">
+                    Next payout date (reference)
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      id="partner-payout-reference"
+                      type="date"
+                      disabled={!canEditConfig}
+                      value={partnerPayoutReferenceYmd}
+                      onChange={(e) => setPartnerPayoutReferenceYmd(e.target.value)}
+                      className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!canEditConfig}
+                  onClick={() => {
+                    const calc = getCalculatedPartnerPayoutReference(partnerPayoutStandard);
+                    setPartnerPayoutReferenceYmd(calc.payoutDueYmd);
+                  }}
+                    >
+                      Use calculated
+                    </Button>
+                  </div>
+                  <div
+                    className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5"
+                    aria-live="polite"
+                  >
+                    <p className="text-[11px] text-text-tertiary leading-relaxed">
+                      {payoutReferenceDiffersFromCalculated ? (
+                        <>
+                          Custom reference — schedule alone would suggest{" "}
+                          <span className="font-medium tabular-nums">
+                            {formatDate(partnerPayoutReference.calculatedPayoutDueYmd)}
+                          </span>
+                          . Biweekly payouts align to this reference Friday after you save.
+                        </>
+                      ) : (
+                        <>
+                          Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Work week
+                          ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun).
+                        </>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                      Final review uses the same <span className="font-medium">Standard</span> rule when the partner has
+                      no custom terms.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
+
+            <aside className="w-full lg:w-[280px] shrink-0 rounded-lg border border-border-light bg-surface-hover/40 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">
+                Next 4 payouts (reference)
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border-light text-text-tertiary">
+                      <th className="pb-1.5 pr-2 font-medium w-6">#</th>
+                      <th className="pb-1.5 pr-2 font-medium">Pay date</th>
+                      <th className="pb-1.5 font-medium">Week end</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {upcomingPayoutPreview.map((row, idx) => (
+                      <tr key={`${row.payoutDueYmd}-${row.weekEndYmd}`} className="border-b border-border-light/60 last:border-0">
+                        <td className="py-1.5 pr-2 text-text-tertiary tabular-nums">{idx + 1}</td>
+                        <td className="py-1.5 pr-2 font-medium text-text-primary tabular-nums whitespace-nowrap">
+                          {formatDate(row.payoutDueYmd)}
+                        </td>
+                        <td className="py-1.5 text-text-secondary tabular-nums whitespace-nowrap">
+                          {formatDate(row.weekEndYmd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-text-tertiary mt-2 leading-snug">
+                Preview only — updates when you change schedule or reference date.
+              </p>
+            </aside>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
