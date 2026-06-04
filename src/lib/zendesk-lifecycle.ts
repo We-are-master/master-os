@@ -28,6 +28,7 @@ import {
 } from "@/lib/zendesk";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { tryClaimPartnerBookedEmailSend } from "@/lib/job-partner-acceptance";
 import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
 import {
   buildJobCancelledHtml,
@@ -193,7 +194,15 @@ export async function dispatchJobCreatedZendesk(args: {
   const partnerEmail = partner?.email?.trim() ?? "";
   const partnerName = partner?.name?.trim() ?? "";
 
-  if (!sideConvId && job.partner_id && partnerEmail) {
+  // Exactly one "Job booked" partner notification per assignment — the claim is
+  // shared atomically with notify-partner-zendesk + the auto-assign winner, so
+  // whichever path fires first wins and the others skip.
+  if (
+    !sideConvId &&
+    job.partner_id &&
+    partnerEmail &&
+    (await tryClaimPartnerBookedEmailSend(supabase, String(job.id)))
+  ) {
     try {
       // Build the partner-scoped report URL up front and include it as the
       // primary CTA so the partner can submit the report without waiting

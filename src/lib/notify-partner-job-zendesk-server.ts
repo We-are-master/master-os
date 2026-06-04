@@ -15,6 +15,7 @@
 
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
+import { tryClaimPartnerBookedEmailSend } from "@/lib/job-partner-acceptance";
 import { createPartnerReportToken, createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -305,9 +306,18 @@ export async function notifyPartnerJobZendesk(
     error?: string;
     skipped?: string;
   } = { ok: false, error: "skipped" };
+  // The "Job booked" confirmation must reach a partner exactly once per
+  // assignment, no matter which path fires it (this route, dispatchJobCreated,
+  // or the auto-assign winner). Claim the shared atomic slot; if another path
+  // already booked this partner, skip the side conversation here. NOTE:
+  // `confirmation_request` (the auto-assign offer) must NOT claim — the booked
+  // email is sent later on accept by finalizeAutoAssignWinner.
+  const isBookingKind = kind === "booked" || kind === "assigned";
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
+    } else if (isBookingKind && !(await tryClaimPartnerBookedEmailSend(supabase, job.id))) {
+      zendeskResult = { ok: true, skipped: "already_booked" };
     } else if (job.zendesk_side_conversation_id) {
       const r = await replyToSideConversation({
         ticketId: zendeskTicketId,

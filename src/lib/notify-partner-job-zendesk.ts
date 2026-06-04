@@ -63,6 +63,8 @@ export async function notifyPartnerJobChange(opts: NotifyPartnerJobChangeOptions
     const res = await fetch(`/api/jobs/${jobId}/notify-partner-zendesk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // Survive page navigation (e.g. fired right before router.push on create).
+      keepalive: true,
       body: JSON.stringify({
         kind,
         reason: reason ?? null,
