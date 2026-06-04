@@ -1,19 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { appBaseUrl } from "@/lib/app-base-url";
-import { escapeHtmlAttr, normalizeEmailAssetUrl } from "@/lib/email-asset-url";
+import { buildPartnerQuoteBidInviteEmail } from "@/lib/emails/partner-quote-bid-invite";
+import { normalizeEmailAssetUrl } from "@/lib/email-asset-url";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { createSideConversation } from "@/lib/zendesk";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 export interface SendQuotePartnerInviteEmailsParams {
   quoteId: string;
@@ -24,6 +17,12 @@ export interface SendQuotePartnerInviteEmailsParams {
 export interface SendQuotePartnerInviteEmailsResult {
   sent: number;
   invited: number;
+}
+
+function partnerFirstName(contactName: string | null | undefined, companyName: string | null | undefined): string {
+  const fromContact = contactName?.trim().split(/\s+/)[0];
+  if (fromContact) return fromContact;
+  return companyName?.trim() || "there";
 }
 
 /**
@@ -39,7 +38,7 @@ export async function sendQuotePartnerInviteEmails(
 
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
-    .select("id, reference, title, property_address, request_id, scope, external_source, external_ref")
+    .select("id, reference, title, client_name, service_type, property_address, request_id, scope, external_source, external_ref")
     .eq("id", params.quoteId)
     .single();
   if (qErr || !quote) {
@@ -69,6 +68,12 @@ export async function sendQuotePartnerInviteEmails(
   }
 
   const invitationScope = quoteScope || requestDescription.trim();
+  const typeOfWork =
+    (typeof quote.title === "string" ? quote.title.trim() : "") ||
+    (typeof quote.service_type === "string" ? quote.service_type.trim() : "") ||
+    "Quote";
+  const clientName = typeof quote.client_name === "string" ? quote.client_name.trim() : "";
+
   const { data: partners } = await supabase
     .from("partners")
     .select("id, email, company_name, contact_name, zendesk_user_id")
@@ -86,31 +91,13 @@ export async function sendQuotePartnerInviteEmails(
   const resend = resendKey ? new Resend(resendKey) : null;
   const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy <quotes@example.com>";
   const base = appBaseUrl();
-
-  const imgHtml = photoUrls
-    .map((u, i) => {
-      const href = escapeHtmlAttr(u);
-      return `<p style="margin:12px 0"><a href="${href}">Site photo ${i + 1}</a></p><img src="${href}" alt="" width="560" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #e5e5e5" />`;
-    })
-    .join("");
+  const invitedAt = new Date();
 
   const iosStore = process.env.PARTNER_APP_IOS_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_IOS_URL?.trim();
   const androidStore =
     process.env.PARTNER_APP_ANDROID_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_ANDROID_URL?.trim();
   const deepLink = `masterservices://invite?quoteId=${encodeURIComponent(params.quoteId)}`;
-  const deepEsc = escapeHtmlAttr(deepLink);
-  const storeLinks: string[] = [];
-  if (iosStore) storeLinks.push(`<a href="${escapeHtmlAttr(iosStore)}">App Store</a>`);
-  if (androidStore) storeLinks.push(`<a href="${escapeHtmlAttr(androidStore)}">Google Play</a>`);
-  const storeBlock =
-    storeLinks.length > 0
-      ? `<p style="margin:12px 0">${storeLinks.join(" · ")}</p>`
-      : `<p style="margin:12px 0;color:#444;font-size:14px">Install <strong>Fixfy</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
-
   const officeQuoteUrl = `${base}/quotes?quoteId=${encodeURIComponent(params.quoteId)}&drawerTab=bids`;
-  const officeEsc = escapeHtmlAttr(officeQuoteUrl);
-
-  const subject = `Quote invitation ${quote.reference} — ${quote.title ?? "Bid request"}`;
 
   const sendOne = async (p: {
     id: string;
@@ -133,25 +120,22 @@ export async function sendQuotePartnerInviteEmails(
       return { shortPath: targetPath };
     });
     const bidWebUrl = `${base}${shortPath}`;
-    const bidWebEsc = escapeHtmlAttr(bidWebUrl);
-    const html = `
-        <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
-        <p>You have been invited to bid on <strong>${escapeHtml(quote.reference)}</strong> — ${escapeHtml(quote.title ?? "")}</p>
-        <p><strong>Property:</strong> ${escapeHtml(quote.property_address ?? "—")}</p>
-        ${invitationScope ? `<p><strong>Scope:</strong><br/>${escapeHtml(invitationScope).replace(/\n/g, "<br/>")}</p>` : ""}
-        ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
-        <p style="margin-top:20px"><strong>Submit your bid</strong></p>
-        <p style="margin:12px 0;font-size:14px"><a href="${bidWebEsc}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600">Open bid form</a></p>
-        <p style="margin:8px 0;font-size:12px;color:#666">Or open in the Fixfy partner app: <a href="${deepEsc}">in-app invitation</a></p>
-        ${storeBlock}
-        <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Fixfy OS</a></p>
-      `;
-    const bodyText =
-      `Hi ${p.company_name ?? "there"},\n\n` +
-      `You have been invited to bid on ${quote.reference} — ${quote.title ?? ""}.\n` +
-      `Property: ${quote.property_address ?? "—"}\n` +
-      (invitationScope ? `Scope:\n${invitationScope}\n` : "") +
-      `\nSubmit your bid: ${bidWebUrl}\n`;
+
+    const { subject, html, text: bodyText } = buildPartnerQuoteBidInviteEmail({
+      partnerFirstName: partnerFirstName(p.contact_name, p.company_name),
+      quoteReference: quote.reference,
+      typeOfWork,
+      clientName: clientName || "—",
+      propertyAddress: quote.property_address ?? "",
+      scope: invitationScope,
+      photoUrls,
+      bidUrl: bidWebUrl,
+      deepLinkUrl: deepLink,
+      iosStoreUrl: iosStore,
+      androidStoreUrl: androidStore,
+      officeQuoteUrl,
+      invitedAt,
+    });
 
     // Prefer a Zendesk side conversation on the quote's ticket; fall back to a
     // standalone Resend email when there's no ticket (or Zendesk send fails).
