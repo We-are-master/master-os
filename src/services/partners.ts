@@ -1,4 +1,5 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
+import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
 import type { Partner } from "@/types/database";
 import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 
@@ -166,14 +167,15 @@ export async function createPartner(
   input: Omit<Partner, "id" | "joined_at" | "rating" | "jobs_completed" | "total_earnings" | "compliance_score">
 ): Promise<Partner> {
   const supabase = getSupabase();
+  const withRating = { ...input, rating: PARTNER_RATING_MAX };
   let { data, error } = await supabase
     .from("partners")
-    .insert(input)
+    .insert(withRating)
     .select()
     .single();
   if (error && "trades" in input) {
     const { trades: _ignored, ...legacyInput } = input as Omit<Partner, "trades"> & { trades?: string[] | null };
-    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
     error = fallback.error;
   }
@@ -182,7 +184,7 @@ export async function createPartner(
       partner_legal_type?: unknown;
       utr?: unknown;
     };
-    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
     error = fallback.error;
   }
@@ -191,13 +193,13 @@ export async function createPartner(
       uk_coverage_regions?: unknown;
       partner_address?: unknown;
     };
-    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
     error = fallback.error;
   }
   if (error && "vat_registered" in input) {
     const { vat_registered: _vr, ...legacyInput } = input as typeof input & { vat_registered?: unknown };
-    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
     error = fallback.error;
   }
@@ -205,7 +207,27 @@ export async function createPartner(
     const { catalog_service_ids: _csi, ...legacyInput } = input as typeof input & {
       catalog_service_ids?: unknown;
     };
-    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (
+    error &&
+    ("coverage_mode" in input ||
+      "service_radius_miles" in input ||
+      "included_postcodes" in input)
+  ) {
+    const {
+      coverage_mode: _cm,
+      service_radius_miles: _sr,
+      coverage_latitude: _clat,
+      coverage_longitude: _clng,
+      coverage_base_postcode: _cbp,
+      included_postcodes: _inc,
+      coverage_cities: _cc,
+      ...legacyInput
+    } = input as typeof input;
+    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
     error = fallback.error;
   }
@@ -275,6 +297,32 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     const { catalog_service_ids: _csi, ...legacyInput } = input as Partial<Partner> & {
       catalog_service_ids?: unknown;
     };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (
+    error &&
+    ("coverage_mode" in input ||
+      "service_radius_miles" in input ||
+      "coverage_latitude" in input ||
+      "included_postcodes" in input)
+  ) {
+    const {
+      coverage_mode: _cm,
+      service_radius_miles: _sr,
+      coverage_latitude: _clat,
+      coverage_longitude: _clng,
+      coverage_base_postcode: _cbp,
+      included_postcodes: _inc,
+      coverage_cities: _cc,
+      ...legacyInput
+    } = input as Partial<Partner>;
     const fallback = await supabase
       .from("partners")
       .update(legacyInput)

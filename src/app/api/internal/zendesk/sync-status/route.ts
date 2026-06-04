@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { isValidUUID } from "@/lib/auth-api";
 import { syncJobZendeskStatus, syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
+import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
 import {
   dispatchJobCancelledZendesk,
   dispatchJobCompletedZendesk,
@@ -76,6 +77,14 @@ export async function POST(req: NextRequest) {
     console.error(`[zendesk sync] ${entity} ${id} status sync failed: ${syncResult.error}`);
   }
 
+  let onHoldFieldsSync: Awaited<ReturnType<typeof syncJobZendeskOnHoldFields>> | null = null;
+  if (entity === "job") {
+    onHoldFieldsSync = await syncJobZendeskOnHoldFields(id, supabase);
+    if (!onHoldFieldsSync.ok) {
+      console.error(`[zendesk sync] job ${id} on-hold fields sync failed:`, onHoldFieldsSync.errors);
+    }
+  }
+
   // ─── Step 2: lifecycle side effects (idempotent via *_notice_sent_at) ──
   const lifecycle: Record<string, unknown> = {};
   try {
@@ -112,5 +121,5 @@ export async function POST(req: NextRequest) {
     lifecycle.error = err instanceof Error ? err.message : String(err);
   }
 
-  return NextResponse.json({ entity, id, sync: syncResult, lifecycle });
+  return NextResponse.json({ entity, id, sync: syncResult, onHoldFields: onHoldFieldsSync, lifecycle });
 }

@@ -1,10 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AlarmClock, CalendarClock, Car, ChevronDown, ChevronUp, ClipboardCheck, Loader2, MapPin, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import {
+  AlarmClock,
+  CalendarClock,
+  Car,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCheck,
+  DollarSign,
+  Loader2,
+  MapPin,
+  SlidersHorizontal,
+  PauseCircle,
+  Plus,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
@@ -33,8 +48,20 @@ import {
   mergeFrontendSetup,
   normalizeOfficeJobCancellationPresets,
   parseFrontendSetup,
+  normalizeJobOnHoldPresets,
+  resolvePartnerPayoutReferenceYmd,
+  resolvePartnerPayoutStandardTerms,
+  type JobOnHoldPresetRow,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
+import {
+  getCalculatedPartnerPayoutReference,
+  getNextPartnerPayoutReference,
+  ORG_PARTNER_PAYOUT_STANDARD_TERMS,
+  PARTNER_PAYOUT_TERM_OPTIONS,
+} from "@/lib/partner-payout-schedule";
+import { formatDate } from "@/lib/utils";
+import { slugifyJobOnHoldPresetId } from "@/lib/job-on-hold-reasons";
 import {
   buildDefaultPartnerDocumentRules,
   getPartnerDocumentCatalogForSetup,
@@ -70,7 +97,9 @@ export function SetupTab() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [rawSetup, setRawSetup] = useState<unknown>(null);
   const [biddingSlaHoursStr, setBiddingSlaHoursStr] = useState("8");
-  const [onHoldPresets, setOnHoldPresets] = useState<string[]>(() => [...DEFAULT_JOB_ON_HOLD_PRESETS]);
+  const [onHoldPresets, setOnHoldPresets] = useState<JobOnHoldPresetRow[]>(() =>
+    DEFAULT_JOB_ON_HOLD_PRESETS.map((r) => ({ ...r })),
+  );
 
   const [officeCancelPresets, setOfficeCancelPresets] = useState<OfficeJobCancellationPresetRow[]>(() =>
     normalizeOfficeJobCancellationPresets(null),
@@ -89,12 +118,62 @@ export function SetupTab() {
   const [lowMarginPctStr, setLowMarginPctStr] = useState(String(DEFAULT_PULSE_LOW_MARGIN_PCT));
 
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
+  const [zendeskOnHoldReasonFieldId, setZendeskOnHoldReasonFieldId] = useState("");
+  const [zendeskComplaintDescriptionFieldId, setZendeskComplaintDescriptionFieldId] = useState("");
+  const [zendeskComplaintSolutionFieldId, setZendeskComplaintSolutionFieldId] = useState("");
+  const [onHoldZendeskSyncing, setOnHoldZendeskSyncing] = useState(false);
   const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
   const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
     buildDefaultPartnerDocumentRules(),
   );
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
+  const [partnerPayoutStandard, setPartnerPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
+  const [savedPayoutStandard, setSavedPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
+  const [partnerPayoutReferenceYmd, setPartnerPayoutReferenceYmd] = useState("");
+  const [savedPayoutReferenceYmd, setSavedPayoutReferenceYmd] = useState("");
+  const [syncPayoutLoading, setSyncPayoutLoading] = useState(false);
+
+  const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
+    setOnHoldZendeskSyncing(true);
+    try {
+      const res = await fetch("/api/admin/job-on-hold/zendesk-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: opts?.dryRun === true }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        skipped?: string;
+        error?: string;
+        stats?: { append?: number; prune?: number; rename?: number };
+      };
+      if (!res.ok || json.ok === false) {
+        if (!opts?.silent) {
+          toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
+        }
+        return false;
+      }
+      if (json.skipped) {
+        if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
+        return false;
+      }
+      if (!opts?.silent && json.stats) {
+        const { append = 0, prune = 0, rename = 0 } = json.stats;
+        toast.success(
+          opts?.dryRun
+            ? `Preview: +${append} / −${prune} / rename ${rename} (dry run)`
+            : `Zendesk on-hold reasons synced (+${append}, −${prune}, rename ${rename})`,
+        );
+      }
+      return true;
+    } catch {
+      if (!opts?.silent) toast.error("Zendesk sync failed");
+      return false;
+    } finally {
+      setOnHoldZendeskSyncing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -106,7 +185,7 @@ export function SetupTab() {
       const parsed = parseFrontendSetup(data?.frontend_setup);
       setRawSetup(data?.frontend_setup ?? null);
       setBiddingSlaHoursStr(String(parsed.bidding_sla_hours ?? 8));
-      setOnHoldPresets([...(parsed.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
+      setOnHoldPresets([...normalizeJobOnHoldPresets(parsed.job_on_hold_presets ?? null)]);
       setOfficeCancelPresets([...(parsed.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
       setWorkingDays(new Set(parsed.working_days ?? DEFAULT_WORKING_DAYS));
       setWorkStartStr(parsed.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
@@ -117,9 +196,28 @@ export function SetupTab() {
       setTargetMarginPctStr(String(parsed.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(parsed.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
+      setZendeskOnHoldReasonFieldId(
+        parsed.zendesk_on_hold_reason_field_id ? String(parsed.zendesk_on_hold_reason_field_id) : "",
+      );
+      setZendeskComplaintDescriptionFieldId(
+        parsed.zendesk_complaint_description_field_id
+          ? String(parsed.zendesk_complaint_description_field_id)
+          : "",
+      );
+      setZendeskComplaintSolutionFieldId(
+        parsed.zendesk_complaint_solution_field_id ? String(parsed.zendesk_complaint_solution_field_id) : "",
+      );
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
+      const payoutStd = resolvePartnerPayoutStandardTerms(parsed);
+      const payoutRef =
+        resolvePartnerPayoutReferenceYmd(parsed) ??
+        getCalculatedPartnerPayoutReference(payoutStd).payoutDueYmd;
+      setPartnerPayoutStandard(payoutStd);
+      setSavedPayoutStandard(payoutStd);
+      setPartnerPayoutReferenceYmd(payoutRef);
+      setSavedPayoutReferenceYmd(payoutRef);
       setLoading(false);
     })();
     return () => {
@@ -185,9 +283,20 @@ export function SetupTab() {
         target_margin_pct: targetMargin,
         pulse_low_margin_pct: lowMargin,
         zendesk_subdomain: zendeskSubdomain,
+        zendesk_on_hold_reason_field_id: zendeskOnHoldReasonFieldId.trim()
+          ? Number(zendeskOnHoldReasonFieldId.trim())
+          : undefined,
+        zendesk_complaint_description_field_id: zendeskComplaintDescriptionFieldId.trim()
+          ? Number(zendeskComplaintDescriptionFieldId.trim())
+          : undefined,
+        zendesk_complaint_solution_field_id: zendeskComplaintSolutionFieldId.trim()
+          ? Number(zendeskComplaintSolutionFieldId.trim())
+          : undefined,
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
+        partner_payout_standard_terms: partnerPayoutStandard,
+        partner_payout_reference_ymd: partnerPayoutReferenceYmd.trim() || null,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -211,7 +320,7 @@ export function SetupTab() {
         if (error) throw error;
       }
       setRawSetup(next);
-      setOnHoldPresets([...(next.job_on_hold_presets ?? DEFAULT_JOB_ON_HOLD_PRESETS)]);
+      setOnHoldPresets([...normalizeJobOnHoldPresets(next.job_on_hold_presets ?? null)]);
       setOfficeCancelPresets([...(next.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
       setWorkingDays(new Set(next.working_days ?? DEFAULT_WORKING_DAYS));
       setWorkStartStr(next.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
@@ -222,11 +331,33 @@ export function SetupTab() {
       setTargetMarginPctStr(String(next.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(next.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
+      setZendeskOnHoldReasonFieldId(
+        next.zendesk_on_hold_reason_field_id ? String(next.zendesk_on_hold_reason_field_id) : "",
+      );
+      setZendeskComplaintDescriptionFieldId(
+        next.zendesk_complaint_description_field_id
+          ? String(next.zendesk_complaint_description_field_id)
+          : "",
+      );
+      setZendeskComplaintSolutionFieldId(
+        next.zendesk_complaint_solution_field_id ? String(next.zendesk_complaint_solution_field_id) : "",
+      );
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
+      const payoutStd = resolvePartnerPayoutStandardTerms(next);
+      const payoutRef =
+        resolvePartnerPayoutReferenceYmd(next) ??
+        getCalculatedPartnerPayoutReference(payoutStd).payoutDueYmd;
+      setPartnerPayoutStandard(payoutStd);
+      setSavedPayoutStandard(payoutStd);
+      setPartnerPayoutReferenceYmd(payoutRef);
+      setSavedPayoutReferenceYmd(payoutRef);
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
+      if (next.zendesk_on_hold_reason_field_id) {
+        void syncOnHoldReasonsToZendesk({ silent: true });
+      }
     } catch (e) {
       console.error("[setup-tab] save failed", e);
       const msg = (() => {
@@ -238,6 +369,58 @@ export function SetupTab() {
       toast.error(msg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const payoutStandardDirty =
+    partnerPayoutStandard !== savedPayoutStandard ||
+    partnerPayoutReferenceYmd !== savedPayoutReferenceYmd;
+
+  const partnerPayoutReference = useMemo(
+    () => getNextPartnerPayoutReference(partnerPayoutStandard, new Date(), partnerPayoutReferenceYmd),
+    [partnerPayoutStandard, partnerPayoutReferenceYmd],
+  );
+
+  const payoutReferenceDiffersFromCalculated =
+    partnerPayoutReferenceYmd !== partnerPayoutReference.calculatedPayoutDueYmd;
+
+  const handleSyncPartnerPayoutStandard = async () => {
+    if (!canEditConfig) return;
+    if (payoutStandardDirty) {
+      toast.error("Save setup first so the org standard is stored, then apply to partners.");
+      return;
+    }
+    setSyncPayoutLoading(true);
+    try {
+      const res = await fetch("/api/admin/partners/sync-payout-standard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          standardTerms: partnerPayoutStandard,
+          previousStandard: savedPayoutStandard,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        cleared?: number;
+        totalPartners?: number;
+      };
+      if (!res.ok || json.ok === false) {
+        toast.error(json.error ?? "Failed to sync partner payout schedules");
+        return;
+      }
+      const cleared = json.cleared ?? 0;
+      toast.success(
+        cleared > 0
+          ? `Cleared custom payout terms on ${cleared} partner(s). They now use the org standard (${partnerPayoutStandard}).`
+          : `No partners needed updating — profiles without a schedule already use the org standard.`,
+      );
+    } catch (e) {
+      console.error("[setup-tab] sync payout standard", e);
+      toast.error("Failed to sync partner payout schedules");
+    } finally {
+      setSyncPayoutLoading(false);
     }
   };
 
@@ -539,24 +722,29 @@ export function SetupTab() {
             <div className="flex items-center gap-2">
               <PauseCircle className="h-4 w-4 text-text-tertiary" />
               <CardTitle>Jobs · On Hold Reasons</CardTitle>
-              <FixfyHintIcon text={`Options in the 'Reason preset' list when putting a job on hold. Add or remove up to ${MAX_JOB_ON_HOLD_PRESETS}. Use arrows to reorder.`} />
+              <FixfyHintIcon text={`On-hold reason ids (e.g. complaint) must match the Zendesk dropdown. Rename labels for staff; reorder up to ${MAX_JOB_ON_HOLD_PRESETS} options.`} />
             </div>
           </CardHeader>
           <div className="space-y-4 px-6 pb-6">
           <div className="space-y-2 max-w-xl">
             {onHoldPresets.map((row, idx) => (
-              <div key={`on-hold-${idx}`} className="flex items-center gap-2">
-                <Input
-                  value={row}
-                  maxLength={MAX_JOB_ON_HOLD_PRESET_LEN}
-                  placeholder="Reason label"
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setOnHoldPresets((prev) => prev.map((p, i) => (i === idx ? v : p)));
-                  }}
-                  className="flex-1"
-                />
-                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card">
+              <div key={row.id} className="flex items-start gap-2">
+                <div className="flex-1 min-w-0 space-y-1">
+                  <label className="block text-[10px] font-medium text-text-tertiary truncate" title={row.id}>
+                    id: <code className="text-[11px]">{row.id}</code>
+                  </label>
+                  <Input
+                    value={row.label}
+                    maxLength={MAX_JOB_ON_HOLD_PRESET_LEN}
+                    placeholder="Label shown to staff"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setOnHoldPresets((prev) => prev.map((p, i) => (i === idx ? { ...p, label: v } : p)));
+                    }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card mt-5">
                   <Button
                     type="button"
                     variant="ghost"
@@ -580,17 +768,6 @@ export function SetupTab() {
                     <ChevronDown className="h-4 w-4" />
                   </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-text-tertiary hover:text-red-600"
-                  disabled={!canEditConfig}
-                  onClick={() => setOnHoldPresets((prev) => prev.filter((_, i) => i !== idx))}
-                  aria-label="Remove preset"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
               </div>
             ))}
           </div>
@@ -601,13 +778,30 @@ export function SetupTab() {
               size="sm"
               disabled={!canEditConfig || onHoldPresets.length >= MAX_JOB_ON_HOLD_PRESETS}
               onClick={() =>
-                setOnHoldPresets((prev) =>
-                  prev.length >= MAX_JOB_ON_HOLD_PRESETS ? prev : [...prev, ""],
-                )
+                setOnHoldPresets((prev) => {
+                  if (prev.length >= MAX_JOB_ON_HOLD_PRESETS) return prev;
+                  const label = "New reason";
+                  let id = slugifyJobOnHoldPresetId(label);
+                  let n = 1;
+                  while (prev.some((p) => p.id === id)) {
+                    id = `${slugifyJobOnHoldPresetId(label)}_${n++}`;
+                  }
+                  return [...prev, { id, label }];
+                })
               }
             >
               <Plus className="h-4 w-4 mr-1.5 inline" />
               Add Reason
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              loading={onHoldZendeskSyncing}
+              onClick={() => void syncOnHoldReasonsToZendesk()}
+            >
+              Sync reasons → Zendesk
             </Button>
             <Button
               type="button"
@@ -618,6 +812,10 @@ export function SetupTab() {
               {saving ? "Saving…" : "Save Setup"}
             </Button>
           </div>
+          <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
+            After you save, reasons auto-sync to Zendesk when the on-hold reason field id is set under Integrations.
+            Option <code className="text-[11px]">value</code> in Zendesk = the <code className="text-[11px]">id</code> shown above.
+          </p>
         </div>
       </Card>
 
@@ -683,6 +881,115 @@ export function SetupTab() {
           >
             {saving ? "Saving…" : "Save setup"}
           </Button>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Partner payout standard</CardTitle>
+            <FixfyHintIcon text="Default schedule for partner self-bills when a partner has no payout terms on their profile (shown as Standard in Final review). Changing this updates due-date math for new approvals; use Apply to partners to clear preset terms on profiles so they inherit this standard." />
+          </div>
+          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+            Example: biweekly Friday payout. Partners with blank payment terms follow this org standard automatically.
+          </p>
+        </CardHeader>
+        <div className="px-6 pb-6 space-y-4">
+          <div>
+            <label htmlFor="partner-payout-standard" className="block text-xs font-medium text-text-secondary mb-1">
+              Org standard schedule
+            </label>
+            <select
+              id="partner-payout-standard"
+              disabled={!canEditConfig}
+              value={partnerPayoutStandard}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPartnerPayoutStandard(v);
+                setPartnerPayoutReferenceYmd(getCalculatedPartnerPayoutReference(v).payoutDueYmd);
+              }}
+              className="w-full max-w-xl rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+            >
+              {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <div className="mt-3 max-w-xl space-y-2">
+              <label htmlFor="partner-payout-reference" className="block text-xs font-medium text-text-secondary">
+                Next payout date (reference)
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  id="partner-payout-reference"
+                  type="date"
+                  disabled={!canEditConfig}
+                  value={partnerPayoutReferenceYmd}
+                  onChange={(e) => setPartnerPayoutReferenceYmd(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canEditConfig}
+                  onClick={() =>
+                    setPartnerPayoutReferenceYmd(
+                      getCalculatedPartnerPayoutReference(partnerPayoutStandard).payoutDueYmd,
+                    )
+                  }
+                >
+                  Use calculated
+                </Button>
+              </div>
+              <div
+                className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5"
+                aria-live="polite"
+              >
+                <p className="text-[11px] text-text-tertiary leading-relaxed">
+                  {payoutReferenceDiffersFromCalculated ? (
+                    <>
+                      Custom reference — schedule alone would suggest{" "}
+                      <span className="font-medium tabular-nums">
+                        {formatDate(partnerPayoutReference.calculatedPayoutDueYmd)}
+                      </span>
+                      . Biweekly payouts align to this reference Friday after you save.
+                    </>
+                  ) : (
+                    <>
+                      Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Work week
+                      ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun).
+                    </>
+                  )}
+                </p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                  Final review uses the same <span className="font-medium">Standard</span> rule when the partner has no
+                  custom terms.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canEditConfig || syncPayoutLoading || payoutStandardDirty}
+              loading={syncPayoutLoading}
+              onClick={() => void handleSyncPartnerPayoutStandard()}
+            >
+              Apply to partners
+            </Button>
+            {payoutStandardDirty ? (
+              <p className="text-xs text-amber-700">Save setup first, then apply to partners.</p>
+            ) : (
+              <p className="text-xs text-text-tertiary">
+                Clears preset payout terms on partner profiles so they inherit this standard.
+              </p>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -833,7 +1140,7 @@ export function SetupTab() {
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
             <CardTitle>Integrations · Zendesk</CardTitle>
-            <FixfyHintIcon text="Subdomain used to deep-link to Zendesk tickets from the Zendesk badge popover. Falls back to the server ZENDESK_SUBDOMAIN env when blank." />
+            <FixfyHintIcon text="Zendesk subdomain + complaint ticket field ids. Field ids can also be set via env vars (see docs). Dropdown options sync from On Hold Reasons when you save." />
           </div>
         </CardHeader>
         <div className="space-y-4 px-6 pb-6">
@@ -855,6 +1162,47 @@ export function SetupTab() {
                 Accepts plain subdomain, full domain, or full URL — we normalize on save.
               </p>
             </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                On-hold reason field id
+              </label>
+              <Input
+                value={zendeskOnHoldReasonFieldId}
+                onChange={(e) => setZendeskOnHoldReasonFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Zendesk dropdown field id"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Complaint description field id
+              </label>
+              <Input
+                value={zendeskComplaintDescriptionFieldId}
+                onChange={(e) => setZendeskComplaintDescriptionFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Multiline field id"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Partner solution field id
+              </label>
+              <Input
+                value={zendeskComplaintSolutionFieldId}
+                onChange={(e) => setZendeskComplaintSolutionFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="Multiline field id"
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
+            In Zendesk Admin → Ticket fields, open each field and copy the numeric id from the URL
+            (e.g. <code className="text-[11px]">.../ticket_fields/1234567890123</code>). Map the complaint form fields to the same ids.
+          </p>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               onClick={() => void handleSave()}
@@ -862,6 +1210,15 @@ export function SetupTab() {
               icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
             >
               {saving ? "Saving…" : "Save Setup"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              loading={onHoldZendeskSyncing}
+              onClick={() => void syncOnHoldReasonsToZendesk()}
+            >
+              Sync on-hold reasons → Zendesk
             </Button>
           </div>
         </div>

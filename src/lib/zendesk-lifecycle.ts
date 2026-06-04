@@ -22,9 +22,13 @@ import {
   createSideConversation,
   replyToSideConversation,
   getZendeskTicketId,
+  getTicketRequester,
+  setTicketRequester,
   isZendeskConfigured,
   updateTicket as zdUpdateTicket,
 } from "@/lib/zendesk";
+import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
 import {
   buildJobCancelledHtml,
@@ -54,7 +58,7 @@ export async function dispatchJobCreatedZendesk(args: {
     .select(`
       id, reference, title, property_address, scope,
       scheduled_date, scheduled_start_at, total_value,
-      external_source, external_ref, partner_id,
+      external_source, external_ref, partner_id, client_id,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
       clients ( name ),
@@ -71,14 +75,40 @@ export async function dispatchJobCreatedZendesk(args: {
   if (!ticketId) return { ok: true };
   if (!isZendeskConfigured()) return { ok: true };
 
-  // Idempotent — already dispatched.
+  // Idempotent claim. Two triggers fire on job creation — the /api/jobs call
+  // and the AFTER INSERT DB trigger (via /api/internal/zendesk/sync-status). A
+  // check-then-set would let both through (both read null) and post the partner
+  // "Job confirmed" side conversation twice. Claim the slot atomically so only
+  // the first caller proceeds; the loser sees 0 rows and bails.
   if ((job as { job_creation_notice_sent_at?: string | null }).job_creation_notice_sent_at) {
     return { ok: true };
   }
+  const { data: claimed } = await supabase
+    .from("jobs")
+    .update({ job_creation_notice_sent_at: new Date().toISOString() })
+    .eq("id", args.jobId)
+    .is("job_creation_notice_sent_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return { ok: true }; // another trigger already claimed → skip
 
-  const clientRow = (job as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
-  const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+  type ClientRel = { name?: string | null };
+  const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
+  const clientRow: ClientRel | null = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
+  const clientNameFallback = clientRow?.name ?? "";
+
+  // Resolve the customer-facing recipient the same way quotes/invoices do — the
+  // account's billing_type decides between the account email (B2B) and the end
+  // client's email (B2C). Keeps job confirmation consistent with every other
+  // customer send.
+  const jobClientId = (job as { client_id?: string | null }).client_id?.trim() ?? "";
+  const billing = await resolveNominalBillingParty(supabase, {
+    clientId: jobClientId,
+    fallbackName: clientNameFallback,
+  });
+  const clientName = billing.displayName || clientNameFallback;
+  const clientEmail = billing.documentEmail?.trim() ?? "";
+  const clientAccountId = billing.sourceAccountId?.trim() ?? "";
 
   const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
   const hour = job.scheduled_start_at
@@ -100,6 +130,52 @@ export async function dispatchJobCreatedZendesk(args: {
     scheduledHour: hour,
     totalGbp: Number(job.total_value ?? 0),
   });
+
+  // Make the booking confirmation reach the CUSTOMER on this ticket. Jobs
+  // created in the OS open a ticket with team@getfixfy.com as requester (and a
+  // private opening note), so a public comment would land in the team inbox.
+  // Flip the requester to the customer (only when the ticket is still the
+  // internal team@ one — never hijack a macro/quote-origin ticket that already
+  // has a real customer) and file it under the account's Zendesk organization.
+  // Mirrors the quote send-pdf flow.
+  const TEAM_REQUESTER = "team@getfixfy.com";
+  if (clientEmail.includes("@") && clientEmail.toLowerCase() !== TEAM_REQUESTER) {
+    try {
+      const cur = await getTicketRequester(ticketId);
+      if (cur.ok && cur.requesterEmail === TEAM_REQUESTER) {
+        let orgId: string | null = null;
+        if (clientAccountId) {
+          const { data: acct } = await supabase
+            .from("accounts")
+            .select("zendesk_organization_id")
+            .eq("id", clientAccountId)
+            .maybeSingle();
+          orgId = (acct as { zendesk_organization_id?: string | null } | null)?.zendesk_organization_id ?? null;
+          if (!orgId) {
+            const sync = await syncAccountToZendesk(clientAccountId);
+            orgId = sync.ok ? (sync.organizationId ?? null) : null;
+          }
+        }
+        const set = await setTicketRequester({
+          ticketId,
+          email:          clientEmail,
+          name:           clientName || null,
+          entityId:       clientAccountId || String(job.id),
+          organizationId: orgId ?? undefined,
+        });
+        if (!set.ok) {
+          console.warn("[zendesk-lifecycle] dispatchJobCreated setTicketRequester failed:", set.error);
+        }
+      } else if (!cur.ok) {
+        console.warn(
+          "[zendesk-lifecycle] dispatchJobCreated could not read requester for ticket", ticketId,
+          "— skipping reassignment (conservative).", cur.error,
+        );
+      }
+    } catch (err) {
+      console.error("[zendesk-lifecycle] dispatchJobCreated requester reassignment failed:", err);
+    }
+  }
 
   let mainPosted = false;
   try {
@@ -167,11 +243,7 @@ export async function dispatchJobCreatedZendesk(args: {
     }
   }
 
-  await supabase
-    .from("jobs")
-    .update({ job_creation_notice_sent_at: new Date().toISOString() })
-    .eq("id", args.jobId);
-
+  // job_creation_notice_sent_at was already claimed atomically at the top.
   return { ok: true, mainPosted, sideConvId };
 }
 

@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ImagePlus, X } from "lucide-react";
 import { compressImage, sanitizeFileForUpload } from "@/lib/upload-helpers";
-import { typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
+import type { CatalogService } from "@/types/database";
 
 const MAX_IMAGES = 6;
 
@@ -25,12 +26,12 @@ export function NewRequestClient({ properties }: { properties: PortalPropertyOpt
   const [images, setImages] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [serviceTypeOptions, setServiceTypeOptions] = useState<string[]>([]);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void listCatalogServicesForPicker()
-      .then((c) => setServiceTypeOptions(typeOfWorkLabelsFromCatalog(c)))
+      .then((c) => setCatalogServices(c))
       .catch(() => {});
   }, []);
 
@@ -177,19 +178,15 @@ export function NewRequestClient({ properties }: { properties: PortalPropertyOpt
             <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
               Service type <span className="text-red-500">*</span>
             </label>
-            <select
-              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+            <TypeOfWorkPicker
+              hideLabel
+              aria-label="Service type"
+              catalog={catalogServices}
               value={serviceType}
-              onChange={(e) => setServiceType(e.target.value)}
+              placeholder="Select a type of work..."
               disabled={submitting}
-            >
-              <option value="">Select a type of work...</option>
-              {serviceTypeOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
+              onChange={(name) => setServiceType(name)}
+            />
           </div>
 
           <div>

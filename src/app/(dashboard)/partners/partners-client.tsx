@@ -56,13 +56,19 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
-import { UkCoveragePicker } from "@/components/partners/uk-coverage-picker";
 import {
-  defaultUkCoverage,
-  formatUkCoverageLabel,
-  normalizeUkCoverageRegions,
-  partnerCoverageToForm,
-} from "@/lib/partner-uk-coverage";
+  PartnerCoverageEditor,
+  PartnerCoverageTab,
+} from "@/components/partners/partner-coverage-tab";
+import {
+  COVERAGE_CITY_LONDON_ID,
+  defaultLondonIncludedPostcodes,
+} from "@/lib/coverage-cities";
+import {
+  clearedCoverageFieldsForMode,
+  formatPartnerCoverageSummary,
+} from "@/lib/partner-coverage";
+import type { PartnerCoverageMode } from "@/types/database";
 import {
   computeProfileCompletenessScore,
   countExpiredDocuments,
@@ -108,6 +114,7 @@ import {
   getPartnerPortalAllowlistOptions,
 } from "@/lib/partner-portal-allowlist";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { PARTNER_PAYOUT_TERM_OPTIONS } from "@/lib/partner-payout-schedule";
 import type { PartnerDocRuleRow } from "@/lib/partner-required-docs";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -119,6 +126,9 @@ import {
 } from "./service-rates-tab";
 import { upsertPartnerServicePrice } from "@/services/partner-service-prices";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
+import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
+import { displayPartnerRating, PARTNER_RATING_MAX } from "@/lib/partner-rating";
+import { refreshLegacyZeroPartnerRatings, refreshPartnerRating } from "@/services/partner-rating";
 
 const PARTNERS_PAGE_SIZE = 10;
 const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
@@ -362,8 +372,8 @@ function PartnersDirectoryGridView({
 
                   <div className="flex items-center gap-1.5 text-xs text-text-secondary min-w-0">
                     <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-                    <span className="truncate" title={formatUkCoverageLabel(item.uk_coverage_regions, item.location)}>
-                      {formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}
+                    <span className="truncate" title={formatPartnerCoverageSummary(item)}>
+                      {formatPartnerCoverageSummary(item) || "—"}
                     </span>
                   </div>
 
@@ -379,7 +389,7 @@ function PartnersDirectoryGridView({
                       <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Rating</dt>
                       <dd className="flex items-center gap-1 font-semibold text-sm text-text-primary">
                         <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" aria-hidden />
-                        {item.rating}
+                        {displayPartnerRating(item.rating)}
                       </dd>
                     </div>
                     <div>
@@ -576,7 +586,7 @@ function PartnersDirectoryKanbanView({
                   <div className="flex items-center gap-1 mt-1.5 text-[11px] text-text-secondary min-w-0">
                     <MapPin className="h-3 w-3 text-text-tertiary shrink-0" />
                     <span className="truncate">
-                      {formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}
+                      {formatPartnerCoverageSummary(item) || "—"}
                     </span>
                   </div>
                 </div>
@@ -822,7 +832,6 @@ const emptyForm = {
   utr: "",
   partner_legal_type: "self_employed" as PartnerLegalType,
   trades: [] as string[],
-  uk_coverage_regions: defaultUkCoverage(),
   partner_address: "",
   /** New directory partners start in Onboarding until compliance + activation. */
   status: "onboarding" as PartnerStatus,
@@ -831,7 +840,7 @@ const emptyForm = {
 const CREATE_PARTNER_WIZARD_STEPS = [
   { id: "info", label: "Partner info" },
   { id: "documents", label: "Documents" },
-  { id: "rates", label: "Service rates" },
+  { id: "rates", label: "Rate card" },
 ] as const;
 
 type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
@@ -875,6 +884,23 @@ function validateCreatePartnerWizardStep(
   return null;
 }
 
+function validateCreatePartnerCoverage(
+  mode: PartnerCoverageMode,
+  radiusMiles: number,
+  lat: number | null,
+  lng: number | null,
+  outward: Set<string>,
+): string | null {
+  if (mode === "radius") {
+    if (lat == null || lng == null || !(radiusMiles > 0)) {
+      return "Set a base location on the map and choose a radius in miles.";
+    }
+    return null;
+  }
+  if (outward.size === 0) return "Select at least one postcode district for coverage.";
+  return null;
+}
+
 type PendingCreatePartnerDoc = {
   id: string;
   docType: string;
@@ -905,6 +931,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [createDocPreset, setCreateDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [createCustomCertName, setCreateCustomCertName] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [createCoverageMode, setCreateCoverageMode] = useState<PartnerCoverageMode>("postcodes");
+  const [createRadiusMiles, setCreateRadiusMiles] = useState(15);
+  const [createCoverageAddress, setCreateCoverageAddress] = useState("");
+  const [createCoverageLat, setCreateCoverageLat] = useState<number | null>(null);
+  const [createCoverageLng, setCreateCoverageLng] = useState<number | null>(null);
+  const [createCoverageCityId, setCreateCoverageCityId] = useState(COVERAGE_CITY_LONDON_ID);
+  const [createCoverageOutward, setCreateCoverageOutward] = useState(
+    () => new Set(defaultLondonIncludedPostcodes()),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
@@ -997,6 +1032,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     initialData,
   });
 
+  const partnerListIdsKey = partners.map((p) => p.id).join(",");
+  useEffect(() => {
+    if (loading || viewMode !== "directory" || directoryDisplayMode === "kanban") return;
+    const legacyZeroIds = partners.filter((p) => p.rating === 0).map((p) => p.id);
+    if (!legacyZeroIds.length) return;
+    let cancelled = false;
+    void refreshLegacyZeroPartnerRatings(legacyZeroIds).then(() => {
+      if (!cancelled) refreshList();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [partnerListIdsKey, loading, viewMode, directoryDisplayMode, refreshList]);
+
   const [kanbanPartners, setKanbanPartners] = useState<Partner[]>([]);
   const [kanbanLoading, setKanbanLoading] = useState(false);
   const [kanbanTotalItems, setKanbanTotalItems] = useState(0);
@@ -1024,6 +1073,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     if (viewMode !== "directory" || directoryDisplayMode !== "kanban") return;
     void loadKanbanPartners();
   }, [viewMode, directoryDisplayMode, loadKanbanPartners]);
+
+  const kanbanPartnerIdsKey = kanbanPartners.map((p) => p.id).join(",");
+  useEffect(() => {
+    if (viewMode !== "directory" || directoryDisplayMode !== "kanban" || kanbanLoading) return;
+    const legacyZeroIds = kanbanPartners.filter((p) => p.rating === 0).map((p) => p.id);
+    if (!legacyZeroIds.length) return;
+    let cancelled = false;
+    void refreshLegacyZeroPartnerRatings(legacyZeroIds).then(() => {
+      if (!cancelled) void loadKanbanPartners();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [kanbanPartnerIdsKey, kanbanLoading, viewMode, directoryDisplayMode, loadKanbanPartners]);
 
   const refresh = useCallback(() => {
     refreshList();
@@ -1075,6 +1138,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     setCreateQueueDocOpen(false);
     setCreateDocPreset(null);
     setCreateCustomCertName("");
+    setCreateCoverageMode("postcodes");
+    setCreateRadiusMiles(15);
+    setCreateCoverageAddress("");
+    setCreateCoverageLat(null);
+    setCreateCoverageLng(null);
+    setCreateCoverageCityId(COVERAGE_CITY_LONDON_ID);
+    setCreateCoverageOutward(new Set(defaultLondonIncludedPostcodes()));
   }, [createOpen]);
 
   const partnerTradesForCreate = useMemo(
@@ -1134,9 +1204,31 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       toast.error(err);
       return;
     }
+    if (createWizardStep === "info") {
+      const covErr = validateCreatePartnerCoverage(
+        createCoverageMode,
+        createRadiusMiles,
+        createCoverageLat,
+        createCoverageLng,
+        createCoverageOutward,
+      );
+      if (covErr) {
+        toast.error(covErr);
+        return;
+      }
+    }
     const next = CREATE_PARTNER_WIZARD_STEPS[createWizardStepIndex + 1];
     if (next) setCreateWizardStep(next.id);
-  }, [createWizardStep, createWizardStepIndex, form]);
+  }, [
+    createWizardStep,
+    createWizardStepIndex,
+    form,
+    createCoverageMode,
+    createRadiusMiles,
+    createCoverageLat,
+    createCoverageLng,
+    createCoverageOutward,
+  ]);
 
   const goCreateWizardBack = useCallback(() => {
     const prev = CREATE_PARTNER_WIZARD_STEPS[createWizardStepIndex - 1];
@@ -1150,6 +1242,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setCreateWizardStep("info");
       return;
     }
+    const covErr = validateCreatePartnerCoverage(
+      createCoverageMode,
+      createRadiusMiles,
+      createCoverageLat,
+      createCoverageLng,
+      createCoverageOutward,
+    );
+    if (covErr) {
+      toast.error(covErr);
+      setCreateWizardStep("info");
+      return;
+    }
     const dupP = await findDuplicatePartners({
       email: form.email.trim(),
       companyName: form.company_name.trim(),
@@ -1159,7 +1263,22 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL;
-      const regions = normalizeUkCoverageRegions(form.uk_coverage_regions);
+      const coveragePatch =
+        createCoverageMode === "radius"
+          ? {
+              ...clearedCoverageFieldsForMode("radius"),
+              service_radius_miles: createRadiusMiles,
+              coverage_latitude: createCoverageLat,
+              coverage_longitude: createCoverageLng,
+              coverage_base_postcode: createCoverageAddress.trim() || null,
+              location: createCoverageAddress.trim() || "UK",
+            }
+          : {
+              ...clearedCoverageFieldsForMode("postcodes"),
+              included_postcodes: [...createCoverageOutward],
+              coverage_cities: [createCoverageCityId],
+              location: "London",
+            };
       const created = await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
@@ -1178,11 +1297,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
-        location: formatUkCoverageLabel(regions, null),
-        uk_coverage_regions: regions,
         partner_address: form.partner_address.trim() || null,
         verified: false,
         catalog_service_ids: catalogServiceIdsForTradeLabels(form.trades, partnerCatalogServices),
+        ...coveragePatch,
       });
 
       // Mirror the new partner into Zendesk (Organisation + User) fire-and-
@@ -1383,9 +1501,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "location", label: "Coverage",
       render: (item) => (
-        <div className="flex items-center gap-1.5 text-sm text-text-secondary max-w-[200px] truncate" title={formatUkCoverageLabel(item.uk_coverage_regions, item.location)}>
+        <div className="flex items-center gap-1.5 text-sm text-text-secondary max-w-[200px] truncate" title={formatPartnerCoverageSummary(item)}>
           <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-          <span className="truncate">{formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}</span>
+          <span className="truncate">{formatPartnerCoverageSummary(item) || "—"}</span>
         </div>
       ),
     },
@@ -1455,7 +1573,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       render: (item) => (
         <div className="flex items-center gap-1">
           <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
-          <span className="text-sm font-semibold text-text-primary">{item.rating}</span>
+          <span className="text-sm font-semibold text-text-primary">{displayPartnerRating(item.rating)}</span>
         </div>
       ),
     },
@@ -2001,10 +2119,34 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 className="text-sm"
               />
             </div>
-            <UkCoveragePicker
-              value={form.uk_coverage_regions}
-              onChange={(next) => setForm((f) => ({ ...f, uk_coverage_regions: next }))}
-              idPrefix="create-partner"
+            <PartnerCoverageEditor
+              mode={createCoverageMode}
+              onModeChange={(next) => {
+                if (next === createCoverageMode) return;
+                setCreateCoverageMode(next);
+                if (next === "radius") {
+                  setCreateCoverageOutward(new Set());
+                } else {
+                  setCreateCoverageAddress("");
+                  setCreateCoverageLat(null);
+                  setCreateCoverageLng(null);
+                  setCreateCoverageOutward(new Set(defaultLondonIncludedPostcodes()));
+                }
+              }}
+              radiusMiles={createRadiusMiles}
+              onRadiusMilesChange={setCreateRadiusMiles}
+              baseAddress={createCoverageAddress}
+              onBaseLocationChange={(address, lat, lng) => {
+                setCreateCoverageAddress(address);
+                setCreateCoverageLat(lat);
+                setCreateCoverageLng(lng);
+              }}
+              baseLat={createCoverageLat}
+              baseLng={createCoverageLng}
+              cityId={createCoverageCityId}
+              onCityIdChange={setCreateCoverageCityId}
+              selectedOutward={createCoverageOutward}
+              onSelectedOutwardChange={setCreateCoverageOutward}
             />
             <div className="space-y-1">
               <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
@@ -2460,10 +2602,7 @@ function partnerOverviewFormFromPartner(partner: Partner) {
     contact_name: partner.contact_name ?? "",
     email: partner.email ?? "",
     phone: partner.phone ?? "",
-    trades: partner.trades?.length ? partner.trades : [partner.trade ?? GENERAL_MAINTENANCE_LABEL],
-    uk_coverage_regions: partnerCoverageToForm(partner),
     partner_address: partner.partner_address ?? "",
-    rating: String(partner.rating ?? 0),
   };
 }
 
@@ -3067,6 +3206,11 @@ function PartnerDetailDrawer({
   onPartnerUpdate?: (updated: Partner) => void;
   onTeamChanged?: () => void;
 }) {
+  const { partnerPayoutStandardTerms } = useFrontendSetup();
+  const orgPayoutStandardLabel =
+    PARTNER_PAYOUT_TERM_OPTIONS.find((o) => o.value === partnerPayoutStandardTerms)?.label ??
+    partnerPayoutStandardTerms;
+
   const [tab, setTab] = useState("overview");
   const [documents, setDocuments] = useState<PartnerDoc[]>([]);
   const [notes, setNotes] = useState<PartnerNote[]>([]);
@@ -3133,11 +3277,9 @@ function PartnerDetailDrawer({
     contact_name: "",
     email: "",
     phone: "",
-    trades: [tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL] as string[],
-    uk_coverage_regions: defaultUkCoverage(),
     partner_address: "",
-    rating: "",
   });
+  const [ratingMeta, setRatingMeta] = useState({ complaintCount: 0, pointsLost: 0 });
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
@@ -3249,6 +3391,26 @@ function PartnerDetailDrawer({
     setEditingOverview(false);
     setOverviewForm(partnerOverviewFormFromPartner(partner));
   }, [partner, loadAll, initialTab]);
+
+  useEffect(() => {
+    if (!partner?.id) return;
+    let cancelled = false;
+    void refreshPartnerRating(partner.id)
+      .then((meta) => {
+        if (cancelled) return;
+        setRatingMeta({ complaintCount: meta.complaintCount, pointsLost: meta.pointsLost });
+        const stored = partner.rating ?? PARTNER_RATING_MAX;
+        if (Math.abs(stored - meta.rating) > 0.009) {
+          onPartnerUpdate?.({ ...partner, rating: meta.rating });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRatingMeta({ complaintCount: 0, pointsLost: 0 });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [partner?.id]);
 
   useEffect(() => {
     if (!partner) return;
@@ -3454,15 +3616,6 @@ function PartnerDetailDrawer({
       toast.error("Enter a valid email address.");
       return;
     }
-    if (overviewForm.trades.length === 0) {
-      toast.error("Select at least one trade.");
-      return;
-    }
-    const rating = Number(overviewForm.rating || "0");
-    if (Number.isNaN(rating) || rating < 0 || rating > 5) {
-      toast.error("Rating must be between 0 and 5.");
-      return;
-    }
     if (overviewForm.partner_legal_type === "limited_company") {
       if (overviewForm.vat_registered === null) {
         toast.error("Select whether the company is VAT registered.");
@@ -3474,10 +3627,6 @@ function PartnerDetailDrawer({
       }
     }
     try {
-      const primaryTrade = overviewForm.trades[0] ?? (tradePickOptions[0] ?? GENERAL_MAINTENANCE_LABEL);
-      const regions = normalizeUkCoverageRegions(overviewForm.uk_coverage_regions);
-      const tradesOut = overviewForm.trades.length > 0 ? overviewForm.trades : [primaryTrade];
-      const catalogIds = catalogServiceIdsForTradeLabels(tradesOut, partnerCatalogForIds);
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number:
@@ -3500,13 +3649,7 @@ function PartnerDetailDrawer({
         contact_name: overviewForm.contact_name.trim(),
         email: emailNorm,
         phone: overviewForm.phone.trim() || undefined,
-        trade: primaryTrade,
-        trades: tradesOut,
-        catalog_service_ids: catalogIds,
-        location: formatUkCoverageLabel(regions, null),
-        uk_coverage_regions: regions,
         partner_address: overviewForm.partner_address.trim() || null,
-        rating,
       });
       onPartnerUpdate?.(updated);
       setEditingOverview(false);
@@ -3516,7 +3659,7 @@ function PartnerDetailDrawer({
       const parts = [e.message, e.details, e.hint].filter(Boolean);
       toast.error(parts.length ? parts.join(" — ") : "Failed to update");
     }
-  }, [partner, overviewForm, onPartnerUpdate, partnerCatalogForIds, tradePickOptions]);
+  }, [partner, overviewForm, onPartnerUpdate]);
 
   const handleAddDocument = async (
     docType: string,
@@ -4019,11 +4162,12 @@ function PartnerDetailDrawer({
       text: `${expiringSoonDocs.length} document(s) will expire in the next 30 days.`,
     });
   }
-  if (Number(partner.rating ?? 0) > 0 && Number(partner.rating ?? 0) < 3) {
+  const shownRating = displayPartnerRating(partner.rating);
+  if (shownRating > 0 && shownRating < 3) {
     overviewAlerts.push({
       key: "low-rating",
       level: "warning",
-      text: `Low rating (${partner.rating}/5). Review service quality and feedback.`,
+      text: `Low rating (${shownRating}/${PARTNER_RATING_MAX}). Review complaints and service quality.`,
     });
   }
   if (computedCompliance < 70) {
@@ -4056,6 +4200,8 @@ function PartnerDetailDrawer({
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
+    { id: "trades", label: "Trades & skills" },
+    { id: "coverage", label: "Coverage" },
     { id: "documents", label: "Documents", count: documents.length },
     { id: "financial", label: "Financial", count: selfBills.length },
     { id: "jobs", label: "Jobs", count: realJobsCount },
@@ -4064,7 +4210,7 @@ function PartnerDetailDrawer({
       label: "Compliance",
       count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
     },
-    { id: "rates" as const, label: "Service rates" },
+    { id: "rates" as const, label: "Rate card" },
     { id: "contracts" as const, label: "Contracts" },
     { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
@@ -4076,7 +4222,7 @@ function PartnerDetailDrawer({
       open={!!partner}
       onClose={onClose}
       title={partner.company_name}
-      subtitle={formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "Coverage TBC"}
+      subtitle={formatPartnerCoverageSummary(partner) || "Coverage TBC"}
       headerExtra={
         <PartnerTradesIconStrip
           trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
@@ -4182,24 +4328,6 @@ function PartnerDetailDrawer({
                       onChange={(e) => setOverviewForm((p) => ({ ...p, contact_name: e.target.value }))}
                       placeholder="Contact name"
                     />
-                    <div>
-                      <p className="text-[10px] font-medium text-text-tertiary mb-1.5">Trades (select all that apply)</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {tradePickOptions.map((t) => {
-                          const active = overviewForm.trades.includes(t);
-                          return (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => setOverviewForm((p) => ({ ...p, trades: active ? p.trades.filter((x) => x !== t) : [...p.trades, t] }))}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${active ? "border-primary bg-primary/10 text-primary" : "border-border-light bg-card text-text-secondary hover:border-border"}`}
-                            >
-                              {t}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
                   </div>
                 ) : (
                   <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
@@ -4234,7 +4362,7 @@ function PartnerDetailDrawer({
                   })()}
                   {!editingOverview ? (
                     <PartnerTradesIconStrip
-                      trades={overviewTradesForDisplay(partner, false, overviewForm.trades, partnerCatalogForIds)}
+                      trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
                       catalogServices={partnerCatalogForIds}
                       className="max-w-[min(100%,20rem)]"
                     />
@@ -4425,30 +4553,30 @@ function PartnerDetailDrawer({
                 </div>
               )}
               {editingOverview ? (
-                <>
-                  <UkCoveragePicker
-                    value={overviewForm.uk_coverage_regions}
-                    onChange={(next) => setOverviewForm((p) => ({ ...p, uk_coverage_regions: next }))}
-                    idPrefix="drawer-partner"
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">Home / business address</label>
+                  <Input
+                    value={overviewForm.partner_address}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, partner_address: e.target.value }))}
+                    placeholder="Street, city, postcode"
+                    className="text-sm"
                   />
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-text-secondary">Home / business address</label>
-                    <Input
-                      value={overviewForm.partner_address}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, partner_address: e.target.value }))}
-                      placeholder="Street, city, postcode"
-                      className="text-sm"
-                    />
-                  </div>
-                </>
+                </div>
               ) : (
                 <>
-                  {(formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "").trim() ? (
+                  {(formatPartnerCoverageSummary(partner) || "").trim() ? (
                     <div className="flex items-start gap-2 text-sm text-text-secondary">
                       <MapPin className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
                       <span className="min-w-0">
-                        <span className="text-[10px] font-medium text-text-tertiary block">Area coverage</span>
-                        {formatUkCoverageLabel(partner.uk_coverage_regions, partner.location)}
+                        <span className="text-[10px] font-medium text-text-tertiary block">Coverage</span>
+                        {formatPartnerCoverageSummary(partner)}
+                        <button
+                          type="button"
+                          className="text-[10px] text-primary hover:underline mt-0.5 block"
+                          onClick={() => setTab("coverage")}
+                        >
+                          Edit in Coverage tab
+                        </button>
                       </span>
                     </div>
                   ) : null}
@@ -4458,14 +4586,6 @@ function PartnerDetailDrawer({
                       <span className="min-w-0">
                         <span className="text-[10px] font-medium text-text-tertiary block">Address</span>
                         {partner.partner_address}
-                      </span>
-                    </div>
-                  ) : !partner.uk_coverage_regions?.length && partner.location?.trim() ? (
-                    <div className="flex items-start gap-2 text-sm text-text-secondary">
-                      <Home className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
-                      <span className="min-w-0">
-                        <span className="text-[10px] font-medium text-text-tertiary block">Address (legacy)</span>
-                        {partner.location}
                       </span>
                     </div>
                   ) : null}
@@ -4500,21 +4620,19 @@ function PartnerDetailDrawer({
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
                 <div className="flex items-center gap-1.5 mt-1">
                   <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
-                  {editingOverview ? (
-                    <Input
-                      type="number"
-                      min={0}
-                      max={5}
-                      step="0.1"
-                      value={overviewForm.rating}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, rating: e.target.value }))}
-                      className="h-8 w-24"
-                    />
-                  ) : (
-                    <span className="text-xl font-bold text-text-primary">{partner.rating}</span>
-                  )}
-                  <span className="text-xs text-text-tertiary">/5.0</span>
+                  <span className="text-xl font-bold text-text-primary">
+                    {displayPartnerRating(partner.rating)}
+                  </span>
+                  <span className="text-xs text-text-tertiary">/{PARTNER_RATING_MAX.toFixed(1)}</span>
                 </div>
+                <p className="text-[10px] text-text-tertiary mt-1 leading-snug">
+                  Starts at {PARTNER_RATING_MAX}. Each partner-fault complaint costs{" "}
+                  {ratingMeta.pointsLost > 0 ? `${ratingMeta.pointsLost} pts` : "0.5 pts"} (half if job completed,
+                  full if cancelled).
+                  {ratingMeta.complaintCount > 0
+                    ? ` ${ratingMeta.complaintCount} complaint job(s) on record.`
+                    : " No complaint jobs on record."}
+                </p>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <div className="flex items-center gap-1">
@@ -4586,6 +4704,20 @@ function PartnerDetailDrawer({
               )}
             </div>
           </div>
+        )}
+
+        {/* ========== TRADES & SKILLS ========== */}
+        {tab === "trades" && onPartnerUpdate && (
+          <CatalogTradesSkillsTab
+            kind="partner"
+            partner={partner}
+            onPartnerUpdate={onPartnerUpdate}
+            canEdit={isAdmin}
+          />
+        )}
+
+        {tab === "coverage" && onPartnerUpdate && (
+          <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
         )}
 
         {/* ========== JOBS ========== */}
@@ -5000,15 +5132,16 @@ function PartnerDetailDrawer({
                   onChange={(e) => setPartnerPaymentTerms(e.target.value)}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
-                  <option value="">Default (Friday after week close)</option>
-                  <option value="Net 7">Net 7 — 7 days after week end</option>
-                  <option value="Net 14">Net 14 — 14 days after week end</option>
-                  <option value="Net 30">Net 30 — 30 days after week end</option>
-                  <option value="Every Friday">Weekly — every Friday</option>
-                  <option value="Every 2 weeks on Friday">Biweekly — every 2nd Friday</option>
-                  <option value="Monthly cutoff 26 pay Friday">Monthly — cutoff 26th, pay Friday</option>
-                  <option value="Monthly cutoff 15 pay Friday">Monthly — cutoff 15th, pay Friday</option>
+                  <option value="">{`Standard — ${orgPayoutStandardLabel}`}</option>
+                  {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
+                <p className="text-[10px] text-text-tertiary mt-1">
+                  Blank uses the org standard from Settings → Setup (same Standard chip as Final review).
+                </p>
               </div>
               <div>
                 <label htmlFor="partner-default-cancel-fee" className="block text-xs font-medium text-text-secondary mb-1">
@@ -5238,7 +5371,7 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== SERVICE RATES (mig 160) ========== */}
+        {/* ========== RATE CARD ========== */}
         {tab === "rates" && (
           <div className="p-6">
             <PartnerServiceRatesTabSection

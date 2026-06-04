@@ -10,6 +10,8 @@ interface DrawerProps {
   onClose: () => void;
   title?: string;
   subtitle?: string;
+  /** Renders beside the title (e.g. Zendesk ticket badge). */
+  titleAddon?: React.ReactNode;
   /** Renders inside the header area below the title row (e.g. owner row). */
   headerExtra?: React.ReactNode;
   children: React.ReactNode;
@@ -26,6 +28,7 @@ export function Drawer({
   onClose,
   title,
   subtitle,
+  titleAddon,
   headerExtra,
   children,
   footer,
@@ -60,7 +63,12 @@ export function Drawer({
               <div className="shrink-0 border-b border-fx-line sticky top-0 bg-surface z-[2]">
                 <div className="flex items-start justify-between gap-3 px-5 py-3.5">
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em]">{title}</h3>
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em] min-w-0">
+                        {title}
+                      </h3>
+                      {titleAddon ? <span className="shrink-0">{titleAddon}</span> : null}
+                    </div>
                     {subtitle && (
                       <p className="text-xs text-fx-mute mt-0.5 line-clamp-2 break-words">{subtitle}</p>
                     )}

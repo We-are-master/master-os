@@ -5,7 +5,11 @@ import {
   partnerCancellationClawbackOwedGbp,
 } from "@/lib/job-cancel-economics";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
-import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
+import {
+  isPostgresCheckViolationError,
+  isSupabaseMissingColumnError,
+  parsePostgrestUnknownColumnName,
+} from "@/lib/supabase-schema-compat";
 
 const JOB_LINE_FOR_SB_FULL =
   "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at, partner_cancelled_at";
@@ -173,12 +177,10 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
   if (!try1.error) {
     jobs = (try1.data ?? []) as JobPayoutRow[];
-  } else if (isSupabaseMissingColumnError(try1.error)) {
-    const try3 = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
-    if (try3.error) throw try3.error;
-    jobs = (try3.data ?? []) as JobPayoutRow[];
   } else {
-    throw try1.error;
+    const tryLegacy = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
+    if (tryLegacy.error) throw try1.error;
+    jobs = (tryLegacy.data ?? []) as JobPayoutRow[];
   }
 
   const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
@@ -661,15 +663,85 @@ export async function getSelfBill(id: string): Promise<SelfBill | null> {
 }
 
 export async function updateSelfBillStatus(id: string, status: SelfBillStatus): Promise<SelfBill> {
+  return updateSelfBill(id, { status });
+}
+
+export async function updateSelfBill(
+  id: string,
+  patch: Partial<Pick<SelfBill, "status" | "due_date">>,
+): Promise<SelfBill> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("self_bills")
-    .update({ status })
-    .eq("id", id)
-    .select("*")
-    .single();
-  if (error) throw error;
-  return data as SelfBill;
+  const requestedStatus = patch.status;
+  const statusFallbacks: SelfBillStatus[] =
+    requestedStatus === "awaiting_payment"
+      ? ["pending_review", "ready_to_pay", "accumulating"]
+      : requestedStatus === "ready_to_pay"
+        ? ["pending_review", "accumulating"]
+        : [];
+
+  let lastErr: unknown = null;
+
+  for (let statusTry = 0; statusTry <= statusFallbacks.length; statusTry++) {
+    let payload: Record<string, unknown> = { ...patch };
+    if (statusTry > 0 && requestedStatus) {
+      payload.status = statusFallbacks[statusTry - 1];
+    }
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const { data, error } = await supabase
+        .from("self_bills")
+        .update(payload)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+      if (!error && data) return data as SelfBill;
+
+      lastErr = error;
+      if (!error) {
+        const row = await getSelfBill(id);
+        if (row) return row;
+        break;
+      }
+
+      if (payload.due_date != null && isSupabaseMissingColumnError(error, "due_date")) {
+        const { due_date: _d, ...withoutDue } = payload;
+        payload = withoutDue;
+        if (Object.keys(payload).length === 0) {
+          const row = await getSelfBill(id);
+          if (!row) throw error;
+          return row;
+        }
+        continue;
+      }
+
+      const col = parsePostgrestUnknownColumnName(error);
+      if (col && col in payload && col !== "status") {
+        delete payload[col];
+        continue;
+      }
+
+      if (
+        isPostgresCheckViolationError(error) &&
+        "status" in payload &&
+        statusTry < statusFallbacks.length
+      ) {
+        break;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        const row = await getSelfBill(id);
+        if (!row) throw error;
+        return row;
+      }
+
+      throw error;
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  const row = await getSelfBill(id);
+  if (!row) throw new Error("Self-bill update failed");
+  return row;
 }
 
 export async function listJobsForSelfBill(selfBillId: string): Promise<SelfBillJobLine[]> {

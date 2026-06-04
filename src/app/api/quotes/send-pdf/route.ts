@@ -10,7 +10,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, getTicketRequester, setTicketRequester } from "@/lib/zendesk";
+import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { quoteId, recipientEmail, recipientName, notes, items, customMessage, scope, attachRequestPhotos } = body as {
+    const { quoteId, recipientEmail, recipientName, notes, items, customMessage, scope, attachRequestPhotos, accountId } = body as {
       quoteId: string;
       recipientEmail?: string;
       recipientName?: string;
@@ -149,6 +150,8 @@ export async function POST(req: NextRequest) {
       items?: { description: string; quantity: number; unitPrice: number; total: number }[];
       /** When set, overrides saved quote preference for this send only. */
       attachRequestPhotos?: boolean;
+      /** OS account id whose Zendesk organization the ticket should be filed under. */
+      accountId?: string;
     };
 
     if (!quoteId || typeof quoteId !== "string") {
@@ -303,43 +306,69 @@ export async function POST(req: NextRequest) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
 
-    // Kick off the Resend-only site-photo fetch concurrently with the logo
-    // prefetch + PDF render below. Only the Resend path attaches these, so we
-    // skip the work entirely for Zendesk-delivered quotes. Awaited later in the
-    // Resend branch.
-    const useRequestPhotos =
-      typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
-    const sitePhotosPromise: Promise<SitePhotoAttachment[]> =
-      !useZendesk && useRequestPhotos && quote.request_id
-        ? (async () => {
-            const { data: sr } = await supabase
-              .from("service_requests")
-              .select("images")
-              .eq("id", quote.request_id)
-              .maybeSingle();
-            const urls = normalizeJsonImageArray(sr?.images);
-            return sitePhotoAttachments(urls);
-          })()
-        : Promise.resolve([]);
-
-    // Pre-fetch the logo (bounded + cached) so react-pdf renders from an inline
-    // data URI instead of issuing its own unbounded fetch during layout.
-    const tLogo = nowMs();
-    const logoDataUri = await resolveLogoDataUri(branding.logoUrl);
-    marks.push(["logo_fetch", nowMs() - tLogo]);
-    const brandingForPdf: CompanyBranding = { ...branding, logoUrl: logoDataUri };
-
-    const tPdf = nowMs();
-    const pdfBuffer = await renderQuotePdfToBuffer(safePdfData, brandingForPdf);
-    marks.push(["pdf_render", nowMs() - tPdf]);
-
-    // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
-    const responseToken = createQuoteResponseToken(quoteId);
-    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
-    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
+    // Track what we did to the ticket ownership for the audit log below.
+    let requesterReassigned = false;
+    let ticketOrganizationId: string | null = null;
 
     if (useZendesk) {
+      // ─── Make sure the proposal reaches the customer on THIS ticket ───────
+      // OS-created quotes open a ticket with team@getfixfy.com as the requester,
+      // so a public comment would land in the team inbox, not the customer's.
+      // Reassign the requester to the selected customer email (only when the
+      // ticket is still the internal team@ one — never hijack a macro-origin
+      // ticket that already has a real customer), and file the ticket under the
+      // account's Zendesk organization when we have one.
+      const customerEmail = recipientTrimmed || pdfClientEmail;
+      const TEAM_REQUESTER = "team@getfixfy.com";
+
+      // Resolve the account's Zendesk org id (read, else sync to create it).
+      const acctId =
+        (typeof accountId === "string" && accountId.trim()) ||
+        (typeof (quote as { source_account_id?: string | null }).source_account_id === "string"
+          ? String((quote as { source_account_id?: string | null }).source_account_id).trim()
+          : "");
+      if (acctId) {
+        try {
+          const { data: acct } = await supabase
+            .from("accounts")
+            .select("zendesk_organization_id")
+            .eq("id", acctId)
+            .maybeSingle();
+          ticketOrganizationId =
+            (acct as { zendesk_organization_id?: string | null } | null)?.zendesk_organization_id ?? null;
+          if (!ticketOrganizationId) {
+            const sync = await syncAccountToZendesk(acctId);
+            ticketOrganizationId = sync.ok ? (sync.organizationId ?? null) : null;
+          }
+        } catch (err) {
+          console.error("[send-pdf] account→org resolution failed:", err);
+        }
+      }
+
+      if (customerEmail.includes("@") && customerEmail.toLowerCase() !== TEAM_REQUESTER) {
+        const cur = await getTicketRequester(zdTicketId!);
+        const isInternalTicket = cur.ok && cur.requesterEmail === TEAM_REQUESTER;
+        if (isInternalTicket) {
+          const set = await setTicketRequester({
+            ticketId:       zdTicketId!,
+            email:          customerEmail,
+            name:           pdfClientName || (quote as { client_name?: string | null }).client_name || null,
+            entityId:       (quote as { client_id?: string | null }).client_id ?? acctId ?? quoteId,
+            organizationId: ticketOrganizationId ?? undefined,
+          });
+          if (set.ok) {
+            requesterReassigned = true;
+          } else {
+            console.warn("[send-pdf] setTicketRequester failed for ticket", zdTicketId, "—", set.error);
+          }
+        } else if (!cur.ok) {
+          console.warn(
+            "[send-pdf] could not read requester for ticket", zdTicketId,
+            "— skipping reassignment (conservative).", cur.error,
+          );
+        }
+      }
+
       // ─── Zendesk delivery (awaited — sole channel) ────────────────────────
       const tZd = nowMs();
       try {
@@ -381,9 +410,16 @@ export async function POST(req: NextRequest) {
       // Status update + audit log + portal notification (same as Resend path)
       const sentAt = new Date().toISOString();
       const tWrite = nowMs();
+      const customerEmailForPersist = recipientTrimmed || pdfClientEmail;
       await supabase
         .from("quotes")
-        .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
+        .update({
+          status: "awaiting_customer",
+          customer_pdf_sent_at: sentAt,
+          // Remember the email we actually sent to, so future sends + the UI
+          // reflect the real customer (not the team@ placeholder).
+          ...(customerEmailForPersist.includes("@") ? { client_email: customerEmailForPersist } : {}),
+        })
         .eq("id", quoteId);
 
       void supabase.from("audit_logs").insert({
@@ -394,7 +430,12 @@ export async function POST(req: NextRequest) {
         field_name:  "status",
         old_value:   quote.status,
         new_value:   "awaiting_customer",
-        metadata:    { channel: "zendesk", ticket_id: zdTicketId },
+        metadata:    {
+          channel: "zendesk",
+          ticket_id: zdTicketId,
+          requester_reassigned: requesterReassigned,
+          ...(ticketOrganizationId ? { organization_id: ticketOrganizationId } : {}),
+        },
       }).then(({ error }) => { if (error) console.error("audit_logs insert (send-pdf zd)", error); });
 
       // Portal users live in the OS portal, not in the Zendesk thread —

@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment, useId } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
-import {
-  DEFAULT_DATE_FILTER,
-  resolveDateFilter,
-  type DateFilterValue,
-} from "@/lib/date-range-filter";
+import { resolveDateFilter, type DateFilterValue } from "@/lib/date-range-filter";
+
+/** Quotes list: show every quote by default (period chip "All"). */
+const QUOTES_DEFAULT_DATE_FILTER: DateFilterValue = {
+  mode: "all",
+  customFrom: "",
+  customTo: "",
+};
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
@@ -65,7 +68,7 @@ import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import {
   getBidsByQuoteId,
   getSubmittedBidAveragesByQuoteIds,
-  approveBid,
+  selectBidForProposal,
   type QuoteBid,
 } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
@@ -98,7 +101,8 @@ import {
   type JobScheduleV2SeriesPayload,
 } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { typeOfWorkLabelsFromCatalog, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
@@ -361,6 +365,28 @@ type BidPriceRankLabel = "Lowest" | "Mid" | "Highest";
 /** Submitted + approved bids only (rejected excluded from price spread). */
 function bidsEligibleForPriceSpread(bids: QuoteBid[]): QuoteBid[] {
   return bids.filter((b) => b.status === "submitted" || b.status === "approved");
+}
+
+/** Bid driving customer proposal — internal selection, not formal bid approval. */
+function resolveProposalSourceBid(
+  bids: QuoteBid[],
+  selectedReviewBidId: string | null,
+  quotePartnerId: string | null | undefined,
+): QuoteBid | null {
+  if (selectedReviewBidId) {
+    const picked = bids.find((b) => b.id === selectedReviewBidId);
+    if (picked && (picked.status === "submitted" || picked.status === "approved")) return picked;
+  }
+  const legacyApproved = bids.find((b) => b.status === "approved");
+  if (legacyApproved) return legacyApproved;
+  const pid = quotePartnerId?.trim();
+  if (pid) {
+    const matched = bids.find(
+      (b) => b.partner_id === pid && (b.status === "submitted" || b.status === "approved"),
+    );
+    if (matched) return matched;
+  }
+  return null;
 }
 
 /**
@@ -756,7 +782,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterAccountId, setFilterAccountId] = useState<string>("all");
   const [filterAccountsList, setFilterAccountsList] = useState<{ id: string; name: string }[]>([]);
   /** Date filter on `created_at` — quotes don't have a scheduled date, so this is "when the quote was created". */
-  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>(QUOTES_DEFAULT_DATE_FILTER);
   const buFilter = useBuFilter();
   const { biddingSlaMs, biddingSlaHours } = useFrontendSetup();
   const biddingSlaHoursLabelPretty = formatBiddingSlaHoursLabel(biddingSlaHours);
@@ -1428,6 +1454,23 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           } catch (err) {
             console.error("[quotes] quote_partner_invitations persist threw:", err);
           }
+          // When the quote is linked to a Zendesk ticket, also open bid-invite
+          // side conversations so the partner email trail lives on the ticket —
+          // push alone leaves no record on Zendesk. No-op without a ticket.
+          if (
+            (patched as { external_source?: string | null }).external_source === "zendesk" &&
+            bidPayloadTrimmedString((patched as { external_ref?: unknown }).external_ref)
+          ) {
+            try {
+              await fetch("/api/quotes/partner-invite-email", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quoteId: patched.id, partnerIds: oneShotPartnerIds }),
+              });
+            } catch (err) {
+              console.error("[quotes] bid-invite side conversation dispatch failed:", err);
+            }
+          }
           try {
             const res = await fetch("/api/push/notify-partner", {
               method: "POST",
@@ -1778,20 +1821,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         // Trigger push + Zendesk side conversation manually here.
         //
         // CHANNEL DECISION:
-        //   - Quote had an approved bid → partner already got "Bid approved
-        //     — job booked" the moment the bid was approved AND the existing
-        //     side conversation thread was carried over by createJob via
-        //     quotes.zendesk_side_conversation_id. Nothing more to send.
-        //   - No bid (manual quote) → partner is hearing about the job for
-        //     the first time, send the confirmation request with Accept link.
+        //   - Customer accept already ran dispatchJobCreatedZendesk (job confirmed).
+        //   - Staff convert before accept: notify partner with confirmation request.
         if (hasPartner && job.partner_id) {
           notifyAssignedPartnerAboutJob({
             partnerId: job.partner_id,
             job,
             kind: "job_assigned",
           });
-          const cameFromBid = Boolean((quoteToConvert as { zendesk_side_conversation_id?: string | null } | null)?.zendesk_side_conversation_id);
-          if (!cameFromBid) {
+          const customerAccepted = Boolean(quoteToConvert.customer_accepted);
+          if (!customerAccepted) {
             void notifyPartnerJobChange({
               jobId: job.id,
               jobReference: job.reference,
@@ -2692,10 +2731,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             : "Manual quote — we create the proposal and send the PDF to the inbox from Accounts (End client vs This account billing)."
         }
         size="lg"
-        scrollBody
+        scrollBody={false}
       >
+        <div className="grid h-full min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
         {/* Mode toggle — same segmented-control pattern as the Jobs "Rate Type" tabs. */}
-        <div className="px-4 pt-3 sm:px-5">
+        <div className="shrink-0 px-4 pt-3 sm:px-5">
           <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
             <button
               type="button"
@@ -2735,19 +2775,22 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             </button>
           </div>
         </div>
-        <CreateQuoteForm
-          key={`${createFormVariant}-${routingCreateEntry}`}
-          variant={createFormVariant}
-          routingCollectTrade={routingCreateEntry === "bidding"}
-          onSubmit={handleCreate}
-          onCancel={() => {
-            setCreateOpen(false);
-            createQuoteIntentRef.current = "routing_invite";
-            setCreateFormVariant("routing_minimal");
-            setRoutingCreateEntry("bidding");
-            setDrawerPendingOpenInviteQuoteId(null);
-          }}
-        />
+        <div className="min-h-0 overflow-hidden">
+          <CreateQuoteForm
+            key={`${createFormVariant}-${routingCreateEntry}`}
+            variant={createFormVariant}
+            routingCollectTrade={routingCreateEntry === "bidding"}
+            onSubmit={handleCreate}
+            onCancel={() => {
+              setCreateOpen(false);
+              createQuoteIntentRef.current = "routing_invite";
+              setCreateFormVariant("routing_minimal");
+              setRoutingCreateEntry("bidding");
+              setDrawerPendingOpenInviteQuoteId(null);
+            }}
+          />
+        </div>
+        </div>
       </Modal>
       <ExportCsvModal
         open={exportOpen}
@@ -2984,6 +3027,11 @@ function QuoteDetailDrawer({
   const [quoteEmailedInSession, setQuoteEmailedInSession] = useState(false);
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
+  /** Capture-customer-email modal (shown when no recipient email resolves at send time). */
+  const [emailPromptOpen, setEmailPromptOpen] = useState(false);
+  const [emailPromptValue, setEmailPromptValue] = useState("");
+  const [emailPromptConfirm, setEmailPromptConfirm] = useState("");
+  const [emailPromptName, setEmailPromptName] = useState("");
   const [lineItems, setLineItems] = useState<ProposalLineRow[]>([]);
   const [scopeText, setScopeText] = useState("");
   const [convertedJob, setConvertedJob] = useState<Job | null>(null);
@@ -3015,8 +3063,9 @@ function QuoteDetailDrawer({
   const [bidsLoading, setBidsLoading] = useState(false);
   /** Partner bid cards: collapsed preview shows total only; expand for breakdown, dates, scope, notes. */
   const [expandedBidIds, setExpandedBidIds] = useState<Set<string>>(new Set());
-  /** Bid driving Review & Send figures without formal approve (submitted) or the approved bid id. */
+  /** Submitted bid chosen internally for the customer proposal (partners stay submitted until job booked). */
   const [selectedReviewBidId, setSelectedReviewBidId] = useState<string | null>(null);
+  const autoSelectedProposalBidQuoteRef = useRef<string | null>(null);
   const quoteRef = useRef(quote);
   quoteRef.current = quote;
   const onQuoteUpdateRef = useRef(onQuoteUpdate);
@@ -3119,6 +3168,7 @@ function QuoteDetailDrawer({
       setPricingOpen(false);
       setExpandedBidIds(new Set());
       setSelectedReviewBidId(null);
+      autoSelectedProposalBidQuoteRef.current = null;
       setProposalDetailsExpanded(false);
       setQuoteClientPick({
       client_id: quote.client_id,
@@ -3554,7 +3604,10 @@ function QuoteDetailDrawer({
     if (fresh) onQuoteUpdateRef.current?.(fresh);
   }, [loadBids]);
 
-  const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
+  const proposalSourceBid = useMemo(
+    () => resolveProposalSourceBid(bids, selectedReviewBidId, quote.partner_id),
+    [bids, selectedReviewBidId, quote.partner_id],
+  );
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
   const invitedPartnersCount = quote.quote_type !== "partner" ? 0 : Math.max(0, Number(quote.partner_quotes_count) || 0);
@@ -3585,14 +3638,6 @@ function QuoteDetailDrawer({
     return m;
   }, [bidSpotlightEntries]);
   const bidsVisibleInTab = useMemo(() => bidsCollapsedVisible, [bidsCollapsedVisible]);
-
-  /** If selection falls outside the visible top-3 preview, clear it. */
-  useEffect(() => {
-    if (!selectedReviewBidId) return;
-    if (!bidsCollapsedVisible.some((b) => b.id === selectedReviewBidId)) {
-      setSelectedReviewBidId(null);
-    }
-  }, [selectedReviewBidId, bidsCollapsedVisible]);
 
   const actions = isDraftRoutingPhase(quote) ? [] : getQuoteActions(quote);
   /** Start Bidding lives on the Bids tab, not under Review & Send. Hide Reject until the customer has received the proposal. */
@@ -4036,6 +4081,8 @@ function QuoteDetailDrawer({
     /** Override deposit % (0–100); default is current `depositPercent` state. */
     depositOverride?: string;
     partnerCostOverride?: number;
+    partnerIdOverride?: string;
+    partnerNameOverride?: string | null;
   }): Promise<Quote> => {
     const lines = opts?.lineItemsOverride ?? lineItems;
     const st = opts?.scopeTextOverride !== undefined ? opts.scopeTextOverride : scopeText;
@@ -4089,6 +4136,12 @@ function QuoteDetailDrawer({
     }
 
     return updateQuote(quote.id, {
+      ...(opts?.partnerIdOverride
+        ? {
+            partner_id: opts.partnerIdOverride,
+            partner_name: opts.partnerNameOverride ?? undefined,
+          }
+        : {}),
       partner_cost: partnerTotal,
       total_value: lineTot,
       sell_price: lineTot,
@@ -4127,6 +4180,7 @@ function QuoteDetailDrawer({
       setSelectedReviewBidId(bid.id);
       setProposalSaving(true);
       try {
+        await selectBidForProposal(bid.id, quote.id);
         const updated = await persistProposalToQuoteRef.current({
           lineItemsOverride: pre.lines,
           scopeTextOverride: scopeMerged,
@@ -4134,11 +4188,13 @@ function QuoteDetailDrawer({
           startDate2Override: d2,
           depositOverride: depPct,
           partnerCostOverride: bid.bid_amount,
+          partnerIdOverride: bid.partner_id,
+          partnerNameOverride: bid.partner_name ?? null,
         });
         onQuoteUpdate?.(updated);
         if (!options?.silent) {
           toast.success(
-            "Review & Send updated from this bid — send to the customer when ready. Use Approve only if you want to lock this partner now.",
+            "Customer proposal filled from this bid. Partners are not notified — send to the customer on Review & Send; job confirmed goes out when they accept.",
           );
         }
       } catch (e) {
@@ -4181,6 +4237,29 @@ function QuoteDetailDrawer({
     }
   }, [bids, selectedReviewBidId]);
 
+  useEffect(() => {
+    const pid = quote.partner_id?.trim();
+    if (!pid || selectedReviewBidId) return;
+    const matched = bids.find(
+      (b) => b.partner_id === pid && (b.status === "submitted" || b.status === "approved"),
+    );
+    if (matched) setSelectedReviewBidId(matched.id);
+  }, [quote.id, quote.partner_id, bids, selectedReviewBidId]);
+
+  useEffect(() => {
+    if (autoSelectedProposalBidQuoteRef.current === quote.id) return;
+    if (quote.status !== "bidding") return;
+    if (quote.partner_id?.trim() || selectedReviewBidId) {
+      autoSelectedProposalBidQuoteRef.current = quote.id;
+      return;
+    }
+    const submitted = bids.filter((b) => b.status === "submitted");
+    if (submitted.length === 0) return;
+    const lowest = [...submitted].sort(compareBidsForCheapest)[0];
+    autoSelectedProposalBidQuoteRef.current = quote.id;
+    void selectBidForReview(lowest, { silent: true });
+  }, [quote.id, quote.status, quote.partner_id, bids, selectedReviewBidId, selectBidForReview]);
+
   const saveProposalDraft = async () => {
     setProposalSaving(true);
     try {
@@ -4211,8 +4290,20 @@ function QuoteDetailDrawer({
     }
   };
 
-  const handleSendToCustomer = async () => {
-    if (!sendEmail) { toast.error("Enter a recipient email"); return; }
+  const handleSendToCustomer = async (overrideEmail?: string) => {
+    const resolved =
+      bidPayloadTrimmedString(overrideEmail as unknown) ||
+      bidPayloadTrimmedString(sendEmail as unknown) ||
+      bidPayloadTrimmedString(quote.client_email as unknown);
+    if (!resolved.includes("@")) {
+      // No recipient on file — capture it (and confirm the org) before sending.
+      setEmailPromptValue(resolved);
+      setEmailPromptConfirm("");
+      setEmailPromptName(bidPayloadTrimmedString(quote.client_name as unknown));
+      setEmailPromptOpen(true);
+      return;
+    }
+    if (resolved !== sendEmail) setSendEmail(resolved);
     const isResend = quoteEmailedInSession || sendState === "sent" || Boolean(quote.customer_pdf_sent_at);
     setSendState("sending");
     try {
@@ -4232,8 +4323,9 @@ function QuoteDetailDrawer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           quoteId: quote.id,
-          recipientEmail: sendEmail,
-          recipientName: quote.client_name,
+          recipientEmail: resolved,
+          recipientName: emailPromptName.trim() || quote.client_name,
+          accountId: bidPayloadTrimmedString(quote.source_account_id as unknown) || undefined,
           customMessage: bidPayloadTrimmedString(customMessage as unknown) || undefined,
           items: items.length ? items : undefined,
           scope: bidPayloadTrimmedString(scopeText as unknown) || undefined,
@@ -4249,8 +4341,8 @@ function QuoteDetailDrawer({
       } else {
         toast.success(
           isResend
-            ? `Proposal saved and updated PDF resent to ${sendEmail}. Accept / Reject links are unchanged.`
-            : `Proposal saved — PDF sent to ${sendEmail}. Customer can Accept or Reject via the email link.`,
+            ? `Proposal saved and updated PDF resent to ${resolved}. Accept / Reject links are unchanged.`
+            : `Proposal saved — PDF sent to ${resolved}. Customer can Accept or Reject via the email link.`,
         );
         setQuoteEmailedInSession(true);
       }
@@ -4268,6 +4360,23 @@ function QuoteDetailDrawer({
       setSendState("idle");
       toast.error(err instanceof Error ? err.message : "Failed to send");
     }
+  };
+
+  /** Confirm the captured customer email from the modal, then send via Zendesk. */
+  const confirmEmailPromptAndSend = () => {
+    const value = emailPromptValue.trim();
+    if (!value.includes("@")) {
+      toast.error("Enter a valid customer email.");
+      return;
+    }
+    if (emailPromptConfirm.trim().toLowerCase() !== value.toLowerCase()) {
+      toast.error("The two emails do not match.");
+      return;
+    }
+    setSendEmail(value);
+    setEmailPromptOpen(false);
+    // Pass the value directly — setSendEmail is async and would re-prompt.
+    void handleSendToCustomer(value);
   };
 
   const handleMarkAsSentExternally = async () => {
@@ -4313,7 +4422,7 @@ function QuoteDetailDrawer({
           .filter(Boolean)
           .join(" — ")
           .concat(
-            ` Lines 1–2: partner unit costs come from the approved bid (locked); customer unit sell defaults to ${Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell. Use the scale below to adjust sell; edit rows directly if needed.`,
+            ` Lines 1–2: partner unit costs come from the selected bid (locked); customer unit sell defaults to ${Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell. Use the scale below to adjust sell; edit rows directly if needed.`,
           );
 
   /** Pinned below scroll — avoids flex “dead space” above actions. */
@@ -4527,6 +4636,16 @@ function QuoteDetailDrawer({
       open={!!quote}
       onClose={onClose}
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
+      titleAddon={
+        quote.external_source === "zendesk" && quote.external_ref?.trim() ? (
+          <ZendeskTicketBadge
+            source={quote.external_source}
+            ref={quote.external_ref}
+            size="sm"
+            zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+          />
+        ) : null
+      }
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
       width="w-full max-w-[440px]"
       footer={quoteDrawerFooter}
@@ -4888,20 +5007,14 @@ function QuoteDetailDrawer({
                     <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
                   </div>
                   <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                      Type of work
-                    </label>
-                    <Select
-                      label=""
-                      aria-label="Type of work"
+                    <TypeOfWorkPicker
+                      label="Type of work"
+                      labelClassName="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary"
+                      catalog={routingTypeOfWorkCatalog}
                       value={routingTitleDraft}
-                      onChange={(e) => setRoutingTitleDraft(e.target.value)}
-                      className="h-10 min-h-10 w-full rounded-xl text-sm"
-                      options={[
-                        { value: "", label: "Select type of work…" },
-                        ...typeOfWorkLabelsFromCatalog(routingTypeOfWorkCatalog, routingTitleDraft || quote.service_type)
-                          .map((name) => ({ value: name, label: name })),
-                      ]}
+                      currentFallback={routingTitleDraft || quote.service_type}
+                      placeholder="Select type of work…"
+                      onChange={(name) => setRoutingTitleDraft(name)}
                     />
                   </div>
                   <div className="min-w-0">
@@ -5024,19 +5137,19 @@ function QuoteDetailDrawer({
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="border-t border-border-light dark:border-border px-4 pb-4 space-y-3">
-                {approvedBid ? (
+                {proposalSourceBid ? (
                   <div className="space-y-3">
                     <div className="rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 px-3 py-2.5 space-y-1">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                      <p className="text-sm font-semibold text-text-primary">{approvedBid.partner_name ?? approvedBid.partner_id}</p>
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Selected for customer proposal</p>
+                      <p className="text-sm font-semibold text-text-primary">{proposalSourceBid.partner_name ?? proposalSourceBid.partner_id}</p>
                       <p className="text-xs text-text-secondary">
                         Bid total{" "}
-                        <span className="font-bold text-primary tabular-nums">{formatCurrency(approvedBid.bid_amount)}</span>
+                        <span className="font-bold text-primary tabular-nums">{formatCurrency(proposalSourceBid.bid_amount)}</span>
                       </p>
                 </div>
                     {(() => {
-                      const p = parseBidProposalFromNotes(approvedBid.notes);
-                      const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
+                      const p = parseBidProposalFromNotes(proposalSourceBid.notes);
+                      const { labour, materials } = splitBidPartnerCosts(proposalSourceBid.bid_amount, p);
                       const rawD1 = bidPayloadTrimmedString(p?.start_date_option_1 as unknown);
                       const rawD2 = bidPayloadTrimmedString(p?.start_date_option_2 as unknown);
                       const d1 =
@@ -5094,19 +5207,19 @@ function QuoteDetailDrawer({
                         </div>
                       );
                     })()}
-                    {!parseBidProposalFromNotes(approvedBid.notes) && bidPayloadTrimmedString(approvedBid.notes as unknown) ? (
-                      <p className="text-[11px] text-text-tertiary whitespace-pre-wrap leading-snug">{bidPayloadTrimmedString(approvedBid.notes as unknown)}</p>
+                    {!parseBidProposalFromNotes(proposalSourceBid.notes) && bidPayloadTrimmedString(proposalSourceBid.notes as unknown) ? (
+                      <p className="text-[11px] text-text-tertiary whitespace-pre-wrap leading-snug">{bidPayloadTrimmedString(proposalSourceBid.notes as unknown)}</p>
                     ) : null}
                   </div>
                 ) : (
                   <div className="flex items-start gap-2 rounded-xl border border-border-light bg-surface-hover/60 px-3 py-2">
                     <p className="text-[11px] font-medium text-text-secondary">
-                      {quote.quote_type === "partner" ? "No approved bid yet" : "Manual line pricing"}
+                      {quote.quote_type === "partner" ? "No bid selected yet" : "Manual line pricing"}
                     </p>
                     <FixfyHintIcon
                       text={
                         quote.quote_type === "partner"
-                          ? "Open the Bids tab to review and approve one. Partner unit costs on the first two proposal lines will lock from the bid; customer sell and scale are set in Customer proposal below."
+                          ? "Open the Bids tab and click a submitted bid to fill the customer proposal (internal only — partners are not notified until the customer accepts)."
                           : "Set partner unit cost and customer sell per line in Customer proposal. The scale uses a 40% margin baseline on lines 1–2."
                       }
                     />
@@ -5389,7 +5502,7 @@ function QuoteDetailDrawer({
                                   type="number"
                                   placeholder="0"
                                   value={item.partnerUnitCost}
-                                  disabled={!!approvedBid && idx < 2}
+                                  disabled={!!proposalSourceBid && idx < 2}
                                   onChange={(e) => updateLineItem(idx, "partnerUnitCost", e.target.value)}
                                   className="text-xs w-full disabled:opacity-70"
                                 />
@@ -5603,7 +5716,7 @@ function QuoteDetailDrawer({
             </div>
           )}
 
-          {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
+          {/* BIDS TAB — Partner bids; click one to fill customer proposal (no partner notify) */}
           {tab === "bids" && (
             <div className="space-y-3 p-3 sm:p-4">
               {quote.quote_type === "partner" ? (
@@ -5679,15 +5792,16 @@ function QuoteDetailDrawer({
                   )}
                 </div>
                 <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
-                  Our AI automatically selects the best bid for the customer proposal based on price, availability and region. It is pre-selected
-                  using the lowest price — feel free to change it manually.
+                  Click a bid to use it for the customer proposal (lowest price is pre-selected). Partners stay in submitted status until the
+                  customer accepts — then job confirmed is sent on the Zendesk ticket.
                 </p>
               </div>
-              {quote.status === "bidding" && bids.some((b) => b.status === "approved") && (
+              {quote.status === "bidding" && proposalSourceBid && (
                 <div className="rounded-xl border border-primary/25 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-3">
-                  <p className="text-sm font-semibold text-text-primary">Ready to price for the customer</p>
+                  <p className="text-sm font-semibold text-text-primary">Ready to send to the customer</p>
                   <p className="text-xs text-text-tertiary">
-                    Partner cost comes from the approved bid. Adjust <strong className="text-text-secondary">your sell price</strong> and margin on Review & Send, then complete the proposal and send.
+                    <strong className="text-text-secondary">{proposalSourceBid.partner_name ?? "Partner"}</strong> is selected internally.
+                    Adjust sell and margin on Review &amp; Send, then send the proposal on the Zendesk ticket.
                   </p>
                   <div className="flex flex-wrap gap-6 text-sm">
                     <div>
@@ -5836,97 +5950,10 @@ function QuoteDetailDrawer({
                             </span>
                           ) : null}
                         </div>
-                        {bid.status === "submitted" ? (
-                          <div className="ml-auto shrink-0 self-center pl-1" data-bid-no-select onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              className="shrink-0"
-                              disabled={proposalSaving}
-                              onClick={() => {
-                                void (async () => {
-                                  try {
-                                    const pre = computeCustomerProposalFromBid(bid, quote);
-                                    const scopeMerged = pre.scopeText ?? scopeText;
-                                    const d1b = normalizeCalendarDateToYmd(pre.startDate1 ?? startDate1) || "";
-                                    const d2b = normalizeCalendarDateToYmd(pre.startDate2 ?? startDate2) || "";
-                                    const depPct = pre.depositPercent ?? depositPercent;
-
-                                    await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
-
-                                    try {
-                                      const notifyRes = await fetch(
-                                        `/api/quotes/${encodeURIComponent(quote.id)}/notify-partner-bid-approved`,
-                                        {
-                                          method: "POST",
-                                          headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({ partnerId: bid.partner_id }),
-                                        },
-                                      );
-                                      if (!notifyRes.ok) {
-                                        const errBody = (await notifyRes.json().catch(() => null)) as {
-                                          error?: string;
-                                          skipped?: string;
-                                        } | null;
-                                        console.warn(
-                                          "[approve-bid] partner notify failed:",
-                                          errBody?.error ?? notifyRes.status,
-                                          errBody?.skipped ?? "",
-                                        );
-                                      }
-                                    } catch (notifyErr) {
-                                      console.warn("[approve-bid] partner notify request failed:", notifyErr);
-                                    }
-
-                                    const updated = await persistProposalToQuote({
-                                      lineItemsOverride: pre.lines,
-                                      scopeTextOverride: scopeMerged,
-                                      startDate1Override: d1b,
-                                      startDate2Override: d2b,
-                                      depositOverride: depPct,
-                                      partnerCostOverride: bid.bid_amount,
-                                    });
-
-                                    await loadBids(quote.id);
-
-                                    setLineItems(pre.lines);
-                                    setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
-                                    setStartDate1(d1b);
-                                    setStartDate2(d2b);
-                                    setDepositPercent(depPct);
-                                    setProposalScalePercent(100);
-                                    setSelectedReviewBidId(bid.id);
-
-                                    onQuoteUpdate?.(updated);
-                                    setTab("overview");
-                                    toast.success(
-                                      "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
-                                    );
-                                  } catch (err) {
-                                    // Supabase / PostgrestError objects aren't `instanceof Error`, so the
-                                    // generic "Failed to approve bid" fallback used to swallow the actual
-                                    // database message (RLS violation, constraint, etc.). Surface the real
-                                    // text whenever it's there so the office can act on it instead of guessing.
-                                    console.error("[approve-bid] failed:", err);
-                                    let msg = "Failed to approve bid";
-                                    if (err instanceof Error) {
-                                      msg = err.message;
-                                    } else if (err && typeof err === "object") {
-                                      const e = err as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
-                                      const parts = [e.message, e.details, e.hint]
-                                        .map((x) => (typeof x === "string" ? x.trim() : ""))
-                                        .filter(Boolean);
-                                      if (parts.length) msg = parts.join(" — ");
-                                      else if (typeof e.code === "string" && e.code) msg = `Database error (${e.code})`;
-                                    }
-                                    toast.error(msg);
-                                  }
-                                })();
-                              }}
-                            >
-                              Approve
-                            </Button>
-                          </div>
+                        {isSelectedForReview && bid.status === "submitted" ? (
+                          <span className="ml-auto shrink-0 self-center rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                            Selected
+                          </span>
                         ) : null}
                       </div>
                       {bidExpanded && hasExpandableDetails ? (
@@ -6201,14 +6228,16 @@ function QuoteDetailDrawer({
         title="Manual quote · review & send"
         subtitle={`${bidPayloadTrimmedString(quote.reference as unknown) || "Quote"} — review figures, then send the PDF to the customer (Approval)`}
         size="lg"
-        scrollBody
+        scrollBody={false}
       >
-        <CreateQuoteForm
-          continuationQuote={quote}
-          continuationSubmitting={manualContinueSending}
-          onContinueManualDraft={handleDrawerContinueManual}
-          onCancel={() => setManualContinueOpen(false)}
-        />
+        <div className="h-full min-h-0 overflow-hidden">
+          <CreateQuoteForm
+            continuationQuote={quote}
+            continuationSubmitting={manualContinueSending}
+            onContinueManualDraft={handleDrawerContinueManual}
+            onCancel={() => setManualContinueOpen(false)}
+          />
+        </div>
       </Modal>
 
       {/* Bid links — per-partner short URLs (for copy/share). */}
@@ -6541,6 +6570,23 @@ function QuoteDetailDrawer({
                       }),
                     }).catch(() => {});
                   }
+                  // Quote linked to a Zendesk ticket: also open bid-invite side
+                  // conversations so the partner email trail lives on the ticket
+                  // (push alone leaves no Zendesk record). No-op without a ticket.
+                  if (
+                    (patched as { external_source?: string | null }).external_source === "zendesk" &&
+                    bidPayloadTrimmedString((patched as { external_ref?: unknown }).external_ref)
+                  ) {
+                    try {
+                      await fetch("/api/quotes/partner-invite-email", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ quoteId: quote.id, partnerIds }),
+                      });
+                    } catch (err) {
+                      console.error("[quotes] bid-invite side conversation dispatch failed:", err);
+                    }
+                  }
                   toast.success(`Quote request sent to ${sent} partner(s)`);
                   setInvitePartnerOpen(false);
                   setSelectedPartnerIds(new Set());
@@ -6552,6 +6598,71 @@ function QuoteDetailDrawer({
               }}
             >
               Send to selected ({selectedPartnerIds.size})
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Capture customer email before sending — the proposal goes out on the
+          ticket to this recipient (who becomes the ticket requester). */}
+      <Modal
+        open={emailPromptOpen}
+        onClose={() => setEmailPromptOpen(false)}
+        title="Customer email"
+        subtitle="No recipient on file — confirm where to send this proposal."
+        size="sm"
+      >
+        <div className="space-y-3 p-4 sm:p-5">
+          {bidPayloadTrimmedString(quote.source_account_name as unknown) ? (
+            <p className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
+              Organização no Zendesk:{" "}
+              <span className="font-semibold text-text-primary">
+                {bidPayloadTrimmedString(quote.source_account_name as unknown)}
+              </span>
+            </p>
+          ) : null}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer email</label>
+            <Input
+              type="email"
+              value={emailPromptValue}
+              onChange={(e) => setEmailPromptValue(e.target.value)}
+              placeholder="client@company.com"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Confirm email</label>
+            <Input
+              type="email"
+              value={emailPromptConfirm}
+              onChange={(e) => setEmailPromptConfirm(e.target.value)}
+              placeholder="Re-type the email"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer name (optional)</label>
+            <Input
+              type="text"
+              value={emailPromptName}
+              onChange={(e) => setEmailPromptName(e.target.value)}
+              placeholder="Contact name"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={() => setEmailPromptOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              icon={<Send className="h-3.5 w-3.5" />}
+              disabled={
+                !emailPromptValue.trim().includes("@") ||
+                emailPromptConfirm.trim().toLowerCase() !== emailPromptValue.trim().toLowerCase()
+              }
+              onClick={confirmEmailPromptAndSend}
+            >
+              Send proposal
             </Button>
           </div>
         </div>
@@ -6729,12 +6840,12 @@ function splitPartnerCostFromFirstTwoLines(
 }
 
 /** Narrative scope only for the job (bid `scope`, else saved `quotes.scope`, else plain bid notes) — no line-item £ or labour/materials breakdown. */
-function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): string {
-  const payload = approvedBid ? parseBidProposalFromNotes(approvedBid.notes) : null;
+function mergeCreateJobScopeFromQuote(q: Quote, sourceBid: QuoteBid | null): string {
+  const payload = sourceBid ? parseBidProposalFromNotes(sourceBid.notes) : null;
   const bidScope = payload ? bidPayloadTrimmedString(payload.scope as unknown) : "";
   const quoteScope = bidPayloadTrimmedString(q.scope as unknown);
   const plainBidNotes =
-    approvedBid && !payload ? bidPayloadTrimmedString(approvedBid.notes as unknown) : "";
+    sourceBid && !payload ? bidPayloadTrimmedString(sourceBid.notes as unknown) : "";
   return (bidScope || quoteScope || plainBidNotes).trim();
 }
 
@@ -6863,13 +6974,13 @@ function CreateJobFromQuoteModal({
       ]);
       if (cancelled) return;
       const q = fresh ?? quote;
-      const approvedBid = bids.find((b) => b.status === "approved") ?? null;
+      const sourceBid = resolveProposalSourceBid(bids, null, q.partner_id);
       const pid =
         bidPayloadTrimmedString(q.partner_id as unknown) ||
-        (approvedBid?.partner_id ? String(approvedBid.partner_id) : "");
+        (sourceBid?.partner_id ? String(sourceBid.partner_id) : "");
       const pname =
         bidPayloadTrimmedString(q.partner_name as unknown) ||
-        bidPayloadTrimmedString(approvedBid?.partner_name as unknown) ||
+        bidPayloadTrimmedString(sourceBid?.partner_name as unknown) ||
         "";
       if (pid) {
         setPartnerFromQuote({ id: pid, name: pname || pid });
@@ -6884,7 +6995,7 @@ function CreateJobFromQuoteModal({
         partner_unit_cost?: number | null;
         notes?: string | null;
       }>;
-      const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid);
+      const mergedScope = mergeCreateJobScopeFromQuote(q, sourceBid);
       const split = splitPartnerCostFromFirstTwoLines(items);
       setForm((prev) => ({
         ...prev,
@@ -6966,11 +7077,6 @@ function CreateJobFromQuoteModal({
     }
     return [{ value: "", label: "No partner" }, ...base];
   }, [partners, form.partner_id, partnerFromQuote]);
-
-  const typeOfWorkOptions = useMemo(
-    () => typeOfWorkLabelsFromCatalog(towCatalog, form.title).map((name) => ({ value: name, label: name })),
-    [towCatalog, form.title],
-  );
 
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -7229,14 +7335,17 @@ function CreateJobFromQuoteModal({
             </>
           )}
         </div>
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          catalog={towCatalog}
           value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...typeOfWorkOptions,
-          ]}
+          currentFallback={form.title}
+          onChange={(name, { catalogServiceId }) => {
+            update("title", name);
+            if (catalogServiceId) {
+              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
+            }
+          }}
         />
         <Select
           label="Job type"
@@ -7555,6 +7664,7 @@ function CreateQuoteForm({
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const inviteUploadFolderRef = useRef(`create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
+  const invitePhotosInputId = useId();
   const quoteTypePrevRef = useRef(quoteType);
   const [accountRows, setAccountRows] = useState<Account[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -7596,13 +7706,6 @@ function CreateQuoteForm({
   const updateCreateLineItem = (idx: number, field: keyof ProposalLineRow, value: string) => {
     setLineItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
   };
-  const typeOfWorkOptions = useMemo(
-    () =>
-      typeOfWorkLabelsFromCatalog(towCatalog, form.title)
-        .map((name) => ({ value: name, label: name })),
-    [towCatalog, form.title],
-  );
-
   const partnersForTrade = useMemo(() => {
     const t = form.title.trim();
     if (!t) return [];
@@ -8116,8 +8219,11 @@ function CreateQuoteForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
-      <div className="max-h-[min(65dvh,520px)] overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[min(72dvh,580px)] sm:px-6 sm:py-5">
+    <form
+      onSubmit={handleSubmit}
+      className="grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+    >
+      <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
         <div className="space-y-4">
       {!continuationQuote ? (
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
@@ -8138,28 +8244,27 @@ function CreateQuoteForm({
         // UUID see the bidding quote. So we render a catalog-driven select that
         // tracks the UUID and writes the row's name back into form.title for
         // every other piece of code that still reads the label.
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          valueMode="catalogId"
+          catalog={towCatalog}
           value={form.catalog_service_id}
-          onChange={(e) => {
-            const id = e.target.value;
-            const row = towCatalog.find((c) => c.id === id);
-            setForm((f) => ({ ...f, catalog_service_id: id, title: row?.name ?? "" }));
+          onChange={(id, { service }) => {
+            setForm((f) => ({ ...f, catalog_service_id: id, title: service?.name ?? "" }));
           }}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...towCatalog.map((c) => ({ value: c.id, label: c.name })),
-          ]}
         />
       ) : (
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          catalog={towCatalog}
           value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...typeOfWorkOptions,
-          ]}
+          currentFallback={form.title}
+          onChange={(name, { catalogServiceId }) => {
+            update("title", name);
+            if (catalogServiceId) {
+              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
+            }
+          }}
         />
       )}
       {!continuationQuote ? (
@@ -8256,27 +8361,34 @@ function CreateQuoteForm({
                 ? "Up to 8 images — partners see these on the invitation."
                 : "Up to 8 images — shown when you send this draft to bidding."}
             </p>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30">
+            <input
+              id={invitePhotosInputId}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="sr-only"
+              disabled={invitePhotos.length >= 8 || uploadingPhotos}
+              onChange={(e) => {
+                const list = e.target.files;
+                if (!list?.length) return;
+                const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                setInvitePhotos(next);
+                setInvitePhotoPreviews((prev) => {
+                  prev.forEach((u) => URL.revokeObjectURL(u));
+                  return next.map((f) => URL.createObjectURL(f));
+                });
+                e.target.value = "";
+              }}
+            />
+            <label
+              htmlFor={invitePhotosInputId}
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary hover:border-primary/30",
+                (invitePhotos.length >= 8 || uploadingPhotos) && "pointer-events-none opacity-50",
+              )}
+            >
               <ImagePlus className="h-3.5 w-3.5" />
               Add photos
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                className="sr-only"
-                disabled={invitePhotos.length >= 8 || uploadingPhotos}
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
-                  setInvitePhotos(next);
-                  setInvitePhotoPreviews((prev) => {
-                    prev.forEach((u) => URL.revokeObjectURL(u));
-                    return next.map((f) => URL.createObjectURL(f));
-                  });
-                  e.target.value = "";
-                }}
-              />
             </label>
             {invitePhotoPreviews.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -8494,27 +8606,34 @@ function CreateQuoteForm({
             Up to 8 images (5 MB each). Shown in the partner app on the job invitation when this quote is in bidding.
           </p>
           <div className="flex flex-wrap gap-2 items-center">
-            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+            <input
+              id={invitePhotosInputId}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="sr-only"
+              disabled={invitePhotos.length >= 8 || uploadingPhotos}
+              onChange={(e) => {
+                const list = e.target.files;
+                if (!list?.length) return;
+                const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                setInvitePhotos(next);
+                setInvitePhotoPreviews((prev) => {
+                  prev.forEach((u) => URL.revokeObjectURL(u));
+                  return next.map((f) => URL.createObjectURL(f));
+                });
+                e.target.value = "";
+              }}
+            />
+            <label
+              htmlFor={invitePhotosInputId}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30",
+                (invitePhotos.length >= 8 || uploadingPhotos) && "pointer-events-none opacity-50",
+              )}
+            >
               <ImagePlus className="h-3.5 w-3.5" />
               Add photos
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                className="sr-only"
-                disabled={invitePhotos.length >= 8 || uploadingPhotos}
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
-                  setInvitePhotos(next);
-                  setInvitePhotoPreviews((prev) => {
-                    prev.forEach((u) => URL.revokeObjectURL(u));
-                    return next.map((f) => URL.createObjectURL(f));
-                  });
-                  e.target.value = "";
-                }}
-              />
             </label>
           </div>
           {invitePhotoPreviews.length > 0 && (
@@ -8939,7 +9058,7 @@ function CreateQuoteForm({
       ) : null}
         </div>
       </div>
-      <div className="shrink-0 border-t border-border-light bg-card px-4 py-3 sm:px-6">
+      <div className="z-10 shrink-0 border-t border-border-light bg-card px-4 py-3 shadow-[0_-8px_24px_-8px_rgba(2,0,64,0.12)] sm:px-6">
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:flex-wrap">
           <Button
             variant="outline"

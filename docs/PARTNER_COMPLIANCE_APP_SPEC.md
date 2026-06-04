@@ -27,16 +27,19 @@ Soma dos pesos = 100. Cada item `done` soma o peso.
 | `email` | 14 | `email` não vazio |
 | `phone` | 12 | `phone` não vazio |
 | `address` | 14 | `partner_address` OR `location` (legado) não vazio |
-| `coverage` | 14 | `uk_coverage_regions` com pelo menos 1 região OU `location` legado (fallback) |
+| `coverage` | 14 | Modo `coverage_mode` + (radius: miles + lat/lng) OU (postcodes: ≥1 `included_postcodes`) |
 | `tax_id` | 18 | Limited: `crn`; Self: `utr` |
 | `vat` | 8 | Ver `isVatProfileComplete`: limited + `vat_registered === false` → feito; limited + `true` → precisa `vat_number`; limited legado só número → feito; self-employed → `vat_number` não vazio |
 | `identity` | 20 | `company_name` E `contact_name` não vazios |
 
-**Cobertura UK (`uk_coverage_regions`):**
+**Cobertura (TradesPortal / OS — tab Coverage):**
 
-- Multi-select de regiões; **padrão: London**. Sem opção “Whole UK” no OS — combinar chips (ex.: London + Outside London + outras).
-- Regiões: London, Outside London, South East, South West, East of England, West Midlands, East Midlands, Yorkshire & Humber, North West, North East, Scotland, Wales, Northern Ireland.
-- Legado `__whole_uk__` na BD é ignorado na normalização (trata-se como vazio e volta ao default London até o utilizador guardar de novo).
+- `coverage_mode`: `radius` | `postcodes`
+- **Radius:** `service_radius_miles`, `coverage_latitude`, `coverage_longitude`, `coverage_base_postcode`
+- **Postcodes:** `included_postcodes` (outward, ex. SW11), `coverage_cities` (ex. `london`)
+- Cidades no catálogo OS: London (extensível em `coverage-cities.ts`)
+- Legado `uk_coverage_regions` migra para postcodes + London quando aplicável
+- Matching de jobs: `partnerCoversJob` + `excluded_postcodes` (lista negativa do portal)
 
 ---
 
@@ -138,11 +141,11 @@ Copiar o bloco abaixo para uma task no app:
 Implement partner onboarding and compliance checklist to match Master OS rules (see docs/PARTNER_COMPLIANCE_APP_SPEC.md in master-os repo, or paste sections 1–8).
 
 Requirements:
-- Collect profile fields: partner_legal_type, company_name, contact_name, email, phone, partner_address, uk_coverage_regions (or legacy location), vat_number, crn OR utr based on legal type.
+- Collect profile fields: partner_legal_type, company_name, contact_name, email, phone, partner_address, coverage (radius or postcodes), vat_number, crn OR utr based on legal type.
 - Build required document list = CORE_DOCS + (if self_employed: UTR doc) + flatten CERT_REQUIREMENTS_BY_TRADE for each selected trade (dedupe certificates by name).
 - Document upload: store doc_type, name, optional expires_at; for certification require certificate number + expiry where applicable.
 - Compute documentScore, profileScore, expiredCount, and final blended score using the same weights and formulas as in the spec.
-- UK coverage: multi-region list (default London), no Whole UK; include Outside London + standard regions as in OS.
+- Coverage: radius (miles from map pin) OR postcode districts by city (default London all districts).
 - Match documents to requirements by doc_type OR substring match on document name (aliases).
 ```
 

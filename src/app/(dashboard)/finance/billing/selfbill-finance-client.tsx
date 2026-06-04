@@ -48,18 +48,23 @@ import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { partnerPayLedgerBypassesPartnerCap, PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
 import type { Job, JobPaymentMethod, SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
+import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
+import { parseISO } from "date-fns/parseISO";
 import {
-  partnerFieldSelfBillPaymentDueDate,
-  parseDateRangeOrWeek,
-  getWeekBoundsForDate,
-} from "@/lib/self-bill-period";
-import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
-import type { FinancePeriodMode } from "@/lib/finance-period";
+  dueDateSourceLabel,
+  inferPartnerDueDateSource,
+  type DueDateSource,
+} from "@/lib/partner-payout-schedule";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import {
-  DEFAULT_FINANCE_PERIOD_MODE,
-  formatFinancePeriodKpiDescription,
-  getMonthBoundsForDate,
-} from "@/lib/finance-period";
+  BillingPageActions,
+  useBillingCreatedAtFilter,
+} from "@/components/finance/billing-filter-context";
+import {
+  billingCreatedAtFilterDescription,
+  resolveBillingCreatedAtYmdBounds,
+} from "@/lib/billing-created-at-filter";
+import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
   isSelfBillPayoutVoided,
@@ -72,13 +77,25 @@ import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 
 const JOB_PAYMENTS_IN_CHUNK = 80;
 
-const PERIOD_HEADER_LABEL: Record<FinancePeriodMode, string> = {
-  all: "All",
-  day: "Day",
-  month: "Month",
-  week: "Week",
-  range: "Range",
-};
+type PayoutListMode = "self_bill" | "by_job";
+
+/** Group headers in table "Grouped" view — calendar week of `created_at`, not work `week_label`. */
+function selfBillCreatedWeekGroup(sb: Pick<SelfBill, "created_at">): {
+  key: string;
+  title: string;
+  subtitle: string | null;
+} {
+  const ymd = sb.created_at?.trim().slice(0, 10) ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    return { key: "unknown", title: "Created · unknown", subtitle: null };
+  }
+  const { weekLabel, weekStart, weekEnd } = getWeekBoundsForDate(parseISO(`${ymd}T12:00:00`));
+  return {
+    key: weekLabel,
+    title: `Created · ${weekLabel}`,
+    subtitle: `${formatDate(weekStart)} → ${formatDate(weekEnd)}`,
+  };
+}
 
 // ── Status model ──────────────────────────────────────────────────────────────
 
@@ -204,6 +221,9 @@ function computeSelfBillAmountDue(
     return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
   }
   const list = jobs ?? [];
+  if (list.length === 0) {
+    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  }
   let due = 0;
   for (const j of list) {
     if (!jobContributesToSelfBillPayout(j)) continue;
@@ -264,21 +284,18 @@ export function SelfBillFinanceClient() {
 }
 
 function SelfBillPageInner() {
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const [activeTab, setActiveTab] = useState<SelfBillTab>("ready_to_pay");
   const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
   /** Table: group Ready to Pay by week (default) or flat list. */
-  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("grouped");
+  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("flat");
+  const [payoutListMode, setPayoutListMode] = useState<PayoutListMode>("self_bill");
+  const [partnerTermsById, setPartnerTermsById] = useState<Record<string, string | null>>({});
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
-  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
-  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
-  const [rangeFrom, setRangeFrom] = useState("");
-  const [rangeTo, setRangeTo] = useState("");
-  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
-  const periodMenuRef = useRef<HTMLDivElement>(null);
+  const { filter: createdAtFilter } = useBillingCreatedAtFilter();
   const [drawerSelfBill, setDrawerSelfBill] = useState<SelfBill | null>(null);
   const [drawerJobs, setDrawerJobs] = useState<Awaited<ReturnType<typeof listJobsForSelfBill>>>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -301,17 +318,11 @@ function SelfBillPageInner() {
     setLoading(true);
     const supabase = getSupabase();
     try {
-      let q = supabase.from("self_bills").select("*").order("week_start", { ascending: false }).order("created_at", { ascending: false });
-      if (periodMode === "week") {
-        const { weekLabel } = getWeekBoundsForDate(weekAnchor);
-        q = q.eq("week_label", weekLabel);
-      } else if (periodMode === "month") {
-        const { from, to } = getMonthBoundsForDate(monthAnchor);
-        q = q.gte("week_start", from).lte("week_start", to);
-      } else if (periodMode === "range") {
-        const range = parseDateRangeOrWeek({ from: rangeFrom.trim() || undefined, to: rangeTo.trim() || undefined });
-        if (range.weekStartMin) q = q.gte("week_start", range.weekStartMin);
-        if (range.weekStartMax) q = q.lte("week_start", range.weekStartMax);
+      let q = supabase.from("self_bills").select("*").order("created_at", { ascending: false });
+      const bounds = resolveBillingCreatedAtYmdBounds(createdAtFilter);
+      if (bounds) {
+        const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+        q = q.gte("created_at", startIso).lte("created_at", endIso);
       }
       const { data, error } = await q;
       if (error) throw error;
@@ -322,7 +333,7 @@ function SelfBillPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [periodMode, weekAnchor, monthAnchor, rangeFrom, rangeTo]);
+  }, [createdAtFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -338,16 +349,6 @@ function SelfBillPageInner() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [loadData]);
-
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      const el = periodMenuRef.current;
-      if (!el || el.contains(e.target as Node)) return;
-      setPeriodMenuOpen(false);
-    };
-    if (periodMenuOpen) document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [periodMenuOpen]);
 
   const filtered = useMemo(() => {
     let result = selfBills.filter((sb) => selfBillMatchesTab(sb, activeTab, todayYmd));
@@ -366,6 +367,30 @@ function SelfBillPageInner() {
   }, [selfBills, activeTab, search, originFilter, todayYmd]);
 
   const filteredIdSet = useMemo(() => new Set(filtered.map((sb) => sb.id)), [filtered]);
+
+  /** Same ordering as period filter: newest `created_at` first. */
+  const filteredSorted = useMemo(
+    () =>
+      [...filtered].sort(
+        (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+      ),
+    [filtered],
+  );
+
+  const jobPayoutRows = useMemo(() => {
+    const rows: { job: JobLine; sb: SelfBill }[] = [];
+    for (const sb of filteredSorted) {
+      if (isSelfBillPayoutVoided(sb) || sb.bill_origin === "internal") continue;
+      for (const j of jobsBySelfBillId[sb.id] ?? []) {
+        if (!jobContributesToSelfBillPayout(j)) continue;
+        rows.push({ job: j, sb });
+      }
+    }
+    return rows.sort(
+      (a, b) =>
+        new Date(b.sb.created_at ?? 0).getTime() - new Date(a.sb.created_at ?? 0).getTime(),
+    );
+  }, [filteredSorted, jobsBySelfBillId]);
 
   const showPayoutBulkBar =
     layoutMode === "table" &&
@@ -407,8 +432,8 @@ function SelfBillPageInner() {
   }, [selfBills, todayYmd]);
 
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
-    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor],
+    () => billingCreatedAtFilterDescription(createdAtFilter),
+    [createdAtFilter],
   );
 
   const totals = useMemo(() => {
@@ -661,25 +686,49 @@ function SelfBillPageInner() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const ids = selfBills.map((sb) => sb.id);
+      const ids = [
+        ...new Set([
+          ...filteredSorted.map((sb) => sb.id),
+          ...(drawerSelfBill?.id ? [drawerSelfBill.id] : []),
+        ]),
+      ];
+      if (ids.length === 0) return;
       try {
         const { map, partnerPaidByJobId: paid } = await computeLinkedJobsMapsForSelfBillIds(ids);
         if (cancelled) return;
-        setJobsBySelfBillId(map);
-        setPartnerPaidByJobId(paid);
+        setJobsBySelfBillId((prev) => ({ ...prev, ...map }));
+        setPartnerPaidByJobId((prev) => ({ ...prev, ...paid }));
+
+        const partnerIds = [
+          ...new Set(
+            filteredSorted.map((sb) => sb.partner_id?.trim()).filter((x): x is string => Boolean(x)),
+          ),
+        ];
+        if (partnerIds.length > 0) {
+          const supabase = getSupabase();
+          const termsPatch: Record<string, string | null> = {};
+          const CHUNK = 80;
+          for (let i = 0; i < partnerIds.length; i += CHUNK) {
+            const { data } = await supabase
+              .from("partners")
+              .select("id, payment_terms")
+              .in("id", partnerIds.slice(i, i + CHUNK));
+            for (const row of data ?? []) {
+              const pr = row as { id: string; payment_terms?: string | null };
+              termsPatch[pr.id] = pr.payment_terms?.trim() || null;
+            }
+          }
+          if (!cancelled) setPartnerTermsById((prev) => ({ ...prev, ...termsPatch }));
+        }
       } catch (e) {
         console.error("Self-bill linked jobs load failed", e);
-        if (!cancelled) {
-          setJobsBySelfBillId({});
-          setPartnerPaidByJobId({});
-          toast.error(e instanceof Error ? e.message : "Failed to load jobs");
-        }
+        if (!cancelled) toast.error(e instanceof Error ? e.message : "Failed to load jobs");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selfBills]);
+  }, [filteredSorted, drawerSelfBill?.id]);
 
   const handleExportCsv = useCallback(() => {
     const headers = ["Reference", "Partner", "Origin", "Week label", "Week start", "Status", "Net payout", "Amount due", "Jobs count", "Created at"];
@@ -753,8 +802,18 @@ function SelfBillPageInner() {
       ),
     },
     {
+      key: "created_at",
+      label: "Created at",
+      width: "108px",
+      render: (item) => (
+        <span className="text-sm text-text-secondary whitespace-nowrap">
+          {item.created_at ? formatDate(item.created_at) : "—"}
+        </span>
+      ),
+    },
+    {
       key: "week_label",
-      label: "Period",
+      label: "Work period",
       width: "160px",
       render: (item) => {
         const wk = item.week_label ? `WK${item.week_label.replace(/^\d{4}-W/, "")}` : null;
@@ -778,10 +837,24 @@ function SelfBillPageInner() {
         const due = selfBillDueYmd(item);
         if (!due) return <span className="text-sm text-text-tertiary whitespace-nowrap">—</span>;
         const isOverdue = isSelfBillOverdue(item, todayYmd);
+        const weekEnd = item.week_end?.trim() ?? "";
+        const terms = item.partner_id ? partnerTermsById[item.partner_id] ?? null : null;
+        const source: DueDateSource = weekEnd
+          ? inferPartnerDueDateSource(
+              due,
+              weekEnd,
+              terms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
+          : "standard";
         return (
-          <span className={cn("text-sm whitespace-nowrap", isOverdue ? "font-semibold text-red-600" : "text-text-secondary")}>
-            {formatDate(due)}
-          </span>
+          <div className="space-y-0.5">
+            <span className={cn("text-sm whitespace-nowrap block", isOverdue ? "font-semibold text-red-600" : "text-text-secondary")}>
+              {formatDate(due)}
+            </span>
+            <span className="text-[10px] font-medium uppercase text-text-tertiary">{dueDateSourceLabel(source)}</span>
+          </div>
         );
       },
     },
@@ -872,63 +945,96 @@ function SelfBillPageInner() {
     },
   ];
 
+  const jobPayoutColumns: Column<{ job: JobLine; sb: SelfBill }>[] = [
+    {
+      key: "job_ref",
+      label: "Job",
+      minWidth: "120px",
+      render: (row) => (
+        <Link href={`/jobs/${row.job.id}`} className="text-sm font-semibold font-mono text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+          {row.job.reference}
+        </Link>
+      ),
+    },
+    {
+      key: "partner",
+      label: "Partner",
+      render: (row) => <span className="text-sm text-text-primary truncate">{row.sb.partner_name}</span>,
+    },
+    {
+      key: "payable",
+      label: "Payable",
+      width: "120px",
+      render: (row) => {
+        const due = selfBillDueYmd(row.sb);
+        const weekEnd = row.sb.week_end?.trim() ?? "";
+        const terms = row.sb.partner_id ? partnerTermsById[row.sb.partner_id] ?? null : null;
+        const source = weekEnd
+          ? inferPartnerDueDateSource(
+              due,
+              weekEnd,
+              terms,
+              partnerPayoutStandardTerms,
+              partnerPayoutReferenceYmd,
+            )
+          : "standard";
+        return (
+          <div>
+            <span className="text-sm text-text-secondary">{due ? formatDate(due) : "—"}</span>
+            <span className="block text-[10px] uppercase text-text-tertiary">{dueDateSourceLabel(source)}</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "job_due",
+      label: "Job due",
+      align: "right",
+      render: (row) => {
+        const cap = jobLinePartnerGross(row.job);
+        const paid = partnerPaidByJobId[row.job.id] ?? 0;
+        const due = Math.max(0, cap - paid);
+        return <span className="text-sm font-semibold tabular-nums text-amber-600">{formatCurrency(due)}</span>;
+      },
+    },
+    {
+      key: "self_bill",
+      label: "Self bill",
+      render: (row) => (
+        <button type="button" className="text-xs font-mono text-primary hover:underline" onClick={(e) => { e.stopPropagation(); void openDrawer(row.sb); }}>
+          {row.sb.reference}
+        </button>
+      ),
+    },
+  ];
+
   return (
     <PageTransition>
+      <BillingPageActions>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+          onClick={() => void loadData()}
+          title="Reload self-bills from the server"
+        >
+          Refresh
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<RefreshCw className={cn("h-3.5 w-3.5", recalculating && "animate-spin")} />}
+          loading={recalculating}
+          onClick={() => void handleFullSync()}
+          title="Sync self-bills: backfill missing, update statuses and totals"
+        >
+          Sync
+        </Button>
+        <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCsv}>
+          Export
+        </Button>
+      </BillingPageActions>
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="relative" ref={periodMenuRef}>
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<CalendarRange className="h-3.5 w-3.5" />}
-              onClick={() => setPeriodMenuOpen((o) => !o)}
-              className={cn(periodMode !== "all" && "border-primary/40 bg-primary/5")}
-            >
-              {periodMode === "all" ? "Period" : PERIOD_HEADER_LABEL[periodMode]}
-            </Button>
-            {periodMenuOpen ? (
-              <div className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-1.5rem),24rem)] rounded-xl border border-border bg-card p-3 shadow-lg">
-                <FinanceWeekRangeBar
-                  mode={periodMode}
-                  onModeChange={setPeriodMode}
-                  weekAnchor={weekAnchor}
-                  onWeekAnchorChange={setWeekAnchor}
-                  monthAnchor={monthAnchor}
-                  onMonthAnchorChange={setMonthAnchor}
-                  rangeFrom={rangeFrom}
-                  rangeTo={rangeTo}
-                  onRangeFromChange={setRangeFrom}
-                  onRangeToChange={setRangeTo}
-                  hideAllDescription
-                  className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none sm:!p-0 max-h-[min(70vh,520px)] overflow-y-auto overflow-x-hidden"
-                />
-              </div>
-            ) : null}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
-            onClick={() => void loadData()}
-            title="Reload self-bills from the server"
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<RefreshCw className={cn("h-3.5 w-3.5", recalculating && "animate-spin")} />}
-            loading={recalculating}
-            onClick={() => void handleFullSync()}
-            title="Sync self-bills: backfill missing, update statuses and totals"
-          >
-            Sync
-          </Button>
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCsv}>
-            Export
-          </Button>
-        </div>
-
         {/* KPI cards */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <button type="button" className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5 text-left hover:border-border transition-colors" onClick={() => setActiveTab("draft")}>
@@ -1002,6 +1108,30 @@ function SelfBillPageInner() {
                   Table
                 </button>
               </div>
+              {layoutMode === "table" && activeTab === "ready_to_pay" && listGroupMode === "flat" ? (
+                <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="Payout rows">
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold",
+                      payoutListMode === "self_bill" ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary",
+                    )}
+                    onClick={() => setPayoutListMode("self_bill")}
+                  >
+                    Self bills
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold",
+                      payoutListMode === "by_job" ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary",
+                    )}
+                    onClick={() => setPayoutListMode("by_job")}
+                  >
+                    By job
+                  </button>
+                </div>
+              ) : null}
               {layoutMode === "table" ? (
                 <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="List layout">
                   <button
@@ -1071,7 +1201,7 @@ function SelfBillPageInner() {
               ) : filtered.length === 0 ? (
                 <p className="text-sm text-text-tertiary col-span-full py-10 text-center">No self-bills in this view.</p>
               ) : (
-                filtered.map((sb) => (
+                filteredSorted.map((sb) => (
                   <SelfBillCard
                     key={sb.id}
                     sb={sb}
@@ -1086,10 +1216,23 @@ function SelfBillPageInner() {
                 ))
               )}
             </div>
-          ) : layoutMode === "table" && listGroupMode === "grouped" && activeTab === "ready_to_pay" ? (
-            <WeekGroupedTable
+          ) : layoutMode === "table" && payoutListMode === "by_job" && listGroupMode === "flat" && activeTab === "ready_to_pay" ? (
+            <DataTable
+              columns={jobPayoutColumns}
+              data={jobPayoutRows}
+              getRowId={(row) => row.job.id}
+              loading={loading}
+              page={1}
+              totalPages={1}
+              totalItems={jobPayoutRows.length}
+              emptyMessage="No payable jobs in this period."
+              onRowClick={(row) => void openDrawer(row.sb)}
+              tableClassName="min-w-[1100px]"
+            />
+          ) : layoutMode === "table" && listGroupMode === "grouped" ? (
+            <SelfBillCreatedWeekGroupedTable
               columns={columns}
-              filtered={filtered}
+              filtered={filteredSorted}
               loading={loading}
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
@@ -1100,12 +1243,12 @@ function SelfBillPageInner() {
           ) : (
             <DataTable
               columns={columns}
-              data={filtered}
+              data={filteredSorted}
               getRowId={(item) => item.id}
               loading={loading}
               page={1}
               totalPages={1}
-              totalItems={filtered.length}
+              totalItems={filteredSorted.length}
               emptyMessage="No self-bills in this view."
               onRowClick={(item) => void openDrawer(item)}
               selectable
@@ -2290,9 +2433,9 @@ function JobRow({
   );
 }
 
-// ── Week-grouped table (Ready to Pay) ─────────────────────────────────────────
+// ── Grouped by calendar week of created_at ────────────────────────────────────
 
-function WeekGroupedTable({
+function SelfBillCreatedWeekGroupedTable({
   columns,
   filtered,
   loading,
@@ -2312,14 +2455,23 @@ function WeekGroupedTable({
   handleBulkCancel: () => Promise<void>;
 }) {
   const groups = useMemo(() => {
-    const map = new Map<string, SelfBill[]>();
+    const map = new Map<string, { title: string; subtitle: string | null; rows: SelfBill[] }>();
     for (const sb of filtered) {
-      const key = sb.week_label ?? sb.period ?? "Unknown";
-      const list = map.get(key) ?? [];
-      list.push(sb);
-      map.set(key, list);
+      const { key, title, subtitle } = selfBillCreatedWeekGroup(sb);
+      const entry = map.get(key) ?? { title, subtitle, rows: [] };
+      entry.rows.push(sb);
+      map.set(key, entry);
     }
-    return [...map.entries()].sort(([a], [b]) => b.localeCompare(a));
+    return [...map.entries()]
+      .map(([key, g]) => ({
+        key,
+        title: g.title,
+        subtitle: g.subtitle,
+        rows: [...g.rows].sort(
+          (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+        ),
+      }))
+      .sort((a, b) => b.key.localeCompare(a.key));
   }, [filtered]);
 
   if (loading) {
@@ -2336,7 +2488,7 @@ function WeekGroupedTable({
 
   return (
     <div className="space-y-6">
-      {groups.map(([weekLabel, rows]) => {
+      {groups.map(({ key: weekKey, title, subtitle, rows }) => {
         const weekTotal = rows.reduce((s, sb) => s + Number(sb.net_payout ?? 0), 0);
         const groupIds = new Set(rows.map((r) => r.id));
         const groupSelected = new Set([...selectedIds].filter((id) => groupIds.has(id)));
@@ -2354,13 +2506,13 @@ function WeekGroupedTable({
         }
 
         return (
-          <div key={weekLabel}>
+          <div key={weekKey}>
             <div className="flex items-center justify-between px-1 pb-2">
               <button
                 type="button"
                 className="flex items-center gap-2.5 group"
                 onClick={toggleWeek}
-                title={allSelected ? "Deselect week" : "Select week"}
+                title={allSelected ? "Deselect group" : "Select group"}
               >
                 <span className={cn(
                   "flex h-4 w-4 items-center justify-center rounded border transition-colors",
@@ -2373,8 +2525,11 @@ function WeekGroupedTable({
                   ) : null}
                 </span>
                 <span className="text-[12px] font-semibold text-text-primary group-hover:text-primary transition-colors">
-                  {weekLabel}
+                  {title}
                 </span>
+                {subtitle ? (
+                  <span className="text-[10px] text-text-tertiary whitespace-nowrap">{subtitle}</span>
+                ) : null}
                 <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[10px] font-semibold text-text-tertiary">{rows.length}</span>
               </button>
               <div className="flex items-center gap-3">

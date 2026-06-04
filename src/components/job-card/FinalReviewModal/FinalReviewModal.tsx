@@ -8,6 +8,7 @@ import { MarginHero } from "./components/MarginHero";
 import { ModalFooter } from "./components/ModalFooter";
 import { ModalHeader } from "./components/ModalHeader";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
+import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
 import type { FinalReviewModalProps } from "./types";
 
@@ -46,6 +47,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     onForceApprove,
     submitting,
     hourlySlot,
+    paymentSchedule,
   } = props;
 
   const allStepsComplete =
@@ -133,6 +135,22 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               />
 
               {hourlySlot ? <div className="px-6 pb-[18px]">{hourlySlot}</div> : null}
+
+              {paymentSchedule ? (
+                <PaymentScheduleSection
+                  invoiceDueYmd={paymentSchedule.invoiceDueYmd}
+                  onInvoiceDueYmdChange={paymentSchedule.onInvoiceDueYmdChange}
+                  invoiceDueSource={paymentSchedule.invoiceDueSource}
+                  partnerDueYmd={paymentSchedule.partnerDueYmd}
+                  onPartnerDueYmdChange={paymentSchedule.onPartnerDueYmdChange}
+                  partnerDueSource={paymentSchedule.partnerDueSource}
+                  showPartner={paymentSchedule.showPartner}
+                  partnerTermsLabel={paymentSchedule.partnerTermsLabel}
+                  orgStandardTerms={paymentSchedule.orgStandardTerms}
+                  orgPayoutReferenceYmd={paymentSchedule.orgPayoutReferenceYmd}
+                  loading={paymentSchedule.loading}
+                />
+              ) : null}
             </div>
 
             <ResponsibilityCheck

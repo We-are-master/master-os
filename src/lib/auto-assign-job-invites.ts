@@ -265,10 +265,12 @@ type JobAutoAssignRow = {
   external_source: string | null;
   external_ref: string | null;
   auto_assign_invited_partner_ids: string[] | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 const JOB_AUTO_ASSIGN_SELECT =
-  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids";
+  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids, latitude, longitude";
 
 /**
  * Match partners (when needed), persist invite list, push + Zendesk Email 1.
@@ -307,6 +309,8 @@ export async function ensureAndDispatchAutoAssignInvites(
       serviceType: job.title,
       catalogServiceId: job.catalog_service_id,
       postcode: extractUkPostcode(job.property_address ?? ""),
+      latitude: job.latitude ?? null,
+      longitude: job.longitude ?? null,
       kind: "job",
       availabilitySlot: {
         scheduledDate: job.scheduled_date,
