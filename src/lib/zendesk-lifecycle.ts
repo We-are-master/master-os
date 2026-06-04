@@ -74,10 +74,22 @@ export async function dispatchJobCreatedZendesk(args: {
   if (!ticketId) return { ok: true };
   if (!isZendeskConfigured()) return { ok: true };
 
-  // Idempotent — already dispatched.
+  // Idempotent claim. Two triggers fire on job creation — the /api/jobs call
+  // and the AFTER INSERT DB trigger (via /api/internal/zendesk/sync-status). A
+  // check-then-set would let both through (both read null) and post the partner
+  // "Job confirmed" side conversation twice. Claim the slot atomically so only
+  // the first caller proceeds; the loser sees 0 rows and bails.
   if ((job as { job_creation_notice_sent_at?: string | null }).job_creation_notice_sent_at) {
     return { ok: true };
   }
+  const { data: claimed } = await supabase
+    .from("jobs")
+    .update({ job_creation_notice_sent_at: new Date().toISOString() })
+    .eq("id", args.jobId)
+    .is("job_creation_notice_sent_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return { ok: true }; // another trigger already claimed → skip
 
   type ClientRel = { name?: string | null };
   const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
@@ -230,11 +242,7 @@ export async function dispatchJobCreatedZendesk(args: {
     }
   }
 
-  await supabase
-    .from("jobs")
-    .update({ job_creation_notice_sent_at: new Date().toISOString() })
-    .eq("id", args.jobId);
-
+  // job_creation_notice_sent_at was already claimed atomically at the top.
   return { ok: true, mainPosted, sideConvId };
 }
 
