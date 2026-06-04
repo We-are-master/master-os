@@ -348,6 +348,44 @@ export async function getTicketRequester(
   }
 }
 
+/** Read one ticket custom field (e.g. Complaint Description on the on-hold form). */
+export async function getTicketCustomFieldValue(
+  ticketId: string | number,
+  fieldId: number,
+): Promise<{ ok: boolean; value?: string | null; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+  if (!Number.isFinite(fieldId) || fieldId <= 0) {
+    return { ok: false, error: "invalid field id" };
+  }
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authHeader() },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      ticket?: { custom_fields?: Array<{ id?: number; value?: unknown }> };
+    };
+    const fields = json.ticket?.custom_fields ?? [];
+    const match = fields.find((f) => f.id === fieldId);
+    const raw = match?.value;
+    const value =
+      raw == null || raw === ""
+        ? null
+        : typeof raw === "string"
+          ? raw
+          : String(raw);
+    return { ok: true, status: res.status, value };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
 /**
  * Reassign an existing ticket's requester to `email` (and optionally file it
  * under a Zendesk organization). Updating the requester on an existing ticket

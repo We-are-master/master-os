@@ -330,55 +330,8 @@ async function dispatchJobTerminalNotice(args: {
     };
   }
 
-  // The public ticket comment above only reaches the customer. On cancellation
-  // (e.g. an on-hold job being scrapped) the assigned partner must also be told
-  // in their own side-conversation thread, otherwise they keep expecting the
-  // job. Reply on the existing thread, or open one if none exists yet.
-  // Non-fatal: a side-conv failure must not block marking the notice as sent.
-  if (args.status === "cancelled" && job.partner_id) {
-    const { email: partnerEmail, name: partnerName, zendeskUserId: partnerUserId } =
-      partnerFromJobEmbed(job);
-
-    if (partnerEmail) {
-      const partnerHtml = buildJobCancelledHtml({
-        customerName: partnerName,
-        reference: String(job.reference ?? ""),
-        title: String(job.title ?? ""),
-        reason: (job.cancellation_reason as string | null) ?? null,
-      });
-      const existingScId =
-        (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
-      try {
-        if (existingScId) {
-          await replyToSideConversation({
-            ticketId,
-            sideConversationId: existingScId,
-            toEmail: partnerEmail,
-            toName: partnerName || undefined,
-            toUserId: partnerUserId,
-            htmlBody: partnerHtml,
-          });
-        } else {
-          const created = await createSideConversation({
-            ticketId,
-            toEmail: partnerEmail,
-            toName: partnerName || undefined,
-            toUserId: partnerUserId,
-            subject: `Job cancelled — #${job.reference}`,
-            htmlBody: partnerHtml,
-          });
-          if (created.ok && created.id) {
-            await supabase
-              .from("jobs")
-              .update({ zendesk_side_conversation_id: created.id })
-              .eq("id", args.jobId);
-          }
-        }
-      } catch (err) {
-        console.error("[zendesk-lifecycle] cancel partner side conv failed:", err);
-      }
-    }
-  }
+  // Partner "Job cancelled" email is sent via notifyPartnerJobZendesk (office cancel /
+  // useCancelJob). This lifecycle step only posts the public customer notice on the ticket.
 
   await supabase.from("jobs").update({ [sentColumn]: new Date().toISOString() }).eq("id", args.jobId);
   return { ok: true, posted: true };
