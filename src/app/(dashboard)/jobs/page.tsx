@@ -50,6 +50,8 @@ import {
   ZENDESK_FIELD_CLIENT_PRICE,
   ZENDESK_FIELD_SCOPE,
   ZENDESK_FIELD_REPORT_LINK,
+  ZENDESK_FIELD_REPLY_STATUS,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
   buildZendeskCustomFields,
 } from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
@@ -1253,6 +1255,7 @@ function JobsPageContent() {
               [ZENDESK_FIELD_CLIENT_PRICE, formData.client_price],
               [ZENDESK_FIELD_SCOPE, formData.scope],
               [ZENDESK_FIELD_REPORT_LINK, (formData as { report_link?: string }).report_link],
+              [ZENDESK_FIELD_REPLY_STATUS, ZENDESK_REPLY_STATUS_SENT_VALUE],
             ]),
           }),
         });

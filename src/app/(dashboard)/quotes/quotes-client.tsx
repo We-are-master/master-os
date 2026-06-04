@@ -46,7 +46,13 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
-import { ZENDESK_QUOTE_TICKET_FORM_ID, ZENDESK_FIELD_SCOPE, buildZendeskCustomFields } from "@/lib/zendesk-form-ids";
+import {
+  ZENDESK_QUOTE_TICKET_FORM_ID,
+  ZENDESK_FIELD_SCOPE,
+  ZENDESK_FIELD_REPLY_STATUS,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
+  buildZendeskCustomFields,
+} from "@/lib/zendesk-form-ids";
 import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
@@ -1263,6 +1269,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               ticketFormId: ZENDESK_QUOTE_TICKET_FORM_ID || undefined,
               customFields: buildZendeskCustomFields([
                 [ZENDESK_FIELD_SCOPE, formData.scope],
+                [ZENDESK_FIELD_REPLY_STATUS, ZENDESK_REPLY_STATUS_SENT_VALUE],
               ]),
             }),
           });

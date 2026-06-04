@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
-import { createTicket } from "@/lib/zendesk";
+import {
+  createTicket,
+  ZENDESK_REPLY_STATUS_FIELD_ID,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
+} from "@/lib/zendesk";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -72,6 +76,14 @@ export async function POST(req: NextRequest) {
 
   const tags = ["os-created", `os-${entityType}`, ...(body.extraTags ?? [])];
 
+  const customFields = Array.isArray(body.customFields) ? [...body.customFields] : [];
+  if (ZENDESK_REPLY_STATUS_FIELD_ID > 0) {
+    const hasReplyStatus = customFields.some((f) => f?.id === ZENDESK_REPLY_STATUS_FIELD_ID);
+    if (!hasReplyStatus) {
+      customFields.push({ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE });
+    }
+  }
+
   const result = await createTicket({
     subject,
     commentBody:   commentBody || undefined,
@@ -87,7 +99,7 @@ export async function POST(req: NextRequest) {
     tags,
     customStatusId: typeof body.customStatusId === "number" ? body.customStatusId : undefined,
     ticketFormId:   typeof body.ticketFormId === "number" ? body.ticketFormId : undefined,
-    customFields:   Array.isArray(body.customFields) ? body.customFields : undefined,
+    customFields:   customFields.length > 0 ? customFields : undefined,
   });
 
   if (!result.ok || !result.id) {
