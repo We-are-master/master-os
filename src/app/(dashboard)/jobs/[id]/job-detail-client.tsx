@@ -893,6 +893,49 @@ function FinSetupFieldLabel({
   );
 }
 
+/** Billing type modal — fixed-price confirm row (gross margin % on labour). */
+function FixedValuesConfirmPreview({
+  clientRate,
+  partnerCost,
+  fallbackSale,
+  fallbackCost,
+}: {
+  clientRate: string;
+  partnerCost: string;
+  fallbackSale: number;
+  fallbackCost: number;
+}) {
+  const sale = Math.max(0, Number(clientRate) || fallbackSale);
+  const cost = Math.max(0, Number(partnerCost) || fallbackCost);
+  const marginPct = sale > 0 ? Math.round(((sale - cost) / sale) * 1000) / 10 : 0;
+  return (
+    <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Client value (sale)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sale)}</p>
+        </div>
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Partner cost</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(cost)}</p>
+        </div>
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Margin %</p>
+          <p
+            className={cn(
+              "font-semibold tabular-nums",
+              marginPct >= 0 ? "text-emerald-700" : "text-red-600",
+            )}
+          >
+            {marginPct}%
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Schedule tab — CCZ / Parking toggles share the same off-state (light gray container + track). */
 function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
   return cn(
@@ -9177,61 +9220,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
               </div>
               {fixedSwitchPreview ? (
-                <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
-                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Client value (sale)</p>
-                      <p className="font-semibold tabular-nums text-text-primary">
-                        {formatCurrency(Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Partner cost</p>
-                      <p className="font-semibold tabular-nums text-text-primary">
-                        {formatCurrency(Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost))}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Margin</p>
-                      <p
-                        className={cn(
-                          "font-semibold tabular-nums",
-                          (Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) >= 0
-                            ? "text-emerald-700"
-                            : "text-red-600",
-                        )}
-                      >
-                        {formatCurrency(
-                          Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost),
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Margin %</p>
-                      <p
-                        className={cn(
-                          "font-semibold tabular-nums",
-                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
-                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) >= 0
-                            ? "text-emerald-700"
-                            : "text-red-600",
-                        )}
-                      >
-                        {Math.round(
-                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
-                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) *
-                            1000,
-                        ) / 10}
-                        %
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <FixedValuesConfirmPreview
+                  clientRate={fixedInlineClientRate}
+                  partnerCost={fixedInlinePartnerCost}
+                  fallbackSale={fixedSwitchPreview.sale}
+                  fallbackCost={fixedSwitchPreview.cost}
+                />
               ) : null}
             </div>
           )}
