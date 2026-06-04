@@ -1020,6 +1020,15 @@ export async function updateJob(
       partner_ids:
         basePatch.partner_ids !== undefined ? basePatch.partner_ids : partnerRow?.partner_ids,
     };
+    // Partner changed (swap / unassign / reassign) → re-arm the one-time
+    // "Job booked" notification so the new partner gets exactly one and the old
+    // one isn't re-notified. Same-partner re-saves don't reset (no duplicate).
+    if (
+      basePatch.partner_id !== undefined &&
+      String(basePatch.partner_id ?? "") !== String(partnerRow?.partner_id ?? "")
+    ) {
+      effectivePatch.partner_booked_email_sent_at = null;
+    }
     if (
       !jobHasPartnerSet(mergedPartner as Job) &&
       JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(beforeGates.status)

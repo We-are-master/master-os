@@ -1416,19 +1416,17 @@ function JobsPageContent() {
       });
       setCreateOpen(false);
       toast.success("Job created");
-      setJobsNavQueue([result.id]);
-      router.push(`/jobs/${result.id}`);
-      void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
-      void loadDashboardStats();
-      void Promise.resolve().then(() => refreshSilent());
+      // Fire partner notifications BEFORE navigating — router.push unmounts this
+      // page and would drop these fire-and-forget fetches (keepalive helps too).
       if (result.status === "auto_assigning") {
-        void fetch(`/api/jobs/${result.id}/dispatch-auto-assign-invites`, { method: "POST" }).catch((err) =>
+        void fetch(`/api/jobs/${result.id}/dispatch-auto-assign-invites`, { method: "POST", keepalive: true }).catch((err) =>
           console.error("[jobs/create] auto-assign dispatch failed:", err),
         );
       } else if (result.partner_id) {
         fetch("/api/push/notify-partner", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          keepalive: true,
           body: JSON.stringify({
             partnerId: result.partner_id,
             title: "Job Assigned",
@@ -1436,16 +1434,20 @@ function JobsPageContent() {
             data: { type: "job_assigned", jobId: result.id },
           }),
         }).catch(() => {});
-        // Direct-assign path: send the confirmation_request email with the
-        // tokenised Accept link. Partner clicks → /job/confirm → POST
-        // /api/jobs/confirm-acceptance → status flips + booked email follow-up.
+        // Direct OS allocation → send "Job booked" straight away (no accept step).
+        // The shared partner_booked_email_sent_at claim keeps it to one email.
         void notifyPartnerJobChange({
           jobId:        result.id,
           jobReference: result.reference,
-          kind:         "confirmation_request",
+          kind:         "booked",
           skipPush:     true,
         });
       }
+      setJobsNavQueue([result.id]);
+      router.push(`/jobs/${result.id}`);
+      void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
+      void loadDashboardStats();
+      void Promise.resolve().then(() => refreshSilent());
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
     }

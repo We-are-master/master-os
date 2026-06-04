@@ -42,8 +42,14 @@ export type PartnerForAcceptance = {
 const JOB_SELECT =
   "id, reference, title, status, partner_id, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
 
-/** Atomically claim the one-time Job booked email send for this job. */
-async function tryClaimPartnerBookedEmailSend(
+/**
+ * Atomically claim the one-time "Job booked" partner send for this job. Returns
+ * true for the single caller that wins (it should send), false otherwise (already
+ * booked → skip). Shared by every partner booking notifier so exactly one email
+ * goes out per assignment; reset `partner_booked_email_sent_at` to null on
+ * partner change to re-arm for the new partner.
+ */
+export async function tryClaimPartnerBookedEmailSend(
   supabase: SupabaseClient,
   jobId: string,
 ): Promise<boolean> {

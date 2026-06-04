@@ -2457,7 +2457,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             void notifyPartnerJobChange({
               jobId,
               jobReference: updated.reference,
-              kind: "assigned",
+              kind: "booked", // OS direct allocation → "Job booked" (one email via shared claim)
               skipPush: true, // notifyAssignedPartnerAboutJob already pushed
             });
           } else {
@@ -9996,7 +9996,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       void notifyPartnerJobChange({
                         jobId: job.id,
                         jobReference: job.reference,
-                        kind: "assigned",
+                        kind: "booked",
                         skipPush: true,
                         silent: true,
                       });
