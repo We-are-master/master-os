@@ -1,5 +1,6 @@
 import type { Job } from "@/types/database";
 import { canMarkJobCompletedFinancially, type JobCompletionPaymentRow } from "@/lib/job-financials";
+import { isJobOperationalSchemaEnabled } from "@/lib/job-schema-compat";
 import type { LucideIcon } from "lucide-react";
 import {
   Play,
@@ -448,6 +449,34 @@ export function jobStatusAfterResumeFromOnHold(
   if (p === "scheduled" || p === "late") return p;
   if (p === "final_check" || p === "need_attention") return p;
   return "in_progress";
+}
+
+/**
+ * Persist review/approval flags on `jobs` using columns that exist in migration 070 + 011.
+ * Do not use `report_submitted` — that field is not on Postgres and causes PostgREST 400.
+ */
+export function buildJobReviewApprovalPatch(opts?: {
+  submittedAt?: string;
+  reviewSentAt?: string;
+  reviewSendMethod?: "email" | "manual";
+}): Partial<Job> {
+  const ts = opts?.submittedAt ?? new Date().toISOString();
+  const legacy: Partial<Job> = {
+    report_1_uploaded: true,
+    report_1_approved: true,
+    report_1_approved_at: ts,
+  };
+  if (!isJobOperationalSchemaEnabled()) {
+    return legacy;
+  }
+  return {
+    final_report_submitted: true,
+    internal_report_approved: true,
+    internal_invoice_approved: true,
+    ...legacy,
+    ...(opts?.reviewSentAt ? { review_sent_at: opts.reviewSentAt } : {}),
+    ...(opts?.reviewSendMethod ? { review_send_method: opts.reviewSendMethod } : {}),
+  };
 }
 
 /** When ops validates the last report, move to final_check and stop the on-site timer in the same update. */

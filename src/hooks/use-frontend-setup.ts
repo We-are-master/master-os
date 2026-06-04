@@ -12,6 +12,7 @@ import {
   resolveAccessFees,
   resolveMarginThresholds,
   resolvePartnerDocumentRules,
+  resolvePartnerPayoutStandardTerms,
   type AccessFees,
   type MarginThresholds,
 } from "@/lib/frontend-setup";
@@ -45,6 +46,7 @@ export function useFrontendSetup() {
   const marginThresholds = useMemo<MarginThresholds>(() => resolveMarginThresholds(setup), [setup]);
   const accessFees = useMemo<AccessFees>(() => resolveAccessFees(setup), [setup]);
   const partnerDocumentRules = useMemo(() => resolvePartnerDocumentRules(setup), [setup]);
+  const partnerPayoutStandardTerms = useMemo(() => resolvePartnerPayoutStandardTerms(setup), [setup]);
 
   return {
     loading,
@@ -56,6 +58,7 @@ export function useFrontendSetup() {
     marginThresholds,
     accessFees,
     partnerDocumentRules,
+    partnerPayoutStandardTerms,
     refetch: load,
   };
 }

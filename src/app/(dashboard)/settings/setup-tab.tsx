@@ -1,10 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AlarmClock, CalendarClock, Car, ChevronDown, ChevronUp, ClipboardCheck, Loader2, MapPin, SlidersHorizontal, PauseCircle, Plus, Trash2, XCircle } from "lucide-react";
+import {
+  AlarmClock,
+  CalendarClock,
+  Car,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCheck,
+  DollarSign,
+  Loader2,
+  MapPin,
+  SlidersHorizontal,
+  PauseCircle,
+  Plus,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
@@ -34,9 +49,16 @@ import {
   normalizeOfficeJobCancellationPresets,
   parseFrontendSetup,
   normalizeJobOnHoldPresets,
+  resolvePartnerPayoutStandardTerms,
   type JobOnHoldPresetRow,
   type OfficeJobCancellationPresetRow,
 } from "@/lib/frontend-setup";
+import {
+  getNextPartnerPayoutReference,
+  ORG_PARTNER_PAYOUT_STANDARD_TERMS,
+  PARTNER_PAYOUT_TERM_OPTIONS,
+} from "@/lib/partner-payout-schedule";
+import { formatDate } from "@/lib/utils";
 import { slugifyJobOnHoldPresetId } from "@/lib/job-on-hold-reasons";
 import {
   buildDefaultPartnerDocumentRules,
@@ -104,6 +126,9 @@ export function SetupTab() {
     buildDefaultPartnerDocumentRules(),
   );
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
+  const [partnerPayoutStandard, setPartnerPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
+  const [savedPayoutStandard, setSavedPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
+  const [syncPayoutLoading, setSyncPayoutLoading] = useState(false);
 
   const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
     setOnHoldZendeskSyncing(true);
@@ -181,6 +206,9 @@ export function SetupTab() {
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
+      const payoutStd = resolvePartnerPayoutStandardTerms(parsed);
+      setPartnerPayoutStandard(payoutStd);
+      setSavedPayoutStandard(payoutStd);
       setLoading(false);
     })();
     return () => {
@@ -258,6 +286,7 @@ export function SetupTab() {
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
+        partner_payout_standard_terms: partnerPayoutStandard,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -306,6 +335,9 @@ export function SetupTab() {
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
+      const payoutStd = resolvePartnerPayoutStandardTerms(next);
+      setPartnerPayoutStandard(payoutStd);
+      setSavedPayoutStandard(payoutStd);
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
       if (next.zendesk_on_hold_reason_field_id) {
@@ -322,6 +354,53 @@ export function SetupTab() {
       toast.error(msg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const payoutStandardDirty = partnerPayoutStandard !== savedPayoutStandard;
+
+  const partnerPayoutReference = useMemo(
+    () => getNextPartnerPayoutReference(partnerPayoutStandard),
+    [partnerPayoutStandard],
+  );
+
+  const handleSyncPartnerPayoutStandard = async () => {
+    if (!canEditConfig) return;
+    if (payoutStandardDirty) {
+      toast.error("Save setup first so the org standard is stored, then apply to partners.");
+      return;
+    }
+    setSyncPayoutLoading(true);
+    try {
+      const res = await fetch("/api/admin/partners/sync-payout-standard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          standardTerms: partnerPayoutStandard,
+          previousStandard: savedPayoutStandard,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        cleared?: number;
+        totalPartners?: number;
+      };
+      if (!res.ok || json.ok === false) {
+        toast.error(json.error ?? "Failed to sync partner payout schedules");
+        return;
+      }
+      const cleared = json.cleared ?? 0;
+      toast.success(
+        cleared > 0
+          ? `Cleared custom payout terms on ${cleared} partner(s). They now use the org standard (${partnerPayoutStandard}).`
+          : `No partners needed updating — profiles without a schedule already use the org standard.`,
+      );
+    } catch (e) {
+      console.error("[setup-tab] sync payout standard", e);
+      toast.error("Failed to sync partner payout schedules");
+    } finally {
+      setSyncPayoutLoading(false);
     }
   };
 
@@ -782,6 +861,73 @@ export function SetupTab() {
           >
             {saving ? "Saving…" : "Save setup"}
           </Button>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Partner payout standard</CardTitle>
+            <FixfyHintIcon text="Default schedule for partner self-bills when a partner has no payout terms on their profile (shown as Standard in Final review). Changing this updates due-date math for new approvals; use Apply to partners to clear preset terms on profiles so they inherit this standard." />
+          </div>
+          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+            Example: biweekly Friday payout. Partners with blank payment terms follow this org standard automatically.
+          </p>
+        </CardHeader>
+        <div className="px-6 pb-6 space-y-4">
+          <div>
+            <label htmlFor="partner-payout-standard" className="block text-xs font-medium text-text-secondary mb-1">
+              Org standard schedule
+            </label>
+            <select
+              id="partner-payout-standard"
+              disabled={!canEditConfig}
+              value={partnerPayoutStandard}
+              onChange={(e) => setPartnerPayoutStandard(e.target.value)}
+              className="w-full max-w-xl rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+            >
+              {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <div
+              className="mt-3 rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5 max-w-xl"
+              aria-live="polite"
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                Next payout (reference)
+              </p>
+              <p className="text-sm font-semibold text-text-primary mt-0.5 tabular-nums">
+                {formatDate(partnerPayoutReference.payoutDueYmd)}
+              </p>
+              <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                For work in the week ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun). Final review uses
+                the same <span className="font-medium">Standard</span> rule when the partner has no custom terms.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canEditConfig || syncPayoutLoading || payoutStandardDirty}
+              loading={syncPayoutLoading}
+              onClick={() => void handleSyncPartnerPayoutStandard()}
+            >
+              Apply to partners
+            </Button>
+            {payoutStandardDirty ? (
+              <p className="text-xs text-amber-700">Save setup first, then apply to partners.</p>
+            ) : (
+              <p className="text-xs text-text-tertiary">
+                Clears preset payout terms on partner profiles so they inherit this standard.
+              </p>
+            )}
+          </div>
         </div>
       </Card>
 
