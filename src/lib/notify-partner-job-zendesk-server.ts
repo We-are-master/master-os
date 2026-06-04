@@ -18,6 +18,7 @@ import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerReportToken, createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { partnerOnHoldComplaintReasonText } from "@/lib/job-on-hold-reasons";
@@ -289,13 +290,18 @@ export async function notifyPartnerJobZendesk(
       });
 
   // ─── Partner email policy ─────────────────────────────────────────
-  // Partners receive side-conv emails for: job confirmation (`assigned`),
-  // job finished (`completed`), and on-hold (`on_hold`) — the latter carries
-  // the "resolve this job" CTA so the partner can submit notes + photos to
-  // clear a complaint. All other lifecycle events still get the in-app push
-  // above, but we don't email them — status updates were noisy and the office
-  // handles those manually.
-  const PARTNER_EMAIL_KINDS = new Set<NotifyKind>(["assigned", "completed", "on_hold"]);
+  // Partners receive side-conv emails for: accept request (`confirmation_request`),
+  // job booked (`assigned` / `booked`), job finished (`completed`), and on-hold
+  // (`on_hold`). Create Job with a manually allocated partner fires `assigned`;
+  // auto-assign uses invites + `confirmation_request` only where the product still
+  // requires an explicit partner accept (e.g. quote convert before customer accept).
+  const PARTNER_EMAIL_KINDS = new Set<NotifyKind>([
+    "assigned",
+    "confirmation_request",
+    "booked",
+    "completed",
+    "on_hold",
+  ]);
   const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
 
   // ─── Zendesk side conversation (only if we have the ticket) ──────
@@ -371,27 +377,38 @@ export async function notifyPartnerJobZendesk(
   // without changing the job's status (e.g. clicking "Send via
   // Zendesk" on an already-scheduled job).
   if (zendeskTicketId) {
-    void syncJobZendeskStatus(job.id, supabase).then(
-      (r) => {
-        if (!r.ok) {
+    void Promise.all([
+      syncJobZendeskStatus(job.id, supabase),
+      syncJobZendeskFormFields(job.id, supabase),
+    ]).then(
+      ([statusRes, formRes]) => {
+        if (!statusRes.ok) {
           console.error(
             "[notify-partner-zendesk] status sync failed for ticket",
             zendeskTicketId,
             ":",
-            r.error ?? r.skip ?? "unknown",
+            statusRes.error ?? statusRes.skip ?? "unknown",
           );
         } else {
           console.log(
             "[notify-partner-zendesk] status synced for ticket",
             zendeskTicketId,
             "→",
-            r.customStatusId ?? "(skipped)",
+            statusRes.customStatusId ?? "(skipped)",
             "job",
             job.reference,
           );
         }
+        if (!formRes.ok) {
+          console.error(
+            "[notify-partner-zendesk] form fields sync failed for ticket",
+            zendeskTicketId,
+            ":",
+            formRes.error ?? formRes.skipped ?? "unknown",
+          );
+        }
       },
-      (err) => console.error("[notify-partner-zendesk] status sync threw:", err),
+      (err) => console.error("[notify-partner-zendesk] zendesk sync threw:", err),
     );
   }
 

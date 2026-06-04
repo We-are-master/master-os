@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { isValidUUID } from "@/lib/auth-api";
 import { syncJobZendeskStatus, syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
+import { syncJobZendeskFormFields, syncQuoteZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import {
   dispatchJobCancelledZendesk,
   dispatchJobCompletedZendesk,
@@ -78,10 +79,20 @@ export async function POST(req: NextRequest) {
   }
 
   let onHoldFieldsSync: Awaited<ReturnType<typeof syncJobZendeskOnHoldFields>> | null = null;
+  let formFieldsSync: Awaited<ReturnType<typeof syncJobZendeskFormFields>> | null = null;
   if (entity === "job") {
     onHoldFieldsSync = await syncJobZendeskOnHoldFields(id, supabase);
     if (!onHoldFieldsSync.ok) {
       console.error(`[zendesk sync] job ${id} on-hold fields sync failed:`, onHoldFieldsSync.errors);
+    }
+    formFieldsSync = await syncJobZendeskFormFields(id, supabase);
+    if (!formFieldsSync.ok) {
+      console.error(`[zendesk sync] job ${id} form fields sync failed:`, formFieldsSync.error);
+    }
+  } else {
+    formFieldsSync = await syncQuoteZendeskFormFields(id, supabase);
+    if (!formFieldsSync.ok) {
+      console.error(`[zendesk sync] quote ${id} form fields sync failed:`, formFieldsSync.error);
     }
   }
 
@@ -121,5 +132,12 @@ export async function POST(req: NextRequest) {
     lifecycle.error = err instanceof Error ? err.message : String(err);
   }
 
-  return NextResponse.json({ entity, id, sync: syncResult, onHoldFields: onHoldFieldsSync, lifecycle });
+  return NextResponse.json({
+    entity,
+    id,
+    sync: syncResult,
+    onHoldFields: onHoldFieldsSync,
+    formFields: formFieldsSync,
+    lifecycle,
+  });
 }

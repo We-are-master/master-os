@@ -1393,6 +1393,13 @@ function JobsPageContent() {
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
         partner_ids: formData.partner_ids,
+        // Manual partner pick = office allocation (not auto-assign invite). Treat as
+        // already accepted so the partner gets Job booked, not Confirm this job.
+        partner_confirmed_at: (() => {
+          const st = formData.status as Job["status"] | undefined;
+          if (st === "auto_assigning") return undefined;
+          return jobHasPartnerSet(formData as Job) ? new Date().toISOString() : undefined;
+        })(),
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
         status: (() => {
@@ -1439,19 +1446,16 @@ function JobsPageContent() {
       });
       setCreateOpen(false);
       toast.success("Job created");
-      // Flip the linked Zendesk ticket status to match the OS stage
-      // (auto_assigning → Auto-Assigning, scheduled → Schedule, …). The ticket
-      // was opened as "open"; fire before navigating (keepalive) so it isn't
-      // dropped. Works for newly-opened and pasted-id tickets alike.
-      if (result.external_source === "zendesk" && result.external_ref) {
-        void fetch(`/api/jobs/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
-          .catch((err) => console.error("[jobs/create] zendesk status sync failed:", err));
-      }
       setJobsNavQueue([result.id]);
       router.push(`/jobs/${result.id}`);
       void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       void loadDashboardStats();
       void Promise.resolve().then(() => refreshSilent());
+      // Status + ticket form fields (type of work, client, auto-assign, …).
+      if (result.external_source === "zendesk" && result.external_ref?.trim()) {
+        void fetch(`/api/jobs/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+          .catch((err) => console.error("[jobs/create] zendesk sync failed:", err));
+      }
       if (result.status === "auto_assigning") {
         void fetch(`/api/jobs/${result.id}/dispatch-auto-assign-invites`, { method: "POST" }).catch((err) =>
           console.error("[jobs/create] auto-assign dispatch failed:", err),
@@ -1467,13 +1471,12 @@ function JobsPageContent() {
             data: { type: "job_assigned", jobId: result.id },
           }),
         }).catch(() => {});
-        // Direct-assign path: send the confirmation_request email with the
-        // tokenised Accept link. Partner clicks → /job/confirm → POST
-        // /api/jobs/confirm-acceptance → status flips + booked email follow-up.
+        // Manual partner allocation (not auto-assign): Job booked side conversation
+        // immediately — same as re-assigning a partner on the job detail page.
         void notifyPartnerJobChange({
           jobId:        result.id,
           jobReference: result.reference,
-          kind:         "confirmation_request",
+          kind:         "assigned",
           skipPush:     true,
         });
       }

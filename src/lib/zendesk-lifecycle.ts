@@ -40,6 +40,27 @@ import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 
+type PartnerEmbed = {
+  company_name?: string | null;
+  contact_name?: string | null;
+  email?: string | null;
+  zendesk_user_id?: number | string | null;
+};
+
+function partnerFromJobEmbed(job: unknown): {
+  email: string;
+  name: string;
+  zendeskUserId?: string;
+} {
+  const partnerRow = (job as { partners?: PartnerEmbed | PartnerEmbed[] | null }).partners;
+  const p = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
+  return {
+    email: p?.email?.trim() ?? "",
+    name: p?.company_name?.trim() || p?.contact_name?.trim() || "",
+    zendeskUserId: p?.zendesk_user_id != null ? String(p.zendesk_user_id) : undefined,
+  };
+}
+
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
 
 /**
@@ -58,11 +79,11 @@ export async function dispatchJobCreatedZendesk(args: {
     .select(`
       id, reference, title, property_address, scope,
       scheduled_date, scheduled_start_at, total_value,
-      external_source, external_ref, partner_id, client_id,
+      external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
       clients ( name ),
-      partners ( name, email )
+      partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -185,16 +206,18 @@ export async function dispatchJobCreatedZendesk(args: {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
   }
 
-  // Open partner side conversation if a partner is already on the job.
+  // Partner side conv here only when a partner is on the job but not yet office-confirmed
+  // (e.g. quote accept). Create Job with a manual partner sets partner_confirmed_at and
+  // fires `assigned` via notifyPartnerJobZendesk — skip to avoid a duplicate thread.
   let sideConvId: string | null =
     (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
 
-  const partnerRow = (job as unknown as { partners?: { name?: string | null; email?: string | null } | { name?: string | null; email?: string | null }[] | null }).partners;
-  const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-  const partnerEmail = partner?.email?.trim() ?? "";
-  const partnerName = partner?.name?.trim() ?? "";
+  const { email: partnerEmail, name: partnerName, zendeskUserId } = partnerFromJobEmbed(job);
+  const partnerConfirmed = Boolean(
+    (job as { partner_confirmed_at?: string | null }).partner_confirmed_at,
+  );
 
-  if (!sideConvId && job.partner_id && partnerEmail) {
+  if (!sideConvId && job.partner_id && partnerEmail && !partnerConfirmed) {
     try {
       // Build the partner-scoped report URL up front and include it as the
       // primary CTA so the partner can submit the report without waiting
@@ -228,6 +251,7 @@ export async function dispatchJobCreatedZendesk(args: {
         ticketId,
         toEmail: partnerEmail,
         toName: partnerName || null,
+        toUserId: zendeskUserId,
         subject: `Job confirmed — #${String(job.reference ?? "")}`,
         htmlBody: sideConvBody,
       });
@@ -265,7 +289,7 @@ async function dispatchJobTerminalNotice(args: {
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
       clients ( name ),
-      partners ( name, email, zendesk_user_id )
+      partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -312,17 +336,8 @@ async function dispatchJobTerminalNotice(args: {
   // job. Reply on the existing thread, or open one if none exists yet.
   // Non-fatal: a side-conv failure must not block marking the notice as sent.
   if (args.status === "cancelled" && job.partner_id) {
-    const partnerRow = (job as unknown as {
-      partners?:
-        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }
-        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }[]
-        | null;
-    }).partners;
-    const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-    const partnerEmail = partner?.email?.trim() ?? "";
-    const partnerName = partner?.name?.trim() ?? "";
-    const partnerUserId =
-      partner?.zendesk_user_id != null ? String(partner.zendesk_user_id) : undefined;
+    const { email: partnerEmail, name: partnerName, zendeskUserId: partnerUserId } =
+      partnerFromJobEmbed(job);
 
     if (partnerEmail) {
       const partnerHtml = buildJobCancelledHtml({
