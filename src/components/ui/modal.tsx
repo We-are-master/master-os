@@ -43,7 +43,10 @@ export function Modal({
       {open && (
         <div
           className={cn(
-            "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain py-4 sm:items-center sm:py-6 px-3 sm:px-4",
+            "fixed inset-0 z-50 flex justify-center px-3 sm:px-4 py-4 sm:py-6",
+            scrollBody
+              ? "items-start overflow-y-auto overscroll-contain sm:items-center"
+              : "items-center overflow-hidden overscroll-contain",
             rootClassName,
           )}
         >
@@ -61,7 +64,8 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full min-h-0 h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-xl shadow-modal border border-fx-line overflow-hidden my-auto",
+              "relative w-full min-h-0 flex flex-col max-h-[min(90dvh,100dvh-2rem)] bg-card rounded-xl shadow-modal border border-fx-line overflow-hidden my-auto",
+              scrollBody ? "h-fit" : "h-[min(90dvh,100dvh-2rem)] min-h-0",
               sizeStyles[size],
               className
             )}
@@ -98,7 +102,7 @@ export function Modal({
               className={cn(
                 scrollBody
                   ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(85vh,calc(90dvh - 5rem),920px)]"
-                  : "min-h-0 flex flex-1 flex-col overflow-hidden",
+                  : "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
               )}
             >
               {children}

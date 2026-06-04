@@ -84,11 +84,7 @@ import {
   jobScheduleYmd,
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
-import {
-  catalogServiceIdForTypeOfWorkLabel,
-  typeOfWorkLabelsFromCatalog,
-  normalizeTypeOfWork,
-} from "@/lib/type-of-work";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
@@ -108,6 +104,7 @@ import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
@@ -129,6 +126,8 @@ import { getAccountServicePrice } from "@/services/account-service-prices";
 import { getPartnerServicePrice } from "@/services/partner-service-prices";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { partnerCoversJob } from "@/lib/partner-coverage";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
@@ -2883,15 +2882,6 @@ function isHousekeepWorkLabel(value: string | null | undefined): boolean {
   return v.includes("housekeep") || v.includes("house keep");
 }
 
-function workTypeIcon(label: string) {
-  const v = label.toLowerCase();
-  if (v.includes("electric")) return Sparkles;
-  if (v.includes("plumb")) return MapPin;
-  if (v.includes("paint") || v.includes("decor")) return Building2;
-  if (v.includes("handy") || v.includes("carp") || v.includes("repair")) return Wrench;
-  return Briefcase;
-}
-
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: {
   open: boolean;
@@ -2934,8 +2924,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
-  const [workTypeSearch, setWorkTypeSearch] = useState("");
-  const [workTypeOpen, setWorkTypeOpen] = useState(false);
   const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const sitePhotosInputId = useId();
@@ -3116,7 +3104,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
   const partnerSearchQ = partnerSearch.trim().toLowerCase();
-  const eligiblePartners = useMemo(() => partners.filter((p) => isPartnerEligibleForWork(p)), [partners]);
+  const jobCoveragePostcode = extractUkPostcode(clientAddress.property_address);
+  const eligiblePartners = useMemo(
+    () =>
+      partners.filter((p) => {
+        if (!isPartnerEligibleForWork(p)) return false;
+        return partnerCoversJob(p, { postcode: jobCoveragePostcode });
+      }),
+    [partners, jobCoveragePostcode],
+  );
   const filteredPartnersBase = !partnerSearchQ
     ? eligiblePartners
     : eligiblePartners.filter((p) => {
@@ -3138,13 +3134,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (aMatch !== bMatch) return aMatch ? -1 : 1;
     return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
   });
-  const filteredWorkTypes = useMemo(() => {
-    const labels = typeOfWorkLabelsFromCatalog(catalogServices, null);
-    const q = workTypeSearch.trim().toLowerCase();
-    if (!q) return labels;
-    return labels.filter((name) => name.toLowerCase().includes(q));
-  }, [workTypeSearch, catalogServices]);
-
   useEffect(() => {
     if (!open) return;
     Promise.all([
@@ -3427,10 +3416,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
       title="New Job"
       subtitle="Create a new job"
       size="lg"
+      scrollBody={false}
       className="max-w-[min(100%,36rem)]"
     >
-      <form onSubmit={handleSubmit} className="@container flex min-h-0 flex-col">
-        <div className="max-h-[85vh] overflow-y-auto overflow-x-hidden px-3 py-3 @sm:px-5 space-y-2.5 min-w-0">
+      <form
+        onSubmit={handleSubmit}
+        className="@container grid h-full min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+      >
+        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 @sm:px-5 space-y-2.5 min-w-0">
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2">
             <p className="text-[11px] font-semibold text-text-tertiary">Rate Type</p>
             <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
@@ -3515,73 +3508,26 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </>
                 ) : (
                   <>
-                    <p className="text-[11px] font-medium text-text-secondary">Type of Work *</p>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setWorkTypeOpen((v) => !v)}
-                        className={cn(
-                          "h-9 w-full rounded-lg border bg-card px-3 text-left text-sm flex items-center justify-between",
-                          !form.title && "text-text-tertiary",
-                          form.title ? "border-border text-text-primary" : requiredFieldClass,
-                        )}
-                      >
-                        <span className="truncate">{form.title || "Select type of work..."}</span>
-                        <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", workTypeOpen && "rotate-180")} />
-                      </button>
-                      {workTypeOpen ? (
-                        <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-card shadow-lg p-2 space-y-2">
-                          <div className="relative">
-                            <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-tertiary" />
-                            <Input
-                              value={workTypeSearch}
-                              onChange={(e) => setWorkTypeSearch(e.target.value)}
-                              placeholder="Search type of work..."
-                              className="h-8 pl-8"
-                            />
-                          </div>
-                          <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
-                            {filteredWorkTypes.length > 0 ? filteredWorkTypes.map((name) => {
-                              const Icon = workTypeIcon(name);
-                              return (
-                                <button
-                                  key={name}
-                                  type="button"
-                                  onClick={() => {
-                                    const catId = catalogServiceIdForTypeOfWorkLabel(name, catalogServices) ?? "";
-                                    const service = catId ? catalogServices.find((s) => s.id === catId) : undefined;
-                                    const hasPresets =
-                                      !!service &&
-                                      sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets)).length > 0;
-                                    const presetId = hasPresets && service ? defaultPricingPresetId(service) : "";
-                                    setForm((prev) => ({
-                                      ...prev,
-                                      title: name,
-                                      catalog_service_id: catId,
-                                      catalog_pricing_preset_id: presetId,
-                                      catalog_pricing_addon_ids: [],
-                                    }));
-                                    setWorkTypeOpen(false);
-                                    setWorkTypeSearch("");
-                                  }}
-                                  className={cn(
-                                    "w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors inline-flex items-center gap-1.5",
-                                    form.title === name
-                                      ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
-                                      : "bg-[#fafaf8] border-[#e0ddd8] text-[#555] hover:bg-surface-hover",
-                                  )}
-                                >
-                                  <Icon className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="truncate">{name}</span>
-                                </button>
-                              );
-                            }) : (
-                              <p className="px-2 py-2 text-xs text-text-tertiary">No work types found.</p>
-                            )}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
+                    <TypeOfWorkPicker
+                      label="Type of Work *"
+                      catalog={catalogServices}
+                      value={form.title}
+                      emptyClassName={requiredFieldClass}
+                      onChange={(name, { catalogServiceId, service }) => {
+                        const catId = catalogServiceId ?? "";
+                        const hasPresets =
+                          !!service &&
+                          sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets)).length > 0;
+                        const presetId = hasPresets && service ? defaultPricingPresetId(service) : "";
+                        setForm((prev) => ({
+                          ...prev,
+                          title: name,
+                          catalog_service_id: catId,
+                          catalog_pricing_preset_id: presetId,
+                          catalog_pricing_addon_ids: [],
+                        }));
+                      }}
+                    />
                   </>
                 )}
               </div>
@@ -4129,7 +4075,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
         </div>
 
-        <div className="sticky bottom-0 z-10 flex flex-col gap-2 border-t border-border-light bg-card/95 px-3 py-2.5 backdrop-blur @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
+        <div className="z-10 flex shrink-0 flex-col gap-2 border-t border-border-light bg-card px-3 py-2.5 shadow-[0_-8px_24px_-8px_rgba(2,0,64,0.12)] @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
           <p className="text-xs text-text-secondary shrink-0">
             Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
           </p>

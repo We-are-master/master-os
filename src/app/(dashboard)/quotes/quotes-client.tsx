@@ -98,7 +98,8 @@ import {
   type JobScheduleV2SeriesPayload,
 } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { typeOfWorkLabelsFromCatalog, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
@@ -2729,7 +2730,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         size="lg"
         scrollBody={false}
       >
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="grid h-full min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
         {/* Mode toggle — same segmented-control pattern as the Jobs "Rate Type" tabs. */}
         <div className="shrink-0 px-4 pt-3 sm:px-5">
           <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
@@ -2771,19 +2772,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             </button>
           </div>
         </div>
-        <CreateQuoteForm
-          key={`${createFormVariant}-${routingCreateEntry}`}
-          variant={createFormVariant}
-          routingCollectTrade={routingCreateEntry === "bidding"}
-          onSubmit={handleCreate}
-          onCancel={() => {
-            setCreateOpen(false);
-            createQuoteIntentRef.current = "routing_invite";
-            setCreateFormVariant("routing_minimal");
-            setRoutingCreateEntry("bidding");
-            setDrawerPendingOpenInviteQuoteId(null);
-          }}
-        />
+        <div className="min-h-0 overflow-hidden">
+          <CreateQuoteForm
+            key={`${createFormVariant}-${routingCreateEntry}`}
+            variant={createFormVariant}
+            routingCollectTrade={routingCreateEntry === "bidding"}
+            onSubmit={handleCreate}
+            onCancel={() => {
+              setCreateOpen(false);
+              createQuoteIntentRef.current = "routing_invite";
+              setCreateFormVariant("routing_minimal");
+              setRoutingCreateEntry("bidding");
+              setDrawerPendingOpenInviteQuoteId(null);
+            }}
+          />
+        </div>
         </div>
       </Modal>
       <ExportCsvModal
@@ -4991,20 +4994,14 @@ function QuoteDetailDrawer({
                     <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
                   </div>
                   <div>
-                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                      Type of work
-                    </label>
-                    <Select
-                      label=""
-                      aria-label="Type of work"
+                    <TypeOfWorkPicker
+                      label="Type of work"
+                      labelClassName="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary"
+                      catalog={routingTypeOfWorkCatalog}
                       value={routingTitleDraft}
-                      onChange={(e) => setRoutingTitleDraft(e.target.value)}
-                      className="h-10 min-h-10 w-full rounded-xl text-sm"
-                      options={[
-                        { value: "", label: "Select type of work…" },
-                        ...typeOfWorkLabelsFromCatalog(routingTypeOfWorkCatalog, routingTitleDraft || quote.service_type)
-                          .map((name) => ({ value: name, label: name })),
-                      ]}
+                      currentFallback={routingTitleDraft || quote.service_type}
+                      placeholder="Select type of work…"
+                      onChange={(name) => setRoutingTitleDraft(name)}
                     />
                   </div>
                   <div className="min-w-0">
@@ -6220,12 +6217,14 @@ function QuoteDetailDrawer({
         size="lg"
         scrollBody={false}
       >
-        <CreateQuoteForm
-          continuationQuote={quote}
-          continuationSubmitting={manualContinueSending}
-          onContinueManualDraft={handleDrawerContinueManual}
-          onCancel={() => setManualContinueOpen(false)}
-        />
+        <div className="h-full min-h-0 overflow-hidden">
+          <CreateQuoteForm
+            continuationQuote={quote}
+            continuationSubmitting={manualContinueSending}
+            onContinueManualDraft={handleDrawerContinueManual}
+            onCancel={() => setManualContinueOpen(false)}
+          />
+        </div>
       </Modal>
 
       {/* Bid links — per-partner short URLs (for copy/share). */}
@@ -7066,11 +7065,6 @@ function CreateJobFromQuoteModal({
     return [{ value: "", label: "No partner" }, ...base];
   }, [partners, form.partner_id, partnerFromQuote]);
 
-  const typeOfWorkOptions = useMemo(
-    () => typeOfWorkLabelsFromCatalog(towCatalog, form.title).map((name) => ({ value: name, label: name })),
-    [towCatalog, form.title],
-  );
-
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const depositRequired = Math.max(0, Number(quote.deposit_required ?? 0));
@@ -7328,14 +7322,17 @@ function CreateJobFromQuoteModal({
             </>
           )}
         </div>
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          catalog={towCatalog}
           value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...typeOfWorkOptions,
-          ]}
+          currentFallback={form.title}
+          onChange={(name, { catalogServiceId }) => {
+            update("title", name);
+            if (catalogServiceId) {
+              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
+            }
+          }}
         />
         <Select
           label="Job type"
@@ -7696,13 +7693,6 @@ function CreateQuoteForm({
   const updateCreateLineItem = (idx: number, field: keyof ProposalLineRow, value: string) => {
     setLineItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
   };
-  const typeOfWorkOptions = useMemo(
-    () =>
-      typeOfWorkLabelsFromCatalog(towCatalog, form.title)
-        .map((name) => ({ value: name, label: name })),
-    [towCatalog, form.title],
-  );
-
   const partnersForTrade = useMemo(() => {
     const t = form.title.trim();
     if (!t) return [];
@@ -8216,8 +8206,11 @@ function CreateQuoteForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
+    <form
+      onSubmit={handleSubmit}
+      className="grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+    >
+      <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
         <div className="space-y-4">
       {!continuationQuote ? (
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
@@ -8238,28 +8231,27 @@ function CreateQuoteForm({
         // UUID see the bidding quote. So we render a catalog-driven select that
         // tracks the UUID and writes the row's name back into form.title for
         // every other piece of code that still reads the label.
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          valueMode="catalogId"
+          catalog={towCatalog}
           value={form.catalog_service_id}
-          onChange={(e) => {
-            const id = e.target.value;
-            const row = towCatalog.find((c) => c.id === id);
-            setForm((f) => ({ ...f, catalog_service_id: id, title: row?.name ?? "" }));
+          onChange={(id, { service }) => {
+            setForm((f) => ({ ...f, catalog_service_id: id, title: service?.name ?? "" }));
           }}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...towCatalog.map((c) => ({ value: c.id, label: c.name })),
-          ]}
         />
       ) : (
-        <Select
+        <TypeOfWorkPicker
           label="Type of work *"
+          catalog={towCatalog}
           value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...typeOfWorkOptions,
-          ]}
+          currentFallback={form.title}
+          onChange={(name, { catalogServiceId }) => {
+            update("title", name);
+            if (catalogServiceId) {
+              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
+            }
+          }}
         />
       )}
       {!continuationQuote ? (
@@ -9053,7 +9045,7 @@ function CreateQuoteForm({
       ) : null}
         </div>
       </div>
-      <div className="shrink-0 border-t border-border-light bg-card px-4 py-3 sm:px-6">
+      <div className="z-10 shrink-0 border-t border-border-light bg-card px-4 py-3 shadow-[0_-8px_24px_-8px_rgba(2,0,64,0.12)] sm:px-6">
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:flex-wrap">
           <Button
             variant="outline"

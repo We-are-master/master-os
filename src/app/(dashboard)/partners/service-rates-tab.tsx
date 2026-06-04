@@ -151,13 +151,13 @@ export function PartnerServiceRatesTabSection({
       <div className="rounded-xl border border-dashed border-border-light p-8 text-center text-sm text-text-tertiary">
         {!hasTradeHints ? (
           <>
-            No trades selected for this partner. Open <strong>Overview</strong> and choose which services they
-            offer — only those appear here for pricing.
+            No trades enabled for this partner. Open <strong>Trades &amp; skills</strong> and enable at least one
+            trade — only matching services appear here for pricing.
           </>
         ) : (
           <>
-            No catalog services match this partner&apos;s profile. Check <strong>Settings → Services</strong> names
-            match the trades, then save Overview again.
+            No catalog services match this partner&apos;s trades. Check <strong>Settings → Services</strong> names
+            match the trades, then save <strong>Trades &amp; skills</strong> again.
           </>
         )}
       </div>
@@ -169,12 +169,11 @@ export function PartnerServiceRatesTabSection({
       <div>
         <h4 className="text-sm font-bold text-text-primary flex items-center gap-2">
           <Wrench className="h-4 w-4 text-text-tertiary" />
-          Service rates
+          Rate card
         </h4>
         <p className="text-xs text-text-tertiary mt-0.5">
-          What we PAY this partner per service they offer (profile trades + saved catalogue ids). Services with
-          price bands or add-ons list each variation below when you turn off &quot;Use standard&quot;. Overrides apply
-          to NEW jobs from now on.
+          Your cost per service. Use the Fixfy standard or set your own — toggle off &quot;Use standard&quot; for a custom
+          rate. Presets and additionals appear below each service when custom. Applies to NEW jobs from now on.
         </p>
       </div>
 

@@ -1,4 +1,5 @@
 import type { Partner, PartnerLegalType } from "@/types/database";
+import { partnerCoverageIsComplete } from "@/lib/partner-coverage";
 
 /** Infer legal type when DB column missing (legacy rows). */
 export function inferPartnerLegal(p: Pick<Partner, "partner_legal_type" | "crn">): PartnerLegalType {
@@ -30,9 +31,7 @@ export function isVatProfileComplete(partner: Partner): boolean {
 /** Checklist rows for UI — weights match `computeProfileCompletenessScore`. */
 export function getProfileCompletenessItems(partner: Partner): ProfileCompletenessItem[] {
   const legal = inferPartnerLegal(partner);
-  const hasCoverage =
-    (partner.uk_coverage_regions?.length ?? 0) > 0 ||
-    !!formatCoverageFallback(partner)?.trim();
+  const hasCoverage = partnerCoverageIsComplete(partner);
   return [
     { id: "email", label: "Email on file", weight: 14, done: !!partner.email?.trim(), hint: "Add or confirm in Overview." },
     { id: "phone", label: "Phone number", weight: 12, done: !!partner.phone?.trim(), hint: "Add in Overview." },
@@ -45,10 +44,10 @@ export function getProfileCompletenessItems(partner: Partner): ProfileCompletene
     },
     {
       id: "coverage",
-      label: "Area coverage (UK)",
+      label: "Work coverage (radius or postcodes)",
       weight: 14,
       done: hasCoverage,
-      hint: "Select UK regions in Overview (default London).",
+      hint: "Set radius or postcode districts in the Coverage tab.",
     },
     {
       id: "tax_id",
@@ -100,11 +99,6 @@ export function computeProfileCompletenessScore(partner: Partner): number {
     if (it.done) earned += it.weight;
   }
   return max > 0 ? Math.round((earned / max) * 100) : 0;
-}
-
-function formatCoverageFallback(p: Partner): string {
-  if (p.uk_coverage_regions?.length) return "";
-  return p.location ?? "";
 }
 
 /**
