@@ -440,6 +440,18 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `ZENDESK_ON_HOLD_REASON_FIELD_ID` | Dropdown: on-hold reason id on ticket |
 | `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID` | Complaint description (partner email + Zendesk) |
 | `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` | Partner solution after on-hold form submit |
+| `ZENDESK_JOB_ID_FIELD_ID` | Job reference on ticket (default `5824403479839`) |
+| `ZENDESK_QUOTE_REF_FIELD_ID` | Quote reference (QT-…); falls back to job id field when unset |
+| `ZENDESK_TYPE_OF_WORK_FIELD_ID` | Tagger: `service_catalog.id` UUID |
+| `ZENDESK_JOB_TYPE_FIELD_ID` | Tagger: `job_type_fixed` / `job_type_hourly` |
+| `ZENDESK_RATE_TYPE_FIELD_ID` | Text/dropdown: `fixed` / `hourly` (if separate from Job Type) |
+| `ZENDESK_ARRIVAL_WINDOW_FIELD_ID` | Tagger: `arrival_morning`, `arrival_early_afternoon`, … |
+| `ZENDESK_AUTO_ASSIGN_FIELD_ID` | Checkbox: `true` / `false` from job auto-assign |
+| `ZENDESK_CLIENT_EMAIL_FIELD_ID` | `clients.email` (not account finance email) |
+| `ZENDESK_CLIENT_NAME_FIELD_ID` | `jobs.client_name` (end client on the job row) |
+| `ZENDESK_PROPERTY_ADDRESS_FIELD_ID` | `jobs.property_address` |
+| `ZENDESK_CLIENT_PHONE_FIELD_ID` | `clients.phone` |
+| `ZENDESK_SCOPE_FIELD_ID` | `jobs.scope` (work brief) |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Emails Resend (fallback quando não há Zendesk) |
 | `CRON_SECRET` | `/api/cron/*` (`Authorization: Bearer …`) |
 | `QUOTE_RESPONSE_SECRET` | Assinar tokens de accept/reject |

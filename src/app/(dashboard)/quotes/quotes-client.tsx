@@ -1401,16 +1401,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           external_ref:    (formData.external_ref    as string | null | undefined) ?? null,
         });
 
-        // Sync the linked Zendesk ticket status to the OS stage (bidding → Bidding)
-        // — the ticket was opened "open". Fire-and-forget; works for new + linked.
-        if (
-          (result as { external_source?: string | null }).external_source === "zendesk" &&
-          (result as { external_ref?: string | null }).external_ref
-        ) {
-          void fetch(`/api/quotes/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
-            .catch((err) => console.error("[quotes/create] zendesk status sync failed:", err));
-        }
-
         const manualLines = options?.manualLineItems;
         if (!isBidding && formData.quote_type === "internal" && manualLines?.length) {
           const supabase = getSupabase();
@@ -1434,6 +1424,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           userId: profile?.id,
           userName: profile?.full_name,
         });
+
+        if (result.external_source === "zendesk" && result.external_ref?.trim()) {
+          void fetch(`/api/quotes/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+            .catch((err) => console.error("[quotes/create] zendesk sync failed:", err));
+        }
 
         // Close create modal immediately so it never stacks over the drawer; drawer stays hidden while createOpen.
         setCreateOpen(false);

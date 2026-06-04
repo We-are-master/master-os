@@ -451,6 +451,8 @@ export interface Job {
   partner_id?: string | null;
   partner_ids?: string[] | null;
   partner_name?: string | null;
+  /** Set when the partner accepts (portal/email) or office manually allocates at create. */
+  partner_confirmed_at?: string | null;
   quote_id?: string;
   /** Optional link to Services catalog (call-out template) used at creation. */
   catalog_service_id?: string | null;
