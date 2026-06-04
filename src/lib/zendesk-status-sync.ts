@@ -25,6 +25,7 @@ import {
   ZD_STATUS_READY_TO_QUOTE,
   ZD_STATUS_SCHEDULED,
   ZD_STATUS_UNASSIGNED,
+  ZD_STATUS_AUTO_ASSIGNING,
 } from "@/lib/zendesk-statuses";
 import type { JobStatus, QuoteStatus } from "@/types/database";
 
@@ -62,8 +63,9 @@ export function quoteStatusToZendesk(status: QuoteStatus): number | null {
 export function jobStatusToZendesk(status: JobStatus): number | null {
   switch (status) {
     case "unassigned":
-    case "auto_assigning":
       return ZD_STATUS_UNASSIGNED;
+    case "auto_assigning":
+      return ZD_STATUS_AUTO_ASSIGNING;
     case "scheduled":
     case "late":
     case "need_attention":

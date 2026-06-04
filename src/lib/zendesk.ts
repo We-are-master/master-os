@@ -58,6 +58,10 @@ export interface CreateTicketArgs {
   tags?:          string[];
   /** Optional external link back to the OS job/quote for support agents. */
   externalId?:    string;
+  /** Optional Zendesk ticket form id (Job / Quote form). */
+  ticketFormId?:  number;
+  /** Optional custom field values to prefill the form (id + value). */
+  customFields?:  Array<{ id: number; value: unknown }>;
 }
 
 export interface CreateTicketResult {
@@ -104,6 +108,14 @@ export async function createTicket(args: CreateTicketArgs): Promise<CreateTicket
   };
   if (args.tags && args.tags.length > 0) ticket.tags = args.tags;
   if (args.externalId) ticket.external_id = args.externalId;
+  if (args.ticketFormId && Number.isFinite(args.ticketFormId)) {
+    ticket.ticket_form_id = args.ticketFormId;
+  }
+  if (args.customFields && args.customFields.length > 0) {
+    ticket.custom_fields = args.customFields
+      .filter((f) => f && Number.isFinite(f.id) && f.value != null && f.value !== "")
+      .map((f) => ({ id: f.id, value: f.value }));
+  }
   if (args.customStatusId != null) {
     ticket.custom_status_id = args.customStatusId;
     const baseStatus = baseStatusForCustomStatusId(args.customStatusId);

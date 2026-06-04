@@ -46,6 +46,7 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import { ZENDESK_QUOTE_TICKET_FORM_ID, ZENDESK_FIELD_SCOPE, buildZendeskCustomFields } from "@/lib/zendesk-form-ids";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { resolveCorporateAccountIdForClient } from "@/services/clients";
@@ -1254,6 +1255,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               entityType:  "quote",
               subject,
               commentBody: lines.join("\n"),
+              ticketFormId: ZENDESK_QUOTE_TICKET_FORM_ID || undefined,
+              customFields: buildZendeskCustomFields([
+                [ZENDESK_FIELD_SCOPE, formData.scope],
+              ]),
             }),
           });
           const j = await res.json();
@@ -1395,6 +1400,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           external_source: (formData.external_source as string | null | undefined) ?? null,
           external_ref:    (formData.external_ref    as string | null | undefined) ?? null,
         });
+
+        // Sync the linked Zendesk ticket status to the OS stage (bidding → Bidding)
+        // — the ticket was opened "open". Fire-and-forget; works for new + linked.
+        if (
+          (result as { external_source?: string | null }).external_source === "zendesk" &&
+          (result as { external_ref?: string | null }).external_ref
+        ) {
+          void fetch(`/api/quotes/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+            .catch((err) => console.error("[quotes/create] zendesk status sync failed:", err));
+        }
 
         const manualLines = options?.manualLineItems;
         if (!isBidding && formData.quote_type === "internal" && manualLines?.length) {

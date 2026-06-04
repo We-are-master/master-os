@@ -31,11 +31,17 @@ const TEAM_REQUESTER_EMAIL = "team@getfixfy.com";
 const TEAM_REQUESTER_NAME  = "Fixfy Team";
 
 interface RequestBody {
-  entityType?:  "job" | "quote";
-  subject?:     string;
-  commentBody?: string;
-  htmlBody?:    string;
-  extraTags?:   string[];
+  entityType?:    "job" | "quote";
+  subject?:       string;
+  commentBody?:   string;
+  htmlBody?:      string;
+  extraTags?:     string[];
+  /** Open the ticket already matching the OS stage (Bidding / Auto-Assigning / …). */
+  customStatusId?: number;
+  /** Job / Quote ticket form id. */
+  ticketFormId?:  number;
+  /** Prefill the form from the OS entity (field id + value). */
+  customFields?:  Array<{ id: number; value: unknown }>;
 }
 
 export async function POST(req: NextRequest) {
@@ -79,6 +85,9 @@ export async function POST(req: NextRequest) {
     requesterEmail: TEAM_REQUESTER_EMAIL,
     requesterName:  TEAM_REQUESTER_NAME,
     tags,
+    customStatusId: typeof body.customStatusId === "number" ? body.customStatusId : undefined,
+    ticketFormId:   typeof body.ticketFormId === "number" ? body.ticketFormId : undefined,
+    customFields:   Array.isArray(body.customFields) ? body.customFields : undefined,
   });
 
   if (!result.ok || !result.id) {

@@ -40,6 +40,18 @@ import {
   jobsManagementClosedBucketLabel,
   type JobsManagementClosedBucket,
 } from "@/services/jobs";
+import {
+  ZENDESK_JOB_TICKET_FORM_ID,
+  ZENDESK_FIELD_JOB_DATE,
+  ZENDESK_FIELD_CLIENT_NAME,
+  ZENDESK_FIELD_CLIENT_EMAIL,
+  ZENDESK_FIELD_CLIENT_PHONE,
+  ZENDESK_FIELD_ADDRESS,
+  ZENDESK_FIELD_CLIENT_PRICE,
+  ZENDESK_FIELD_SCOPE,
+  ZENDESK_FIELD_REPORT_LINK,
+  buildZendeskCustomFields,
+} from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
@@ -1226,6 +1238,17 @@ function JobsPageContent() {
             entityType:  "job",
             subject,
             commentBody: lines.join("\n"),
+            ticketFormId: ZENDESK_JOB_TICKET_FORM_ID || undefined,
+            customFields: buildZendeskCustomFields([
+              [ZENDESK_FIELD_JOB_DATE, formData.scheduled_date ? String(formData.scheduled_date).slice(0, 10) : null],
+              [ZENDESK_FIELD_CLIENT_NAME, formData.client_name],
+              [ZENDESK_FIELD_CLIENT_EMAIL, (formData as { client_email?: string }).client_email],
+              [ZENDESK_FIELD_CLIENT_PHONE, (formData as { client_phone?: string }).client_phone],
+              [ZENDESK_FIELD_ADDRESS, formData.property_address],
+              [ZENDESK_FIELD_CLIENT_PRICE, formData.client_price],
+              [ZENDESK_FIELD_SCOPE, formData.scope],
+              [ZENDESK_FIELD_REPORT_LINK, (formData as { report_link?: string }).report_link],
+            ]),
           }),
         });
         const j = await res.json();
@@ -1416,6 +1439,14 @@ function JobsPageContent() {
       });
       setCreateOpen(false);
       toast.success("Job created");
+      // Flip the linked Zendesk ticket status to match the OS stage
+      // (auto_assigning → Auto-Assigning, scheduled → Schedule, …). The ticket
+      // was opened as "open"; fire before navigating (keepalive) so it isn't
+      // dropped. Works for newly-opened and pasted-id tickets alike.
+      if (result.external_source === "zendesk" && result.external_ref) {
+        void fetch(`/api/jobs/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+          .catch((err) => console.error("[jobs/create] zendesk status sync failed:", err));
+      }
       setJobsNavQueue([result.id]);
       router.push(`/jobs/${result.id}`);
       void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
