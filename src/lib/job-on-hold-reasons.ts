@@ -61,7 +61,7 @@ export function jobOnHoldComplaintDescriptionRequired(presetId: string): boolean
   return presetId === "complaint";
 }
 
-/** Text shown to the partner in the on-hold email (customer complaint detail). */
+/** Text shown to the partner — Zendesk Complaint Description / OS `on_hold_complaint_description`. */
 export function partnerOnHoldComplaintReasonText(job: {
   on_hold_complaint_description?: string | null;
   on_hold_reason?: string | null;
@@ -72,7 +72,12 @@ export function partnerOnHoldComplaintReasonText(job: {
   const reason = job.on_hold_reason?.trim();
   if (!reason) return null;
   if (/^customer complaint/i.test(reason)) return null;
-  if (job.on_hold_reason_preset_id === "complaint") return reason;
+  const dash = reason.indexOf(" — ");
+  if (dash >= 0) {
+    const detail = reason.slice(dash + 3).trim();
+    if (detail) return detail;
+  }
+  // Preset label only (e.g. "Complaint") — not the customer narrative.
   return null;
 }
 

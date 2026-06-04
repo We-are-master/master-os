@@ -47,6 +47,7 @@ import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEng
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { ZENDESK_QUOTE_TICKET_FORM_ID, ZENDESK_FIELD_SCOPE, buildZendeskCustomFields } from "@/lib/zendesk-form-ids";
+import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { resolveCorporateAccountIdForClient } from "@/services/clients";
@@ -1235,7 +1236,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       // the user — opening a ticket first is fine and keeps the flow simple.
       if (formData.__createZendeskTicket) {
         try {
-          const subject = `${formData.title?.trim() || "Quote"} — ${formData.client_name?.trim() || formData.property_address?.trim() || "New quote"}`;
+          const subject = osZendeskCreateTicketSubject(
+            "quote",
+            formData.title,
+            formData.property_address,
+          );
           const lines = [
             `A new quote is being created in the OS.`,
             ``,

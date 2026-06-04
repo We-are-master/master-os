@@ -21,7 +21,7 @@ import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
-import { partnerOnHoldComplaintReasonText } from "@/lib/job-on-hold-reasons";
+import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -155,9 +155,10 @@ export async function notifyPartnerJobZendesk(
   }
 
   // Resolve final reason / status label
-  const effectiveReason = reason
+  const effectiveReason =
+    reason
     ?? (kind === "cancelled" ? job.cancellation_reason : null)
-    ?? (kind === "on_hold" ? partnerOnHoldComplaintReasonText(job) ?? job.on_hold_reason : null);
+    ?? (kind === "on_hold" ? await resolvePartnerComplaintReportedText(job, { client: supabase }) : null);
   const effectiveStatusLabel = newStatusLabel ?? humanStatusLabel(job.status);
 
   const needsPartnerJobNotes = kind === "assigned" || kind === "confirmation_request" || kind === "booked";
@@ -291,16 +292,16 @@ export async function notifyPartnerJobZendesk(
 
   // ─── Partner email policy ─────────────────────────────────────────
   // Partners receive side-conv emails for: accept request (`confirmation_request`),
-  // job booked (`assigned` / `booked`), job finished (`completed`), and on-hold
-  // (`on_hold`). Create Job with a manually allocated partner fires `assigned`;
-  // auto-assign uses invites + `confirmation_request` only where the product still
-  // requires an explicit partner accept (e.g. quote convert before customer accept).
+  // job booked (`assigned` / `booked`), job finished (`completed`), on-hold
+  // (`on_hold`), and office cancel (`cancelled` → buildPartnerJobStatusUpdateEmail).
+  // Terminal customer notices on the main ticket still come from zendesk-lifecycle.
   const PARTNER_EMAIL_KINDS = new Set<NotifyKind>([
     "assigned",
     "confirmation_request",
     "booked",
     "completed",
     "on_hold",
+    "cancelled",
   ]);
   const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
 

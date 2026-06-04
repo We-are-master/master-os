@@ -149,6 +149,7 @@ import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/sh
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
@@ -1218,7 +1219,11 @@ function JobsPageContent() {
     // sync status / post side conversations to it).
     if (formData.__createZendeskTicket) {
       try {
-        const subject  = `${formData.title ?? "Job"} — ${formData.client_name ?? formData.property_address ?? "New job"}`;
+        const subject = osZendeskCreateTicketSubject(
+          "job",
+          formData.title,
+          formData.property_address,
+        );
         const lines: string[] = [
           `A new job is being created in the OS.`,
           ``,
@@ -1729,6 +1734,15 @@ function JobsPageContent() {
             job: fresh,
             kind: "job_cancelled_by_office",
             cancellationReason: reason,
+          });
+          void notifyPartnerJobChange({
+            jobId: j.id,
+            jobReference: j.reference,
+            kind: "cancelled",
+            reason,
+            newStatusLabel: "Cancelled",
+            skipPush: true,
+            silent: true,
           });
         }
       }
