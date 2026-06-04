@@ -252,6 +252,31 @@ See [zendesk-complaint-macro-form.md](./zendesk-complaint-macro-form.md) for mac
 
 ---
 
+## 4c. POST `/api/cancellations` — Mark as Cancelled (Zendesk → OS)
+
+Configure a Zendesk trigger when tag `cancelled` is added (and not `sent-cancel-os`). Action: notify webhook + add tag `sent-cancel-os`.
+
+```bash
+curl -X POST "$BASE/api/cancellations" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $DESK_KEY" \
+  -d '{
+    "ticket_id": "8472",
+    "cancellation_reason_id": "client_requested",
+    "cancellation_notes": "",
+    "cancelled_by_agent": "agent@getfixfy.com",
+    "cancelled_at": "2026-06-04T22:00:00Z"
+  }'
+```
+
+- `cancellation_reason_id` — bare OS id (`client_requested`, …) or Zendesk tag (`cancel_client_requested`).
+- `cancellation_notes` — required when reason is `other`.
+- Idempotent: same ticket already cancelled → `200` with `{ action: "existing" }`.
+
+Zendesk dropdown values use prefix `cancel_*` (synced from Settings → Cancellation Reasons).
+
+---
+
 ## 5. POST `/api/join/register` — cadastro de partner (página `/join`)
 
 **Auth**: público (rate-limited por IP).
@@ -437,6 +462,8 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `ZENDESK_WEBHOOK_API_KEY` (ou `ZOHO_DESK_WEBHOOK_API_KEY`) | `/api/webhooks/desk/*` |
 | `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status` |
 | `ZENDESK_SUBDOMAIN`, `ZENDESK_EMAIL`, `ZENDESK_API_TOKEN` | Comentários no ticket + side conversations |
+| `ZENDESK_CANCELLATION_REASON_FIELD_ID` | Dropdown: `cancel_{osId}` (default `5834334215583`) |
+| `ZENDESK_CANCELLATION_NOTES_FIELD_ID` | Cancellation notes textarea (default `5834293455647`) |
 | `ZENDESK_ON_HOLD_REASON_FIELD_ID` | Dropdown: on-hold reason id on ticket |
 | `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID` | Complaint description (partner email + Zendesk) |
 | `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` | Partner solution after on-hold form submit |

@@ -37,3 +37,15 @@ export function buildOfficeCancellationReasonText(
 export function officeCancellationDetailRequired(presetId: string): boolean {
   return presetId === "other";
 }
+
+/** Alias for Zendesk / API validation (notes required when reason is other). */
+export const officeCancellationNotesRequired = officeCancellationDetailRequired;
+
+/** Validate bare OS id or Zendesk `cancel_*` tag → canonical id. */
+export function parseOfficeCancellationReasonId(raw: string): OfficeJobCancellationReasonId | null {
+  const v = raw.trim();
+  if (!v) return null;
+  const id = v.startsWith("cancel_") ? v.slice("cancel_".length) : v;
+  const row = OFFICE_JOB_CANCELLATION_REASONS.find((r) => r.id === id);
+  return row ? row.id : null;
+}

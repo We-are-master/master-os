@@ -20,6 +20,7 @@ import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { syncJobZendeskCancellationFields } from "@/lib/zendesk-job-cancellation-sync";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -131,6 +132,11 @@ export function useCancelJob() {
             skipPush: true,
           });
         }
+
+        void syncJobZendeskCancellationFields(updated.id, {
+          presetId: input.presetId,
+          notes: input.detail.trim() || null,
+        }).catch((err) => console.error("[use-cancel-job] zendesk cancellation fields:", err));
 
         toast.success("Job cancelled");
         return { ok: true, updated };

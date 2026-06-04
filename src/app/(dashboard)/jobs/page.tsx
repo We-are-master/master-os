@@ -151,6 +151,7 @@ import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/sh
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { syncJobZendeskCancellationFields } from "@/lib/zendesk-job-cancellation-sync";
 import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
@@ -1748,6 +1749,10 @@ function JobsPageContent() {
             silent: true,
           });
         }
+        void syncJobZendeskCancellationFields(j.id, {
+          presetId: bulkCancelPresetId,
+          notes: bulkCancelDetail.trim() || null,
+        }).catch((e) => console.error("syncJobZendeskCancellationFields", j.reference, e));
       }
       if (updatedCount === 0) {
         toast.message("No eligible jobs to cancel (already cancelled).");

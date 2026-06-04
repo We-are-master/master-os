@@ -122,7 +122,10 @@ export function SetupTab() {
   const [zendeskOnHoldReasonFieldId, setZendeskOnHoldReasonFieldId] = useState("");
   const [zendeskComplaintDescriptionFieldId, setZendeskComplaintDescriptionFieldId] = useState("");
   const [zendeskComplaintSolutionFieldId, setZendeskComplaintSolutionFieldId] = useState("");
+  const [zendeskCancellationReasonFieldId, setZendeskCancellationReasonFieldId] = useState("");
+  const [zendeskCancellationNotesFieldId, setZendeskCancellationNotesFieldId] = useState("");
   const [onHoldZendeskSyncing, setOnHoldZendeskSyncing] = useState(false);
+  const [cancelZendeskSyncing, setCancelZendeskSyncing] = useState(false);
   const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
   const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
@@ -176,6 +179,45 @@ export function SetupTab() {
     }
   }, []);
 
+  const syncCancellationReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
+    setCancelZendeskSyncing(true);
+    try {
+      const res = await fetch("/api/admin/job-cancellation/zendesk-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: opts?.dryRun === true }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        skipped?: string;
+        error?: string;
+        stats?: { append?: number; prune?: number; rename?: number };
+      };
+      if (!res.ok || json.ok === false) {
+        if (!opts?.silent) toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
+        return false;
+      }
+      if (json.skipped) {
+        if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
+        return false;
+      }
+      if (!opts?.silent && json.stats) {
+        const { append = 0, prune = 0, rename = 0 } = json.stats;
+        toast.success(
+          opts?.dryRun
+            ? `Preview: +${append} / −${prune} / rename ${rename} (dry run)`
+            : `Zendesk cancellation reasons synced (+${append}, −${prune}, rename ${rename})`,
+        );
+      }
+      return true;
+    } catch {
+      if (!opts?.silent) toast.error("Zendesk sync failed");
+      return false;
+    } finally {
+      setCancelZendeskSyncing(false);
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -207,6 +249,16 @@ export function SetupTab() {
       );
       setZendeskComplaintSolutionFieldId(
         parsed.zendesk_complaint_solution_field_id ? String(parsed.zendesk_complaint_solution_field_id) : "",
+      );
+      setZendeskCancellationReasonFieldId(
+        parsed.zendesk_cancellation_reason_field_id
+          ? String(parsed.zendesk_cancellation_reason_field_id)
+          : "",
+      );
+      setZendeskCancellationNotesFieldId(
+        parsed.zendesk_cancellation_notes_field_id
+          ? String(parsed.zendesk_cancellation_notes_field_id)
+          : "",
       );
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
@@ -293,6 +345,12 @@ export function SetupTab() {
         zendesk_complaint_solution_field_id: zendeskComplaintSolutionFieldId.trim()
           ? Number(zendeskComplaintSolutionFieldId.trim())
           : undefined,
+        zendesk_cancellation_reason_field_id: zendeskCancellationReasonFieldId.trim()
+          ? Number(zendeskCancellationReasonFieldId.trim())
+          : undefined,
+        zendesk_cancellation_notes_field_id: zendeskCancellationNotesFieldId.trim()
+          ? Number(zendeskCancellationNotesFieldId.trim())
+          : undefined,
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
@@ -343,6 +401,16 @@ export function SetupTab() {
       setZendeskComplaintSolutionFieldId(
         next.zendesk_complaint_solution_field_id ? String(next.zendesk_complaint_solution_field_id) : "",
       );
+      setZendeskCancellationReasonFieldId(
+        next.zendesk_cancellation_reason_field_id
+          ? String(next.zendesk_cancellation_reason_field_id)
+          : "",
+      );
+      setZendeskCancellationNotesFieldId(
+        next.zendesk_cancellation_notes_field_id
+          ? String(next.zendesk_cancellation_notes_field_id)
+          : "",
+      );
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
@@ -358,6 +426,9 @@ export function SetupTab() {
       window.dispatchEvent(new Event("master-os-company-settings"));
       if (next.zendesk_on_hold_reason_field_id) {
         void syncOnHoldReasonsToZendesk({ silent: true });
+      }
+      if (next.zendesk_cancellation_reason_field_id) {
+        void syncCancellationReasonsToZendesk({ silent: true });
       }
     } catch (e) {
       console.error("[setup-tab] save failed", e);
@@ -830,7 +901,7 @@ export function SetupTab() {
           <div className="flex items-center gap-2">
             <XCircle className="h-4 w-4 text-text-tertiary" />
             <CardTitle>Jobs · Cancellation Reasons</CardTitle>
-            <FixfyHintIcon text="Reasons shown when cancelling a job. Internal id stays fixed (integrations and 'Other' behaviour rely on it). Rename labels to match your team." />
+            <FixfyHintIcon text="Reasons shown when cancelling a job. Internal id stays fixed; Zendesk option value is cancel_{id}. Rename labels to match your team." />
           </div>
         </CardHeader>
         <div className="space-y-4 px-6 pb-6">
@@ -879,14 +950,29 @@ export function SetupTab() {
               </div>
             ))}
           </div>
-          <Button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={!canEditConfig || saving}
-            icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-          >
-            {saving ? "Saving…" : "Save setup"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canEditConfig || saving}
+              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            >
+              {saving ? "Saving…" : "Save setup"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canEditConfig || cancelZendeskSyncing || !zendeskCancellationReasonFieldId.trim()}
+              loading={cancelZendeskSyncing}
+              onClick={() => void syncCancellationReasonsToZendesk()}
+            >
+              Sync cancellation reasons → Zendesk
+            </Button>
+          </div>
+          <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
+            After save, reasons auto-sync when the cancellation reason field id is set under Integrations.
+            Zendesk tag = <code className="text-[11px]">cancel_</code> + id (e.g. <code className="text-[11px]">cancel_client_requested</code>).
+          </p>
         </div>
       </Card>
 
@@ -1206,7 +1292,29 @@ export function SetupTab() {
               </p>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-4xl">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Cancellation reason field id
+              </label>
+              <Input
+                value={zendeskCancellationReasonFieldId}
+                onChange={(e) => setZendeskCancellationReasonFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="5834334215583"
+                inputMode="numeric"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Cancellation notes field id
+              </label>
+              <Input
+                value={zendeskCancellationNotesFieldId}
+                onChange={(e) => setZendeskCancellationNotesFieldId(e.target.value.replace(/\D/g, ""))}
+                placeholder="5834293455647"
+                inputMode="numeric"
+              />
+            </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 On-hold reason field id
@@ -1263,7 +1371,20 @@ export function SetupTab() {
             >
               Sync on-hold reasons → Zendesk
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canEditConfig || cancelZendeskSyncing || !zendeskCancellationReasonFieldId.trim()}
+              loading={cancelZendeskSyncing}
+              onClick={() => void syncCancellationReasonsToZendesk()}
+            >
+              Sync cancellation reasons → Zendesk
+            </Button>
           </div>
+          <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
+            Webhook (Zendesk → OS): <code className="text-[11px]">POST /api/cancellations</code> with header{" "}
+            <code className="text-[11px]">x-api-key</code>. See docs/API_CURL.md.
+          </p>
         </div>
       </Card>
       </section>
