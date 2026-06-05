@@ -10,6 +10,7 @@ import {
 } from "@/lib/emails/partner-job-confirmation";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { dispatchAutoAssignJobInvites, sendPushToPartners } from "@/lib/auto-assign-job-invites";
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -366,8 +367,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
   const partnerFirstName = (p.contact_name?.trim().split(/\s+/)[0])
     || (p.company_name?.trim() ?? "Partner");
 
-  const partnerAppBase = process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim()?.replace(/\/$/, "")
-    || "https://app.getfixfy.com";
+  const reportUrl = await buildPartnerJobReportUrl(params.jobId, params.partnerId);
 
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName,
@@ -380,7 +380,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobType: isHourly ? "hourly" : "fixed",
     priceDisplay,
     partnerNotes,
-    reportUrl: `${partnerAppBase}/jobs/${params.jobReference}/report`,
+    reportUrl,
   });
 
   await createSideConversation({

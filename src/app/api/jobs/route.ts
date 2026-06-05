@@ -17,6 +17,7 @@ import type {
   CatalogService,
 } from "@/types/database";
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
+import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
@@ -700,6 +701,7 @@ export async function POST(req: NextRequest) {
   }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
+    jobRow.auto_assign_expires_at = autoAssignExpiresAtIso();
   }
   if (ticketId) {
     jobRow.external_source = "zendesk";

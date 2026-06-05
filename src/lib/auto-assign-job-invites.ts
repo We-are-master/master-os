@@ -12,6 +12,7 @@ import { createPartnerJobAcceptToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
+import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -234,9 +235,14 @@ export async function dispatchAutoAssignJobInvites(
     pushSent = await sendPushToPartners(supabase, args.partnerIds, {
       title: "New job available",
       body: `${args.jobReference} · ${args.jobTitle} · ${args.propertyAddress}`,
-      data: { type: "job_assigned", jobId: args.jobId },
+      data: { type: "job_offer", jobId: args.jobId },
     });
   }
+
+  await supabase
+    .from("jobs")
+    .update({ auto_assign_expires_at: autoAssignExpiresAtIso() })
+    .eq("id", args.jobId);
 
   await broadcastAutoAssignInvites({
     jobId: args.jobId,
@@ -359,7 +365,10 @@ export async function ensureAndDispatchAutoAssignInvites(
 
     const { error: upErr } = await supabase
       .from("jobs")
-      .update({ auto_assign_invited_partner_ids: partnerIds })
+      .update({
+        auto_assign_invited_partner_ids: partnerIds,
+        auto_assign_expires_at: autoAssignExpiresAtIso(),
+      })
       .eq("id", jobId);
     if (upErr) {
       console.error("[auto-assign] failed to persist invited partner ids:", upErr);

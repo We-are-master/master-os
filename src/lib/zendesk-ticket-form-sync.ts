@@ -187,6 +187,7 @@ export function buildJobZendeskFormFieldEntries(job: {
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
   status?: string | null;
+  partner_id?: string | null;
   auto_assign_invited_partner_ids?: string[] | null;
   client_name?: string | null;
   property_address?: string | null;
@@ -194,9 +195,12 @@ export function buildJobZendeskFormFieldEntries(job: {
   clients?: { email?: string | null; phone?: string | null } | { email?: string | null; phone?: string | null }[] | null;
 }): TicketCustomFieldEntry[] {
   const { email, phone } = clientEmbedContact(job.clients);
+  const hasPartner = job.partner_id != null && String(job.partner_id).trim() !== "";
   const isAuto =
-    job.status === "auto_assigning" ||
-    (Array.isArray(job.auto_assign_invited_partner_ids) && job.auto_assign_invited_partner_ids.length > 0);
+    !hasPartner &&
+    (job.status === "auto_assigning" ||
+      (Array.isArray(job.auto_assign_invited_partner_ids) &&
+        job.auto_assign_invited_partner_ids.length > 0));
 
   return buildCommonZendeskFormFieldEntries({
     reference: job.reference,

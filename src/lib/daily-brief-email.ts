@@ -1,4 +1,5 @@
 import type { OpsSnapshot } from "@/lib/master-brain-metrics";
+import { formatGbpIncVat } from "@/lib/money-display-label";
 
 export function buildDailyBriefHtml(params: {
   companyName: string;
@@ -13,7 +14,7 @@ export function buildDailyBriefHtml(params: {
     ["Jobs with work scheduled today (date)", String(params.snapshot.jobsScheduledToday)],
     ["Quotes awaiting customer", String(params.snapshot.quotesAwaitingCustomer)],
     ["New requests", String(params.snapshot.requestsNew)],
-    ["Pending invoices", `${params.snapshot.invoicesPending} (~£${params.snapshot.invoicesPendingAmount.toFixed(2)})`],
+    ["Pending invoices", `${params.snapshot.invoicesPending} (~${formatGbpIncVat(params.snapshot.invoicesPendingAmount)})`],
   ];
 
   const table = `<table style="border-collapse:collapse;width:100%;max-width:560px;font-family:system-ui,sans-serif;font-size:14px;color:#111">

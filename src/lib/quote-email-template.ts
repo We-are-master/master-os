@@ -1,3 +1,4 @@
+import { formatGbpIncVat } from "@/lib/money-display-label";
 import type { QuotePDFData, CompanyBranding, QuoteLineItem } from "@/lib/pdf/quote-template";
 
 export interface QuoteEmailOptions {
@@ -30,8 +31,8 @@ function buildQuoteDetailsSection(data: QuotePDFData, color: string): string {
         `<tr>
           <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#1C1917;">${escapeHtml(row.description)}</td>
           <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#57534E;text-align:center;">${row.quantity}</td>
-          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#57534E;text-align:right;">£${Number(row.unitPrice).toLocaleString("en-GB", { minimumFractionDigits: 2 })}</td>
-          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;font-weight:600;color:#1C1917;text-align:right;">£${Number(row.total).toLocaleString("en-GB", { minimumFractionDigits: 2 })}</td>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#57534E;text-align:right;">${formatGbpIncVat(Number(row.unitPrice))}</td>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;font-weight:600;color:#1C1917;text-align:right;">${formatGbpIncVat(Number(row.total))}</td>
         </tr>`,
     )
     .join("");
@@ -39,7 +40,7 @@ function buildQuoteDetailsSection(data: QuotePDFData, color: string): string {
   const depositBlock = hasDeposit
     ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;">
         <tr style="background:#FFFBEB;"><td style="padding:12px 16px;font-size:13px;color:#92400E;">
-          <strong>Deposit required:</strong> £${Number(data.depositRequired).toLocaleString("en-GB", { minimumFractionDigits: 2 })} (payable on acceptance)
+          <strong>Deposit required:</strong> ${formatGbpIncVat(Number(data.depositRequired))} (payable on acceptance)
         </td></tr>
       </table>`
     : "";
@@ -68,8 +69,8 @@ function buildQuoteDetailsSection(data: QuotePDFData, color: string): string {
         <tr style="background:#1C1917;">
           <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;">Description</td>
           <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:center;width:60px;">Qty</td>
-          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:80px;">Unit price</td>
-          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:90px;">Total</td>
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:80px;">Unit price (inc VAT)</td>
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:90px;">Total (inc VAT)</td>
         </tr>
         ${rows}
       </table>
@@ -139,7 +140,7 @@ export function buildQuoteEmailHTML(
           </td>
           <td style="padding:16px;border-bottom:1px solid #E7E5E4;text-align:right;">
             <p style="margin:0 0 4px;font-size:12px;color:#78716C;">Quoted Value <span style="display:inline-block;padding:1px 4px;border-radius:3px;background:#DCFCE7;color:#166534;font-size:10px;font-weight:700;letter-spacing:0.3px;">INC VAT</span></p>
-            <p style="margin:0;font-size:20px;font-weight:700;color:${color};">£${data.totalValue.toLocaleString("en-GB", { minimumFractionDigits: 2 })}</p>
+            <p style="margin:0;font-size:20px;font-weight:700;color:${color};">${formatGbpIncVat(data.totalValue)}</p>
           </td>
         </tr>
         <tr>

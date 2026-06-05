@@ -18,6 +18,7 @@ import {
   partnerEmailPreheaderHtml,
   partnerEmailSplitTitleHtml,
 } from "@/lib/emails/partner-email-layout";
+import { moneyIncVatLabel } from "@/lib/money-display-label";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
 
@@ -96,7 +97,7 @@ function partnerJobEmailSubject(args: {
     const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
     return `Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
   }
-  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
   return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
 }
 
@@ -144,7 +145,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     client: escapeHtml(data.clientName),
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
-    price: escapeHtml(data.priceDisplay),
+    price: escapeHtml(moneyIncVatLabel(data.priceDisplay)),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
     url: escapeHtml(data.reportUrl),
     support: escapeHtml(supportEmail),
@@ -263,7 +264,7 @@ New job booked for you.
 Job #${data.jobReference}
 ${data.jobTitle}
 
-Earnings: ${data.priceDisplay} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
+Earnings: ${moneyIncVatLabel(data.priceDisplay)} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
 
 Client: ${data.clientName}
 Address: ${data.propertyAddress}
@@ -322,7 +323,7 @@ const KIND_HEADLINE: Record<PartnerJobStatusKind, string> = {
   // confirmation_request / booked are handled by their own dedicated builders
   // and never hit this generic status-update layout, but they still need to
   // satisfy the Record type (unused values).
-  confirmation_request: "Please confirm this job",
+  confirmation_request: "Action required",
   booked:               "Job booked",
 };
 
@@ -333,7 +334,8 @@ const KIND_INTRO: Record<PartnerJobStatusKind, string> = {
   resumed:              "This job has been resumed and is active again.",
   completed:            "This job has been marked as complete.",
   rescheduled:          "This job has been moved to a new date.",
-  confirmation_request: "We've allocated this job to you — please accept it.",
+  confirmation_request:
+    "Be quicker than others and secure this job before it gets taken.",
   booked:               "Your job is booked.",
 };
 
@@ -938,14 +940,15 @@ export function buildPartnerJobConfirmationRequestEmail(
     propertyAddress: data.propertyAddress,
   });
 
+  const postcode = extractUkPostcode(data.propertyAddress) ?? "—";
+
   const safe = {
     name:    escapeHtml(data.partnerFirstName || "there"),
     ref:     escapeHtml(data.jobReference),
     title:   escapeHtml(data.jobTitle),
-    client:  escapeHtml(data.clientName),
-    address: escapeHtml(data.propertyAddress),
+    postcode: escapeHtml(postcode),
     scope:   escapeHtml(data.scope),
-    price:   escapeHtml(data.priceDisplay),
+    price:   escapeHtml(moneyIncVatLabel(data.priceDisplay)),
     accept:  escapeHtml(data.acceptUrl),
     hours:   String(responseHours),
     support: escapeHtml(supportEmail),
@@ -963,18 +966,20 @@ ${partnerEmailHeadBlock()}
 ${partnerEmailBaseStyles()}
 </head>
 ${partnerEmailBodyOpen()}
-${partnerEmailPreheaderHtml(`Please confirm job ${safe.ref} within ${safe.hours} hours.`)}
+${partnerEmailPreheaderHtml("Be quicker than others and secure this job before it gets taken.")}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
     <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
       <tr><td bgcolor="#0B5FFF" style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
-        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required — respond within ${safe.hours} hours</p>
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required</p>
       </td></tr>
 ${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        ${partnerEmailSplitTitleHtml(safe.name, "Please confirm this job")}
-        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the job below to you. Tap <strong style="color:#0A0A1F;">Accept job</strong> within ${safe.hours} hours so we can confirm the booking with the customer.</p>
+        ${partnerEmailGreetingH1Html(safe.name)}
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">Be quicker than others and secure this job before it gets taken.</p>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the live job below for you. Tap <strong style="color:#0A0A1F;">Accept Job Now</strong> so we can immediately confirm the booking with the customer.</p>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">The faster you accept, the higher your chances of securing the work.</p>
       </td></tr>
       <tr><td style="padding:0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
@@ -990,12 +995,8 @@ ${partnerEmailLogoHeaderRow()}
             <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
             <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
             <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Client</p>
-              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.client}</p>
-            </div>
-            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Address</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</p>
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Area</p>
+              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.postcode}</p>
             </div>
             <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
               <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Scope of work</p>
@@ -1006,7 +1007,7 @@ ${partnerEmailLogoHeaderRow()}
       </td></tr>
       ${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
-        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">✓ Accept job</a>
+        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
         <p style="margin:0 0 8px 0; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
@@ -1021,25 +1022,26 @@ ${partnerEmailLogoHeaderRow()}
 </body></html>`;
 
   const text =
-`ACTION REQUIRED — RESPOND WITHIN ${responseHours} HOURS
+`⏱ ACTION REQUIRED
 
 Hi ${data.partnerFirstName || "there"},
 
-Please confirm this job.
+Be quicker than others and secure this job before it gets taken.
 
-We've allocated this job to you. Please confirm within ${responseHours} hours:
+We've allocated the live job below for you. Tap "Accept Job Now" so we can immediately confirm the booking with the customer.
+
+The faster you accept, the higher your chances of securing the work.
 
 Job #${data.jobReference} — ${data.jobTitle}
-Earnings: ${data.priceDisplay}
-Client:   ${data.clientName}
-Address:  ${data.propertyAddress}
+Earnings: ${moneyIncVatLabel(data.priceDisplay)}
+Area:     ${postcode}
 
 Scope:
 ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
-Accept this job: ${data.acceptUrl}
+Accept Job Now: ${data.acceptUrl}
 
 Can't take it? Reply to this email and we'll reallocate.
 Otherwise: ${supportEmail} / ${supportPhone}

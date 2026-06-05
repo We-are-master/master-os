@@ -1,4 +1,5 @@
 import React from "react";
+import { formatGbpIncVat } from "@/lib/money-display-label";
 import {
   Document,
   Page,
@@ -425,15 +426,15 @@ export function QuotePDF({
           <View style={styles.tableHeader}>
             <Text style={[styles.tableHeaderText, styles.colDesc]}>Description</Text>
             <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
-            <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
-            <Text style={[styles.tableHeaderText, styles.colTotal]}>Total</Text>
+            <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price (inc VAT)</Text>
+            <Text style={[styles.tableHeaderText, styles.colTotal]}>Total (inc VAT)</Text>
           </View>
           {defaultItems.map((item, i) => (
             <View key={i} style={i % 2 === 1 ? styles.tableRowAlt : styles.tableRow}>
               <Text style={[styles.cellText, styles.colDesc]}>{item.description}</Text>
               <Text style={[styles.cellText, styles.colQty]}>{item.quantity}</Text>
-              <Text style={[styles.cellText, styles.colUnit]}>{formatCurrency(item.unitPrice)}</Text>
-              <Text style={[styles.cellTextBold, styles.colTotal]}>{formatCurrency(item.total)}</Text>
+              <Text style={[styles.cellText, styles.colUnit]}>{formatGbpIncVat(item.unitPrice)}</Text>
+              <Text style={[styles.cellTextBold, styles.colTotal]}>{formatGbpIncVat(item.total)}</Text>
             </View>
           ))}
         </View>
@@ -451,7 +452,7 @@ export function QuotePDF({
             </View>
             <View style={[styles.grandTotalRow, { borderTopColor: color }]}>
               <Text style={styles.grandTotalLabel}>Total (Inc VAT)</Text>
-              <Text style={[styles.grandTotalValue, { color }]}>{formatCurrency(grandTotal)}</Text>
+              <Text style={[styles.grandTotalValue, { color }]}>{formatGbpIncVat(grandTotal)}</Text>
             </View>
           </View>
         </View>

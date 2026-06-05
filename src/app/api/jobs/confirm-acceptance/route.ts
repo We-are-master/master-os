@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyPartnerJobAcceptToken } from "@/lib/quote-response-token";
+import { partnerMissingRequiredDocs } from "@/lib/partner-docs-gate";
 import {
+  claimAutoAssignJob,
   finalizeAutoAssignWinner,
   loadJobForPartnerAcceptance,
   loadPartnerForAcceptance,
   partnerDisplayName,
+  partnerNameForJobRow,
   sendBookedSideConvReply,
 } from "@/lib/job-partner-acceptance";
 
@@ -37,6 +40,18 @@ export async function POST(req: NextRequest) {
   const { jobId, partnerId } = claims;
   const supabase = createServiceClient();
 
+  const missing = await partnerMissingRequiredDocs(supabase, partnerId);
+  if (missing.length) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Upload your required documents first: ${missing.join(", ")}.`,
+        code: "docs_required",
+      },
+      { status: 403 },
+    );
+  }
+
   const job = await loadJobForPartnerAcceptance(supabase, jobId);
   if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
 
@@ -44,7 +59,7 @@ export async function POST(req: NextRequest) {
   if (!partner) return NextResponse.json({ ok: false, error: "partner_not_found" }, { status: 404 });
 
   const partnerLabel = partnerDisplayName(partner);
-  const partnerName = partner.contact_name?.trim() || partner.company_name?.trim() || null;
+  const partnerName = partnerNameForJobRow(partner);
 
   const isSpecific = job.partner_id === partnerId;
   const isAutoClaimable =
@@ -100,38 +115,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const now = new Date().toISOString();
-  const { data: claimRows, error: claimErr } = await supabase
-    .from("jobs")
-    .update({
-      partner_id: partnerId,
-      partner_name: partnerName,
-      status: "scheduled",
-      partner_confirmed_at: now,
-    })
-    .eq("id", jobId)
-    .eq("status", "auto_assigning")
-    .is("partner_id", null)
-    .select("id");
-
-  if (claimErr) {
-    console.error("[confirm-acceptance] claim update failed:", claimErr);
-    return NextResponse.json({ ok: false, error: "claim_failed" }, { status: 500 });
-  }
-  if (!claimRows || claimRows.length === 0) {
-    const { data: fresh } = await supabase
-      .from("jobs")
-      .select("status, partner_id")
-      .eq("id", jobId)
-      .maybeSingle();
-    const taken = fresh && (fresh as { partner_id: string | null }).partner_id;
+  const claim = await claimAutoAssignJob({ supabase, jobId, partnerId, partnerName });
+  if (!claim.claimed) {
     return NextResponse.json(
       {
         ok: false,
         error: "job_taken",
-        message: taken
-          ? "This job has already been taken by another partner. Thanks for being quick!"
-          : "This job is no longer available.",
+        message:
+          claim.reason === "job_taken"
+            ? "This job has already been taken by another partner. Thanks for being quick!"
+            : "This job is no longer available.",
       },
       { status: 409 },
     );
