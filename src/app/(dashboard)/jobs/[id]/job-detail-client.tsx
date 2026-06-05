@@ -7759,7 +7759,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             {/* PRIMARY PARTNER */}
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
-              <div className="flex items-center justify-between gap-2">
+              <div className="space-y-2">
                 <div className="flex min-w-0 items-center gap-2">
                   {job.partner_id?.trim() ? (
                     <Avatar
@@ -7796,7 +7796,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
                   )}
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {job.partner_id?.trim() ? (
                     <button
                       type="button"
