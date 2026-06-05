@@ -18,3 +18,11 @@ export function formatGbpIncVat(value: number): string {
   });
   return moneyIncVatLabel(`£${formatted}`);
 }
+
+/** Splits a display amount from the trailing "inc VAT" suffix (if present). */
+export function splitMoneyIncVatParts(amount: string): { core: string; hasIncVat: boolean } {
+  const label = moneyIncVatLabel(amount);
+  const match = label.match(/^(.+?)\s+inc\s+vat$/i);
+  if (match) return { core: match[1].trim(), hasIncVat: true };
+  return { core: label, hasIncVat: false };
+}

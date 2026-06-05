@@ -1,10 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import {
-  closeSideConversation,
-  createSideConversation,
-  replyToSideConversation,
-} from "@/lib/zendesk";
+import { closeSideConversation, createSideConversation } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
@@ -29,6 +25,8 @@ export type JobForPartnerAcceptance = {
   external_ref: string | null;
   zendesk_side_conversation_id: string | null;
   partner_booked_email_sent_at?: string | null;
+  auto_assign_invited_partner_ids?: string[] | null;
+  auto_assign_expires_at?: string | null;
 };
 
 export type PartnerForAcceptance = {
@@ -41,12 +39,13 @@ export type PartnerForAcceptance = {
 
 export type BookedEmailResult = {
   sent: boolean;
+  sideConversationId?: string | null;
   skipped?: string;
   error?: string;
 };
 
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
 
 /** Atomically claim the one-time Job booked email send for this job. */
 async function tryClaimPartnerBookedEmailSend(
@@ -74,13 +73,13 @@ async function clearPartnerBookedEmailClaim(supabase: SupabaseClient, jobId: str
     .eq("id", jobId);
 }
 
-async function resolveBookedSideConversationId(
+/** Close every offer-thread side conversation before opening the Job booked thread. */
+async function closeJobOfferSideConversations(
   supabase: SupabaseClient,
   jobId: string,
-  partnerId: string,
-  fallback: string | null,
-): Promise<string | null> {
-  if (fallback) return fallback;
+  ticketId: string,
+): Promise<void> {
+  const sideConversationIds = new Set<string>();
 
   const { data: jobRow } = await supabase
     .from("jobs")
@@ -89,16 +88,25 @@ async function resolveBookedSideConversationId(
     .maybeSingle();
   const onJob = (jobRow as { zendesk_side_conversation_id: string | null } | null)
     ?.zendesk_side_conversation_id;
-  if (onJob) return onJob;
+  if (onJob) sideConversationIds.add(onJob);
 
-  const { data: inviteRow } = await supabase
+  const { data: invites } = await supabase
     .from("job_partner_invites")
     .select("zendesk_side_conversation_id")
-    .eq("job_id", jobId)
-    .eq("partner_id", partnerId)
-    .maybeSingle();
-  return (inviteRow as { zendesk_side_conversation_id: string | null } | null)
-    ?.zendesk_side_conversation_id ?? null;
+    .eq("job_id", jobId);
+  for (const invite of invites ?? []) {
+    const id = (invite as { zendesk_side_conversation_id: string | null })
+      .zendesk_side_conversation_id;
+    if (id) sideConversationIds.add(id);
+  }
+
+  await Promise.all(
+    [...sideConversationIds].map((sideConversationId) =>
+      closeSideConversation({ ticketId, sideConversationId }).catch((err) =>
+        console.error("[booked reply] close offer side conv failed:", err),
+      ),
+    ),
+  );
 }
 
 export async function loadJobForPartnerAcceptance(
@@ -133,6 +141,22 @@ export function partnerNameForJobRow(partner: PartnerForAcceptance): string | nu
 export type AutoAssignClaimResult =
   | { claimed: true; reference: string }
   | { claimed: false; reason: "job_taken" | "not_available" | "error"; error?: string };
+
+export type AutoAssignAcceptResult =
+  | {
+      ok: true;
+      jobReference: string;
+      partnerLabel: string;
+      alreadyConfirmed: boolean;
+      claimed: boolean;
+      bookedEmail: BookedEmailResult;
+    }
+  | {
+      ok: false;
+      error: "job_taken" | "not_available" | "partner_mismatch";
+      message: string;
+      jobReference?: string;
+    };
 
 /**
  * Atomic first-to-accept claim for auto-assigning jobs.
@@ -175,6 +199,144 @@ export async function claimAutoAssignJob(args: {
     return { claimed: false, reason: taken ? "job_taken" : "not_available" };
   }
   return { claimed: true, reference: (data[0] as { reference: string }).reference };
+}
+
+/**
+ * Single auto-assign accept path for email CTA and trade portal.
+ * Claim → finalize (Zendesk booked email, invite bookkeeping, ticket sync).
+ * Idempotent when the job is already scheduled for this partner (e.g. stale portal claim).
+ */
+export async function processAutoAssignJobAccept(args: {
+  supabase: SupabaseClient;
+  jobId: string;
+  partnerId: string;
+  partnerName?: string | null;
+}): Promise<AutoAssignAcceptResult> {
+  const job = await loadJobForPartnerAcceptance(args.supabase, args.jobId);
+  if (!job) {
+    return { ok: false, error: "not_available", message: "This job is no longer available." };
+  }
+
+  const partner = await loadPartnerForAcceptance(args.supabase, args.partnerId);
+  if (!partner) {
+    return { ok: false, error: "not_available", message: "This job is no longer available." };
+  }
+
+  const partnerLabel = partnerDisplayName(partner);
+  const partnerName = args.partnerName ?? partnerNameForJobRow(partner);
+
+  const isAutoClaimable =
+    job.status === "auto_assigning" &&
+    job.partner_id === null &&
+    (job.auto_assign_invited_partner_ids ?? []).includes(args.partnerId);
+
+  const isAlreadyWinner =
+    job.status === "scheduled" && job.partner_id === args.partnerId;
+
+  if (isAlreadyWinner) {
+    if (job.auto_assign_invited_partner_ids?.length || job.auto_assign_expires_at) {
+      await args.supabase
+        .from("jobs")
+        .update({
+          auto_assign_invited_partner_ids: null,
+          auto_assign_expires_at: null,
+          partner_confirmed_at: job.partner_confirmed_at ?? new Date().toISOString(),
+          ...(partnerName ? { partner_name: partnerName } : {}),
+        })
+        .eq("id", args.jobId)
+        .eq("partner_id", args.partnerId);
+    }
+
+    if (job.partner_booked_email_sent_at) {
+      return {
+        ok: true,
+        jobReference: job.reference,
+        partnerLabel,
+        alreadyConfirmed: true,
+        claimed: false,
+        bookedEmail: { sent: false, skipped: "already_sent" },
+      };
+    }
+
+    const freshJob = (await loadJobForPartnerAcceptance(args.supabase, args.jobId)) ?? job;
+    const { bookedEmail } = await finalizeAutoAssignWinner({
+      supabase: args.supabase,
+      jobId: args.jobId,
+      partnerId: args.partnerId,
+      job: freshJob,
+      partner,
+      partnerName,
+    });
+
+    return {
+      ok: true,
+      jobReference: job.reference,
+      partnerLabel,
+      alreadyConfirmed: false,
+      claimed: false,
+      bookedEmail,
+    };
+  }
+
+  if (!isAutoClaimable) {
+    if (job.status === "scheduled" || job.partner_id) {
+      return {
+        ok: false,
+        error: "job_taken",
+        message:
+          "This job has already been taken by another partner. Thanks for being quick!",
+        jobReference: job.reference,
+      };
+    }
+    return {
+      ok: false,
+      error: "partner_mismatch",
+      message: "This job is no longer assigned to you.",
+      jobReference: job.reference,
+    };
+  }
+
+  const claim = await claimAutoAssignJob({
+    supabase: args.supabase,
+    jobId: args.jobId,
+    partnerId: args.partnerId,
+    partnerName,
+  });
+
+  if (!claim.claimed) {
+    const fresh = await loadJobForPartnerAcceptance(args.supabase, args.jobId);
+    if (fresh?.status === "scheduled" && fresh.partner_id === args.partnerId) {
+      return processAutoAssignJobAccept(args);
+    }
+    return {
+      ok: false,
+      error: claim.reason === "job_taken" ? "job_taken" : "not_available",
+      message:
+        claim.reason === "job_taken"
+          ? "This job has already been taken by another partner. Thanks for being quick!"
+          : "This job is no longer available.",
+      jobReference: job.reference,
+    };
+  }
+
+  const freshJob = (await loadJobForPartnerAcceptance(args.supabase, args.jobId)) ?? job;
+  const { bookedEmail } = await finalizeAutoAssignWinner({
+    supabase: args.supabase,
+    jobId: args.jobId,
+    partnerId: args.partnerId,
+    job: freshJob,
+    partner,
+    partnerName,
+  });
+
+  return {
+    ok: true,
+    jobReference: freshJob.reference,
+    partnerLabel,
+    alreadyConfirmed: false,
+    claimed: true,
+    bookedEmail,
+  };
 }
 
 /** After auto-assign winner is set on the job — invite bookkeeping + Job booked side conv. */
@@ -233,27 +395,6 @@ export async function finalizeAutoAssignWinner(args: {
       .update({ status: "lost", decided_at: now })
       .eq("job_id", args.jobId)
       .neq("partner_id", args.partnerId);
-
-    const zendeskTicketId =
-      args.job.external_source === "zendesk" ? args.job.external_ref : null;
-    if (zendeskTicketId) {
-      for (const loser of losers) {
-        if (!loser.zendesk_side_conversation_id) continue;
-        void closeSideConversation({
-          ticketId: zendeskTicketId,
-          sideConversationId: loser.zendesk_side_conversation_id,
-        }).catch((err) => console.error("[finalizeAutoAssignWinner] close loser side conv failed:", err));
-      }
-    }
-  }
-
-  let sideConvId = args.job.zendesk_side_conversation_id ?? winnerSideConvId;
-  if (winnerSideConvId && !args.job.zendesk_side_conversation_id) {
-    await supabase
-      .from("jobs")
-      .update({ zendesk_side_conversation_id: winnerSideConvId })
-      .eq("id", args.jobId);
-    sideConvId = winnerSideConvId;
   }
 
   const bookedEmail = await sendBookedSideConvReply({
@@ -262,7 +403,6 @@ export async function finalizeAutoAssignWinner(args: {
       ...args.job,
       status: "scheduled",
       partner_id: args.partnerId,
-      zendesk_side_conversation_id: sideConvId,
     },
     partner: args.partner,
     partnerName,
@@ -273,7 +413,10 @@ export async function finalizeAutoAssignWinner(args: {
     syncJobZendeskFormFields(args.jobId, supabase),
   ]).catch((err) => console.error("[finalizeAutoAssignWinner] zendesk sync failed:", err));
 
-  return { winnerSideConvId: sideConvId, bookedEmail };
+  return {
+    winnerSideConvId: bookedEmail.sideConversationId ?? winnerSideConvId,
+    bookedEmail,
+  };
 }
 
 export async function sendBookedSideConvReply(args: {
@@ -323,13 +466,6 @@ export async function sendBookedSideConvReply(args: {
     reportUrl,
   });
 
-  const sideConversationId = await resolveBookedSideConversationId(
-    supabase,
-    job.id,
-    partner.id,
-    job.zendesk_side_conversation_id,
-  );
-
   const persistSuccess = async (sideConvId: string | null) => {
     const patch: Record<string, unknown> = {};
     if (sideConvId) patch.zendesk_side_conversation_id = sideConvId;
@@ -340,22 +476,7 @@ export async function sendBookedSideConvReply(args: {
   };
 
   try {
-    if (sideConversationId) {
-      const r = await replyToSideConversation({
-        ticketId,
-        sideConversationId,
-        toEmail: partner.email,
-        toName: partner.contact_name || partner.company_name || undefined,
-        toUserId: partner.zendesk_user_id ?? undefined,
-        htmlBody: email.html,
-        bodyText: email.text,
-      });
-      if (r.ok) {
-        await persistSuccess(sideConversationId);
-        return { sent: true };
-      }
-      console.error("[booked reply] reply failed, trying new side conv:", r.error);
-    }
+    await closeJobOfferSideConversations(supabase, job.id, ticketId);
 
     const created = await createSideConversation({
       ticketId,
@@ -368,7 +489,7 @@ export async function sendBookedSideConvReply(args: {
     });
     if (created.ok && created.id) {
       await persistSuccess(created.id);
-      return { sent: true };
+      return { sent: true, sideConversationId: created.id };
     }
 
     await clearPartnerBookedEmailClaim(supabase, job.id);

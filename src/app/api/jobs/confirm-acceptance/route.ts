@@ -3,12 +3,11 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyPartnerJobAcceptToken } from "@/lib/quote-response-token";
 import { partnerMissingRequiredDocs } from "@/lib/partner-docs-gate";
 import {
-  claimAutoAssignJob,
-  finalizeAutoAssignWinner,
   loadJobForPartnerAcceptance,
   loadPartnerForAcceptance,
   partnerDisplayName,
   partnerNameForJobRow,
+  processAutoAssignJobAccept,
   sendBookedSideConvReply,
 } from "@/lib/job-partner-acceptance";
 
@@ -115,35 +114,37 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const claim = await claimAutoAssignJob({ supabase, jobId, partnerId, partnerName });
-  if (!claim.claimed) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "job_taken",
-        message:
-          claim.reason === "job_taken"
-            ? "This job has already been taken by another partner. Thanks for being quick!"
-            : "This job is no longer available.",
-      },
-      { status: 409 },
-    );
-  }
-
-  await finalizeAutoAssignWinner({
+  const result = await processAutoAssignJobAccept({
     supabase,
     jobId,
     partnerId,
-    job,
-    partner,
     partnerName,
   });
 
+  if (!result.ok) {
+    const status =
+      result.error === "job_taken"
+        ? 409
+        : result.error === "partner_mismatch"
+          ? 410
+          : 409;
+    return NextResponse.json(
+      {
+        ok: false,
+        error: result.error,
+        jobReference: result.jobReference,
+        message: result.message,
+      },
+      { status },
+    );
+  }
+
   return NextResponse.json({
     ok: true,
-    alreadyConfirmed: false,
-    jobReference: job.reference,
-    partnerLabel,
-    claimed: true,
+    alreadyConfirmed: result.alreadyConfirmed,
+    jobReference: result.jobReference,
+    partnerLabel: result.partnerLabel,
+    claimed: result.claimed,
+    bookedEmail: result.bookedEmail,
   });
 }

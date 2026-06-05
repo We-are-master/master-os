@@ -4,12 +4,9 @@ import { isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { partnerMissingRequiredDocs } from "@/lib/partner-docs-gate";
 import {
-  claimAutoAssignJob,
-  finalizeAutoAssignWinner,
-  loadJobForPartnerAcceptance,
   loadPartnerForAcceptance,
-  partnerDisplayName,
   partnerNameForJobRow,
+  processAutoAssignJobAccept,
 } from "@/lib/job-partner-acceptance";
 
 export const dynamic = "force-dynamic";
@@ -71,11 +68,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const job = await loadJobForPartnerAcceptance(supabase, jobId);
-  if (!job) {
-    return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
-  }
-
   const partner = await loadPartnerForAcceptance(supabase, partnerId);
   if (!partner) {
     return NextResponse.json({ ok: false, error: "partner_not_found" }, { status: 404 });
@@ -83,54 +75,36 @@ export async function POST(req: NextRequest) {
 
   const partnerName = partnerNameForJobRow(partner);
 
-  const claim = await claimAutoAssignJob({
+  const result = await processAutoAssignJobAccept({
     supabase,
     jobId,
     partnerId,
     partnerName,
   });
 
-  if (!claim.claimed) {
-    if (claim.reason === "job_taken") {
-      return NextResponse.json(
-        {
-          ok: false,
-          accepted: false,
-          error: "job_taken",
-          message: "This job has already been taken by another partner.",
-        },
-        { status: 409 },
-      );
-    }
+  if (!result.ok) {
+    const status = result.error === "partner_mismatch" ? 410 : 409;
     return NextResponse.json(
       {
         ok: false,
         accepted: false,
-        error: claim.reason,
-        message: "This job is no longer available.",
+        error: result.error,
+        message: result.message,
+        jobReference: result.jobReference,
       },
-      { status: 409 },
+      { status },
     );
   }
-
-  const freshJob = (await loadJobForPartnerAcceptance(supabase, jobId)) ?? job;
-
-  const { bookedEmail } = await finalizeAutoAssignWinner({
-    supabase,
-    jobId,
-    partnerId,
-    job: freshJob,
-    partner,
-    partnerName,
-  });
 
   return NextResponse.json({
     ok: true,
     accepted: true,
-    jobReference: freshJob.reference,
-    partnerLabel: partnerDisplayName(partner),
+    jobReference: result.jobReference,
+    partnerLabel: result.partnerLabel,
     partnerId,
     partnerName,
-    bookedEmail,
+    alreadyConfirmed: result.alreadyConfirmed,
+    claimed: result.claimed,
+    bookedEmail: result.bookedEmail,
   });
 }
