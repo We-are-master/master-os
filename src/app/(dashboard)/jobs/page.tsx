@@ -2011,15 +2011,15 @@ function JobsPageContent() {
       render: (item) => {
         if (status === "action_required") {
           const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
-          const label = onHoldBadge?.label ?? "Unassigned";
-          const variant = onHoldBadge?.variant ?? JOB_STATUS_BADGE_VARIANT.unassigned;
+          const st = effectiveJobStatusForDisplay(item);
+          const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
             <div className="inline-flex flex-col items-start gap-0.5">
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={variant} dot>{label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
               </div>
-              {item.status === "on_hold" ? (
+              {st === "on_hold" ? (
                 <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
               ) : null}
             </div>
@@ -2694,7 +2694,7 @@ function JobsPageContent() {
                     const onHoldKanbanBadge = jobOnHoldDisplayBadge(j);
                     const statusCaption =
                       status === "action_required"
-                        ? onHoldKanbanBadge?.label ?? "Unassigned"
+                        ? onHoldKanbanBadge?.label ?? (statusConfig[disp]?.label ?? disp)
                         : status === "closed"
                           ? jobsManagementClosedBucketLabel(jobsManagementClosedBucket(j))
                           : onHoldKanbanBadge?.label ?? ((statusConfig[disp]?.label ?? disp) as string);
