@@ -386,6 +386,56 @@ export async function getTicketCustomFieldValue(
   }
 }
 
+export type ZendeskTicketSnapshot = {
+  subject: string | null;
+  /** Custom field id → string value (non-empty only). */
+  fields: Record<number, string>;
+};
+
+/** Load ticket subject + custom fields in one GET (job ingest / repair). */
+export async function getZendeskTicketSnapshot(
+  ticketId: string | number,
+): Promise<{ ok: boolean; ticket?: ZendeskTicketSnapshot; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authHeader() },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      ticket?: {
+        subject?: string | null;
+        custom_fields?: Array<{ id?: number; value?: unknown }>;
+      };
+    };
+    const raw = json.ticket;
+    const fields: Record<number, string> = {};
+    for (const f of raw?.custom_fields ?? []) {
+      const id = f.id;
+      if (id == null || !Number.isFinite(id)) continue;
+      const rawVal = f.value;
+      if (rawVal == null || rawVal === "" || rawVal === false) continue;
+      fields[id] = typeof rawVal === "string" ? rawVal.trim() : String(rawVal).trim();
+    }
+    return {
+      ok: true,
+      status: res.status,
+      ticket: {
+        subject: raw?.subject?.trim() || null,
+        fields,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
 /**
  * Reassign an existing ticket's requester to `email` (and optionally file it
  * under a Zendesk organization). Updating the requester on an existing ticket
@@ -491,7 +541,7 @@ export const ZENDESK_COMPLAINT_SOLUTION_FIELD_ID = Number(
 
 /** Tagger: service_catalog.id (UUID) — same field as ZENDESK_TYPE_OF_WORK_FIELD_ID in catalog sync. */
 export const ZENDESK_TYPE_OF_WORK_FIELD_ID = Number(
-  process.env.ZENDESK_TYPE_OF_WORK_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_TYPE_OF_WORK_FIELD_ID?.trim() || "5687087915551",
 );
 
 /** Tagger: `job_type_fixed` / `job_type_hourly` (Zendesk Job Type field). 0 = disabled. */
@@ -506,7 +556,7 @@ export const ZENDESK_ARRIVAL_WINDOW_FIELD_ID = Number(
 
 /** Checkbox or dropdown: job created with auto-assign (true/false). 0 = disabled. */
 export const ZENDESK_AUTO_ASSIGN_FIELD_ID = Number(
-  process.env.ZENDESK_AUTO_ASSIGN_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_AUTO_ASSIGN_FIELD_ID?.trim() || "5811578972703",
 );
 
 /**
@@ -518,16 +568,16 @@ export const ZENDESK_RATE_TYPE_FIELD_ID = Number(
 );
 
 export const ZENDESK_CLIENT_EMAIL_FIELD_ID = Number(
-  process.env.ZENDESK_CLIENT_EMAIL_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_CLIENT_EMAIL_FIELD_ID?.trim() || "5811705681183",
 );
 
 /** Text: end-client name on the job row (not account company name). 0 = disabled. */
 export const ZENDESK_CLIENT_NAME_FIELD_ID = Number(
-  process.env.ZENDESK_CLIENT_NAME_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_CLIENT_NAME_FIELD_ID?.trim() || "5693105918623",
 );
 
 export const ZENDESK_PROPERTY_ADDRESS_FIELD_ID = Number(
-  process.env.ZENDESK_PROPERTY_ADDRESS_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_PROPERTY_ADDRESS_FIELD_ID?.trim() || "5693026186527",
 );
 
 export const ZENDESK_CLIENT_PHONE_FIELD_ID = Number(

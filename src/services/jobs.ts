@@ -29,6 +29,7 @@ import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
   jobIsBookedPipelineWithoutPartner,
+  partnerAssignStatusPatch,
 } from "@/lib/job-partner-assign";
 import { resolveJobGeocode } from "@/lib/job-geocode-client";
 import { officePartnerTimerResetPatch } from "@/lib/partner-live-timer";
@@ -1029,10 +1030,15 @@ export async function updateJob(
       Object.assign(effectivePatch, officePartnerTimerResetPatch());
     }
     if (jobHasPartnerSet(mergedPartner as Job)) {
-      const tentativeStatus =
-        effectivePatch.status !== undefined ? (effectivePatch.status as Job["status"]) : beforeGates.status;
-      if (tentativeStatus === "unassigned") {
-        effectivePatch.status = "scheduled";
+      const hadPartnerBefore = partnerRow ? jobHasPartnerSet(partnerRow as Job) : false;
+      if (!hadPartnerBefore) {
+        Object.assign(effectivePatch, partnerAssignStatusPatch(beforeGates.status as Job["status"]));
+      } else {
+        const tentativeStatus =
+          effectivePatch.status !== undefined ? (effectivePatch.status as Job["status"]) : beforeGates.status;
+        if (tentativeStatus === "unassigned") {
+          effectivePatch.status = "scheduled";
+        }
       }
     }
   }

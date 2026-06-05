@@ -29,7 +29,13 @@ import {
 } from "@/lib/zendesk";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
+import {
+  buildJobConfirmationHtml,
+  formatJobConfirmationArrivalWindow,
+  formatJobConfirmationLongDate,
+  resolveCustomerGreetingName,
+  splitPropertyAddressAndPostcode,
+} from "@/lib/zendesk-job-confirmation";
 import {
   buildJobCancelledHtml,
   buildJobCompletedHtml,
@@ -46,6 +52,26 @@ type PartnerEmbed = {
   email?: string | null;
   zendesk_user_id?: number | string | null;
 };
+
+const CLIENT_CONFIRMATION_STATUSES = new Set(["scheduled", "late"]);
+
+async function resolveJobTypeOfWorkLabel(
+  supabase: SupabaseClient,
+  catalogServiceId: string | null | undefined,
+  title: string | null | undefined,
+): Promise<string> {
+  const id = catalogServiceId?.trim();
+  if (id) {
+    const { data } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", id)
+      .maybeSingle();
+    const name = (data as { name?: string | null } | null)?.name?.trim();
+    if (name) return name;
+  }
+  return title?.trim() || "Maintenance";
+}
 
 function partnerFromJobEmbed(job: unknown): {
   email: string;
@@ -71,14 +97,15 @@ function partnerFromJobEmbed(job: unknown): {
 export async function dispatchJobCreatedZendesk(args: {
   jobId: string;
   client?: SupabaseClient;
-}): Promise<{ ok: boolean; mainPosted?: boolean; sideConvId?: string | null; error?: string }> {
+}): Promise<{ ok: boolean; mainPosted?: boolean; sideConvId?: string | null; skipped?: string; error?: string }> {
   const supabase = args.client ?? createServiceClient();
 
   const { data: job, error } = await supabase
     .from("jobs")
     .select(`
-      id, reference, title, property_address, scope,
-      scheduled_date, scheduled_start_at, total_value,
+      id, reference, title, property_address, scope, status,
+      scheduled_date, scheduled_start_at, scheduled_end_at, total_value,
+      catalog_service_id,
       external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
@@ -96,14 +123,19 @@ export async function dispatchJobCreatedZendesk(args: {
   if (!ticketId) return { ok: true };
   if (!isZendeskConfigured()) return { ok: true };
 
-  // Idempotent claim. Two triggers fire on job creation — the /api/jobs call
-  // and the AFTER INSERT DB trigger (via /api/internal/zendesk/sync-status). A
-  // check-then-set would let both through (both read null) and post the partner
-  // "Job confirmed" side conversation twice. Claim the slot atomically so only
-  // the first caller proceeds; the loser sees 0 rows and bails.
   if ((job as { job_creation_notice_sent_at?: string | null }).job_creation_notice_sent_at) {
     return { ok: true };
   }
+
+  const jobStatus = String((job as { status?: string | null }).status ?? "");
+  const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
+  if (!CLIENT_CONFIRMATION_STATUSES.has(jobStatus) || !dateStr) {
+    return { ok: true, skipped: "not_scheduled" };
+  }
+
+  // Idempotent claim — only after we know the job is booked. Unassigned jobs
+  // created in the OS skip here without claiming so a later transition to
+  // scheduled can still send the customer confirmation.
   const { data: claimed } = await supabase
     .from("jobs")
     .update({ job_creation_notice_sent_at: new Date().toISOString() })
@@ -111,7 +143,7 @@ export async function dispatchJobCreatedZendesk(args: {
     .is("job_creation_notice_sent_at", null)
     .select("id")
     .maybeSingle();
-  if (!claimed) return { ok: true }; // another trigger already claimed → skip
+  if (!claimed) return { ok: true };
 
   type ClientRel = { name?: string | null };
   const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
@@ -131,25 +163,40 @@ export async function dispatchJobCreatedZendesk(args: {
   const clientEmail = billing.documentEmail?.trim() ?? "";
   const clientAccountId = billing.sourceAccountId?.trim() ?? "";
 
-  const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
-  const hour = job.scheduled_start_at
-    ? new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Europe/London",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }).format(new Date(String(job.scheduled_start_at)))
-    : "";
+  let organizationName: string | null = null;
+  if (clientAccountId) {
+    const { data: acct } = await supabase
+      .from("accounts")
+      .select("company_name, contact_name")
+      .eq("id", clientAccountId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    const row = acct as { company_name?: string | null; contact_name?: string | null } | null;
+    organizationName = row?.company_name?.trim() || row?.contact_name?.trim() || null;
+  }
+
+  const greetingName = resolveCustomerGreetingName(organizationName, clientName);
+  const { propertyAddress, propertyPostcode } = splitPropertyAddressAndPostcode(
+    String(job.property_address ?? ""),
+  );
+  const typeOfWork = await resolveJobTypeOfWorkLabel(
+    supabase,
+    (job as { catalog_service_id?: string | null }).catalog_service_id,
+    String(job.title ?? ""),
+  );
 
   const html = buildJobConfirmationHtml({
-    customerName: clientName,
-    reference: String(job.reference ?? ""),
-    title: String(job.title ?? ""),
-    propertyAddress: String(job.property_address ?? ""),
-    scope: (job.scope as string | null) ?? null,
-    scheduledDate: dateStr,
-    scheduledHour: hour,
-    totalGbp: Number(job.total_value ?? 0),
+    greetingName,
+    jobReference: String(job.reference ?? ""),
+    jobTitle: String(job.title ?? "Maintenance job"),
+    jobDate: formatJobConfirmationLongDate(dateStr),
+    arrivalWindow: formatJobConfirmationArrivalWindow({
+      scheduled_start_at: job.scheduled_start_at,
+      scheduled_end_at: (job as { scheduled_end_at?: string | null }).scheduled_end_at,
+    }),
+    propertyAddress,
+    propertyPostcode,
+    typeOfWork,
   });
 
   // Make the booking confirmation reach the CUSTOMER on this ticket. Jobs
@@ -237,12 +284,20 @@ export async function dispatchJobCreatedZendesk(args: {
         console.error("[zendesk-lifecycle] short link upsert for report failed:", err);
       }
       const reportUrl = `${base}${reportShortPath}`;
+      const scheduledHour = job.scheduled_start_at
+        ? new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Europe/London",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }).format(new Date(String(job.scheduled_start_at)))
+        : "";
 
       const sideConvBody = buildPartnerJobConfirmedSideConvBody({
         reference: String(job.reference ?? ""),
         title: String(job.title ?? ""),
         scheduledDate: dateStr,
-        scheduledHour: hour,
+        scheduledHour,
         propertyAddress: String(job.property_address ?? ""),
         scope: (job.scope as string | null) ?? null,
         reportUrl,

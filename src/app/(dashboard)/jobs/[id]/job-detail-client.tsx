@@ -188,6 +188,7 @@ import {
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
+  partnerAssignStatusPatch,
 } from "@/lib/job-partner-assign";
 import {
   computePartnerLiveTimerActiveMs,
@@ -1151,6 +1152,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [selectedPartnerId, setSelectedPartnerId] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
   const [signingOffPartner, setSigningOffPartner] = useState(false);
+  const [dispatchingAutoAssign, setDispatchingAutoAssign] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
   const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
@@ -2597,6 +2599,46 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setSigningOffPartner(false);
     }
   }, [job?.id, job?.partner_id, job?.status, handleJobUpdate]);
+
+  const handleQuickAutoAssign = useCallback(async () => {
+    if (!job || jobHasPartnerSet(job)) return;
+    setDispatchingAutoAssign(true);
+    try {
+      if (job.status !== "auto_assigning") {
+        const updated = await handleJobUpdate(
+          job.id,
+          { status: "auto_assigning" },
+          { silent: true },
+        );
+        if (!updated) return;
+      }
+      const res = await fetch(
+        `/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`,
+        { method: "POST" },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        partnerCount?: number;
+        error?: string;
+      } | null;
+      if (res.ok) {
+        const n = body?.partnerCount ?? 0;
+        toast.success(
+          n > 0
+            ? `Auto assign — ${n} partner${n === 1 ? "" : "s"} invited`
+            : "Auto assign — invites sent",
+        );
+      } else {
+        toast.error(body?.error ?? "Could not send auto assign invites");
+        const refreshed = await getJob(job.id).catch(() => null);
+        if (refreshed) setJob(refreshed);
+      }
+    } catch {
+      toast.error("Could not send auto assign invites");
+    } finally {
+      setDispatchingAutoAssign(false);
+    }
+  }, [job, handleJobUpdate]);
 
   const openJobBillingTypeEdit = useCallback(() => {
     if (!job) return;
@@ -7745,10 +7787,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <UserX className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
+                  {!jobHasPartnerSet(job) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={dispatchingAutoAssign}
+                      disabled={signingOffPartner || savingPartner || dispatchingAutoAssign}
+                      className="h-auto shrink-0 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
+                      onClick={() => void handleQuickAutoAssign()}
+                    >
+                      Auto assign
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={signingOffPartner}
+                    disabled={signingOffPartner || dispatchingAutoAssign}
                     className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
                     onClick={() => setPartnerModalOpen(true)}
                   >
@@ -10005,8 +10059,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.materials_cost = materialsExtra;
                     partnerPatch.partner_agreed_value = Math.round((Number(partnerPatch.partner_cost ?? 0) + materialsExtra) * 100) / 100;
                   }
-                  if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
-                    partnerPatch.status = "scheduled";
+                  if (selectedPartnerId) {
+                    Object.assign(partnerPatch, partnerAssignStatusPatch(job.status));
                   }
                   if (
                     !selectedPartnerId &&

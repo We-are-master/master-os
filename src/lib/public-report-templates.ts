@@ -10,7 +10,9 @@
  * by hand and we serialise to `duration_ms` on submit.
  */
 
-export type ReportTemplate = "general" | "gardener" | "cleaner";
+import { isCertificateTypeOfWork } from "@/lib/type-of-work";
+
+export type ReportTemplate = "general" | "gardener" | "cleaner" | "certificate";
 
 const GARDENER_KEYWORDS = ["garden", "lawn", "hedge", "landscap"];
 const CLEANER_KEYWORDS  = ["clean", "housekeep", "sanitiz", "sanitis"];
@@ -22,6 +24,9 @@ export function pickReportTemplate(input: {
   const haystack = `${input.serviceType ?? ""} ${input.title ?? ""}`.toLowerCase();
   if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
   if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
+  if (isCertificateTypeOfWork(input.serviceType) || isCertificateTypeOfWork(input.title)) {
+    return "certificate";
+  }
   return "general";
 }
 
@@ -168,16 +173,131 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       { key: "customer_inspected", label: "Customer inspected the work?", type: "boolean" },
     ],
   },
+  certificate: {
+    start: [
+      {
+        key: "site_access_obtained",
+        label: "Were you able to access the property?",
+        type: "boolean",
+      },
+      {
+        key: "access_issues_note",
+        label: "Access issues",
+        hint: "Explain what blocked access, if applicable.",
+        type: "longtext",
+        optional: true,
+        showIf: { key: "site_access_obtained", equals: false },
+      },
+    ],
+    final: [
+      {
+        key: "inspection_summary",
+        label: "Inspection / testing summary",
+        hint: "What was inspected or tested on site.",
+        type: "longtext",
+      },
+      {
+        key: "certificate_issued",
+        label: "Certificate or report issued?",
+        type: "boolean",
+      },
+      {
+        key: "certificate_number",
+        label: "Certificate / report reference",
+        type: "text",
+        optional: true,
+        showIf: { key: "certificate_issued", equals: true },
+      },
+      {
+        key: "certificate_outcome",
+        label: "Outcome",
+        type: "select",
+        showIf: { key: "certificate_issued", equals: true },
+        options: [
+          { value: "satisfactory", label: "Satisfactory" },
+          { value: "satisfactory_with_recommendations", label: "Satisfactory with recommendations" },
+          { value: "unsatisfactory", label: "Unsatisfactory" },
+        ],
+      },
+      {
+        key: "expiry_date",
+        label: "Expiry date",
+        hint: "DD/MM/YYYY — if applicable.",
+        type: "text",
+        optional: true,
+        showIf: { key: "certificate_issued", equals: true },
+      },
+      {
+        key: "remedial_work_required",
+        label: "Remedial work required?",
+        type: "boolean",
+      },
+      {
+        key: "remedial_work_details",
+        label: "Remedial work details",
+        type: "longtext",
+        optional: true,
+        showIf: { key: "remedial_work_required", equals: true },
+      },
+      {
+        key: "additional_charges",
+        label: "Any additional charges agreed on site?",
+        type: "boolean",
+      },
+      {
+        key: "additional_charges_note",
+        label: "Charges note",
+        type: "text",
+        optional: true,
+        showIf: { key: "additional_charges", equals: true },
+      },
+      {
+        key: "follow_up_required",
+        label: "Follow-up visit required?",
+        type: "boolean",
+      },
+    ],
+  },
 };
 
 export function fieldsForTemplate(template: ReportTemplate): TemplateSpec {
   return SPECS[template];
 }
 
+export function reportTemplateDisplayLabel(template: ReportTemplate): string {
+  const labels: Record<ReportTemplate, string> = {
+    general: "General maintenance",
+    gardener: "Gardening",
+    cleaner: "Cleaning",
+    certificate: "Certificate",
+  };
+  return labels[template];
+}
+
+export function reportSectionTitles(template: ReportTemplate): { start: string; final: string } {
+  if (template === "certificate") {
+    return { start: "Site access", final: "Certificate details" };
+  }
+  if (template === "gardener") return { start: "On arrival", final: "On completion" };
+  if (template === "cleaner") return { start: "On arrival", final: "On completion" };
+  return { start: "On arrival", final: "On completion" };
+}
+
+export interface ReportPhotoSlot {
+  key: string;
+  label: string;
+  hint?: string;
+  /** Shown in UI only — uploads are never blocked server-side. */
+  optional?: boolean;
+  accept?: string;
+  /** Large drop-style upload (certificate PDF/photo). */
+  prominent?: boolean;
+}
+
 /** Mirrors the per-template photo bucket layout from the mobile app. */
 export function photoSlotsForTemplate(template: ReportTemplate): {
-  start: Array<{ key: string; label: string }>;
-  final: Array<{ key: string; label: string }>;
+  start: ReportPhotoSlot[];
+  final: ReportPhotoSlot[];
 } {
   if (template === "cleaner") {
     const rooms = [
@@ -191,6 +311,21 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
     return {
       start: [{ key: "equipment", label: "Equipment" }, ...rooms],
       final: rooms,
+    };
+  }
+  if (template === "certificate") {
+    return {
+      start: [],
+      final: [
+        {
+          key: "certificate",
+          label: "Attach certificate or report",
+          hint: "Upload the issued certificate or report — PDF or photo.",
+          accept: "image/*,application/pdf,.pdf",
+          prominent: true,
+          optional: true,
+        },
+      ],
     };
   }
   return {

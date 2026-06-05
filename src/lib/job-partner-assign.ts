@@ -9,6 +9,38 @@ export const JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED: readonly JobStatus[] = 
   "in_progress",
 ];
 
+/** Pre-booked pipeline steps that become `scheduled` when a partner is first assigned. */
+export const JOB_STATUSES_SCHEDULE_ON_PARTNER_ASSIGN: readonly JobStatus[] = [
+  "unassigned",
+  "auto_assigning",
+  "on_hold",
+];
+
+const ON_HOLD_CLEAR_PATCH: Partial<Job> = {
+  on_hold_previous_status: null,
+  on_hold_at: null,
+  on_hold_reason: null,
+  on_hold_reason_preset_id: null,
+  on_hold_complaint_description: null,
+  on_hold_snapshot_scheduled_date: null,
+  on_hold_snapshot_scheduled_start_at: null,
+  on_hold_snapshot_scheduled_end_at: null,
+  on_hold_snapshot_scheduled_finish_date: null,
+};
+
+/**
+ * When the office assigns a partner from the pre-booked queue, bump the job to
+ * `scheduled` so Zendesk syncs to Scheduled (not Auto-Assigning / On Hold).
+ */
+export function partnerAssignStatusPatch(beforeStatus: JobStatus): Partial<Job> {
+  if (!JOB_STATUSES_SCHEDULE_ON_PARTNER_ASSIGN.includes(beforeStatus)) return {};
+  const patch: Partial<Job> = { status: "scheduled" };
+  if (beforeStatus === "on_hold") {
+    Object.assign(patch, ON_HOLD_CLEAR_PATCH);
+  }
+  return patch;
+}
+
 /** Fields required before a partner can be assigned (or swapped) on a job. */
 export type PartnerAssignGateFields = Pick<
   Job,
@@ -71,8 +103,13 @@ export function jobIsBookedPipelineWithoutPartner(
 export function effectiveJobStatusForDisplay(
   job: Pick<Job, "status" | "partner_id" | "partner_ids">,
 ): JobStatus {
-  /** Stale rows: partner set but status never bumped from `unassigned` (e.g. swap/API path omitted status). */
-  if (jobHasPartnerSet(job) && job.status === "unassigned") return "scheduled";
+  /** Stale rows: partner set but status never bumped from pre-booked queue. */
+  if (
+    jobHasPartnerSet(job) &&
+    (job.status === "unassigned" || job.status === "auto_assigning" || job.status === "on_hold")
+  ) {
+    return "scheduled";
+  }
   if (jobIsBookedPipelineWithoutPartner(job)) return "unassigned";
   return job.status;
 }

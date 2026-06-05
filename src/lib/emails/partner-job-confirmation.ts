@@ -76,7 +76,7 @@ function formatPartnerJobEmailSubjectDate(
       return d.toLocaleDateString("en-GB", {
         day: "numeric",
         month: "short",
-        ...(opts?.includeYear !== false ? { year: "numeric" } : {}),
+        ...(opts?.includeYear === true ? { year: "numeric" } : {}),
         timeZone: "UTC",
       });
     }

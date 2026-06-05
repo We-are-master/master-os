@@ -16,7 +16,7 @@
  *      both the dashboard card and the PDF template.
  */
 
-export type ReportTemplate = "general" | "gardener" | "cleaner";
+export type ReportTemplate = "general" | "gardener" | "cleaner" | "certificate";
 export type ReportKind = "start" | "final";
 
 export type ReportPhotos = string[] | Record<string, string[]>;
@@ -65,6 +65,23 @@ export interface CleanerStartData {
 export interface CleanerFinalData {
   job_complete?: boolean;
   customer_inspected?: boolean;
+  duration_ms?: number;
+}
+export interface CertificateStartData {
+  site_access_obtained?: boolean;
+  access_issues_note?: string | null;
+}
+export interface CertificateFinalData {
+  inspection_summary?: string;
+  certificate_issued?: boolean;
+  certificate_number?: string | null;
+  certificate_outcome?: string;
+  expiry_date?: string | null;
+  remedial_work_required?: boolean;
+  remedial_work_details?: string | null;
+  additional_charges?: boolean;
+  additional_charges_note?: string | null;
+  follow_up_required?: boolean;
   duration_ms?: number;
 }
 
@@ -151,6 +168,16 @@ export const REPORT_FIELD_LABELS: Record<string, string> = {
   photos_refused:       "Customer refused photos",
   job_complete:         "Job complete",
   customer_inspected:   "Customer inspected",
+  // certificate
+  site_access_obtained:   "Site access obtained",
+  access_issues_note:     "Access issues",
+  inspection_summary:     "Inspection / testing summary",
+  certificate_issued:     "Certificate issued",
+  certificate_number:     "Certificate reference",
+  certificate_outcome:    "Outcome",
+  expiry_date:            "Expiry date",
+  remedial_work_required: "Remedial work required",
+  remedial_work_details:  "Remedial work details",
 };
 
 export function labelForReportField(key: string): string {
@@ -199,6 +226,11 @@ function formatFieldValue(key: string, value: unknown): string {
   if (key === "duration_ms" && typeof value === "number") return formatDurationMs(value);
   if (key === "chargeable_hours" && typeof value === "number") return `${value.toFixed(2)} h`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (key === "certificate_outcome" && typeof value === "string") {
+    return value
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
   return JSON.stringify(value);
@@ -215,5 +247,6 @@ function formatDurationMs(ms: number): string {
 }
 
 function humaniseRoomKey(key: string): string {
+  if (key === "certificate") return "Certificate / report";
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

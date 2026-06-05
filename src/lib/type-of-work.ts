@@ -28,6 +28,46 @@ export const CANONICAL_TYPE_OF_WORK_NAMES = [
   "Fire Extinguisher Service (FES)",
 ] as const;
 
+/** Compliance / certificate SKUs — partner report form uses the certificate template. */
+export const CERTIFICATE_TYPE_OF_WORK_NAMES = [
+  "Boiler Service",
+  "Electrical Installation Condition Report (EICR)",
+  "Portable Appliance Testing (PAT)",
+  "Gas Safety Certificate (GSC)",
+  "Fire Risk Assessment (FRA)",
+  "Fire Alarm Certificate",
+  "Emergency Lighting Certificate",
+  "Fire Extinguisher Service (FES)",
+] as const;
+
+const CERTIFICATE_MATCH_KEYWORDS = [
+  "eicr",
+  "pat testing",
+  "portable appliance",
+  "gas safety",
+  "cp12",
+  "fire risk",
+  "fire alarm",
+  "emergency lighting",
+  "fire extinguisher",
+  "boiler service",
+];
+
+/** True when the label/title is a compliance certificate SKU (not general maintenance). */
+export function isCertificateTypeOfWork(value?: string | null): boolean {
+  const raw = (value ?? "").trim();
+  if (!raw) return false;
+  const norm = normalizeTypeOfWork(raw);
+  if (
+    norm &&
+    CERTIFICATE_TYPE_OF_WORK_NAMES.some((name) => name.toLowerCase() === norm.toLowerCase())
+  ) {
+    return true;
+  }
+  const lower = raw.toLowerCase();
+  return CERTIFICATE_MATCH_KEYWORDS.some((k) => lower.includes(k));
+}
+
 /** @deprecated Use {@link CANONICAL_TYPE_OF_WORK_NAMES}; alias kept for older imports. */
 export const TYPE_OF_WORK_OPTIONS = CANONICAL_TYPE_OF_WORK_NAMES;
 
