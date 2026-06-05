@@ -3,6 +3,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { jobHasPartnerSet, stalePartnerBookedJobPatch } from "@/lib/job-partner-assign";
 import { createServiceClient } from "@/lib/supabase/service";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
 import {
@@ -195,12 +196,9 @@ export function buildJobZendeskFormFieldEntries(job: {
   clients?: { email?: string | null; phone?: string | null } | { email?: string | null; phone?: string | null }[] | null;
 }): TicketCustomFieldEntry[] {
   const { email, phone } = clientEmbedContact(job.clients);
-  const hasPartner = job.partner_id != null && String(job.partner_id).trim() !== "";
   const isAuto =
-    !hasPartner &&
-    (job.status === "auto_assigning" ||
-      (Array.isArray(job.auto_assign_invited_partner_ids) &&
-        job.auto_assign_invited_partner_ids.length > 0));
+    !jobHasPartnerSet(job) &&
+    job.status === "auto_assigning";
 
   return buildCommonZendeskFormFieldEntries({
     reference: job.reference,
@@ -315,9 +313,9 @@ export async function syncJobZendeskFormFields(
     .select(`
       id, reference, catalog_service_id, job_type,
       scheduled_start_at, scheduled_end_at,
-      status, auto_assign_invited_partner_ids,
+      status, auto_assign_invited_partner_ids, auto_assign_expires_at,
       client_name, property_address, scope,
-      external_source, external_ref, partner_id,
+      external_source, external_ref, partner_id, partner_ids,
       partners ( zendesk_user_id ),
       clients ( email, phone )
     `)
@@ -331,6 +329,18 @@ export async function syncJobZendeskFormFields(
   const ticketId = getZendeskTicketId(job);
   if (!ticketId) {
     return { ok: true, syncedFields, skipped: "not_zendesk_linked" };
+  }
+
+  const repairPatch = stalePartnerBookedJobPatch(
+    job as Parameters<typeof stalePartnerBookedJobPatch>[0],
+  );
+  if (Object.keys(repairPatch).length > 0) {
+    const { error: repairErr } = await supabase.from("jobs").update(repairPatch).eq("id", jobId);
+    if (repairErr) {
+      console.error(`[zendesk-form-sync] stale partner repair failed job=${jobId}:`, repairErr);
+    } else {
+      Object.assign(job, repairPatch);
+    }
   }
 
   const fields = buildJobZendeskFormFieldEntries(

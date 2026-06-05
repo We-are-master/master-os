@@ -7,6 +7,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { extractUkPostcode, normalizeUkPostcode } from "@/lib/uk-postcode";
 import { isValidUUID } from "@/lib/auth-api";
 import {
@@ -230,6 +231,8 @@ export async function repairJobIngestFromZendeskTicket(
     client_name: string | null;
     property_address: string | null;
     status: string;
+    partner_id?: string | null;
+    partner_ids?: string[] | null;
     catalog_service_id?: string | null;
     external_source?: string | null;
     external_ref?: string | null;
@@ -245,7 +248,7 @@ export async function repairJobIngestFromZendeskTicket(
     clientName: job.client_name?.trim() || "",
     clientEmail: null,
     propertyAddress: job.property_address?.trim() || "",
-    autoAssign: job.status === "auto_assigning",
+    autoAssign: job.status === "auto_assigning" && !jobHasPartnerSet(job),
     catalogServiceId: job.catalog_service_id?.trim() || null,
     accountCompanyName: accountCompanyName ?? null,
   });
@@ -267,7 +270,7 @@ export async function repairJobIngestFromZendeskTicket(
   if (reconciled.catalogServiceId && !job.catalog_service_id) {
     patch.catalog_service_id = reconciled.catalogServiceId;
   }
-  if (reconciled.autoAssign && job.status === "unassigned") {
+  if (reconciled.autoAssign && job.status === "unassigned" && !jobHasPartnerSet(job)) {
     patch.status = "auto_assigning";
   }
 
