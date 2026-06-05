@@ -258,7 +258,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
-import { JOB_STATUS_BADGE_VARIANT, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
+import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
@@ -324,7 +324,10 @@ function jobDetailMarginAppearance(marginPct: number): {
   };
 }
 
-function getStatusColors(status: string): {
+function getStatusColors(
+  status: string,
+  job?: { status?: string | null; on_hold_reason_preset_id?: string | null },
+): {
   healthBarClass: string;
   activeStepDotClass: string;
   activeStepLabelClass: string;
@@ -332,6 +335,15 @@ function getStatusColors(status: string): {
   completedAllSteps: boolean;
 } {
   const s = status.trim().toLowerCase();
+  if (job && isJobOnHoldComplaint(job)) {
+    return {
+      healthBarClass: "bg-red-600",
+      activeStepDotClass: "bg-red-50 border-red-600 text-red-600 dark:bg-red-950/40 dark:border-red-500 dark:text-red-400",
+      activeStepLabelClass: "text-red-600 dark:text-red-400 font-semibold",
+      topBadgeClass: "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-200 dark:border-red-800",
+      completedAllSteps: false,
+    };
+  }
   if (s === "on_hold") {
     return {
       healthBarClass: "bg-[#d97706]",
@@ -5223,8 +5235,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }
 
   const displayStatus = effectiveJobStatusForDisplay(job);
-  const config = statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
-  const statusColors = getStatusColors(displayStatus);
+  const onHoldBadge = jobOnHoldDisplayBadge(job);
+  const config = onHoldBadge ?? statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
+  const statusColors = getStatusColors(displayStatus, job);
   /**
    * Ledger-derived sums of client/partner extras (excluding materials, which
    * is tracked separately in `materials_cost`). Used below as a defensive

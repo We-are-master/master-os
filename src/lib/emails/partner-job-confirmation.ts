@@ -631,31 +631,82 @@ Fixfy · www.getfixfy.com`;
   return { subject, html, text };
 }
 
+export function partnerJobOnHoldIsComplaint(presetId: string | null | undefined): boolean {
+  return (presetId ?? "").trim() === "complaint";
+}
+
+/** Complaint: `9267 - Action Required: Complaint`. Other reasons: `9267 - Job On Hold - Awaiting Next Stage`. */
+export function partnerJobOnHoldEmailSubject(args: {
+  jobReference: string;
+  presetId: string | null | undefined;
+}): string {
+  const shortRef = partnerJobEmailShortRef(args.jobReference);
+  if (partnerJobOnHoldIsComplaint(args.presetId)) {
+    return `${shortRef} - Action Required: Complaint`;
+  }
+  return `${shortRef} - Job On Hold - Awaiting Next Stage`;
+}
+
 /**
- * Dedicated on-hold email — sent via Zendesk side conversation to the
- * assigned partner when the office puts a job on hold. Layout, copy and
- * styling mirror job-on-hold-partner-PREVIEW.html: red urgency strip,
- * payment-on-hold notice, "what we need from you" evidence list, and a
- * 12-hour deadline notice.
- *
- * The internal `on_hold_reason` is intentionally NOT shown — partners get
- * a fixed evidence checklist instead, matching the approved template.
+ * On-hold email — complaint variant (urgent) or general (awaiting next stage).
  */
 export interface PartnerJobOnHoldData {
   partnerFirstName: string;
   jobReference:     string;
   jobTitle:         string;
   propertyAddress:  string;
-  /** Partner-scoped link to the "resolve this job" form (notes + photos). Primary CTA. */
+  /** On-hold reason preset id from `jobs.on_hold_reason_preset_id`. */
+  presetId:         string | null | undefined;
+  /** Partner-scoped resolve form — complaint variant only. */
   resolveUrl:       string;
-  /**
-   * What the customer reported (the complaint reason). Shown to the partner
-   * so they know what to address. Omitted from the email when empty or when
-   * it's only the generic system placeholder.
-   */
+  /** What the customer reported — complaint variant only. */
   complaintReason?: string | null;
   supportEmail?:    string;
   supportPhone?:    string;
+}
+
+function partnerJobOnHoldJobCardHtml(safe: {
+  ref: string;
+  title: string;
+  address: string;
+  pillLabel: string;
+  pillBg: string;
+  pillColor: string;
+}): string {
+  return `      <tr><td style="padding:0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
+            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
+            <div style="display:inline-block; background-color:${safe.pillBg}; color:${safe.pillColor}; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">${safe.pillLabel}</div>
+            <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>`;
+}
+
+function partnerJobOnHoldFooterHtml(safe: {
+  resolveUrl?: string;
+  showResolveLink: boolean;
+  support: string;
+  supportTel: string;
+  supportTelHref: string;
+}): string {
+  const linkBlock = safe.showResolveLink
+    ? `<p style="margin:0 0 8px 0; font-size:12px; line-height:18px; color:#9A9AAE; word-break:break-all;">Button not working? Paste this link into your browser:<br/><a href="${safe.resolveUrl}" style="color:#ED4B00;">${safe.resolveUrl}</a></p>`
+    : "";
+  return `      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
+        ${linkBlock}
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
+      </td></tr>
+
+      <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
+        <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
+      </td></tr>`;
 }
 
 export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
@@ -665,13 +716,15 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const jobShortRef = data.jobReference.replace(/^JOB-/i, "").trim() || data.jobReference;
-  const subject = `${jobShortRef} - Action Required: Complaint`;
+  const isComplaint = partnerJobOnHoldIsComplaint(data.presetId);
+  const subject = partnerJobOnHoldEmailSubject({
+    jobReference: data.jobReference,
+    presetId: data.presetId,
+  });
 
-  // Only surface the reason when it's a real description, not the generic
-  // system placeholder the webhook falls back to.
   const rawReason = (data.complaintReason ?? "").trim();
-  const showReason = rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
+  const showReason =
+    isComplaint && rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
 
   const safe = {
     name:           escapeHtml(data.partnerFirstName || "there"),
@@ -685,7 +738,15 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
     supportTelHref: telHref(supportPhone),
   };
 
-  // Optional "what the customer reported" block, inserted under the job card.
+  const jobCard = partnerJobOnHoldJobCardHtml({
+    ref: safe.ref,
+    title: safe.title,
+    address: safe.address,
+    pillLabel: isComplaint ? "⏸ On hold" : "⏸ Awaiting next stage",
+    pillBg: isComplaint ? "#FBEFD6" : "#E8F4FD",
+    pillColor: isComplaint ? "#C47A00" : "#0B5FFF",
+  });
+
   const reasonBlockHtml = showReason
     ? `
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
@@ -698,18 +759,21 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
       </td></tr>`
     : "";
 
-  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-${partnerEmailHeadBlock()}
-${partnerEmailBaseStyles()}
-</head>
-${partnerEmailBodyOpen()}
-${partnerEmailPreheaderHtml(`Job ${safe.ref} is on hold. We need your help to resolve within 12 hours — please reply with the evidence requested.`)}
+  const footer = partnerJobOnHoldFooterHtml({
+    resolveUrl: safe.resolveUrl,
+    showResolveLink: isComplaint,
+    support: safe.support,
+    supportTel: safe.supportTel,
+    supportTelHref: safe.supportTelHref,
+  });
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+  let bodyMiddle: string;
+  let preheader: string;
+  let text: string;
 
+  if (isComplaint) {
+    preheader = `Job ${safe.ref} — complaint raised. Please respond within 12 hours.`;
+    bodyMiddle = `
       <tr><td bgcolor="#C8102E" style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required — respond within 12 hours</p>
       </td></tr>
@@ -723,20 +787,7 @@ ${partnerEmailLogoHeaderRow()}
         )}
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
-
-      <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
-            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
-            <div style="display:inline-block; background-color:#FBEFD6; color:#C47A00; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">⏸ On hold</div>
-            <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
-            </div>
-          </td></tr>
-        </table>
-      </td></tr>
+${jobCard}
 ${reasonBlockHtml}
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBE3E7; border-left:3px solid #C8102E; border-radius:8px;">
@@ -760,11 +811,10 @@ ${reasonBlockHtml}
         </table>
       </td></tr>
 
-      <!-- Primary CTA: open the resolution form -->
       <tr><td align="center" style="padding:28px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
           <tr><td align="center" style="border-radius:10px; background-color:#ED4B00; background-image:linear-gradient(135deg,#ED4B00 0%,#FF7A29 100%);">
-            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve this job →</a>
+            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve now</a>
           </td></tr>
         </table>
         <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Takes 2 minutes — add a note and snap a few photos, no app or login needed.</p>
@@ -777,53 +827,71 @@ ${reasonBlockHtml}
           </td></tr>
         </table>
       </td></tr>
+${footer}`;
 
-      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
-        <p style="margin:0 0 8px 0; font-size:12px; line-height:18px; color:#9A9AAE; word-break:break-all;">Button not working? Paste this link into your browser:<br/><a href="${safe.resolveUrl}" style="color:#ED4B00;">${safe.resolveUrl}</a></p>
-        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
-      </td></tr>
-
-      <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
-        <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
-        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
-      </td></tr>
-
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-
-  const text =
+    text =
 `ACTION REQUIRED — RESPOND WITHIN 12 HOURS
 
 Hi ${data.partnerFirstName || "there"},
 
 A complaint was raised on this job — we need your help to resolve.
 
-A complaint has come in about the job below, so we've placed it on hold
-while we look into it. We've committed
-to the customer that we'll resolve within 24 hours, so please reply within
-12 hours.
-
 Job #${data.jobReference} — ${data.jobTitle}
 Location: ${data.propertyAddress || "—"}
-Status: ON HOLD
 ${showReason ? `\nWhat the customer reported:\n${rawReason}\n` : ""}
 Payment on hold until resolved.
 
-Resolve this job (add a note + photos, no app or login needed):
+Resolve now (add a note + photos, no app or login needed):
 ${data.resolveUrl}
-
-Please send us:
-  • A short written summary of what was done and how you can resolve the issue
-  • Photos of the work area / completed work
-  • Anything relevant — receipts for materials, certificates (CP12, electrical), etc.
 
 Please respond within 12 hours.
 
 Need to talk this through? Call ${supportPhone} or email ${supportEmail}.
 
 Fixfy · www.getfixfy.com`;
+  } else {
+    preheader = `Job ${safe.ref} is on hold — awaiting next stage.`;
+    bodyMiddle = `
+${partnerEmailLogoHeaderRow()}
+
+      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
+        ${partnerEmailSplitTitleHtml(safe.name, "This job is on hold — awaiting next stage")}
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've placed this job on hold while we coordinate the next step. No action is needed from you right now — we'll be in touch when the job is ready to move forward.</p>
+      </td></tr>
+${jobCard}
+${footer}`;
+
+    text =
+`JOB ON HOLD — AWAITING NEXT STAGE
+
+Hi ${data.partnerFirstName || "there"},
+
+We've placed this job on hold while we coordinate the next step.
+
+Job #${data.jobReference} — ${data.jobTitle}
+Location: ${data.propertyAddress || "—"}
+
+No action is needed from you right now. If you have questions, call ${supportPhone} or email ${supportEmail}.
+
+Fixfy · www.getfixfy.com`;
+  }
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(preheader)}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+${bodyMiddle}
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
 
   return { subject, html, text };
 }
