@@ -17,6 +17,7 @@ import { type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
+import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -126,6 +127,8 @@ export async function notifyPartnerJobZendesk(
   if (!partner) {
     return { status: 200, body: { ok: true, skipped: "partner_not_found" } };
   }
+
+  const base = appBaseUrl();
 
   // Customer phone is intentionally NOT looked up — partner emails carry
   // name + address only (privacy decision: customer phone stays with OS).
