@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
+import { partnerMissingRequiredDocs } from "@/lib/partner-docs-gate";
 import {
+  claimAutoAssignJob,
   finalizeAutoAssignWinner,
   loadJobForPartnerAcceptance,
   loadPartnerForAcceptance,
   partnerDisplayName,
+  partnerNameForJobRow,
 } from "@/lib/job-partner-acceptance";
 
 export const dynamic = "force-dynamic";
@@ -23,8 +26,9 @@ function secretsMatch(a: string | null | undefined, b: string): boolean {
 /**
  * POST /api/internal/jobs/partner-portal-accept
  *
- * Called by the trade portal after an in-app auto-assign claim succeeds.
- * Finalises job_partner_invites and sends the Job booked Zendesk side conversation.
+ * Called by the trade portal when a partner accepts an auto-assign offer in-app.
+ * Performs the atomic claim, finalises invites, sends Job booked Zendesk email,
+ * and syncs ticket status + form fields.
  *
  * Auth: header `x-internal-secret` must match env `INTERNAL_SYNC_SECRET`.
  * Body: { jobId: uuid, partnerId: uuid }
@@ -54,16 +58,22 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  const missing = await partnerMissingRequiredDocs(supabase, partnerId);
+  if (missing.length) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Upload your required documents first: ${missing.join(", ")}.`,
+        code: "docs_required",
+      },
+      { status: 403 },
+    );
+  }
+
   const job = await loadJobForPartnerAcceptance(supabase, jobId);
   if (!job) {
     return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
-  }
-
-  if (job.partner_id !== partnerId) {
-    return NextResponse.json({ ok: false, error: "partner_mismatch" }, { status: 409 });
-  }
-  if (job.status !== "scheduled") {
-    return NextResponse.json({ ok: false, error: "job_not_scheduled" }, { status: 409 });
   }
 
   const partner = await loadPartnerForAcceptance(supabase, partnerId);
@@ -71,17 +81,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "partner_not_found" }, { status: 404 });
   }
 
-  const partnerName = partner.contact_name?.trim() || partner.company_name?.trim() || null;
-  const now = new Date().toISOString();
+  const partnerName = partnerNameForJobRow(partner);
 
-  await supabase
-    .from("jobs")
-    .update({
-      partner_id: partnerId,
-      partner_name: partnerName,
-      partner_confirmed_at: job.partner_confirmed_at ?? now,
-    })
-    .eq("id", jobId);
+  const claim = await claimAutoAssignJob({
+    supabase,
+    jobId,
+    partnerId,
+    partnerName,
+  });
+
+  if (!claim.claimed) {
+    if (claim.reason === "job_taken") {
+      return NextResponse.json(
+        {
+          ok: false,
+          accepted: false,
+          error: "job_taken",
+          message: "This job has already been taken by another partner.",
+        },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        accepted: false,
+        error: claim.reason,
+        message: "This job is no longer available.",
+      },
+      { status: 409 },
+    );
+  }
 
   const freshJob = (await loadJobForPartnerAcceptance(supabase, jobId)) ?? job;
 
@@ -96,6 +126,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    accepted: true,
     jobReference: freshJob.reference,
     partnerLabel: partnerDisplayName(partner),
     partnerId,

@@ -1,5 +1,6 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { formatGbpIncVat } from "@/lib/money-display-label";
 
 export interface SelfBillPdfLine {
   reference: string;
@@ -83,7 +84,7 @@ const styles = StyleSheet.create({
 });
 
 function fmt(n: number): string {
-  return `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatGbpIncVat(n);
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {

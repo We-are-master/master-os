@@ -1,15 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
 import {
   closeSideConversation,
   createSideConversation,
   replyToSideConversation,
 } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
-import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
-import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
+import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 
 export type JobForPartnerAcceptance = {
   id: string;
@@ -125,6 +125,58 @@ export function partnerDisplayName(partner: PartnerForAcceptance): string {
   return partner.contact_name?.trim() || partner.company_name?.trim() || "Partner";
 }
 
+/** Stored on jobs.partner_name — trading name first (aligned with trade portal). */
+export function partnerNameForJobRow(partner: PartnerForAcceptance): string | null {
+  return partner.company_name?.trim() || partner.contact_name?.trim() || null;
+}
+
+export type AutoAssignClaimResult =
+  | { claimed: true; reference: string }
+  | { claimed: false; reason: "job_taken" | "not_available" | "error"; error?: string };
+
+/**
+ * Atomic first-to-accept claim for auto-assigning jobs.
+ * Used by email accept and trade portal (via internal API).
+ */
+export async function claimAutoAssignJob(args: {
+  supabase: SupabaseClient;
+  jobId: string;
+  partnerId: string;
+  partnerName: string | null;
+}): Promise<AutoAssignClaimResult> {
+  const now = new Date().toISOString();
+  const { data, error } = await args.supabase
+    .from("jobs")
+    .update({
+      partner_id: args.partnerId,
+      partner_name: args.partnerName,
+      status: "scheduled",
+      partner_confirmed_at: now,
+      auto_assign_invited_partner_ids: null,
+      auto_assign_expires_at: null,
+    })
+    .eq("id", args.jobId)
+    .eq("status", "auto_assigning")
+    .is("partner_id", null)
+    .contains("auto_assign_invited_partner_ids", [args.partnerId])
+    .select("id, reference");
+
+  if (error) {
+    console.error("[claimAutoAssignJob] update failed:", error);
+    return { claimed: false, reason: "error", error: error.message };
+  }
+  if (!data || data.length === 0) {
+    const { data: fresh } = await args.supabase
+      .from("jobs")
+      .select("partner_id")
+      .eq("id", args.jobId)
+      .maybeSingle();
+    const taken = Boolean((fresh as { partner_id: string | null } | null)?.partner_id);
+    return { claimed: false, reason: taken ? "job_taken" : "not_available" };
+  }
+  return { claimed: true, reference: (data[0] as { reference: string }).reference };
+}
+
 /** After auto-assign winner is set on the job — invite bookkeeping + Job booked side conv. */
 export async function finalizeAutoAssignWinner(args: {
   supabase?: SupabaseClient;
@@ -216,6 +268,11 @@ export async function finalizeAutoAssignWinner(args: {
     partnerName,
   });
 
+  void Promise.all([
+    syncJobZendeskStatus(args.jobId, supabase),
+    syncJobZendeskFormFields(args.jobId, supabase),
+  ]).catch((err) => console.error("[finalizeAutoAssignWinner] zendesk sync failed:", err));
+
   return { winnerSideConvId: sideConvId, bookedEmail };
 }
 
@@ -244,18 +301,7 @@ export async function sendBookedSideConvReply(args: {
     partner.company_name?.trim() ||
     "Partner";
 
-  const base = appBaseUrl();
-  let reportUrl = `${base}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
-  try {
-    const r = await upsertShortLink({
-      targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
-      kind: "partner_report",
-      entityRef: jobPartnerShortLinkEntityRef(job.id, partner.id, "report"),
-    });
-    reportUrl = `${base}${r.shortPath}`;
-  } catch (err) {
-    console.error("[booked reply] short link failed:", err);
-  }
+  const reportUrl = await buildPartnerJobReportUrl(job.id, partner.id);
 
   const partnerNotes = await loadPartnerJobEmailNotes(supabase, {
     catalogServiceId: job.catalog_service_id,

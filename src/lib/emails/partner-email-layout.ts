@@ -78,16 +78,9 @@ export function partnerEmailBaseStyles(extra = ""): string {
 </style>`;
 }
 
-/**
- * Navy header — centred logo at a fixed width (not full-bleed).
- * Keeps the baked band asset for Gmail/iOS dark-mode legibility without
- * stretching it across the whole card on mobile.
- */
-export function partnerEmailLogoHeaderRow(padding = "20px 40px"): string {
-  const band = escapeHtml(partnerEmailHeaderBandUrl());
-  return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:${padding}; text-align:center; line-height:0; font-size:0; mso-line-height-rule:exactly;">
-        <img src="${band}" alt="Fixfy" width="132" class="partner-email-header-img" style="display:block; width:132px; max-width:36%; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
-      </td></tr>`;
+/** Partner emails omit the header logo (broken in many clients; text-only header band). */
+export function partnerEmailLogoHeaderRow(_padding = "20px 40px"): string {
+  return "";
 }
 
 export function partnerEmailOuterTableOpen(): string {

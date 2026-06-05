@@ -453,6 +453,10 @@ export interface Job {
   partner_name?: string | null;
   /** Set when the partner accepts (portal/email) or office manually allocates at create. */
   partner_confirmed_at?: string | null;
+  /** Partners invited to claim while status is auto_assigning (first accept wins). */
+  auto_assign_invited_partner_ids?: string[] | null;
+  /** Offer expiry for auto-assign invites (trade portal countdown). */
+  auto_assign_expires_at?: string | null;
   quote_id?: string;
   /** Optional link to Services catalog (call-out template) used at creation. */
   catalog_service_id?: string | null;

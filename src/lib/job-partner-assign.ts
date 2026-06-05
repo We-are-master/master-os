@@ -28,13 +28,21 @@ const ON_HOLD_CLEAR_PATCH: Partial<Job> = {
   on_hold_snapshot_scheduled_finish_date: null,
 };
 
+/** Clear auto-assign broadcast state once a partner is picked (manual or accept). */
+export function clearAutoAssignQueuePatch(): Partial<Job> {
+  return {
+    auto_assign_invited_partner_ids: null,
+    auto_assign_expires_at: null,
+  };
+}
+
 /**
  * When the office assigns a partner from the pre-booked queue, bump the job to
  * `scheduled` so Zendesk syncs to Scheduled (not Auto-Assigning / On Hold).
  */
 export function partnerAssignStatusPatch(beforeStatus: JobStatus): Partial<Job> {
   if (!JOB_STATUSES_SCHEDULE_ON_PARTNER_ASSIGN.includes(beforeStatus)) return {};
-  const patch: Partial<Job> = { status: "scheduled" };
+  const patch: Partial<Job> = { status: "scheduled", ...clearAutoAssignQueuePatch() };
   if (beforeStatus === "on_hold") {
     Object.assign(patch, ON_HOLD_CLEAR_PATCH);
   }

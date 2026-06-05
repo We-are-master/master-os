@@ -184,6 +184,7 @@ import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-f
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import {
+  clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
@@ -1153,6 +1154,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingPartner, setSavingPartner] = useState(false);
   const [signingOffPartner, setSigningOffPartner] = useState(false);
   const [dispatchingAutoAssign, setDispatchingAutoAssign] = useState(false);
+  const [cancellingAutoAssign, setCancellingAutoAssign] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
   const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
@@ -2640,6 +2642,31 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job, handleJobUpdate]);
 
+  const handleCancelAutoAssign = useCallback(async () => {
+    if (!job || job.status !== "auto_assigning" || jobHasPartnerSet(job)) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Cancel auto assign? Matched partners will no longer be able to accept this job from the offer.",
+      )
+    ) {
+      return;
+    }
+    setCancellingAutoAssign(true);
+    try {
+      const updated = await handleJobUpdate(
+        job.id,
+        { status: "unassigned", ...clearAutoAssignQueuePatch() },
+        { silent: true },
+      );
+      if (updated) {
+        toast.success("Auto assign cancelled — job is Unassigned");
+      }
+    } finally {
+      setCancellingAutoAssign(false);
+    }
+  }, [job, handleJobUpdate]);
+
   const openJobBillingTypeEdit = useCallback(() => {
     if (!job) return;
     setFixedRatesInlineOpen(false);
@@ -2663,7 +2690,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         return { patch: { status: "auto_assigning" }, dispatchAutoAssign: true };
       }
       if (current.status === "auto_assigning") {
-        return { patch: { status: "unassigned", auto_assign_invited_partner_ids: null }, dispatchAutoAssign: false };
+        return { patch: { status: "unassigned", ...clearAutoAssignQueuePatch() }, dispatchAutoAssign: false };
       }
       return null;
     },
@@ -7787,12 +7814,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <UserX className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
-                  {!jobHasPartnerSet(job) ? (
+                  {!jobHasPartnerSet(job) && job.status === "auto_assigning" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={cancellingAutoAssign}
+                      disabled={
+                        signingOffPartner ||
+                        savingPartner ||
+                        dispatchingAutoAssign ||
+                        cancellingAutoAssign
+                      }
+                      className="h-auto shrink-0 rounded-md border-amber-500/35 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
+                      onClick={() => void handleCancelAutoAssign()}
+                    >
+                      Cancel auto assign
+                    </Button>
+                  ) : !jobHasPartnerSet(job) ? (
                     <Button
                       size="sm"
                       variant="outline"
                       loading={dispatchingAutoAssign}
-                      disabled={signingOffPartner || savingPartner || dispatchingAutoAssign}
+                      disabled={
+                        signingOffPartner ||
+                        savingPartner ||
+                        dispatchingAutoAssign ||
+                        cancellingAutoAssign
+                      }
                       className="h-auto shrink-0 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
                       onClick={() => void handleQuickAutoAssign()}
                     >
@@ -7802,7 +7850,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={signingOffPartner || dispatchingAutoAssign}
+                    disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
                     className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
                     onClick={() => setPartnerModalOpen(true)}
                   >

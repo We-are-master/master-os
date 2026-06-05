@@ -15,7 +15,8 @@
 
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
-import { createPartnerReportToken, createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
+import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
@@ -127,6 +128,8 @@ export async function notifyPartnerJobZendesk(
     return { status: 200, body: { ok: true, skipped: "partner_not_found" } };
   }
 
+  const base = appBaseUrl();
+
   // Customer phone is intentionally NOT looked up — partner emails carry
   // name + address only (privacy decision: customer phone stays with OS).
 
@@ -140,19 +143,7 @@ export async function notifyPartnerJobZendesk(
   // partner email (assigned/completed/etc) so the partner can submit the
   // report straight from their inbox without the app. The token binds
   // (jobId, partnerId), so reassigning the partner invalidates older links.
-  const base = appBaseUrl();
-  let reportUrl = `${base}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
-  try {
-    const r = await upsertShortLink({
-      targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
-      kind:       "partner_report",
-      entityRef:  jobPartnerShortLinkEntityRef(job.id, partner.id, "report"),
-      createdBy:  actorUserId,
-    });
-    reportUrl = `${base}${r.shortPath}`;
-  } catch (err) {
-    console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
-  }
+  const reportUrl = await buildPartnerJobReportUrl(job.id, partner.id);
 
   // Resolve final reason / status label
   const effectiveReason =
