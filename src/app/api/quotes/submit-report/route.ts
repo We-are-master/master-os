@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
 const BUCKET = "job-reports";
-const VALID_TEMPLATES = new Set(["general", "gardener", "cleaner"]);
+const VALID_TEMPLATES = new Set(["general", "gardener", "cleaner", "certificate"]);
 
 function getServiceSupabase() {
   return createClient(
@@ -25,12 +25,13 @@ function getServiceSupabase() {
  *
  * Body: multipart/form-data
  *   token         JWT-like token from createQuoteResponseToken
- *   template      "general" | "gardener" | "cleaner"
+ *   template      "general" | "gardener" | "cleaner" | "certificate"
  *   startData     JSON-stringified field map for start_report
  *   finalData     JSON-stringified field map for final_report  (includes duration_ms)
  *   photos[<slot>][]  one or more files per slot (already downscaled client-side):
  *     - general/gardener: slots "before" and "after"
  *     - cleaner:          slots "equipment" + room keys (living_room, hallways, …) for both start & final
+ *     - certificate:      final "certificate" only (PDF or image)
  *
  * Behaviour:
  *   - Writes jobs.start_report + jobs.final_report JSONB in the partner-app
@@ -195,35 +196,24 @@ async function uploadSlotPhotos(
   photoEntries: Record<string, File[]>,
   template: string,
 ): Promise<string[] | Record<string, string[]>> {
-  // Which slots belong to start vs final per template:
   const startSlots = template === "cleaner"
     ? new Set(["equipment", "living_room", "hallways", "kitchen", "bathrooms", "bedrooms", "steam_cleaning"])
-    : new Set(["before"]);
+      : new Set(["before"]);
   const finalSlots = template === "cleaner"
     ? new Set(["living_room", "hallways", "kitchen", "bathrooms", "bedrooms", "steam_cleaning"])
-    : new Set(["after"]);
+    : template === "certificate"
+      ? new Set(["certificate"])
+      : new Set(["after"]);
 
-  // For start: cleaner has multiple, others have one flat "before".
-  // For final: cleaner has multiple, others have one flat "after".
-  // Cleaner reports start use the "equipment" + room maps on the START call,
-  // and only rooms (no equipment) on the FINAL. To prevent FINAL photos
-  // landing in start_report and vice-versa, slot prefix tells which call:
-  // photos[<slot>][] is shared but we differentiate by which kind expects it.
-  // To keep the public form simple, we let the same slot key participate in
-  // BOTH start and final — except for `equipment` which only goes to start
-  // and never appears in final. In practice, the form names slots clearly
-  // ("before" / "after" / room).
-  const isCleaner = template === "cleaner";
+  const usesSlotMap = template === "cleaner" || template === "certificate";
   const allowed = kind === "start" ? startSlots : finalSlots;
 
-  if (!isCleaner) {
-    // Flat array, single slot.
+  if (!usesSlotMap) {
     const flatSlot = kind === "start" ? "before" : "after";
     const files = photoEntries[flatSlot] ?? [];
     return uploadFlat(supabase, jobId, kind, files);
   }
 
-  // Cleaner: room map (and equipment only for start).
   const result: Record<string, string[]> = {};
   for (const [slot, files] of Object.entries(photoEntries)) {
     if (!allowed.has(slot)) continue;
@@ -244,9 +234,12 @@ async function uploadFlat(
     const f = files[i];
     const bytes = new Uint8Array(await f.arrayBuffer());
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const path = `${jobId}/${prefix}-${i}-${ts}.jpg`;
+    const isPdf =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    const ext = isPdf ? "pdf" : "jpg";
+    const path = `${jobId}/${prefix}-${i}-${ts}.${ext}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
-      contentType: f.type || "image/jpeg",
+      contentType: isPdf ? "application/pdf" : (f.type || "image/jpeg"),
       upsert: false,
     });
     if (error) {

@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
+import {
+  repairJobIngestFromZendeskTicket,
+  resolveJobMatchServiceType,
+} from "@/lib/zendesk-job-ingest";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationRequestEmail } from "@/lib/emails/partner-job-confirmation";
@@ -293,7 +297,35 @@ export async function ensureAndDispatchAutoAssignInvites(
     return { ok: false, error: "Job not found.", status: 404 };
   }
 
-  const job = jobRow as JobAutoAssignRow;
+  let job = jobRow as JobAutoAssignRow;
+
+  const { patch: ingestPatch, corrections } = await repairJobIngestFromZendeskTicket(
+    supabase,
+    {
+      id: job.id,
+      reference: job.reference,
+      client_name: job.client_name,
+      property_address: job.property_address,
+      status: job.status,
+      catalog_service_id: job.catalog_service_id,
+      external_source: job.external_source,
+      external_ref: job.external_ref,
+    },
+  );
+  if (Object.keys(ingestPatch).length > 0) {
+    const { error: repairErr } = await supabase
+      .from("jobs")
+      .update(ingestPatch)
+      .eq("id", job.id);
+    if (repairErr) {
+      console.error("[auto-assign] Zendesk ingest repair failed:", repairErr.message);
+    } else {
+      job = { ...job, ...ingestPatch };
+      if (corrections.length > 0) {
+        console.info("[auto-assign] Zendesk ingest repair:", corrections.join(", "));
+      }
+    }
+  }
 
   if (job.status !== "auto_assigning") {
     return { ok: false, error: "Job is not in auto-assigning status.", status: 409 };
@@ -305,9 +337,10 @@ export async function ensureAndDispatchAutoAssignInvites(
   let partnerIds = (job.auto_assign_invited_partner_ids ?? []).filter(Boolean);
 
   if (partnerIds.length === 0) {
+    const { serviceType, catalogServiceId } = await resolveJobMatchServiceType(supabase, job);
     partnerIds = await matchPartnerIdsForWork(supabase, {
-      serviceType: job.title,
-      catalogServiceId: job.catalog_service_id,
+      serviceType,
+      catalogServiceId,
       postcode: extractUkPostcode(job.property_address ?? ""),
       latitude: job.latitude ?? null,
       longitude: job.longitude ?? null,

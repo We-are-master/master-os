@@ -58,6 +58,11 @@ export function partnerEmailBaseStyles(extra = ""): string {
     .partner-email-header-td { background-color: #020040 !important; }
     .partner-email-header-img { filter: none !important; opacity: 1 !important; }
   }
+  .partner-email-header-img {
+    width: 132px !important;
+    max-width: 36% !important;
+    height: auto !important;
+  }
   @media screen and (max-width: 600px) {
     .container { width: 100% !important; }
     .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
@@ -66,24 +71,22 @@ export function partnerEmailBaseStyles(extra = ""): string {
     .info-label { padding-bottom: 2px !important; }
     .btn-mobile a { display: block !important; }
     .price-mobile { font-size: 32px !important; }
+    .partner-email-header-img { width: 108px !important; max-width: 32% !important; }
+    .partner-email-header-td { padding-top: 18px !important; padding-bottom: 18px !important; }
   }
   ${extra}
 </style>`;
 }
 
-/** Navy header band — single image (logo + background) for legibility on mobile Gmail. */
-export function partnerEmailLogoHeaderRow(_padding = "32px 40px"): string {
+/**
+ * Navy header — centred logo at a fixed width (not full-bleed).
+ * Keeps the baked band asset for Gmail/iOS dark-mode legibility without
+ * stretching it across the whole card on mobile.
+ */
+export function partnerEmailLogoHeaderRow(padding = "20px 40px"): string {
   const band = escapeHtml(partnerEmailHeaderBandUrl());
-  return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:0; line-height:0; font-size:0; mso-line-height-rule:exactly;">
-        <!--[if mso]>
-        <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;height:88px;">
-          <v:fill type="tile" color="#020040" />
-          <v:textbox inset="0,0,0,0" style="mso-fit-shape-to-text:true">
-        <![endif]-->
-        <div style="background-color:#020040; background-image:linear-gradient(#020040,#020040); max-height:88px; overflow:hidden;">
-          <img src="${band}" alt="Fixfy" width="600" class="partner-email-header-img" style="display:block; width:100%; max-width:600px; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; color:#020040;" />
-        </div>
-        <!--[if mso]></v:textbox></v:rect><![endif]-->
+  return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:${padding}; text-align:center; line-height:0; font-size:0; mso-line-height-rule:exactly;">
+        <img src="${band}" alt="Fixfy" width="132" class="partner-email-header-img" style="display:block; width:132px; max-width:36%; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
       </td></tr>`;
 }
 
