@@ -85,7 +85,7 @@ import {
   jobHasPartnerSet,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobPartnerListKind } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -2010,8 +2010,9 @@ function JobsPageContent() {
       sortOptions: JOB_SORT_STATUS,
       render: (item) => {
         if (status === "action_required") {
-          const label = item.status === "on_hold" ? "On Hold" : "Unassigned";
-          const variant = item.status === "on_hold" ? JOB_STATUS_BADGE_VARIANT.on_hold : JOB_STATUS_BADGE_VARIANT.unassigned;
+          const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
+          const label = onHoldBadge?.label ?? "Unassigned";
+          const variant = onHoldBadge?.variant ?? JOB_STATUS_BADGE_VARIANT.unassigned;
           return (
             <div className="inline-flex flex-col items-start gap-0.5">
               <div className="inline-flex flex-wrap items-center gap-1.5">
@@ -2044,7 +2045,8 @@ function JobsPageContent() {
           );
         }
         const st = effectiveJobStatusForDisplay(item);
-        const c = statusConfig[st] ?? { label: st, variant: "default" as const };
+        const onHoldBadge = jobOnHoldDisplayBadge(item);
+        const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
           <div className="inline-flex flex-col items-start gap-0.5">
             <div className="inline-flex flex-wrap items-center gap-1.5">
@@ -2689,14 +2691,13 @@ function JobsPageContent() {
                   onCardClick={openJobDetail}
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
+                    const onHoldKanbanBadge = jobOnHoldDisplayBadge(j);
                     const statusCaption =
                       status === "action_required"
-                        ? j.status === "on_hold"
-                          ? "On Hold"
-                          : "Unassigned"
+                        ? onHoldKanbanBadge?.label ?? "Unassigned"
                         : status === "closed"
                           ? jobsManagementClosedBucketLabel(jobsManagementClosedBucket(j))
-                          : ((statusConfig[disp]?.label ?? disp) as string);
+                          : onHoldKanbanBadge?.label ?? ((statusConfig[disp]?.label ?? disp) as string);
                     const sched = formatJobScheduleListLabel(j);
                     const schedDetail = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);

@@ -218,6 +218,7 @@ export async function notifyPartnerJobZendesk(
       jobReference:    job.reference,
       jobTitle:        job.title || "Maintenance job",
       propertyAddress: job.property_address || "—",
+      presetId:        job.on_hold_reason_preset_id,
       resolveUrl,
       complaintReason: effectiveReason,
     });
