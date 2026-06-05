@@ -121,3 +121,41 @@ export function effectiveJobStatusForDisplay(
   if (jobIsBookedPipelineWithoutPartner(job)) return "unassigned";
   return job.status;
 }
+
+/** Zendesk custom_status_id — partner booked but DB status still pre-booked. */
+export function jobStatusForZendeskSync(
+  job: Pick<Job, "status" | "partner_id" | "partner_ids">,
+): JobStatus {
+  if (
+    jobHasPartnerSet(job) &&
+    (job.status === "unassigned" || job.status === "auto_assigning")
+  ) {
+    return "scheduled";
+  }
+  return job.status;
+}
+
+/**
+ * Repair stale rows: partner assigned but status / auto-assign queue never cleared
+ * (e.g. JOB-9269 — Zendesk sync kept pushing Auto-Assigning).
+ */
+export function stalePartnerBookedJobPatch(
+  job: Pick<
+    Job,
+    "status" | "partner_id" | "partner_ids" | "auto_assign_invited_partner_ids" | "auto_assign_expires_at"
+  >,
+): Partial<Job> {
+  if (!jobHasPartnerSet(job)) return {};
+  const patch: Partial<Job> = {};
+  if (job.status === "unassigned" || job.status === "auto_assigning") {
+    patch.status = "scheduled";
+  }
+  const invited = job.auto_assign_invited_partner_ids;
+  const hasQueue =
+    (Array.isArray(invited) && invited.length > 0) ||
+    (job.auto_assign_expires_at != null && String(job.auto_assign_expires_at).trim() !== "");
+  if (hasQueue) {
+    Object.assign(patch, clearAutoAssignQueuePatch());
+  }
+  return patch;
+}

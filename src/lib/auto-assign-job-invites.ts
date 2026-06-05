@@ -313,6 +313,7 @@ export async function ensureAndDispatchAutoAssignInvites(
       client_name: job.client_name,
       property_address: job.property_address,
       status: job.status,
+      partner_id: job.partner_id,
       catalog_service_id: job.catalog_service_id,
       external_source: job.external_source,
       external_ref: job.external_ref,
