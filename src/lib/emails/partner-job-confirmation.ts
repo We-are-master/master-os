@@ -18,7 +18,7 @@ import {
   partnerEmailPreheaderHtml,
   partnerEmailSplitTitleHtml,
 } from "@/lib/emails/partner-email-layout";
-import { moneyIncVatLabel } from "@/lib/money-display-label";
+import { moneyIncVatLabel, splitMoneyIncVatParts } from "@/lib/money-display-label";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
 
@@ -57,6 +57,30 @@ function escapeHtml(s: string): string {
 
 function telHref(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
+}
+
+function partnerEmailEarningsPriceHtml(priceDisplay: string, largeFontPx = 36): string {
+  const { core, hasIncVat } = splitMoneyIncVatParts(priceDisplay);
+  const amount = escapeHtml(core);
+  const amountStyle = [
+    `font-size:${largeFontPx}px`,
+    "line-height:1.15",
+    "font-weight:700",
+    "color:#FFFFFF",
+    "letter-spacing:-1px",
+  ].join(";");
+  if (!hasIncVat) {
+    return `<span style="${amountStyle}">${amount}</span>`;
+  }
+  const vatStyle = [
+    "font-size:13px",
+    "line-height:1.2",
+    "font-weight:600",
+    "color:#ED4B00",
+    "letter-spacing:0",
+    "vertical-align:middle",
+  ].join(";");
+  return `<span style="${amountStyle}">${amount}</span> <span style="${vatStyle}">inc VAT</span>`;
 }
 
 /** JOB-9265 → 9265 */
@@ -145,7 +169,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     client: escapeHtml(data.clientName),
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
-    price: escapeHtml(moneyIncVatLabel(data.priceDisplay)),
+    priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 36),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
     url: escapeHtml(data.reportUrl),
     support: escapeHtml(supportEmail),
@@ -188,7 +212,7 @@ ${partnerEmailLogoHeaderRow()}
               <tr>
                 <td>
                   <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
-                  <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:36px; line-height:42px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+                  <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${safe.priceHtml}</p>
                 </td>
                 <td align="right" valign="top">
                   <div style="display:inline-block; background-color:#ED4B00; color:#FFFFFF; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">${safe.pill}</div>
@@ -948,7 +972,7 @@ export function buildPartnerJobConfirmationRequestEmail(
     title:   escapeHtml(data.jobTitle),
     postcode: escapeHtml(postcode),
     scope:   escapeHtml(data.scope),
-    price:   escapeHtml(moneyIncVatLabel(data.priceDisplay)),
+    priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 32),
     accept:  escapeHtml(data.acceptUrl),
     hours:   String(responseHours),
     support: escapeHtml(supportEmail),
@@ -985,7 +1009,7 @@ ${partnerEmailLogoHeaderRow()}
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
           <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
             <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
-            <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+            <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${safe.priceHtml}</p>
           </td></tr>
         </table>
       </td></tr>

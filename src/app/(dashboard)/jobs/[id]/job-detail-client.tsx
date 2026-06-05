@@ -7759,14 +7759,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             {/* PRIMARY PARTNER */}
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
-              <div className="space-y-2">
+              <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   {job.partner_id?.trim() ? (
                     <Avatar
                       src={partners.find((p) => p.id === job.partner_id)?.avatar_url}
                       name={job.partner_name || "Partner"}
                       size="sm"
-                      className="h-8 w-8 border border-border-light ring-0"
+                      className="h-8 w-8 shrink-0 border border-border-light ring-0"
                     />
                   ) : (
                     <div
@@ -7777,7 +7777,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                   {job.partner_name ? (
-                    <div className="group/partner-name relative min-w-0">
+                    <div className="group/partner-name relative min-w-0 flex-1">
                       <p className="truncate text-xs font-bold text-text-primary cursor-default">{job.partner_name}</p>
                       {job.partner_id ? (
                         <span
@@ -7789,14 +7789,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ) : null}
                     </div>
                   ) : jobPartnerListKind(job) === "auto_assign" ? (
-                    <Badge variant="info" dot className="text-[10px] font-medium normal-case">
+                    <Badge variant="info" dot className="max-w-full truncate text-[10px] font-medium normal-case">
                       Auto assign
                     </Badge>
                   ) : (
-                    <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
+                    <p className="min-w-0 truncate text-xs font-medium text-text-tertiary">Unassigned</p>
                   )}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
                   {job.partner_id?.trim() ? (
                     <button
                       type="button"
@@ -7805,7 +7803,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       disabled={signingOffPartner || savingPartner}
                       onClick={() => void handleQuickUnassignPartner()}
                       className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-full border border-border-light bg-surface-hover text-text-tertiary transition-colors",
+                        "ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover text-text-tertiary transition-colors",
                         "hover:border-primary/30 hover:bg-primary-light/80 hover:text-primary",
                         "dark:hover:bg-primary/10",
                         "disabled:pointer-events-none disabled:opacity-45",
@@ -7814,6 +7812,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <UserX className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
+                </div>
+                <div className="flex w-full min-w-0 flex-col gap-1.5">
                   {!jobHasPartnerSet(job) && job.status === "auto_assigning" ? (
                     <Button
                       size="sm"
@@ -7825,7 +7825,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         dispatchingAutoAssign ||
                         cancellingAutoAssign
                       }
-                      className="h-auto shrink-0 rounded-md border-amber-500/35 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
+                      className="h-auto min-w-0 w-full rounded-md border-amber-500/35 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
                       onClick={() => void handleCancelAutoAssign()}
                     >
                       Cancel auto assign
@@ -7841,7 +7841,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         dispatchingAutoAssign ||
                         cancellingAutoAssign
                       }
-                      className="h-auto shrink-0 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
+                      className="h-auto min-w-0 w-full rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
                       onClick={() => void handleQuickAutoAssign()}
                     >
                       Auto assign
@@ -7851,7 +7851,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     size="sm"
                     variant="outline"
                     disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
-                    className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                    className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
                     onClick={() => setPartnerModalOpen(true)}
                   >
                     {job.partner_id ? "Swap" : "Assign"}
