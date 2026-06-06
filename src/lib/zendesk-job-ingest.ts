@@ -2,13 +2,14 @@
  * Zendesk macro → POST /api/jobs field reconciliation.
  *
  * Checkatrade and some B2B forms store client email in the field the OS maps as
- * property_address; the real postcode often lives only in the ticket subject.
- * This module repairs those mismatches before partner matching runs.
+ * property_address; the real street address may live in the Zendesk custom field.
+ * The ticket subject is never used for address — only payload.property_address
+ * (or the ticket property-address field when the payload holds an email).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { jobHasPartnerSet } from "@/lib/job-partner-assign";
-import { extractUkPostcode, normalizeUkPostcode } from "@/lib/uk-postcode";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { isValidUUID } from "@/lib/auth-api";
 import {
   getZendeskTicketSnapshot,
@@ -49,64 +50,47 @@ function fieldValue(fields: Record<number, string>, fieldId: number): string | n
   return v || null;
 }
 
-/** Build a minimal UK address when only a postcode is known (partner matching). */
-export function addressFromPostcode(postcode: string, subject?: string | null): string {
-  const pc = normalizeUkPostcode(postcode);
-  const subj = (subject ?? "").trim();
-  if (subj && extractUkPostcode(subj)) {
-    const idx = subj.toUpperCase().indexOf(pc.replace(/\s+/g, " ").toUpperCase());
-    if (idx > 0) {
-      const prefix = subj.slice(0, idx).replace(/\s+in\s*$/i, "").trim();
-      if (prefix.length >= 3 && prefix.length <= 120) {
-        return `${prefix}, ${pc}`;
-      }
-    }
-  }
-  return pc;
-}
-
-function resolvePropertyAddress(
+/**
+ * Canonical property address for Zendesk job ingest.
+ * Never parses the ticket subject — payload (or ticket address field when payload is email).
+ */
+export function resolveZendeskPropertyAddress(
   bodyAddress: string,
-  fields: Record<number, string>,
-  subject: string | null,
+  ticketAddressField: string | null,
 ): { address: string; swappedEmail: string | null; correction?: string } {
-  const addressField = fieldValue(fields, ZENDESK_PROPERTY_ADDRESS_FIELD_ID);
-  const bodyPc = extractUkPostcode(bodyAddress);
+  const trimmed = bodyAddress.trim();
+  const fieldTrimmed = ticketAddressField?.trim() ?? "";
 
-  if (bodyPc && !looksLikeEmail(bodyAddress)) {
-    return { address: bodyAddress.trim(), swappedEmail: null };
+  if (trimmed && !looksLikeEmail(trimmed)) {
+    return { address: trimmed, swappedEmail: null };
   }
 
-  if (addressField && extractUkPostcode(addressField) && !looksLikeEmail(addressField)) {
+  if (fieldTrimmed && !looksLikeEmail(fieldTrimmed)) {
     return {
-      address: addressField,
-      swappedEmail: looksLikeEmail(bodyAddress) ? bodyAddress.trim() : null,
+      address: fieldTrimmed,
+      swappedEmail: looksLikeEmail(trimmed) ? trimmed.toLowerCase() : null,
       correction: "property_address_from_ticket_field",
     };
   }
 
-  const subjectPc = subject ? extractUkPostcode(subject) : null;
-  if (subjectPc) {
-    const swapped =
-      looksLikeEmail(bodyAddress)
-        ? bodyAddress.trim()
-        : looksLikeEmail(addressField)
-          ? addressField
-          : null;
+  if (trimmed) {
     return {
-      address: addressFromPostcode(subjectPc, subject),
-      swappedEmail: swapped,
-      correction: "property_address_from_ticket_subject_postcode",
+      address: trimmed,
+      swappedEmail: looksLikeEmail(trimmed) ? trimmed.toLowerCase() : null,
     };
   }
 
-  if (addressField && !looksLikeEmail(addressField)) {
-    return { address: addressField, swappedEmail: looksLikeEmail(bodyAddress) ? bodyAddress.trim() : null };
+  if (fieldTrimmed && !looksLikeEmail(fieldTrimmed)) {
+    return {
+      address: fieldTrimmed,
+      swappedEmail: null,
+      correction: "property_address_from_ticket_field",
+    };
   }
 
   return {
-    address: bodyAddress.trim(),
-    swappedEmail: looksLikeEmail(bodyAddress) ? bodyAddress.trim() : null,
+    address: "",
+    swappedEmail: looksLikeEmail(trimmed) ? trimmed.toLowerCase() : null,
   };
 }
 
@@ -140,11 +124,12 @@ export async function reconcileZendeskJobIngest(
     return { ...input, clientName, clientEmail, propertyAddress, autoAssign, catalogServiceId, corrections };
   }
 
-  const { fields, subject } = snap.ticket;
+  const { fields } = snap.ticket;
   const ticketClientName = fieldValue(fields, ZENDESK_CLIENT_NAME_FIELD_ID);
   const ticketClientEmail = fieldValue(fields, ZENDESK_CLIENT_EMAIL_FIELD_ID);
   const ticketAutoAssign = fieldValue(fields, ZENDESK_AUTO_ASSIGN_FIELD_ID);
   const ticketCatalog = fieldValue(fields, ZENDESK_TYPE_OF_WORK_FIELD_ID);
+  const ticketPropertyAddress = fieldValue(fields, ZENDESK_PROPERTY_ADDRESS_FIELD_ID);
 
   if (!autoAssign && parseZendeskBoolField(ticketAutoAssign)) {
     autoAssign = true;
@@ -159,13 +144,15 @@ export async function reconcileZendeskJobIngest(
     corrections.push("client_name_from_ticket");
   }
 
-  const addrFix = resolvePropertyAddress(propertyAddress, fields, subject);
+  const addrFix = resolveZendeskPropertyAddress(propertyAddress, ticketPropertyAddress);
   if (addrFix.correction) {
     propertyAddress = addrFix.address;
     corrections.push(addrFix.correction);
-  } else if (addrFix.address !== propertyAddress) {
+  } else if (addrFix.address && addrFix.address !== propertyAddress) {
     propertyAddress = addrFix.address;
     corrections.push("property_address_from_ticket_field");
+  } else if (addrFix.address) {
+    propertyAddress = addrFix.address;
   }
 
   if (addrFix.swappedEmail && !clientEmail) {
@@ -262,8 +249,7 @@ export async function repairJobIngestFromZendeskTicket(
   }
   if (
     reconciled.propertyAddress &&
-    reconciled.propertyAddress !== (job.property_address ?? "").trim() &&
-    extractUkPostcode(reconciled.propertyAddress)
+    reconciled.propertyAddress !== (job.property_address ?? "").trim()
   ) {
     patch.property_address = reconciled.propertyAddress;
   }

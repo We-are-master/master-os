@@ -18,6 +18,7 @@ import type {
 } from "@/types/database";
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
+import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
 import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
@@ -290,8 +291,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, arrival_time, client_name, property_address, " +
-          "and either service_type or catalog_service_id are required.",
+          "account_id, date, arrival_time, client_name, property_address " +
+          "(required for geocoding), and either service_type or catalog_service_id are required.",
       },
       { status: 400 },
     );
@@ -470,6 +471,14 @@ export async function POST(req: NextRequest) {
     if (zendeskCorrections.length > 0) {
       console.info("[api/jobs] Zendesk ingest corrections:", zendeskCorrections.join(", "));
     }
+  }
+
+  propertyAddress = propertyAddress.trim();
+  if (!propertyAddress) {
+    return NextResponse.json(
+      { error: "property_address is required for geocoding." },
+      { status: 400 },
+    );
   }
 
   if (
@@ -723,6 +732,16 @@ export async function POST(req: NextRequest) {
     console.error("[api/jobs] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
   }
+
+  void geocodeUkAddressServer(propertyAddress)
+    .then((coords) => {
+      if (!coords) return;
+      return supabase
+        .from("jobs")
+        .update({ latitude: coords.latitude, longitude: coords.longitude })
+        .eq("id", (inserted as { id: string }).id);
+    })
+    .catch((err) => console.error("[api/jobs] geocode failed:", err));
 
   // Mark the source quote as converted (best-effort — the job is already in,
   // so don't fail the request if the status flip stumbles).
