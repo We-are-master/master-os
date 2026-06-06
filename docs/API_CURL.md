@@ -473,7 +473,9 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `MASTER_OS_QUOTE_WEBHOOK_API_KEY` | `/api/quotes` |
 | `MASTER_OS_JOB_WEBHOOK_API_KEY` | `/api/jobs` |
 | `ZENDESK_WEBHOOK_API_KEY` (ou `ZOHO_DESK_WEBHOOK_API_KEY`) | `/api/webhooks/desk/*` |
-| `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status` |
+| `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status`, `/api/internal/jobs/partner-portal-accept` (trade portal Accept job) |
+
+**Health (no auth):** `GET /api/health/internal-sync` on OS · `GET /api/health/accept-config` on trade portal — verify env before testing Accept.
 | `ZENDESK_SUBDOMAIN`, `ZENDESK_EMAIL`, `ZENDESK_API_TOKEN` | Comentários no ticket + side conversations |
 | `ZENDESK_CANCELLATION_REASON_FIELD_ID` | Dropdown: `cancel_{osId}` (default `5834334215583`) |
 | `ZENDESK_CANCELLATION_NOTES_FIELD_ID` | Cancellation notes textarea (default `5834293455647`) |

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import { closeSideConversation, createSideConversation } from "@/lib/zendesk";
+import { createSideConversation } from "@/lib/zendesk";
+import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
@@ -71,42 +72,6 @@ async function clearPartnerBookedEmailClaim(supabase: SupabaseClient, jobId: str
     .from("jobs")
     .update({ partner_booked_email_sent_at: null })
     .eq("id", jobId);
-}
-
-/** Close every offer-thread side conversation before opening the Job booked thread. */
-async function closeJobOfferSideConversations(
-  supabase: SupabaseClient,
-  jobId: string,
-  ticketId: string,
-): Promise<void> {
-  const sideConversationIds = new Set<string>();
-
-  const { data: jobRow } = await supabase
-    .from("jobs")
-    .select("zendesk_side_conversation_id")
-    .eq("id", jobId)
-    .maybeSingle();
-  const onJob = (jobRow as { zendesk_side_conversation_id: string | null } | null)
-    ?.zendesk_side_conversation_id;
-  if (onJob) sideConversationIds.add(onJob);
-
-  const { data: invites } = await supabase
-    .from("job_partner_invites")
-    .select("zendesk_side_conversation_id")
-    .eq("job_id", jobId);
-  for (const invite of invites ?? []) {
-    const id = (invite as { zendesk_side_conversation_id: string | null })
-      .zendesk_side_conversation_id;
-    if (id) sideConversationIds.add(id);
-  }
-
-  await Promise.all(
-    [...sideConversationIds].map((sideConversationId) =>
-      closeSideConversation({ ticketId, sideConversationId }).catch((err) =>
-        console.error("[booked reply] close offer side conv failed:", err),
-      ),
-    ),
-  );
 }
 
 export async function loadJobForPartnerAcceptance(
@@ -476,7 +441,7 @@ export async function sendBookedSideConvReply(args: {
   };
 
   try {
-    await closeJobOfferSideConversations(supabase, job.id, ticketId);
+    await closeAllJobOfferSideConversations(supabase, job.id, ticketId);
 
     const created = await createSideConversation({
       ticketId,

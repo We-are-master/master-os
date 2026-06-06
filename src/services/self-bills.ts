@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
 import {
+  officeCancellationPartnerClawbackGbp,
+  officeCancellationPartnerPayoutGbp,
   partnerCancellationClawbackOwedGbp,
 } from "@/lib/job-cancel-economics";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -99,6 +101,8 @@ type JobPayoutRow = {
   deleted_at?: string | null;
   partner_cancelled_at?: string | null;
   partner_cancellation_fee?: number | null;
+  cancellation_fee_partner_gbp?: number | null;
+  partner_cancellation_compensation_gbp?: number | null;
 };
 
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
@@ -168,19 +172,26 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
 
-  /** One jobs query — prefer partner clawback columns when present */
+  /** One jobs query — prefer partner clawback / office cancel fee columns when present */
+  const jobColsWithOfficeFees =
+    "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
   const jobColsWithPartnerClaw =
     "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at, partner_cancellation_fee";
   const jobColsLegacy = "partner_cost, materials_cost, status, deleted_at";
 
   let jobs: JobPayoutRow[];
-  const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
-  if (!try1.error) {
-    jobs = (try1.data ?? []) as JobPayoutRow[];
+  const tryOffice = await supabase.from("jobs").select(jobColsWithOfficeFees).eq("self_bill_id", selfBillId);
+  if (!tryOffice.error) {
+    jobs = (tryOffice.data ?? []) as JobPayoutRow[];
   } else {
-    const tryLegacy = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
-    if (tryLegacy.error) throw try1.error;
-    jobs = (tryLegacy.data ?? []) as JobPayoutRow[];
+    const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
+    if (!try1.error) {
+      jobs = (try1.data ?? []) as JobPayoutRow[];
+    } else {
+      const tryLegacy = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
+      if (tryLegacy.error) throw tryOffice.error;
+      jobs = (tryLegacy.data ?? []) as JobPayoutRow[];
+    }
   }
 
   const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
@@ -193,11 +204,15 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   }
   const commission = 0;
   let clawAdjustAll = 0;
+  let officePayoutAdjustAll = 0;
   for (const r of jobs) {
     clawAdjustAll += partnerCancellationClawbackOwedGbp(r as Job);
+    clawAdjustAll += officeCancellationPartnerClawbackGbp(r as Job);
+    officePayoutAdjustAll += officeCancellationPartnerPayoutGbp(r as Job);
   }
   const grossLabour = jobValue + materials - commission;
-  const netPayout = Math.round(Math.max(0, grossLabour - clawAdjustAll) * 100) / 100;
+  const netPayout =
+    Math.round(Math.max(0, grossLabour - clawAdjustAll + officePayoutAdjustAll) * 100) / 100;
 
   const { error: uErr } = await supabase
     .from("self_bills")
@@ -229,6 +244,28 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
       }
     }
     return;
+  }
+
+  /** Cancelled jobs with office partner compensation — fee-only payout, no labour lines. */
+  if (netPayout > 0.02) {
+    const reopenPatch: Record<string, unknown> = {
+      status: "accumulating",
+      jobs_count: jobsCount,
+      job_value: jobValue,
+      materials,
+      commission,
+      net_payout: netPayout,
+      payout_void_reason: null,
+      partner_status_label: null,
+    };
+    const { error: reopenErr } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+    if (!reopenErr) return;
+    if (isSupabaseMissingColumnError(reopenErr)) {
+      delete reopenPatch.payout_void_reason;
+      delete reopenPatch.partner_status_label;
+      const { error: retry } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+      if (!retry) return;
+    }
   }
 
   if (jobs.length === 0) return;
