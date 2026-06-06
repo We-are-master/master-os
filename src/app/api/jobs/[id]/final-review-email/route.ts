@@ -8,9 +8,11 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { isInvoicePaymentVerified } from "@/lib/invoice-client-email-template";
+import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
-import type { Account } from "@/types/database";
+import type { Account, Invoice, Job } from "@/types/database";
 
 function escapeHtml(s: string): string {
   return s
@@ -82,7 +84,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const supabase = await createClient();
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, client_id, client_name, property_address, status, invoice_id")
+    .select(
+      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref",
+    )
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -158,19 +162,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const invoiceId = typeof j.invoice_id === "string" ? j.invoice_id : null;
-  let invoiceLine = "";
+  let invoiceRow: Invoice | null = null;
+  let quoteReference: string | null = null;
+
   if (includeInvoice && invoiceId) {
-    const { data: inv } = await admin
-      .from("invoices")
-      .select("reference, amount, status, due_date")
-      .eq("id", invoiceId)
-      .maybeSingle();
-    if (inv) {
-      const ir = inv as { reference?: string; amount?: number; status?: string; due_date?: string | null };
-      const amt = Number(ir.amount ?? 0);
-      const due = ir.due_date ? String(ir.due_date).slice(0, 10) : "";
-      invoiceLine = `<p style="margin:12px 0">Invoice: <strong>${escapeHtml(ir.reference ?? "")}</strong> — ${escapeHtml(amt.toFixed(2))} GBP${due ? ` · due ${escapeHtml(due)}` : ""} · status ${escapeHtml(ir.status ?? "")}</p>`;
-    }
+    const { data: inv } = await admin.from("invoices").select("*").eq("id", invoiceId).maybeSingle();
+    invoiceRow = (inv ?? null) as Invoice | null;
+  }
+
+  const quoteId = typeof j.quote_id === "string" ? j.quote_id : null;
+  if (quoteId) {
+    const { data: quote } = await admin.from("quotes").select("reference").eq("id", quoteId).maybeSingle();
+    quoteReference = (quote as { reference?: string } | null)?.reference?.trim() ?? null;
   }
 
   const { data: settings } = await admin.from("company_settings").select("company_name").limit(1).maybeSingle();
@@ -194,44 +197,57 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "RESEND_API_KEY is not configured" }, { status: 503 });
   }
 
-  const ref = escapeHtml(String(j.reference ?? ""));
-  const title = escapeHtml(String(j.title ?? "Job"));
-  const site = escapeHtml(String(j.property_address ?? ""));
-  const greet = escapeHtml(billing.displayName);
-  const attachNote =
+  const ref = String(j.reference ?? "");
+  const title = String(j.title ?? "Job");
+  const missingReportNote =
     includeReport && attachments.length === 0
-      ? "<p style=\"color:#B45309;font-size:14px\">We could not attach report PDFs (missing files or storage). Your job is finalised; contact us if you need copies.</p>"
-    : !includeReport
-      ? ""
+      ? "We could not attach report PDFs (missing files or storage). Your job is finalised; contact us if you need copies."
       : "";
 
-  const invNote =
-    includeInvoice && !invoiceLine
-      ? "<p style=\"color:#6B6B6B;font-size:14px\">Payment / invoice details will follow if not shown above.</p>"
-      : "";
+  let html: string;
+  if (includeInvoice && invoiceRow) {
+    html = buildInvoiceEmailHTML(
+      invoiceRow,
+      {
+        clientName: billing.displayName,
+        jobTitle: title,
+        propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
+        serviceType: typeof j.service_type === "string" ? j.service_type : null,
+        completionDate:
+          typeof j.completed_date === "string"
+            ? j.completed_date
+            : new Date().toISOString().slice(0, 10),
+        quoteReference,
+      },
+      j as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
+      {
+        reportAttachmentCount: includeReport ? attachments.length : 0,
+        missingReportNote: missingReportNote || undefined,
+      },
+    );
+  } else {
+    const reportSentence =
+      includeReport && attachments.length > 0
+        ? `Please find the final report${attachments.length === 1 ? "" : "s"} attached.`
+        : includeReport
+          ? "Final report files were requested; see note below if attachments are missing."
+          : "No report PDFs are included in this message (per your request).";
 
-  const reportSentence =
-    includeReport && attachments.length > 0
-      ? `Please find the final report${attachments.length === 1 ? "" : "s"} attached.`
-    : includeReport
-      ? "Final report files were requested; see note below if attachments are missing."
-    : "No report PDFs are included in this message (per your request).";
-
-  const invSentence = includeInvoice
-    ? "Invoice and payment information is included below when available."
-    : "No invoice details are included in this email (per your agreement).";
-
-  const html = `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;font-size:15px;color:#111;line-height:1.5;max-width:560px">
-<p>Hi ${greet},</p>
-<p>Your job <strong>${ref}</strong> — ${title}${site ? `<br/>${site}` : ""} — has been finalised.</p>
+    html = `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;font-size:15px;color:#111;line-height:1.5;max-width:560px">
+<p>Hi ${escapeHtml(billing.displayName)},</p>
+<p>Your job <strong>${escapeHtml(ref)}</strong> — ${escapeHtml(title)} — has been finalised.</p>
 <p>${reportSentence}</p>
-<p>${invSentence}</p>
-${attachNote}
-${includeInvoice ? invNote : ""}
-${invoiceLine}
+${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(missingReportNote)}</p>` : ""}
 <p style="margin:16px 0">If you have any questions, reply to this email or call us.</p>
 <p style="color:#666;font-size:13px">— ${escapeHtml(companyName)}</p>
 </body></html>`;
+  }
+
+  const emailSubject = includeInvoice && invoiceRow
+    ? isInvoicePaymentVerified(invoiceRow)
+      ? `Payment receipt — ${invoiceRow.reference}`
+      : `Invoice ${invoiceRow.reference} — ${ref}`
+    : `Job ${ref} — final update`;
 
   let channel: "zendesk" | "resend";
   let resendId: string | undefined;
@@ -256,7 +272,7 @@ ${invoiceLine}
     const { data: sent, error: sendErr } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
-      subject: `Job ${String(j.reference ?? "")} — final update`,
+      subject: emailSubject,
       html,
       attachments: attachments.length > 0 ? attachments : undefined,
     });

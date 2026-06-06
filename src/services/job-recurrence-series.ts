@@ -12,6 +12,7 @@
  */
 
 import { getSupabase } from "./base";
+import { ensureWeeklySelfBillForJob } from "./self-bills";
 import {
   DEFAULT_EXPAND_HORIZON_DAYS,
   expandSeriesOccurrences,
@@ -168,8 +169,14 @@ export async function createJobOrSeries(
       throw jobErr;
     }
     if (jobRow) {
-      inserted.push(jobRow as Job);
+      const job = jobRow as Job;
+      inserted.push(job);
       lastInsertedDate = occ.date;
+      if (job.partner_id?.trim()) {
+        void ensureWeeklySelfBillForJob(job).catch((e) =>
+          console.error("[createJobOrSeries] self-bill link failed", { jobId: job.id }, e),
+        );
+      }
     }
   }
 
@@ -276,13 +283,23 @@ export async function expandSeriesToHorizon(
       occ,
       series.id,
     );
-    const { error: jobErr } = await supabase
+    const { data: jobRow, error: jobErr } = await supabase
       .from("jobs")
-      .insert({ ...row, reference: undefined });
+      .insert({ ...row, reference: undefined })
+      .select()
+      .single();
     if (jobErr) {
       const code = (jobErr as { code?: string }).code;
       if (code === "23505") continue;
       throw jobErr;
+    }
+    if (jobRow) {
+      const job = jobRow as Job;
+      if (job.partner_id?.trim()) {
+        void ensureWeeklySelfBillForJob(job).catch((e) =>
+          console.error("[expandSeriesToHorizon] self-bill link failed", { jobId: job.id }, e),
+        );
+      }
     }
     insertedCount += 1;
   }

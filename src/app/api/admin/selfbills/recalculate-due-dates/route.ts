@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
+import { computePartnerSelfBillDueIso } from "@/lib/partner-payout-schedule";
+import { loadOrgPartnerPayoutSettings } from "@/lib/org-partner-payout-settings-server";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ const UPDATE_CHUNK = 50;
  *
  * For each non-paid self-bill:
  *   1. Resolve partner.payment_terms
- *   2. Compute due_date = partnerFieldSelfBillPaymentDueDate(week_end, terms)
+ *   2. Compute due_date from partner terms or Setup org standard schedule
  *   3. Batch update changed rows
  */
 export async function POST(req: NextRequest) {
@@ -42,6 +43,7 @@ export async function POST(req: NextRequest) {
   } catch { /* no body */ }
 
   const admin = createServiceClient();
+  const orgPayout = await loadOrgPartnerPayoutSettings(admin);
 
   // ── 1. Eligible self-bills ────────────────────────────────────────────────
   const { data: rawBills, error: billsErr } = await admin
@@ -93,7 +95,12 @@ export async function POST(req: NextRequest) {
     if (!partnerTermsMap.has(pid)) { noPartner++; continue; }
 
     const terms = partnerTermsMap.get(pid) ?? null;
-    const newDueDate = partnerFieldSelfBillPaymentDueDate(bill.week_end, terms);
+    const newDueDate = computePartnerSelfBillDueIso(
+      bill.week_end,
+      terms,
+      orgPayout.orgStandardTerms,
+      orgPayout.orgReferenceYmd,
+    );
     const oldDueDate = bill.due_date ? String(bill.due_date).slice(0, 10) : null;
 
     if (newDueDate !== oldDueDate) {
