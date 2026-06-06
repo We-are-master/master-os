@@ -987,6 +987,8 @@ export type UpdateJobOptions = {
   skipSelfBillSync?: boolean;
   /** When cancelling + creating a cancellation-fee invoice first, exclude those ids from void. */
   preserveInvoiceIdsOnCancel?: string[];
+  /** Office cancel with fees: `applyOfficeCancellationFees` voids docs after the row patch. */
+  skipCancelDocVoid?: boolean;
 };
 
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
@@ -1104,7 +1106,7 @@ export async function updateJob(
   if (!options?.skipSelfBillSync) {
     await syncSelfBillAfterJobChange(row);
   }
-  if (row.status === "cancelled") {
+  if (row.status === "cancelled" && !options?.skipCancelDocVoid) {
     try {
       await Promise.all([
         cancelOpenInvoicesForJobCancellation({

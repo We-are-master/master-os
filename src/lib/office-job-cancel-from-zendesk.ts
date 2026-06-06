@@ -15,6 +15,8 @@ import {
   patchOfficeCancelLostSnapshot,
   patchOfficeCancelZeroJobEconomics,
 } from "@/lib/job-cancel-economics";
+import { clearAutoAssignQueuePatch } from "@/lib/job-partner-assign";
+import { runOfficeCancelAutoAssignCleanup } from "@/lib/office-cancel-auto-assign-cleanup";
 import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import type { Job } from "@/types/database";
@@ -133,6 +135,7 @@ export async function cancelJobFromZendeskWebhook(
   const patch = {
     ...patchOfficeCancelZeroJobEconomics(),
     ...patchOfficeCancelLostSnapshot(jobForPatch),
+    ...clearAutoAssignQueuePatch(),
     status: "cancelled" as const,
     cancellation_reason: reasonText,
     cancelled_at: now,
@@ -150,6 +153,10 @@ export async function cancelJobFromZendeskWebhook(
     console.error("[zendesk-cancel-webhook] update failed:", upErr);
     return { ok: false, status: 500, error: "Failed to cancel job." };
   }
+
+  await runOfficeCancelAutoAssignCleanup(supabase, job.id).catch((e) =>
+    console.error("[zendesk-cancel-webhook] auto-assign cleanup:", e),
+  );
 
   await Promise.all([
     cancelOpenInvoicesForJobCancellation(

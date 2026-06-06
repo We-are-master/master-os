@@ -12,17 +12,22 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import {
+  buildCancellationFeeJobPatch,
   patchOfficeCancelLostSnapshot,
   patchOfficeCancelZeroJobEconomics,
+  type OfficeCancelFeeChoices,
 } from "@/lib/job-cancel-economics";
+import { applyOfficeCancellationFees } from "@/lib/office-cancel-fees";
+import { clearAutoAssignQueuePatch } from "@/lib/job-partner-assign";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
-import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { syncJobZendeskCancellationFields } from "@/lib/zendesk-job-cancellation-sync";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { getErrorMessage } from "@/lib/utils";
+
+export type { OfficeCancelFeeChoices };
 
 export type CancelJobInput = {
   /** Job id to cancel. Hook will fetch the latest row to read pre-cancel economics + timer state. */
@@ -33,18 +38,34 @@ export type CancelJobInput = {
   detail: string;
   /** Resolved presets list (passed in to keep the hook framework-agnostic). */
   presets: readonly OfficeJobCancellationPresetRow[];
+  /** Optional cancellation fee rails (client invoice + partner self-bill). */
+  fees?: OfficeCancelFeeChoices;
 };
 
 export type CancelJobResult =
   | { ok: true; updated: Job }
   | { ok: false; error: string };
 
+function feeAuditSummary(fees: OfficeCancelFeeChoices | undefined): string {
+  if (!fees) return "Job cancelled — labour zeroed; no cancellation fees.";
+  const parts: string[] = [];
+  if (fees.chargeClient && fees.clientFeeGbp != null && fees.clientFeeGbp > 0) {
+    parts.push(`client fee £${fees.clientFeeGbp.toFixed(2)}`);
+  }
+  if (fees.partnerFee && fees.partnerFeeGbp != null && fees.partnerFeeGbp > 0) {
+    parts.push(
+      fees.partnerFlow === "paid"
+        ? `partner payout £${fees.partnerFeeGbp.toFixed(2)}`
+        : `partner clawback £${fees.partnerFeeGbp.toFixed(2)}`,
+    );
+  }
+  if (parts.length === 0) return "Job cancelled — labour zeroed; no cancellation fees.";
+  return `Job cancelled — labour zeroed; ${parts.join("; ")} (invoice/self-bill finalized).`;
+}
+
 /**
  * Encapsulates the office-side cancel flow: validation, lost-revenue snapshot,
- * timer resets, status change, audit log, and partner notification. Mirrors
- * the legacy in-place handler at job-detail-client.tsx → handleConfirmOfficeCancel
- * so the same operation is now usable from both the Jobs detail page and the
- * Live View Kanban without duplicating side-effects.
+ * timer resets, status change, fee docs, audit log, and partner notification.
  */
 export function useCancelJob() {
   const { profile } = useProfile();
@@ -74,9 +95,12 @@ export function useCancelJob() {
         }
 
         const now = new Date().toISOString();
+        const feePatch = input.fees ? buildCancellationFeeJobPatch(input.fees) : {};
         const patch: Partial<Job> = {
           ...patchOfficeCancelZeroJobEconomics(),
           ...patchOfficeCancelLostSnapshot(currentJob),
+          ...clearAutoAssignQueuePatch(),
+          ...feePatch,
           status: "cancelled",
           cancellation_reason: reasonText,
           cancelled_at: now,
@@ -85,7 +109,24 @@ export function useCancelJob() {
           ...statusChangeOfficeTimerPatch(currentJob, "cancelled"),
         };
 
-        const updated = await updateJob(input.jobId, patch);
+        const priorInvoiceId = currentJob.invoice_id;
+        const priorSelfBillId = currentJob.self_bill_id;
+
+        let updated = await updateJob(input.jobId, patch, {
+          skipSelfBillSync: true,
+          skipCancelDocVoid: true,
+        });
+
+        updated = await applyOfficeCancellationFees({
+          job: updated,
+          cancellationReason: reasonText,
+          priorInvoiceId,
+          priorSelfBillId,
+        });
+
+        void fetch(`/api/jobs/${encodeURIComponent(updated.id)}/auto-assign-cancel-cleanup`, {
+          method: "POST",
+        }).catch((err) => console.error("[use-cancel-job] auto-assign cleanup:", err));
 
         await logAudit({
           entityType: "job",
@@ -104,17 +145,10 @@ export function useCancelJob() {
           entityRef: updated.reference,
           action: "updated",
           fieldName: "financial_documents",
-          newValue:
-            "Job cancelled — labour zeroed; use Finance Summary extras for any further charges or payouts.",
+          newValue: feeAuditSummary(input.fees),
           userId: profile?.id,
           userName: profile?.full_name,
         });
-
-        try {
-          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-        } catch {
-          /* non-blocking */
-        }
 
         if (updated.partner_id) {
           notifyAssignedPartnerAboutJob({

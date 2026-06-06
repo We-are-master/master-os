@@ -235,7 +235,12 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
-import { patchOfficeCancelZeroJobEconomics, partnerCancellationClawbackOwedGbp } from "@/lib/job-cancel-economics";
+import {
+  officeCancellationPartnerClawbackGbp,
+  officeCancellationPartnerPayoutGbp,
+  patchOfficeCancelZeroJobEconomics,
+  partnerCancellationClawbackOwedGbp,
+} from "@/lib/job-cancel-economics";
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
@@ -5379,10 +5384,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
   const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerPayRemaining = Math.max(0, partnerCashOutTotal - partnerPaidTotal);
-  const partnerClawbackOwed = partnerCancellationClawbackOwedGbp(job);
+  const partnerClawbackOwed =
+    partnerCancellationClawbackOwedGbp(job) + officeCancellationPartnerClawbackGbp(job);
+  const officePartnerCompensation = officeCancellationPartnerPayoutGbp(job);
+  const officeClientCancelFee = Math.max(0, Number(job.cancellation_fee_client_gbp ?? 0));
   const partnerUsesClawbackUi = job.status === "cancelled" && partnerClawbackOwed > 0.02;
+  const partnerUsesCompensationUi = job.status === "cancelled" && officePartnerCompensation > 0.02;
   /** Partner owes office after cancel — ledger stays positive (`partner_cancellation_fee` / snapshot); payout column shows minus. */
-  const partnerCashOutSummaryAmount = partnerUsesClawbackUi ? -partnerClawbackOwed : partnerCashOutTotal;
+  const partnerCashOutSummaryAmount = partnerUsesClawbackUi
+    ? -partnerClawbackOwed
+    : partnerUsesCompensationUi
+      ? officePartnerCompensation
+      : partnerCashOutTotal;
   const partnerPayoutLedgerRows = partnerPayments.filter(
     (p) => p.type === "partner" && !isLegacyMisclassifiedPartnerPayment(p),
   );
@@ -5399,7 +5412,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
   // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
-  const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
+  const amountDue =
+    job.status === "cancelled" && officeClientCancelFee > 0.02
+      ? Math.max(0, officeClientCancelFee - customerPaidTotal)
+      : Math.max(0, billableRevenue - customerPaidTotal);
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
   /** `extras_amount` includes manual extras and access fees folded in by CCZ/parking toggles — split display so CCZ/parking stay positive lines, not double-counted under “Extra charges”. */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
@@ -5790,13 +5806,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           <div className="space-y-1.5 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">
-                {partnerUsesClawbackUi ? "Cancellation clawback (partner owes)" : "Partner total (incl. materials)"}
+                {partnerUsesClawbackUi
+                  ? "Cancellation clawback (partner owes)"
+                  : partnerUsesCompensationUi
+                    ? "Cancellation compensation (Fixfy pays)"
+                    : "Partner total (incl. materials)"}
               </span>
               <span className="font-semibold tabular-nums text-rose-700">
-                {partnerUsesClawbackUi ? formatCurrencyPrecise(-partnerClawbackOwed) : formatCurrency(partnerCashOutTotal)}
+                {partnerUsesClawbackUi
+                  ? formatCurrencyPrecise(-partnerClawbackOwed)
+                  : partnerUsesCompensationUi
+                    ? formatCurrency(officePartnerCompensation)
+                    : formatCurrency(partnerCashOutTotal)}
               </span>
             </div>
-            {!partnerUsesClawbackUi ? (
+            {!partnerUsesClawbackUi && !partnerUsesCompensationUi ? (
               <>
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">Base labour</span>
@@ -9241,6 +9265,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       <CancelJobModal
         jobId={job.id}
         jobReference={job.reference}
+        jobHint={job}
         isOpen={cancelJobOpen}
         onClose={() => setCancelJobOpen(false)}
         onCancelled={(updated) => {
