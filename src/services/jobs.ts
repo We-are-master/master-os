@@ -1099,9 +1099,17 @@ export async function updateJob(
     throw new Error("Job update did not affect any row (check permissions or job id).");
   }
 
-  const row = rows[0] as Job;
+  let row = rows[0] as Job;
   if (!row.id?.toString().trim()) {
     throw new Error("Job update returned a row without id — refresh the page.");
+  }
+  if (row.partner_id?.trim() && !row.self_bill_id?.trim()) {
+    try {
+      const sbId = await ensureWeeklySelfBillForJob(row);
+      if (sbId) row = { ...row, self_bill_id: sbId };
+    } catch (e) {
+      console.error("updateJob: auto-link weekly self-bill failed", { jobId: row.id, ref: row.reference }, e);
+    }
   }
   if (!options?.skipSelfBillSync) {
     await syncSelfBillAfterJobChange(row);

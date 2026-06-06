@@ -304,6 +304,29 @@ export function computePartnerSelfBillDueIso(
   return computeOrgStandardPartnerDueIso(weekEndYmd, orgStandardTerms, orgReferenceYmd);
 }
 
+export type SelfBillDueResolveContext = {
+  partnerTerms?: string | null;
+  orgStandardTerms?: string | null;
+  orgReferenceYmd?: string | null;
+};
+
+/** Stored `due_date` wins; otherwise partner terms or Setup org standard schedule. */
+export function resolveSelfBillDueYmd(
+  sb: Pick<{ week_end?: string | null; due_date?: string | null }, "week_end" | "due_date">,
+  ctx?: SelfBillDueResolveContext,
+): string {
+  const stored = sb.due_date?.trim().slice(0, 10) ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+  const we = sb.week_end?.trim() ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(we)) return "";
+  return computePartnerSelfBillDueIso(
+    we,
+    ctx?.partnerTerms ?? null,
+    ctx?.orgStandardTerms,
+    ctx?.orgReferenceYmd,
+  );
+}
+
 export function inferPartnerDueDateSource(
   storedDue: string | null | undefined,
   weekEndYmd: string,

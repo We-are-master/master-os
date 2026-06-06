@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
+import { computePartnerSelfBillDueIso } from "@/lib/partner-payout-schedule";
+import { loadOrgPartnerPayoutSettings } from "@/lib/org-partner-payout-settings-server";
 import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,13 @@ const CHUNK = 200;
 const APPROVED_JOB_STATUSES = new Set(["awaiting_payment", "completed"]);
 
 /** Self-bill statuses we can promote to ready_to_pay */
-const PROMOTABLE_STATUSES = new Set(["draft", "accumulating", "pending_review"]);
+const PROMOTABLE_STATUSES = new Set([
+  "draft",
+  "accumulating",
+  "pending_review",
+  "awaiting_payment",
+  "audit_required",
+]);
 
 /** Self-bill statuses we must never touch */
 const SKIP_STATUSES = new Set(["paid", "payout_cancelled", "payout_archived", "payout_lost"]);
@@ -43,7 +50,8 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = createServiceClient();
-  const stats = { backfilled: 0, promoted: 0, totalsUpdated: 0, dueDatesUpdated: 0, errors: 0 };
+  const orgPayout = await loadOrgPartnerPayoutSettings(admin);
+  const stats = { orphansFound: 0, backfilled: 0, promoted: 0, totalsUpdated: 0, dueDatesUpdated: 0, errors: 0 };
 
   // ── 1. Backfill: jobs with partner but no self_bill_id ────────────────────
   const { data: orphanJobs } = await admin
@@ -53,6 +61,8 @@ export async function POST(req: NextRequest) {
     .is("self_bill_id", null)
     .is("deleted_at", null)
     .neq("status", "cancelled");
+
+  stats.orphansFound = (orphanJobs ?? []).length;
 
   for (const job of orphanJobs ?? []) {
     try {
@@ -162,10 +172,15 @@ export async function POST(req: NextRequest) {
       stats.promoted++;
     }
 
-    // Recalculate due date
+    // Recalculate due date from partner terms or Setup org standard schedule
     if (sb.week_end) {
       const terms = sb.partner_id ? partnerTermsMap.get(sb.partner_id) ?? null : null;
-      const newDueDate = partnerFieldSelfBillPaymentDueDate(sb.week_end, terms);
+      const newDueDate = computePartnerSelfBillDueIso(
+        sb.week_end,
+        terms,
+        orgPayout.orgStandardTerms,
+        orgPayout.orgReferenceYmd,
+      );
       const oldDueDate = sb.due_date ? String(sb.due_date).slice(0, 10) : null;
       if (newDueDate !== oldDueDate) {
         patch.due_date = newDueDate;

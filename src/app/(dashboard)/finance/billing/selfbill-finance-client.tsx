@@ -48,7 +48,11 @@ import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { partnerPayLedgerBypassesPartnerCap, PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
 import type { Job, JobPaymentMethod, SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
+import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import {
+  resolveSelfBillDueYmd,
+  type SelfBillDueResolveContext,
+} from "@/lib/partner-payout-schedule";
 import { parseISO } from "date-fns/parseISO";
 import {
   dueDateSourceLabel,
@@ -64,6 +68,15 @@ import {
   billingCreatedAtFilterDescription,
   resolveBillingCreatedAtYmdBounds,
 } from "@/lib/billing-created-at-filter";
+import {
+  billingDueDateFilterDescription,
+  DEFAULT_BILLING_DUE_DATE_FILTER,
+  dueYmdInBounds,
+  resolveBillingDueDateYmdBounds,
+  type BillingDueDateFilterValue,
+  type OrgPayoutScheduleCtx,
+} from "@/lib/billing-due-date-filter";
+import { BillingDueDateFilter } from "@/components/finance/billing-due-date-filter";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
@@ -79,7 +92,37 @@ const JOB_PAYMENTS_IN_CHUNK = 80;
 
 type PayoutListMode = "self_bill" | "by_job";
 
-/** Group headers in table "Grouped" view — calendar week of `created_at`, not work `week_label`. */
+/** Module context for due-date resolution (Setup standard + partner terms). */
+let selfBillDueResolveCtx: {
+  partnerTermsById: Record<string, string | null>;
+  orgStandardTerms: string;
+  orgReferenceYmd: string | null;
+} | null = null;
+
+function dueCtxForPartner(partnerId?: string | null): SelfBillDueResolveContext {
+  const pid = partnerId?.trim();
+  return {
+    partnerTerms: pid && selfBillDueResolveCtx ? selfBillDueResolveCtx.partnerTermsById[pid] ?? null : null,
+    orgStandardTerms: selfBillDueResolveCtx?.orgStandardTerms,
+    orgReferenceYmd: selfBillDueResolveCtx?.orgReferenceYmd,
+  };
+}
+
+/** DB statuses that map to the "Draft" UI bucket (job still in progress). */
+const DRAFT_DB_STATUSES = new Set(["draft", "accumulating", "needs_attention"]);
+
+/** DB statuses that map to the "Ready to Pay" UI bucket (before overdue check). */
+const READY_DB_STATUSES = new Set(["ready_to_pay", "pending_review", "awaiting_payment"]);
+
+function selfBillDueYmd(sb: Pick<SelfBill, "week_end" | "due_date" | "partner_id">): string {
+  return resolveSelfBillDueYmd(sb, dueCtxForPartner(sb.partner_id));
+}
+
+function selfBillCountsAsReady(sb: Pick<SelfBill, "status">): boolean {
+  return READY_DB_STATUSES.has(sb.status) || sb.status === "audit_required";
+}
+
+/** Group headers in Draft grouped view — calendar week of `created_at`. */
 function selfBillCreatedWeekGroup(sb: Pick<SelfBill, "created_at">): {
   key: string;
   title: string;
@@ -97,23 +140,24 @@ function selfBillCreatedWeekGroup(sb: Pick<SelfBill, "created_at">): {
   };
 }
 
-// ── Status model ──────────────────────────────────────────────────────────────
-
-/** DB statuses that map to the "Draft" UI bucket (job still in progress). */
-const DRAFT_DB_STATUSES = new Set(["draft", "accumulating", "needs_attention"]);
-
-/** DB statuses that map to the "Ready to Pay" UI bucket (before overdue check). */
-const READY_DB_STATUSES = new Set(["ready_to_pay", "pending_review", "awaiting_payment"]);
-
-function selfBillDueYmd(sb: Pick<SelfBill, "week_end" | "due_date">): string {
-  // Prefer stored due_date (set by partner.payment_terms or manual edit)
-  const stored = sb.due_date?.trim() ?? "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
-  // Fall back to computed Friday-after-week-end
-  const we = sb.week_end?.trim() ?? "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(we)) return "";
-  return partnerFieldSelfBillPaymentDueDate(we);
+/** Group headers in Ready/Overdue grouped view — payment `due_date` (Friday). */
+function selfBillDueWeekGroup(sb: Pick<SelfBill, "week_end" | "due_date">): {
+  key: string;
+  title: string;
+  subtitle: string | null;
+} {
+  const due = selfBillDueYmd(sb);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    return { key: "unknown", title: "Pay · unknown due", subtitle: null };
+  }
+  return {
+    key: due,
+    title: `Pay · ${formatDate(due)}`,
+    subtitle: "Partner payout due",
+  };
 }
+
+// ── Status model ──────────────────────────────────────────────────────────────
 
 function sbTodayYmd(): string {
   const n = new Date();
@@ -121,7 +165,7 @@ function sbTodayYmd(): string {
 }
 
 function isSelfBillOverdue(sb: Pick<SelfBill, "status" | "week_end" | "due_date">, todayYmd: string): boolean {
-  if (!READY_DB_STATUSES.has(sb.status)) return false;
+  if (!selfBillCountsAsReady(sb)) return false;
   const due = selfBillDueYmd(sb);
   if (!due) return false;
   return todayYmd > due;
@@ -138,7 +182,7 @@ function getSelfBillDisplayStatus(sb: SelfBill, todayYmd: string): SelfBillDispl
   if (sb.status === "audit_required") return { label: "Audit required", variant: "danger" };
   if (sb.status === "rejected") return { label: "Cancelled", variant: "default" };
   if (DRAFT_DB_STATUSES.has(sb.status)) return { label: "Draft", variant: "default" };
-  if (READY_DB_STATUSES.has(sb.status)) {
+  if (selfBillCountsAsReady(sb)) {
     if (isSelfBillOverdue(sb, todayYmd)) return { label: "Overdue", variant: "danger" };
     return { label: "Ready to Pay", variant: "info" };
   }
@@ -152,7 +196,6 @@ const TAB_ORDER = [
   "draft",
   "ready_to_pay",
   "overdue",
-  "audit_required",
   "closed",
 ] as const;
 
@@ -163,7 +206,6 @@ const TAB_LABELS: Record<SelfBillTab, string> = {
   draft: "Draft",
   ready_to_pay: "Ready to Pay",
   overdue: "Overdue",
-  audit_required: "Audit required",
   closed: "Closed",
 };
 
@@ -177,10 +219,41 @@ function selfBillMatchesTab(sb: SelfBill, tab: SelfBillTab, todayYmd: string): b
   if (tab === "closed") return isSelfBillClosed(sb);
   if (isSelfBillPayoutVoided(sb)) return false;
   if (tab === "draft") return DRAFT_DB_STATUSES.has(sb.status);
-  if (tab === "ready_to_pay") return READY_DB_STATUSES.has(sb.status) && !isSelfBillOverdue(sb, todayYmd);
+  if (tab === "ready_to_pay") return selfBillCountsAsReady(sb) && !isSelfBillOverdue(sb, todayYmd);
   if (tab === "overdue") return isSelfBillOverdue(sb, todayYmd);
-  if (tab === "audit_required") return sb.status === "audit_required";
   return false;
+}
+
+function selfBillPassesCreatedAtFilter(
+  sb: Pick<SelfBill, "created_at">,
+  bounds: { from: string; to: string } | null,
+): boolean {
+  if (!bounds) return true;
+  const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+  const t = new Date(sb.created_at ?? 0).getTime();
+  return t >= new Date(startIso).getTime() && t <= new Date(endIso).getTime();
+}
+
+function selfBillPassesDueDateFilter(
+  sb: Pick<SelfBill, "week_end" | "due_date">,
+  bounds: { from: string; to: string } | null,
+): boolean {
+  if (!bounds) return true;
+  const due = selfBillDueYmd(sb);
+  return dueYmdInBounds(due, bounds);
+}
+
+async function markSelfBillsPaid(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const supabase = getSupabase();
+  const paidDay = new Date().toISOString().slice(0, 10);
+  const res = await supabase.from("self_bills").update({ status: "paid", paid_at: paidDay }).in("id", ids);
+  if (res.error && /paid_at|column|schema|PGRST204/i.test(String(res.error.message ?? ""))) {
+    const { error } = await supabase.from("self_bills").update({ status: "paid" }).in("id", ids);
+    if (error) throw error;
+  } else if (res.error) {
+    throw res.error;
+  }
 }
 
 // ── Payout helpers ─────────────────────────────────────────────────────────────
@@ -285,10 +358,18 @@ export function SelfBillFinanceClient() {
 
 function SelfBillPageInner() {
   const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const orgPayoutSchedule = useMemo<OrgPayoutScheduleCtx>(
+    () => ({
+      orgStandardTerms: partnerPayoutStandardTerms,
+      orgReferenceYmd: partnerPayoutReferenceYmd,
+    }),
+    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
+  );
   const [activeTab, setActiveTab] = useState<SelfBillTab>("ready_to_pay");
   const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
-  /** Table: group Ready to Pay by week (default) or flat list. */
-  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("flat");
+  /** Table: group Ready/Overdue by payment due date (default) or flat list. */
+  const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("grouped");
+  const [dueDateFilter, setDueDateFilter] = useState<BillingDueDateFilterValue>(DEFAULT_BILLING_DUE_DATE_FILTER);
   const [payoutListMode, setPayoutListMode] = useState<PayoutListMode>("self_bill");
   const [partnerTermsById, setPartnerTermsById] = useState<Record<string, string | null>>({});
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
@@ -318,13 +399,10 @@ function SelfBillPageInner() {
     setLoading(true);
     const supabase = getSupabase();
     try {
-      let q = supabase.from("self_bills").select("*").order("created_at", { ascending: false });
-      const bounds = resolveBillingCreatedAtYmdBounds(createdAtFilter);
-      if (bounds) {
-        const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
-        q = q.gte("created_at", startIso).lte("created_at", endIso);
-      }
-      const { data, error } = await q;
+      const { data, error } = await supabase
+        .from("self_bills")
+        .select("*")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       setSelfBills((data ?? []) as SelfBill[]);
     } catch (e) {
@@ -333,9 +411,44 @@ function SelfBillPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [createdAtFilter]);
+  }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    selfBillDueResolveCtx = {
+      partnerTermsById,
+      orgStandardTerms: partnerPayoutStandardTerms,
+      orgReferenceYmd: partnerPayoutReferenceYmd,
+    };
+  }, [partnerTermsById, partnerPayoutStandardTerms, partnerPayoutReferenceYmd]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const partnerIds = [
+      ...new Set(selfBills.map((sb) => sb.partner_id?.trim()).filter((x): x is string => Boolean(x))),
+    ];
+    if (partnerIds.length === 0) return;
+    (async () => {
+      const supabase = getSupabase();
+      const termsPatch: Record<string, string | null> = {};
+      const CHUNK = 80;
+      for (let i = 0; i < partnerIds.length; i += CHUNK) {
+        const { data } = await supabase
+          .from("partners")
+          .select("id, payment_terms")
+          .in("id", partnerIds.slice(i, i + CHUNK));
+        for (const row of data ?? []) {
+          const pr = row as { id: string; payment_terms?: string | null };
+          termsPatch[pr.id] = pr.payment_terms?.trim() || null;
+        }
+      }
+      if (!cancelled) setPartnerTermsById((prev) => ({ ...prev, ...termsPatch }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selfBills]);
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -350,10 +463,25 @@ function SelfBillPageInner() {
     return () => { supabase.removeChannel(channel); };
   }, [loadData]);
 
+  const createdAtBounds = useMemo(
+    () => resolveBillingCreatedAtYmdBounds(createdAtFilter),
+    [createdAtFilter],
+  );
+  const dueDateBounds = useMemo(
+    () => resolveBillingDueDateYmdBounds(dueDateFilter, todayYmd, orgPayoutSchedule),
+    [dueDateFilter, todayYmd, orgPayoutSchedule],
+  );
+  const usesDueDatePeriod = activeTab === "ready_to_pay" || activeTab === "overdue";
+
   const filtered = useMemo(() => {
     let result = selfBills.filter((sb) => selfBillMatchesTab(sb, activeTab, todayYmd));
     if (originFilter === "partner") result = result.filter((sb) => isPartnerFieldBill(sb));
     else if (originFilter === "internal") result = result.filter((sb) => sb.bill_origin === "internal");
+    if (usesDueDatePeriod) {
+      result = result.filter((sb) => selfBillPassesDueDateFilter(sb, dueDateBounds));
+    } else {
+      result = result.filter((sb) => selfBillPassesCreatedAtFilter(sb, createdAtBounds));
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -364,18 +492,24 @@ function SelfBillPageInner() {
       );
     }
     return result;
-  }, [selfBills, activeTab, search, originFilter, todayYmd]);
+  }, [selfBills, activeTab, search, originFilter, todayYmd, usesDueDatePeriod, dueDateBounds, createdAtBounds]);
 
   const filteredIdSet = useMemo(() => new Set(filtered.map((sb) => sb.id)), [filtered]);
 
-  /** Same ordering as period filter: newest `created_at` first. */
-  const filteredSorted = useMemo(
-    () =>
-      [...filtered].sort(
-        (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
-      ),
-    [filtered],
-  );
+  const filteredSorted = useMemo(() => {
+    const rows = [...filtered];
+    if (usesDueDatePeriod) {
+      return rows.sort((a, b) => {
+        const da = selfBillDueYmd(a);
+        const db = selfBillDueYmd(b);
+        if (da !== db) return da.localeCompare(db);
+        return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+      });
+    }
+    return rows.sort(
+      (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+    );
+  }, [filtered, usesDueDatePeriod]);
 
   const jobPayoutRows = useMemo(() => {
     const rows: { job: JobLine; sb: SelfBill }[] = [];
@@ -417,7 +551,6 @@ function SelfBillPageInner() {
       draft: 0,
       ready_to_pay: 0,
       overdue: 0,
-      audit_required: 0,
       closed: 0,
     };
     for (const sb of selfBills) {
@@ -432,22 +565,44 @@ function SelfBillPageInner() {
   }, [selfBills, todayYmd]);
 
   const kpiPeriodDesc = useMemo(
-    () => billingCreatedAtFilterDescription(createdAtFilter),
-    [createdAtFilter],
+    () =>
+      usesDueDatePeriod
+        ? billingDueDateFilterDescription(dueDateFilter, todayYmd, orgPayoutSchedule)
+        : billingCreatedAtFilterDescription(createdAtFilter),
+    [usesDueDatePeriod, dueDateFilter, todayYmd, orgPayoutSchedule, createdAtFilter],
   );
 
   const totals = useMemo(() => {
     let readyDueSum = 0;
     let overdueSum = 0;
+    let totalPayableSum = 0;
+    let totalReadyCount = 0;
+    let totalOverdueCount = 0;
     for (const sb of selfBills) {
       if (isSelfBillPayoutVoided(sb)) continue;
       const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
-      if (READY_DB_STATUSES.has(sb.status) && !isSelfBillOverdue(sb, todayYmd)) readyDueSum += due;
-      if (isSelfBillOverdue(sb, todayYmd)) overdueSum += due;
+      const ready = selfBillCountsAsReady(sb) && !isSelfBillOverdue(sb, todayYmd);
+      const overdue = isSelfBillOverdue(sb, todayYmd);
+      if (ready) {
+        totalPayableSum += due;
+        totalReadyCount++;
+        if (selfBillPassesDueDateFilter(sb, dueDateBounds)) readyDueSum += due;
+      }
+      if (overdue) {
+        totalPayableSum += due;
+        totalOverdueCount++;
+        if (selfBillPassesDueDateFilter(sb, dueDateBounds)) overdueSum += due;
+      }
     }
-    const draftCount = selfBills.filter((sb) => DRAFT_DB_STATUSES.has(sb.status)).length;
-    const readyCount = selfBills.filter((sb) => READY_DB_STATUSES.has(sb.status) && !isSelfBillOverdue(sb, todayYmd)).length;
-    const overdueCount = selfBills.filter((sb) => isSelfBillOverdue(sb, todayYmd)).length;
+    const readyCount = selfBills.filter(
+      (sb) =>
+        selfBillCountsAsReady(sb) &&
+        !isSelfBillOverdue(sb, todayYmd) &&
+        selfBillPassesDueDateFilter(sb, dueDateBounds),
+    ).length;
+    const overdueCount = selfBills.filter(
+      (sb) => isSelfBillOverdue(sb, todayYmd) && selfBillPassesDueDateFilter(sb, dueDateBounds),
+    ).length;
     // Avg payout per week: group non-voided partner self-bills by week_label, average the net_payout per week
     const weekMap = new Map<string, number>();
     for (const sb of selfBills) {
@@ -458,8 +613,17 @@ function SelfBillPageInner() {
     const avgPerWeek = weekMap.size > 0
       ? [...weekMap.values()].reduce((s, v) => s + v, 0) / weekMap.size
       : 0;
-    return { draftCount, readyCount, readyDueSum, overdueCount, overdueSum, avgPerWeek };
-  }, [selfBills, jobsBySelfBillId, partnerPaidByJobId, todayYmd]);
+    return {
+      readyCount,
+      readyDueSum,
+      overdueCount,
+      overdueSum,
+      totalPayableSum,
+      totalReadyCount,
+      totalOverdueCount,
+      avgPerWeek,
+    };
+  }, [selfBills, jobsBySelfBillId, partnerPaidByJobId, todayYmd, dueDateBounds]);
 
   const updateSbStatus = async (id: string, newStatus: string) => {
     const supabase = getSupabase();
@@ -482,20 +646,12 @@ function SelfBillPageInner() {
 
   const handleMarkPaid = async (sb: SelfBill) => {
     try {
-      await updateSbStatus(sb.id, "paid");
-      toast.success("Self-bill marked as paid");
+      const amount = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+      await markSelfBillsPaid([sb.id]);
+      toast.success(`Marked paid · ${formatCurrency(amount)}`);
       refreshDrawer(sb.id, "paid");
       loadData();
     } catch { toast.error("Failed to mark as paid"); }
-  };
-
-  const handleMarkAuditRequired = async (sb: SelfBill) => {
-    try {
-      await updateSbStatus(sb.id, "audit_required");
-      toast.success("Flagged for audit review");
-      refreshDrawer(sb.id, "audit_required");
-      loadData();
-    } catch { toast.error("Failed to flag for audit"); }
   };
 
   const handleReopenSelfBill = async (sb: SelfBill) => {
@@ -518,9 +674,19 @@ function SelfBillPageInner() {
     setBulkSaving(true);
     const supabase = getSupabase();
     try {
-      const { error } = await supabase.from("self_bills").update({ status: newStatus }).in("id", eligible);
-      if (error) throw error;
-      toast.success(`${eligible.length} self-bill(s) updated`);
+      if (newStatus === "paid") {
+        const totalDue = eligible.reduce((sum, id) => {
+          const sb = selfBills.find((s) => s.id === id);
+          if (!sb) return sum;
+          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+        }, 0);
+        await markSelfBillsPaid(eligible);
+        toast.success(`Marked ${eligible.length} paid · ${formatCurrency(totalDue)}`);
+      } else {
+        const { error } = await supabase.from("self_bills").update({ status: newStatus }).in("id", eligible);
+        if (error) throw error;
+        toast.success(`${eligible.length} self-bill(s) updated`);
+      }
       setSelectedIds(new Set());
       loadData();
     } catch {
@@ -529,6 +695,45 @@ function SelfBillPageInner() {
       setBulkSaving(false);
     }
   };
+
+  const handleSelectAllInView = useCallback(() => {
+    const ids = filteredSorted
+      .filter((sb) => !isSelfBillPayoutVoided(sb))
+      .map((sb) => sb.id);
+    setSelectedIds(new Set(ids));
+    if (ids.length === 0) toast.message("Nothing to select in this view");
+  }, [filteredSorted]);
+
+  const handleMarkPaidForIds = useCallback(
+    async (ids: string[]) => {
+      const eligible = ids.filter((id) => {
+        const sb = selfBills.find((s) => s.id === id);
+        return sb && !isSelfBillPayoutVoided(sb);
+      });
+      if (eligible.length === 0) {
+        toast.error("No payable self-bills in this group");
+        return;
+      }
+      if (bulkSaving) return;
+      setBulkSaving(true);
+      try {
+        const totalDue = eligible.reduce((sum, id) => {
+          const sb = selfBills.find((s) => s.id === id);
+          if (!sb) return sum;
+          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+        }, 0);
+        await markSelfBillsPaid(eligible);
+        toast.success(`Marked ${eligible.length} paid · ${formatCurrency(totalDue)}`);
+        setSelectedIds(new Set());
+        loadData();
+      } catch {
+        toast.error("Failed to mark as paid");
+      } finally {
+        setBulkSaving(false);
+      }
+    },
+    [selfBills, jobsBySelfBillId, partnerPaidByJobId, bulkSaving, loadData],
+  );
 
   const handleBulkSendEmail = async () => {
     if (selectedIds.size === 0 || bulkSaving || emailSending) return;
@@ -753,12 +958,22 @@ function SelfBillPageInner() {
     setRecalculating(true);
     try {
       const res = await fetch("/api/admin/selfbills/full-sync", { method: "POST" });
-      const data = await res.json().catch(() => ({})) as { backfilled?: number; promoted?: number; totalsUpdated?: number; dueDatesUpdated?: number; errors?: number; error?: string };
+      const data = await res.json().catch(() => ({})) as {
+        orphansFound?: number;
+        backfilled?: number;
+        promoted?: number;
+        totalsUpdated?: number;
+        dueDatesUpdated?: number;
+        errors?: number;
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error ?? "Failed");
       const parts = [
+        data.orphansFound ? `${data.orphansFound} orphan job(s) found` : null,
         data.backfilled ? `${data.backfilled} linked` : null,
         data.promoted ? `${data.promoted} promoted` : null,
-        data.totalsUpdated ? `${data.totalsUpdated} totals updated` : null,
+        data.dueDatesUpdated ? `${data.dueDatesUpdated} due dates updated` : null,
+        data.errors ? `${data.errors} error(s)` : null,
       ].filter(Boolean);
       toast.success(`Sync complete — ${parts.length ? parts.join(", ") : "everything up to date"}`);
       void loadData();
@@ -1026,7 +1241,7 @@ function SelfBillPageInner() {
           icon={<RefreshCw className={cn("h-3.5 w-3.5", recalculating && "animate-spin")} />}
           loading={recalculating}
           onClick={() => void handleFullSync()}
-          title="Sync self-bills: backfill missing, update statuses and totals"
+          title="Sync self-bills: backfill missing jobs, promote statuses, recalc due dates from Setup standard"
         >
           Sync
         </Button>
@@ -1037,16 +1252,18 @@ function SelfBillPageInner() {
       <div className="space-y-5">
         {/* KPI cards */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <button type="button" className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5 text-left hover:border-border transition-colors" onClick={() => setActiveTab("draft")}>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Draft</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{totals.draftCount}</p>
-              <p className="text-[11px] text-text-secondary">Pending approval · {kpiPeriodDesc}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total to pay</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.totalPayableSum)}</p>
+              <p className="text-[11px] text-text-secondary">
+                {totals.totalReadyCount} ready + {totals.totalOverdueCount} overdue
+              </p>
             </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400">
-              <Clock className="h-4 w-4" aria-hidden />
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-700 dark:text-violet-400">
+              <Wallet className="h-4 w-4" aria-hidden />
             </div>
-          </button>
+          </div>
           <button type="button" className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5 text-left hover:border-border transition-colors" onClick={() => setActiveTab("ready_to_pay")}>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Ready to Pay</p>
@@ -1085,6 +1302,14 @@ function SelfBillPageInner() {
               <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as SelfBillTab)} />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {usesDueDatePeriod ? (
+                <BillingDueDateFilter
+                  value={dueDateFilter}
+                  onChange={setDueDateFilter}
+                  todayYmd={todayYmd}
+                  orgSchedule={orgPayoutSchedule}
+                />
+              ) : null}
               <SearchInput
                 placeholder="Search name, ref, week…"
                 className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
@@ -1164,8 +1389,19 @@ function SelfBillPageInner() {
           {/* Tab summary bar */}
           {!loading && filtered.length > 0 ? (
             <div className="flex items-center justify-end gap-x-5 rounded-[10px] border border-border-light bg-card px-4 py-2.5">
-              <div className="flex-1 text-[11px] font-medium text-text-tertiary">
-                {filtered.length} self-bill{filtered.length !== 1 ? "s" : ""}
+              <div className="flex flex-1 items-center gap-3 text-[11px] font-medium text-text-tertiary">
+                <span>
+                  {filtered.length} self-bill{filtered.length !== 1 ? "s" : ""}
+                </span>
+                {(activeTab === "ready_to_pay" || activeTab === "overdue") && layoutMode === "table" ? (
+                  <button
+                    type="button"
+                    className="text-[11px] font-semibold text-primary hover:underline"
+                    onClick={() => handleSelectAllInView()}
+                  >
+                    Select all in view
+                  </button>
+                ) : null}
               </div>
               <div className="text-right">
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount Due</p>
@@ -1230,7 +1466,7 @@ function SelfBillPageInner() {
               tableClassName="min-w-[1100px]"
             />
           ) : layoutMode === "table" && listGroupMode === "grouped" ? (
-            <SelfBillCreatedWeekGroupedTable
+            <SelfBillWeekGroupedTable
               columns={columns}
               filtered={filteredSorted}
               loading={loading}
@@ -1239,6 +1475,10 @@ function SelfBillPageInner() {
               onRowClick={(item) => void openDrawer(item)}
               handleBulkStatusChange={handleBulkStatusChange}
               handleBulkCancel={handleBulkCancel}
+              handleMarkPaidForIds={handleMarkPaidForIds}
+              groupBy={usesDueDatePeriod ? "due_date" : "created_at"}
+              jobsBySelfBillId={jobsBySelfBillId}
+              partnerPaidByJobId={partnerPaidByJobId}
             />
           ) : (
             <DataTable
@@ -1279,7 +1519,6 @@ function SelfBillPageInner() {
         onClose={() => setDrawerSelfBill(null)}
         onMarkReadyToPay={() => drawerSelfBill && void handleMarkReadyToPay(drawerSelfBill)}
         onMarkPaid={() => drawerSelfBill && void handleMarkPaid(drawerSelfBill)}
-        onMarkAuditRequired={() => drawerSelfBill && void handleMarkAuditRequired(drawerSelfBill)}
         onReopen={() => drawerSelfBill && void handleReopenSelfBill(drawerSelfBill)}
         onEditTotals={() => drawerSelfBill && openEdit(drawerSelfBill)}
         onPartnerPaymentsRecorded={reloadLinkedJobsAndPartnerPaid}
@@ -1328,7 +1567,6 @@ function SelfBillDetailDrawer({
   onClose,
   onMarkReadyToPay,
   onMarkPaid,
-  onMarkAuditRequired,
   onReopen,
   onEditTotals,
   onPartnerPaymentsRecorded,
@@ -1341,7 +1579,6 @@ function SelfBillDetailDrawer({
   onClose: () => void;
   onMarkReadyToPay: () => void;
   onMarkPaid: () => void;
-  onMarkAuditRequired: () => void;
   onReopen: () => void;
   onEditTotals: () => void;
   /** Refresh job↔partner paid rollup after inserting `job_payments` (partner). */
@@ -1566,10 +1803,9 @@ function SelfBillDetailDrawer({
   ];
 
   const isDraft = DRAFT_DB_STATUSES.has(sb.status);
-  const isReady = READY_DB_STATUSES.has(sb.status);
+  const isReady = selfBillCountsAsReady(sb);
   const isPaid = sb.status === "paid";
   const isRejected = sb.status === "rejected" || voided;
-  const isAudit = sb.status === "audit_required";
   const canTransition = !isPaid && !isRejected && !voided;
 
   /** Field partners only — excludes internal payroll rows, void, paid bundle, cancelled. */
@@ -1592,9 +1828,7 @@ function SelfBillDetailDrawer({
     ? { bg: "#EFF7F3", border: "#9FE1CB", text: "#0F6E56", dot: "#0F6E56" }
     : overdue
       ? { bg: "#FEF5F3", border: "#F5BFBF", text: "#A32D2D", dot: "#A32D2D" }
-      : isAudit
-        ? { bg: "#FFFBEB", border: "#FDE68A", text: "#92400E", dot: "#D97706" }
-        : isRejected
+      : isRejected
           ? { bg: "#F5F5F7", border: "#D8D8DD", text: "#6B6B70", dot: "#6B6B70" }
           : isDraft
             ? { bg: "#FFF8F3", border: "#F5CFB8", text: "#ED4B00", dot: "#ED4B00" }
@@ -1617,7 +1851,7 @@ function SelfBillDetailDrawer({
               <RotateCcw className="h-3.5 w-3.5 shrink-0" /> Reopen self-bill
             </span>
           </Button>
-        ) : isRejected ? null : isDraft || isAudit ? (
+        ) : isRejected ? null : isDraft ? (
           <div className="flex w-full flex-col gap-2">
             <Button variant="success" size="sm" className="w-full flex-1" onClick={onMarkReadyToPay}>
               <span className="inline-flex items-center gap-1.5">
@@ -1654,15 +1888,6 @@ function SelfBillDetailDrawer({
       </div>
       {canTransition && (
         <div className="flex items-center gap-2">
-          {!isAudit ? (
-            <button
-              type="button"
-              onClick={onMarkAuditRequired}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-amber-200 bg-amber-50 py-1.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-400"
-            >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Flag for audit
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={() => { setCancelReason(""); setCancelModalOpen(true); }}
@@ -2433,9 +2658,9 @@ function JobRow({
   );
 }
 
-// ── Grouped by calendar week of created_at ────────────────────────────────────
+// ── Grouped table (created_at for Draft, due_date for Ready/Overdue) ─────────
 
-function SelfBillCreatedWeekGroupedTable({
+function SelfBillWeekGroupedTable({
   columns,
   filtered,
   loading,
@@ -2444,6 +2669,10 @@ function SelfBillCreatedWeekGroupedTable({
   onRowClick,
   handleBulkStatusChange,
   handleBulkCancel,
+  handleMarkPaidForIds,
+  groupBy,
+  jobsBySelfBillId,
+  partnerPaidByJobId,
 }: {
   columns: Column<SelfBill>[];
   filtered: SelfBill[];
@@ -2453,26 +2682,42 @@ function SelfBillCreatedWeekGroupedTable({
   onRowClick: (item: SelfBill) => void;
   handleBulkStatusChange: (status: string) => Promise<void>;
   handleBulkCancel: () => Promise<void>;
+  handleMarkPaidForIds: (ids: string[]) => Promise<void>;
+  groupBy: "created_at" | "due_date";
+  jobsBySelfBillId: Record<string, JobLine[]>;
+  partnerPaidByJobId: Record<string, number>;
 }) {
   const groups = useMemo(() => {
     const map = new Map<string, { title: string; subtitle: string | null; rows: SelfBill[] }>();
     for (const sb of filtered) {
-      const { key, title, subtitle } = selfBillCreatedWeekGroup(sb);
+      const { key, title, subtitle } =
+        groupBy === "due_date" ? selfBillDueWeekGroup(sb) : selfBillCreatedWeekGroup(sb);
       const entry = map.get(key) ?? { title, subtitle, rows: [] };
       entry.rows.push(sb);
       map.set(key, entry);
     }
+    const sortRows = (rows: SelfBill[]) => {
+      if (groupBy === "due_date") {
+        return [...rows].sort((a, b) => {
+          const da = selfBillDueYmd(a);
+          const db = selfBillDueYmd(b);
+          if (da !== db) return da.localeCompare(db);
+          return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+        });
+      }
+      return [...rows].sort(
+        (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+      );
+    };
     return [...map.entries()]
       .map(([key, g]) => ({
         key,
         title: g.title,
         subtitle: g.subtitle,
-        rows: [...g.rows].sort(
-          (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
-        ),
+        rows: sortRows(g.rows),
       }))
-      .sort((a, b) => b.key.localeCompare(a.key));
-  }, [filtered]);
+      .sort((a, b) => (groupBy === "due_date" ? a.key.localeCompare(b.key) : b.key.localeCompare(a.key)));
+  }, [filtered, groupBy]);
 
   if (loading) {
     return (
@@ -2489,7 +2734,10 @@ function SelfBillCreatedWeekGroupedTable({
   return (
     <div className="space-y-6">
       {groups.map(({ key: weekKey, title, subtitle, rows }) => {
-        const weekTotal = rows.reduce((s, sb) => s + Number(sb.net_payout ?? 0), 0);
+        const weekTotal = rows.reduce(
+          (s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId),
+          0,
+        );
         const groupIds = new Set(rows.map((r) => r.id));
         const groupSelected = new Set([...selectedIds].filter((id) => groupIds.has(id)));
         const allSelected = groupIds.size > 0 && groupSelected.size === groupIds.size;
@@ -2502,6 +2750,12 @@ function SelfBillCreatedWeekGroupedTable({
           } else {
             groupIds.forEach((id) => next.add(id));
           }
+          onSelectionChange(next);
+        }
+
+        function selectGroup() {
+          const next = new Set(selectedIds);
+          groupIds.forEach((id) => next.add(id));
           onSelectionChange(next);
         }
 
@@ -2530,18 +2784,28 @@ function SelfBillCreatedWeekGroupedTable({
                 {subtitle ? (
                   <span className="text-[10px] text-text-tertiary whitespace-nowrap">{subtitle}</span>
                 ) : null}
-                <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[10px] font-semibold text-text-tertiary">{rows.length}</span>
+                <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[10px] font-semibold text-text-tertiary">
+                  {rows.length} bill{rows.length !== 1 ? "s" : ""}
+                </span>
               </button>
               <div className="flex items-center gap-3">
-                {groupSelected.size > 0 && (
+                {groupBy === "due_date" ? (
                   <button
                     type="button"
-                    className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 transition-colors"
-                    onClick={() => void handleBulkStatusChange("paid")}
+                    className="rounded-lg border border-border-light px-2.5 py-1 text-[11px] font-semibold text-text-secondary hover:bg-surface-hover transition-colors"
+                    onClick={selectGroup}
                   >
-                    Mark {groupSelected.size} paid ✓
+                    Select all
                   </button>
-                )}
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                  disabled={rows.length === 0}
+                  onClick={() => void handleMarkPaidForIds(rows.map((r) => r.id))}
+                >
+                  Mark paid · {formatCurrency(weekTotal)}
+                </button>
                 <span className="text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(weekTotal)}</span>
               </div>
             </div>
