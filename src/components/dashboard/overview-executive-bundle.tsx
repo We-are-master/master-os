@@ -37,6 +37,10 @@ import {
   localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceOutstanding,
 } from "@/lib/overview-dashboard-kpis";
+import {
+  WORKFORCE_COST_ACTIVE_OR_FILTER,
+  sumWorkforcePayrollAmount,
+} from "@/lib/workforce-lifecycle";
 
 /** Customer cash in from job ledger (deposit + final), matches Financial summary registrations. */
 async function customerPaymentsTotalInRange(
@@ -233,6 +237,7 @@ export function OverviewExecutiveBundle() {
           const { data: payrollRows, error: payErr } = await supabase
             .from("payroll_internal_costs")
             .select("amount")
+            .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
             .not("due_date", "is", null)
             .gte("due_date", overheadFromDay)
             .lte("due_date", overheadToDay);
@@ -467,6 +472,7 @@ export function OverviewExecutiveBundle() {
             supabase
               .from("payroll_internal_costs")
               .select("amount, due_date")
+              .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
               .eq("status", "pending")
               .not("due_date", "is", null)
               .gte("due_date", fromDay)
@@ -661,12 +667,10 @@ export function OverviewExecutiveBundle() {
           Promise.resolve(),
           supabase.from("bills").select("amount").is("archived_at", null).neq("status", "rejected")
             .gte("due_date", fromDay).lte("due_date", toDay),
-          // Every active / onboarding payroll row at its declared amount.
-          // No due_date filter — a monthly contractor with next due in the
-          // following month is still part of this month's commitment.
+          // Active workforce only — onboarding rows excluded until activated.
           supabase.from("payroll_internal_costs")
             .select("id, amount, lifecycle_stage")
-            .neq("lifecycle_stage", "offboard"),
+            .or(WORKFORCE_COST_ACTIVE_OR_FILTER),
           // Internal self-bills — capture ad-hoc contractors without a payroll catalog entry.
           supabase.from("self_bills")
             .select("internal_cost_id, net_payout, status, week_start")
@@ -683,11 +687,8 @@ export function OverviewExecutiveBundle() {
         }
         const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         /**
-         * Workforce cost = sum of every active / onboarding payroll_internal_costs
-         * row at its declared `amount`, regardless of where its next due date
-         * falls. This mirrors exactly what the user sees when they sum the cards
-         * in People → Workforce (no frequency multiplier — `amount` is stored
-         * as the period commitment and the People view treats it the same way).
+         * Workforce cost = sum of activated payroll_internal_costs rows only
+         * (onboarding excluded until Activate in Workforce).
          * Ad-hoc contractors paid through internal self-bills are added on top,
          * deduped by internal_cost_id so no row is counted twice.
          */
@@ -696,8 +697,7 @@ export function OverviewExecutiveBundle() {
         const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
         const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
         const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
-        let payroll = 0;
-        for (const p of payrollRows) payroll += Number(p.amount ?? 0);
+        let payroll = sumWorkforcePayrollAmount(payrollRows);
         for (const sb of internalSbRows) {
           const linkedId = sb.internal_cost_id?.trim();
           if (!linkedId || !payrollIds.has(linkedId)) {

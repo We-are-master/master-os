@@ -51,6 +51,7 @@ import { getSupabase } from "@/services/base";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import {
   resolveSelfBillDueYmd,
+  workPeriodBoundsForPayoutFriday,
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { parseISO } from "date-fns/parseISO";
@@ -80,6 +81,8 @@ import { BillingDueDateFilter } from "@/components/finance/billing-due-date-filt
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
+  cancelSelfBillsByIds,
+  isSelfBillClosed,
   isSelfBillPayoutVoided,
   jobContributesToSelfBillPayout,
   listJobsForSelfBill,
@@ -150,10 +153,11 @@ function selfBillDueWeekGroup(sb: Pick<SelfBill, "week_end" | "due_date">): {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) {
     return { key: "unknown", title: "Pay · unknown due", subtitle: null };
   }
+  const period = workPeriodBoundsForPayoutFriday(due);
   return {
     key: due,
     title: `Pay · ${formatDate(due)}`,
-    subtitle: "Partner payout due",
+    subtitle: `Work · ${formatDate(period.periodStartYmd)} – ${formatDate(period.periodEndYmd)}`,
   };
 }
 
@@ -208,11 +212,6 @@ const TAB_LABELS: Record<SelfBillTab, string> = {
   overdue: "Overdue",
   closed: "Closed",
 };
-
-/** Paid, office-cancelled (rejected), and partner void payouts (cancelled / lost / archived). */
-function isSelfBillClosed(sb: SelfBill): boolean {
-  return sb.status === "paid" || sb.status === "rejected" || isSelfBillPayoutVoided(sb);
-}
 
 function selfBillMatchesTab(sb: SelfBill, tab: SelfBillTab, todayYmd: string): boolean {
   if (tab === "all") return true;
@@ -784,44 +783,16 @@ function SelfBillPageInner() {
     });
     if (eligible.length === 0) {
       toast.error("Selected self-bills are already void or paid.");
+      setBulkSaving(false);
       return;
     }
     if (eligible.length < selectedIds.size) toast.message(`${selectedIds.size - eligible.length} self-bill(s) skipped`);
-    if (!window.confirm(`Cancel ${eligible.length} self-bill(s)? They can be reopened later.`)) return;
-    const supabase = getSupabase();
+    if (!window.confirm(`Cancel ${eligible.length} self-bill(s)? They can be reopened later.`)) {
+      setBulkSaving(false);
+      return;
+    }
     try {
-      const patch: Record<string, unknown> = {
-        status: "payout_cancelled",
-        partner_status_label: "Cancelled",
-        jobs_count: 0,
-        job_value: 0,
-        materials: 0,
-        commission: 0,
-        net_payout: 0,
-      };
-      let lastErr: unknown = null;
-      let triedRejectedFallback = false;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        const { error } = await supabase.from("self_bills").update(patch).in("id", eligible);
-        if (!error) { lastErr = null; break; }
-        lastErr = error;
-        const code = (error as { code?: string }).code;
-        const msg = (error as { message?: string }).message ?? "";
-        // schema-cache: drop unknown column and retry
-        if (code === "PGRST204" || msg.includes("schema cache") || msg.includes("Could not find")) {
-          delete patch.partner_status_label;
-          continue;
-        }
-        // check constraint: older DB forbids payout_cancelled — fall back to "rejected"
-        if ((code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint")) && !triedRejectedFallback) {
-          patch.status = "rejected";
-          delete patch.partner_status_label;
-          triedRejectedFallback = true;
-          continue;
-        }
-        break;
-      }
-      if (lastErr) throw lastErr;
+      await cancelSelfBillsByIds(eligible);
       toast.success(`${eligible.length} self-bill(s) cancelled`);
       setSelectedIds(new Set());
       loadData();
@@ -1520,6 +1491,7 @@ function SelfBillPageInner() {
         onMarkReadyToPay={() => drawerSelfBill && void handleMarkReadyToPay(drawerSelfBill)}
         onMarkPaid={() => drawerSelfBill && void handleMarkPaid(drawerSelfBill)}
         onReopen={() => drawerSelfBill && void handleReopenSelfBill(drawerSelfBill)}
+        onRefresh={() => loadData()}
         onEditTotals={() => drawerSelfBill && openEdit(drawerSelfBill)}
         onPartnerPaymentsRecorded={reloadLinkedJobsAndPartnerPaid}
       />
@@ -1558,7 +1530,7 @@ function SelfBillPageInner() {
 
 // ── Self-bill detail drawer ────────────────────────────────────────────────────
 
-function SelfBillDetailDrawer({
+export function SelfBillDetailDrawer({
   sb,
   jobs,
   loadingJobs,
@@ -1568,6 +1540,7 @@ function SelfBillDetailDrawer({
   onMarkReadyToPay,
   onMarkPaid,
   onReopen,
+  onRefresh,
   onEditTotals,
   onPartnerPaymentsRecorded,
 }: {
@@ -1580,6 +1553,8 @@ function SelfBillDetailDrawer({
   onMarkReadyToPay: () => void;
   onMarkPaid: () => void;
   onReopen: () => void;
+  /** Reload parent data after cancel / due-date edit (must not reopen the self-bill). */
+  onRefresh?: () => void | Promise<void>;
   onEditTotals: () => void;
   /** Refresh job↔partner paid rollup after inserting `job_payments` (partner). */
   onPartnerPaymentsRecorded?: () => void | Promise<void>;
@@ -1717,9 +1692,8 @@ function SelfBillDetailDrawer({
       }
       toast.success("Due date updated.");
       setDueDateModalOpen(false);
-      // Patch the parent sb via refreshDrawer pattern — we call onReopen as a cheap refresh trigger
-      // A proper fix would be a dedicated onSbUpdated callback; for now reload page data
-      onReopen(); // triggers loadData in parent which refreshes drawerSelfBill
+      if (onRefresh) await onRefresh();
+      else onReopen();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update due date");
     } finally {
@@ -1731,40 +1705,11 @@ function SelfBillDetailDrawer({
     if (!sb) return;
     setCancelSaving(true);
     try {
-      const supabase = getSupabase();
-      const patch: Record<string, unknown> = {
-        status: "payout_cancelled",
-        partner_status_label: "Cancelled",
-        jobs_count: 0,
-        job_value: 0,
-        materials: 0,
-        commission: 0,
-        net_payout: 0,
-      };
-      let lastErr: unknown = null;
-      let triedRejectedFallback = false;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
-        if (!error) { lastErr = null; break; }
-        lastErr = error;
-        const code = (error as { code?: string }).code;
-        const msg = (error as { message?: string }).message ?? "";
-        if (code === "PGRST204" || msg.includes("schema cache") || msg.includes("Could not find")) {
-          delete patch.partner_status_label;
-          continue;
-        }
-        if ((code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint")) && !triedRejectedFallback) {
-          patch.status = "rejected";
-          delete patch.partner_status_label;
-          triedRejectedFallback = true;
-          continue;
-        }
-        break;
-      }
-      if (lastErr) throw lastErr;
+      await cancelSelfBillsByIds([sb.id]);
       toast.success("Self-bill cancelled.");
       setCancelModalOpen(false);
-      onReopen(); // refresh
+      if (onRefresh) await onRefresh();
+      else onReopen();
     } catch (e) {
       console.error("Cancel self-bill failed:", e);
       toast.error("Failed to cancel self-bill.");

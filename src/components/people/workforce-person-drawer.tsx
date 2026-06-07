@@ -41,6 +41,7 @@ import {
   type InternalSelfBillLine,
 } from "@/services/internal-self-bills";
 import { WorkforceAccessTab } from "./workforce-access-tab";
+import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
 import {
   FileText,
   Wallet,
@@ -49,6 +50,7 @@ import {
   ExternalLink,
   Loader2,
   Download,
+  CheckCircle2,
 } from "lucide-react";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
@@ -112,6 +114,7 @@ export function WorkforcePersonDrawer({
   const [tab, setTab] = useState<TabId>("overview");
   const [saving, setSaving] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [removePhotoPending, setRemovePhotoPending] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<Record<string, File | undefined>>({});
 
   // Danger-zone modal state
@@ -153,6 +156,7 @@ export function WorkforcePersonDrawer({
     if (!person) return;
     setTab("overview");
     setPendingFiles({});
+    setRemovePhotoPending(false);
     setPayeeName(person.payee_name ?? "");
     {
       const parsed = parsePayLineDescription(person.description ?? "");
@@ -244,6 +248,9 @@ export function WorkforcePersonDrawer({
     try {
       const baseFiles = parsePayrollDocumentFiles(person.payroll_document_files);
       const mergedFiles = await mergeUploads(person.id, baseFiles);
+      if (removePhotoPending) {
+        delete mergedFiles[PROFILE_PHOTO_DOC_KEY];
+      }
       const payroll_profile: PayrollInternalProfile = {
         ...profile,
         email: profile.email?.trim() || undefined,
@@ -316,6 +323,7 @@ export function WorkforcePersonDrawer({
 
       toast.success("Saved");
       setPendingFiles({});
+      setRemovePhotoPending(false);
       onSaved();
       void syncFromPerson();
     } catch (e) {
@@ -326,7 +334,27 @@ export function WorkforcePersonDrawer({
   };
 
   const handleDocPick = (docKey: string, file: File | null) => {
+    if (docKey === PROFILE_PHOTO_DOC_KEY) {
+      if (file) {
+        setRemovePhotoPending(false);
+        setPhotoUrl(URL.createObjectURL(file));
+        setPendingFiles((prev) => ({ ...prev, [docKey]: file }));
+        return;
+      }
+      setPhotoUrl(null);
+      setRemovePhotoPending(true);
+      setPendingFiles((prev) => {
+        const next = { ...prev };
+        delete next[docKey];
+        return next;
+      });
+      return;
+    }
     setPendingFiles((prev) => ({ ...prev, [docKey]: file ?? undefined }));
+  };
+
+  const handleRemovePhoto = () => {
+    handleDocPick(PROFILE_PHOTO_DOC_KEY, null);
   };
 
   const handleOffboardConfirm = async () => {
@@ -378,6 +406,21 @@ export function WorkforcePersonDrawer({
     }
   };
 
+  const handleActivate = async () => {
+    if (!person) return;
+    setSaving(true);
+    try {
+      await activateWorkforcePerson(person.id);
+      toast.success("Person activated — pay counts in company costs and Pay Run when due.");
+      onSaved();
+      void syncFromPerson();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to activate");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleReactivate = async () => {
     if (!person) return;
     setSaving(true);
@@ -422,12 +465,18 @@ export function WorkforcePersonDrawer({
     setSaving(true);
     try {
       const now = new Date().toISOString();
-      // Soft delete via deleted_at (consistent with softDeleteById pattern)
+      // payroll_internal_costs has no deleted_at — hide via offboard + stop payroll (same as offboard flow).
       const { error } = await getSupabase()
         .from("payroll_internal_costs")
         .update({
-          deleted_at: now,
           lifecycle_stage: "offboard",
+          offboard_at: now,
+          offboard_reason: "Removed from workforce",
+          amount: 0,
+          status: "paid",
+          pay_frequency: null,
+          payment_day_of_month: null,
+          recurring_approved_at: null,
           updated_at: now,
         })
         .eq("id", person.id);
@@ -436,9 +485,15 @@ export function WorkforcePersonDrawer({
       // Deactivate linked profile
       if (person.profile_id) {
         try {
-          await fetch(`/api/admin/team/user/${person.profile_id}`, { method: "DELETE" });
+          const res = await fetch(`/api/admin/team/user/${person.profile_id}`, { method: "DELETE" });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            toast.warning(
+              `Person removed, but dashboard access revoke failed: ${body.error ?? "unknown"}`,
+            );
+          }
         } catch {
-          /* best effort */
+          toast.warning("Person removed, but dashboard access revoke failed");
         }
       }
 
@@ -576,6 +631,10 @@ export function WorkforcePersonDrawer({
   ];
 
   const stage = person.lifecycle_stage ?? "active";
+  const savedPhotoPath = parsePayrollDocumentFiles(person.payroll_document_files)[PROFILE_PHOTO_DOC_KEY]?.path;
+  const hasPhoto =
+    !removePhotoPending &&
+    (!!photoUrl || !!pendingFiles[PROFILE_PHOTO_DOC_KEY] || !!savedPhotoPath);
 
   return (
     <Drawer
@@ -595,6 +654,17 @@ export function WorkforcePersonDrawer({
             {person.due_date ? ` · next due ${formatDate(person.due_date)}` : ""}
           </span>
         )}
+        {stage === "onboarding" && (
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={saving}
+            icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+            onClick={() => void handleActivate()}
+          >
+            Activate
+          </Button>
+        )}
       </div>
 
       <div className="px-6 pt-3 pb-0 border-b border-border-light">
@@ -604,24 +674,54 @@ export function WorkforcePersonDrawer({
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {tab === "overview" && (
           <div className="space-y-5">
+            {stage === "onboarding" && (
+              <div className="rounded-xl border border-primary/25 bg-primary/5 p-4 space-y-2">
+                <p className="text-sm text-text-primary font-medium">Ready to go live?</p>
+                <p className="text-xs text-text-secondary">
+                  While onboarding, this person&apos;s pay is not included in company costs or Pay Run. Activate when
+                  they should count as active workforce (employee or contractor).
+                </p>
+                <Button
+                  disabled={saving}
+                  icon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={() => void handleActivate()}
+                >
+                  Activate person
+                </Button>
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row gap-4 items-start">
               <div className="flex flex-col items-center gap-2">
                 <Avatar name={payeeName || "?"} size="xl" src={photoUrl ?? undefined} />
-                <label className="text-xs text-text-secondary cursor-pointer text-center max-w-[140px]">
-                  <span className="text-primary font-medium">Change photo</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleDocPick(PROFILE_PHOTO_DOC_KEY, f);
-                    }}
-                  />
-                  <span className="block text-[10px] text-text-tertiary mt-1 leading-snug">
+                <div className="flex flex-col items-center gap-1 text-center max-w-[140px]">
+                  <label className="text-xs text-text-secondary cursor-pointer">
+                    <span className="text-primary font-medium">Change photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleDocPick(PROFILE_PHOTO_DOC_KEY, f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {hasPhoto ? (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400"
+                      onClick={handleRemovePhoto}
+                    >
+                      Remove photo
+                    </button>
+                  ) : removePhotoPending ? (
+                    <span className="text-[10px] text-text-tertiary leading-snug">Photo removed — save profile to apply</span>
+                  ) : null}
+                  <span className="block text-[10px] text-text-tertiary leading-snug">
                     Saved with <strong className="font-medium text-text-secondary">Save profile</strong> below
                   </span>
-                </label>
+                </div>
               </div>
               <div className="flex-1 space-y-3 w-full min-w-0">
                 <div>

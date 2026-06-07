@@ -13,66 +13,12 @@ import {
 import type { JobOnHoldPresetRow } from "@/lib/job-on-hold-reasons";
 import { resolveZendeskComplaintFieldIds, zendeskOnHoldReasonFieldConfigured } from "@/lib/zendesk-field-ids";
 import { fromZendeskTag, toZendeskTag } from "@/lib/zendesk-reason-tags";
-
-const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN?.trim();
-const EMAIL = process.env.ZENDESK_EMAIL?.trim();
-const API_TOKEN = process.env.ZENDESK_API_TOKEN?.trim();
-
-interface ZendeskFieldOption {
-  id?: number;
-  name: string;
-  value: string;
-  position?: number;
-}
-
-function isApiConfigured(): boolean {
-  return Boolean(SUBDOMAIN && EMAIL && API_TOKEN);
-}
-
-function authHeader(): string {
-  return "Basic " + Buffer.from(`${EMAIL}/token:${API_TOKEN}`).toString("base64");
-}
-
-function fieldUrl(fieldId: number): string {
-  return `https://${SUBDOMAIN}.zendesk.com/api/v2/ticket_fields/${fieldId}.json`;
-}
-
-async function fetchFieldOptions(fieldId: number): Promise<
-  { ok: true; options: ZendeskFieldOption[] } | { ok: false; error: string }
-> {
-  const res = await fetch(fieldUrl(fieldId), {
-    method: "GET",
-    headers: { Authorization: authHeader(), Accept: "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    return { ok: false, error: `zendesk GET ${res.status}: ${body.slice(0, 300)}` };
-  }
-  const data = (await res.json()) as { ticket_field?: { custom_field_options?: ZendeskFieldOption[] } };
-  return { ok: true, options: data.ticket_field?.custom_field_options ?? [] };
-}
-
-async function putFieldOptions(
-  fieldId: number,
-  options: ZendeskFieldOption[],
-): Promise<{ ok: true; options: ZendeskFieldOption[] } | { ok: false; error: string }> {
-  const res = await fetch(fieldUrl(fieldId), {
-    method: "PUT",
-    headers: {
-      Authorization: authHeader(),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ ticket_field: { custom_field_options: options } }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    return { ok: false, error: `zendesk PUT ${res.status}: ${body.slice(0, 300)}` };
-  }
-  const data = (await res.json()) as { ticket_field?: { custom_field_options?: ZendeskFieldOption[] } };
-  return { ok: true, options: data.ticket_field?.custom_field_options ?? [] };
-}
+import {
+  fetchZendeskTicketFieldOptions,
+  isZendeskApiConfigured,
+  putZendeskTicketFieldOptions,
+  type ZendeskFieldOption,
+} from "@/lib/zendesk-ticket-field-api";
 
 function looksLikeHoldZendeskTag(v: string): boolean {
   return v.trim().startsWith("hold_");
@@ -158,7 +104,7 @@ export async function backfillOnHoldPresetsToZendesk(opts?: {
   dryRun?: boolean;
 }): Promise<OnHoldPresetsZendeskSyncResult> {
   const emptyStats = { unchanged: 0, rename: 0, prune: 0, append: 0, keep: 0 };
-  if (!isApiConfigured()) {
+  if (!isZendeskApiConfigured()) {
     return { ok: false, stats: emptyStats, skipped: "zendesk_api_not_configured" };
   }
 
@@ -173,17 +119,18 @@ export async function backfillOnHoldPresetsToZendesk(opts?: {
     ?? resolveJobOnHoldPresets(setup ?? null)
     ?? normalizeJobOnHoldPresets(null);
 
-  const cur = await fetchFieldOptions(fieldId);
+  const cur = await fetchZendeskTicketFieldOptions(fieldId);
   if (!cur.ok) return { ok: false, stats: emptyStats, error: cur.error, fieldId };
 
-  const plan = planOnHoldPresetsBackfill(cur.options, presets);
+  const plan = planOnHoldPresetsBackfill(cur.data, presets);
   if (opts?.dryRun) {
     return { ok: true, fieldId, stats: plan.stats, entries: plan.entries };
   }
 
-  const put = await putFieldOptions(fieldId, plan.options);
+  const put = await putZendeskTicketFieldOptions(fieldId, plan.options);
   if (!put.ok) return { ok: false, stats: plan.stats, error: put.error, fieldId };
 
+  console.log("[zendesk-job-on-hold-reasons-sync] PUT ok", { fieldId, stats: plan.stats });
   return { ok: true, fieldId, stats: plan.stats, entries: plan.entries };
 }
 

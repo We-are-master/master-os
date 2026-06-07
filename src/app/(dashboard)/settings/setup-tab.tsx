@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { endOfMonth, format, startOfMonth } from "date-fns";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +30,12 @@ import {
   DEFAULT_ACCESS_CCZ_FEE_GBP,
   DEFAULT_ACCESS_PARKING_FEE_GBP,
   DEFAULT_JOB_ON_HOLD_PRESETS,
+  DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT,
   DEFAULT_PULSE_LOW_MARGIN_PCT,
+  DEFAULT_PULSE_REVENUE_GOAL_MODE,
+  MAX_PULSE_HEALTHY_NET_MARGIN_PCT,
+  MIN_PULSE_HEALTHY_NET_MARGIN_PCT,
+  monthlyWorkingDays,
   MAX_ACCESS_FEE_GBP,
   MIN_ACCESS_FEE_GBP,
   DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
@@ -53,7 +59,13 @@ import {
   resolvePartnerPayoutStandardTerms,
   type JobOnHoldPresetRow,
   type OfficeJobCancellationPresetRow,
+  type PulseRevenueGoalMode,
 } from "@/lib/frontend-setup";
+import {
+  computePulseRevenueGoalSuggestions,
+  resolvePulseMonthlyRevenueGoal,
+} from "@/lib/pulse-revenue-goal";
+import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
 import {
   getCalculatedPartnerPayoutReference,
   getNextPartnerPayoutReference,
@@ -63,6 +75,10 @@ import {
 } from "@/lib/partner-payout-schedule";
 import { formatDate } from "@/lib/utils";
 import { slugifyJobOnHoldPresetId } from "@/lib/job-on-hold-reasons";
+import {
+  zendeskCancellationReasonFieldConfigured,
+  zendeskOnHoldReasonFieldConfigured,
+} from "@/lib/zendesk-field-ids";
 import {
   buildDefaultPartnerDocumentRules,
   getPartnerDocumentCatalogForSetup,
@@ -80,6 +96,14 @@ const WEEKDAY_LABELS: { id: number; short: string; full: string }[] = [
   { id: 6, short: "Sat", full: "Saturday" },
   { id: 0, short: "Sun", full: "Sunday" },
 ];
+
+function formatSetupGbp(n: number): string {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
 
 function moveArrayItem<T>(arr: T[], index: number, delta: -1 | 1): T[] {
   const j = index + delta;
@@ -118,6 +142,20 @@ export function SetupTab() {
   const [targetMarginPctStr, setTargetMarginPctStr] = useState(String(DEFAULT_TARGET_MARGIN_PCT));
   const [lowMarginPctStr, setLowMarginPctStr] = useState(String(DEFAULT_PULSE_LOW_MARGIN_PCT));
 
+  const [pulseRevenueGoalMode, setPulseRevenueGoalMode] = useState<PulseRevenueGoalMode>(
+    DEFAULT_PULSE_REVENUE_GOAL_MODE,
+  );
+  const [pulseRevenueGoalMonthlyStr, setPulseRevenueGoalMonthlyStr] = useState("");
+  const [pulseHealthyNetMarginPctStr, setPulseHealthyNetMarginPctStr] = useState(
+    String(DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
+  );
+  const [fixedCostsSnapshot, setFixedCostsSnapshot] = useState<{
+    workforce: number;
+    bills: number;
+    total: number;
+  } | null>(null);
+  const [fixedCostsLoading, setFixedCostsLoading] = useState(true);
+
   const [zendeskSubdomain, setZendeskSubdomain] = useState("");
   const [zendeskOnHoldReasonFieldId, setZendeskOnHoldReasonFieldId] = useState("");
   const [zendeskComplaintDescriptionFieldId, setZendeskComplaintDescriptionFieldId] = useState("");
@@ -138,6 +176,22 @@ export function SetupTab() {
   const [savedPayoutReferenceYmd, setSavedPayoutReferenceYmd] = useState("");
   const [syncPayoutLoading, setSyncPayoutLoading] = useState(false);
 
+  const zendeskIntegrationSetup = useMemo(
+    () =>
+      parseFrontendSetup({
+        zendesk_on_hold_reason_field_id: zendeskOnHoldReasonFieldId.trim()
+          ? Number(zendeskOnHoldReasonFieldId.trim())
+          : undefined,
+        zendesk_cancellation_reason_field_id: zendeskCancellationReasonFieldId.trim()
+          ? Number(zendeskCancellationReasonFieldId.trim())
+          : undefined,
+      }),
+    [zendeskOnHoldReasonFieldId, zendeskCancellationReasonFieldId],
+  );
+
+  const holdReasonZendeskConfigured = zendeskOnHoldReasonFieldConfigured(zendeskIntegrationSetup);
+  const cancelReasonZendeskConfigured = zendeskCancellationReasonFieldConfigured(zendeskIntegrationSetup);
+
   const syncOnHoldReasonsToZendesk = useCallback(async (opts?: { dryRun?: boolean; silent?: boolean }) => {
     setOnHoldZendeskSyncing(true);
     try {
@@ -153,12 +207,13 @@ export function SetupTab() {
         stats?: { append?: number; prune?: number; rename?: number };
       };
       if (!res.ok || json.ok === false) {
-        if (!opts?.silent) {
-          toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
-        }
+        const msg = json.error ?? json.skipped ?? "Zendesk sync failed";
+        console.error("[setup-tab] on-hold zendesk sync failed", msg);
+        if (!opts?.silent) toast.error(msg);
         return false;
       }
       if (json.skipped) {
+        console.warn("[setup-tab] on-hold zendesk sync skipped", json.skipped);
         if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
         return false;
       }
@@ -171,7 +226,8 @@ export function SetupTab() {
         );
       }
       return true;
-    } catch {
+    } catch (e) {
+      console.error("[setup-tab] on-hold zendesk sync error", e);
       if (!opts?.silent) toast.error("Zendesk sync failed");
       return false;
     } finally {
@@ -194,10 +250,13 @@ export function SetupTab() {
         stats?: { append?: number; prune?: number; rename?: number };
       };
       if (!res.ok || json.ok === false) {
-        if (!opts?.silent) toast.error(json.error ?? json.skipped ?? "Zendesk sync failed");
+        const msg = json.error ?? json.skipped ?? "Zendesk sync failed";
+        console.error("[setup-tab] cancellation zendesk sync failed", msg);
+        if (!opts?.silent) toast.error(msg);
         return false;
       }
       if (json.skipped) {
+        console.warn("[setup-tab] cancellation zendesk sync skipped", json.skipped);
         if (!opts?.silent) toast.message(`Zendesk: ${json.skipped}`);
         return false;
       }
@@ -210,7 +269,8 @@ export function SetupTab() {
         );
       }
       return true;
-    } catch {
+    } catch (e) {
+      console.error("[setup-tab] cancellation zendesk sync error", e);
       if (!opts?.silent) toast.error("Zendesk sync failed");
       return false;
     } finally {
@@ -238,6 +298,13 @@ export function SetupTab() {
       setSlaFinalChecksStr(String(parsed.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
       setTargetMarginPctStr(String(parsed.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(parsed.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
+      setPulseRevenueGoalMode(parsed.pulse_revenue_goal_mode ?? DEFAULT_PULSE_REVENUE_GOAL_MODE);
+      setPulseRevenueGoalMonthlyStr(
+        parsed.pulse_revenue_goal_monthly_gbp != null ? String(parsed.pulse_revenue_goal_monthly_gbp) : "",
+      );
+      setPulseHealthyNetMarginPctStr(
+        String(parsed.pulse_healthy_net_margin_pct ?? DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
+      );
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
       setZendeskOnHoldReasonFieldId(
         parsed.zendesk_on_hold_reason_field_id ? String(parsed.zendesk_on_hold_reason_field_id) : "",
@@ -278,6 +345,82 @@ export function SetupTab() {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      setFixedCostsLoading(true);
+      const supabase = getSupabase();
+      const now = new Date();
+      const monthFrom = format(startOfMonth(now), "yyyy-MM-dd");
+      const monthTo = format(endOfMonth(now), "yyyy-MM-dd");
+      const [payrollRes, billsRes] = await Promise.all([
+        supabase
+          .from("payroll_internal_costs")
+          .select("amount")
+          .or(WORKFORCE_COST_ACTIVE_OR_FILTER),
+        supabase
+          .from("bills")
+          .select("amount")
+          .is("archived_at", null)
+          .neq("status", "rejected")
+          .gte("due_date", monthFrom)
+          .lte("due_date", monthTo),
+      ]);
+      if (!alive) return;
+      const workforce = ((payrollRes.data ?? []) as Array<{ amount: number | null }>).reduce(
+        (sum, row) => sum + (Number(row.amount) || 0),
+        0,
+      );
+      const bills = ((billsRes.data ?? []) as Array<{ amount: number | null }>).reduce(
+        (sum, row) => sum + (Number(row.amount) || 0),
+        0,
+      );
+      setFixedCostsSnapshot({ workforce, bills, total: workforce + bills });
+      setFixedCostsLoading(false);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const pulseRevenueGoalDraftSetup = useMemo(
+    () =>
+      mergeFrontendSetup(rawSetup, {
+        target_margin_pct: Number(targetMarginPctStr) || DEFAULT_TARGET_MARGIN_PCT,
+        pulse_healthy_net_margin_pct:
+          Number(pulseHealthyNetMarginPctStr) || DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT,
+        pulse_revenue_goal_mode: pulseRevenueGoalMode,
+        pulse_revenue_goal_monthly_gbp: pulseRevenueGoalMonthlyStr.trim()
+          ? Number(pulseRevenueGoalMonthlyStr)
+          : null,
+        working_days: [...workingDays],
+      }),
+    [
+      rawSetup,
+      targetMarginPctStr,
+      pulseHealthyNetMarginPctStr,
+      pulseRevenueGoalMode,
+      pulseRevenueGoalMonthlyStr,
+      workingDays,
+    ],
+  );
+
+  const pulseGoalSuggestions = useMemo(
+    () => computePulseRevenueGoalSuggestions(fixedCostsSnapshot?.total ?? 0, pulseRevenueGoalDraftSetup),
+    [fixedCostsSnapshot, pulseRevenueGoalDraftSetup],
+  );
+
+  const activeMonthlyGoal = useMemo(
+    () => resolvePulseMonthlyRevenueGoal(pulseRevenueGoalDraftSetup, fixedCostsSnapshot?.total ?? 0),
+    [pulseRevenueGoalDraftSetup, fixedCostsSnapshot],
+  );
+
+  const monthlyWorkingDaysCount = monthlyWorkingDays(pulseRevenueGoalDraftSetup);
+  const activeDailyGoal =
+    activeMonthlyGoal.monthlyGoal != null && monthlyWorkingDaysCount > 0
+      ? activeMonthlyGoal.monthlyGoal / monthlyWorkingDaysCount
+      : null;
+
   const handleSave = async () => {
     if (!canEditConfig) return;
     const hours = Number(biddingSlaHoursStr);
@@ -312,6 +455,36 @@ export function SetupTab() {
         setSaving(false);
         return;
       }
+      const healthyNetMargin = Number(pulseHealthyNetMarginPctStr);
+      if (
+        !Number.isFinite(healthyNetMargin) ||
+        healthyNetMargin < MIN_PULSE_HEALTHY_NET_MARGIN_PCT ||
+        healthyNetMargin > MAX_PULSE_HEALTHY_NET_MARGIN_PCT
+      ) {
+        toast.error(
+          `Healthy net margin % must be between ${MIN_PULSE_HEALTHY_NET_MARGIN_PCT} and ${MAX_PULSE_HEALTHY_NET_MARGIN_PCT}.`,
+        );
+        setSaving(false);
+        return;
+      }
+      if (targetMargin <= healthyNetMargin) {
+        toast.error("Target gross margin must be greater than healthy net margin %.");
+        setSaving(false);
+        return;
+      }
+      const manualGoalRaw = pulseRevenueGoalMonthlyStr.trim();
+      const manualGoal = manualGoalRaw ? Number(manualGoalRaw) : null;
+      if (pulseRevenueGoalMode === "manual") {
+        if (!manualGoalRaw || !Number.isFinite(manualGoal!) || manualGoal! <= 0) {
+          toast.error("Enter a monthly revenue goal (£) for manual mode.");
+          setSaving(false);
+          return;
+        }
+      } else if (manualGoalRaw && (!Number.isFinite(manualGoal!) || manualGoal! <= 0)) {
+        toast.error("Monthly revenue override must be a positive number.");
+        setSaving(false);
+        return;
+      }
       const accessCczFee = Number(accessCczFeeStr);
       const accessParkingFee = Number(accessParkingFeeStr);
       for (const [label, v] of [
@@ -335,6 +508,9 @@ export function SetupTab() {
         sla_final_checks_hours: slaFinal,
         target_margin_pct: targetMargin,
         pulse_low_margin_pct: lowMargin,
+        pulse_revenue_goal_mode: pulseRevenueGoalMode,
+        pulse_revenue_goal_monthly_gbp: manualGoal,
+        pulse_healthy_net_margin_pct: healthyNetMargin,
         zendesk_subdomain: zendeskSubdomain,
         zendesk_on_hold_reason_field_id: zendeskOnHoldReasonFieldId.trim()
           ? Number(zendeskOnHoldReasonFieldId.trim())
@@ -389,6 +565,13 @@ export function SetupTab() {
       setSlaFinalChecksStr(String(next.sla_final_checks_hours ?? DEFAULT_SLA_FINAL_CHECKS_HOURS));
       setTargetMarginPctStr(String(next.target_margin_pct ?? DEFAULT_TARGET_MARGIN_PCT));
       setLowMarginPctStr(String(next.pulse_low_margin_pct ?? DEFAULT_PULSE_LOW_MARGIN_PCT));
+      setPulseRevenueGoalMode(next.pulse_revenue_goal_mode ?? DEFAULT_PULSE_REVENUE_GOAL_MODE);
+      setPulseRevenueGoalMonthlyStr(
+        next.pulse_revenue_goal_monthly_gbp != null ? String(next.pulse_revenue_goal_monthly_gbp) : "",
+      );
+      setPulseHealthyNetMarginPctStr(
+        String(next.pulse_healthy_net_margin_pct ?? DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
+      );
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
       setZendeskOnHoldReasonFieldId(
         next.zendesk_on_hold_reason_field_id ? String(next.zendesk_on_hold_reason_field_id) : "",
@@ -424,11 +607,19 @@ export function SetupTab() {
       setSavedPayoutReferenceYmd(payoutRef);
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
-      if (next.zendesk_on_hold_reason_field_id) {
-        void syncOnHoldReasonsToZendesk({ silent: true });
+      if (zendeskOnHoldReasonFieldConfigured(next)) {
+        const holdOk = await syncOnHoldReasonsToZendesk({ silent: true });
+        if (!holdOk) {
+          toast.warning("Setup saved, but Zendesk on-hold reason sync failed — use “Sync reasons → Zendesk” to retry.");
+        }
       }
-      if (next.zendesk_cancellation_reason_field_id) {
-        void syncCancellationReasonsToZendesk({ silent: true });
+      if (zendeskCancellationReasonFieldConfigured(next)) {
+        const cancelOk = await syncCancellationReasonsToZendesk({ silent: true });
+        if (!cancelOk) {
+          toast.warning(
+            "Setup saved, but Zendesk cancellation reason sync failed — use “Sync cancellation reasons → Zendesk” to retry.",
+          );
+        }
       }
     } catch (e) {
       console.error("[setup-tab] save failed", e);
@@ -763,6 +954,174 @@ export function SetupTab() {
         <Card padding="none">
           <CardHeader className="px-6 pt-6">
             <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Pulse · Revenue goal</CardTitle>
+              <FixfyHintIcon text="Monthly revenue target for Pulse. Breakeven covers fixed costs at your target gross margin; Healthy leaves your chosen net margin after fixed costs. The period goal prorates by working days from Setup." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-text-secondary">
+              <MicroLabel className="mb-2">Fixed costs snapshot (this month)</MicroLabel>
+              {fixedCostsLoading ? (
+                <p className="text-text-tertiary">Loading…</p>
+              ) : fixedCostsSnapshot ? (
+                <p className="tabular-nums">
+                  Workforce {formatSetupGbp(fixedCostsSnapshot.workforce)} + Bills{" "}
+                  {formatSetupGbp(fixedCostsSnapshot.bills)} ={" "}
+                  <span className="font-medium text-text-primary">
+                    {formatSetupGbp(fixedCostsSnapshot.total)}/mo
+                  </span>
+                </p>
+              ) : (
+                <p className="text-text-tertiary">Could not load fixed costs.</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
+              <div className="rounded-lg border border-border px-3 py-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">Breakeven</p>
+                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
+                  {pulseGoalSuggestions.breakevenMonthly != null
+                    ? `${formatSetupGbp(pulseGoalSuggestions.breakevenMonthly)}/mo`
+                    : "—"}
+                  {pulseGoalSuggestions.breakevenDaily != null && (
+                    <span className="text-text-tertiary font-normal">
+                      {" "}
+                      · {formatSetupGbp(pulseGoalSuggestions.breakevenDaily)}/working day
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin ≈ 0 after fixed costs.</p>
+              </div>
+              <div className="rounded-lg border border-border px-3 py-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                  Healthy ({pulseHealthyNetMarginPctStr || DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}% net)
+                </p>
+                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
+                  {pulseGoalSuggestions.healthyMonthly != null
+                    ? `${formatSetupGbp(pulseGoalSuggestions.healthyMonthly)}/mo`
+                    : "—"}
+                  {pulseGoalSuggestions.healthyDaily != null && (
+                    <span className="text-text-tertiary font-normal">
+                      {" "}
+                      · {formatSetupGbp(pulseGoalSuggestions.healthyDaily)}/working day
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin after fixed costs.</p>
+              </div>
+            </div>
+            {pulseGoalSuggestions.error && (
+              <p className="text-xs text-fx-amber">{pulseGoalSuggestions.error}</p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+              <div>
+                <label
+                  htmlFor="pulse-revenue-goal-mode"
+                  className="block text-xs font-medium text-text-secondary mb-1.5"
+                >
+                  Goal based on
+                </label>
+                <select
+                  id="pulse-revenue-goal-mode"
+                  disabled={!canEditConfig}
+                  value={pulseRevenueGoalMode}
+                  onChange={(e) => setPulseRevenueGoalMode(e.target.value as PulseRevenueGoalMode)}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                >
+                  <option value="manual">Manual</option>
+                  <option value="breakeven">Breakeven</option>
+                  <option value="healthy">Healthy</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Healthy net margin (%)
+                  <FixfyHintIcon text="Target net margin after fixed costs — used in the Healthy suggestion and when mode is Healthy." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_PULSE_HEALTHY_NET_MARGIN_PCT}
+                  max={MAX_PULSE_HEALTHY_NET_MARGIN_PCT}
+                  step={1}
+                  value={pulseHealthyNetMarginPctStr}
+                  onChange={(e) => setPulseHealthyNetMarginPctStr(e.target.value)}
+                  disabled={!canEditConfig}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">
+                  Default {DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}%.
+                </p>
+              </div>
+            </div>
+
+            {pulseRevenueGoalMode === "manual" ? (
+              <div className="max-w-xs">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Monthly revenue goal (£)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={100}
+                  value={pulseRevenueGoalMonthlyStr}
+                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
+                  disabled={!canEditConfig}
+                  placeholder="e.g. 100000"
+                />
+              </div>
+            ) : (
+              <div className="max-w-xs">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Optional override (£/month)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={100}
+                  value={pulseRevenueGoalMonthlyStr}
+                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
+                  disabled={!canEditConfig}
+                  placeholder="Leave blank to use calculated value"
+                />
+              </div>
+            )}
+
+            <div className="rounded-lg border border-fx-line bg-fx-paper/40 px-4 py-3 text-xs text-text-secondary">
+              <span className="font-medium text-text-primary">Active goal: </span>
+              {activeMonthlyGoal.monthlyGoal != null ? (
+                <>
+                  {formatSetupGbp(activeMonthlyGoal.monthlyGoal)}/mo
+                  {activeDailyGoal != null && (
+                    <> · {formatSetupGbp(activeDailyGoal)}/working day</>
+                  )}
+                  <span className="text-text-tertiary">
+                    {" "}
+                    ({pulseRevenueGoalDraftSetup.working_days?.length ?? DEFAULT_WORKING_DAYS.length} working
+                    days/week · ~{monthlyWorkingDaysCount.toFixed(1)} days/month)
+                  </span>
+                </>
+              ) : (
+                <span className="text-text-tertiary">
+                  {activeMonthlyGoal.error ?? "Configure margin targets and fixed costs to set a goal."}
+                </span>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canEditConfig || saving}
+              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            >
+              {saving ? "Saving…" : "Save Setup"}
+            </Button>
+          </div>
+        </Card>
+
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
               <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
               <CardTitle>Quotes · Bidding SLA</CardTitle>
               <FixfyHintIcon text={`Target time for the Bidding stage. The list shows a countdown to this limit, then overdue time. Range ${MIN_BIDDING_SLA_HOURS}h–${MAX_BIDDING_SLA_HOURS}h.`} />
@@ -874,7 +1233,7 @@ export function SetupTab() {
               type="button"
               variant="outline"
               size="sm"
-              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              disabled={!canEditConfig || onHoldZendeskSyncing || !holdReasonZendeskConfigured}
               loading={onHoldZendeskSyncing}
               onClick={() => void syncOnHoldReasonsToZendesk()}
             >
@@ -890,7 +1249,7 @@ export function SetupTab() {
             </Button>
           </div>
           <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
-            After you save, reasons auto-sync to Zendesk when the on-hold reason field id is set under Integrations.
+            After you save, reasons auto-sync to Zendesk when the on-hold field id is set (Integrations or ZENDESK_ON_HOLD_REASON_FIELD_ID env).
             Zendesk option <code className="text-[11px]">value</code> = <code className="text-[11px]">hold_</code> + id (e.g. <code className="text-[11px]">hold_complaint</code>).
           </p>
         </div>
@@ -962,7 +1321,7 @@ export function SetupTab() {
             <Button
               type="button"
               variant="outline"
-              disabled={!canEditConfig || cancelZendeskSyncing || !zendeskCancellationReasonFieldId.trim()}
+              disabled={!canEditConfig || cancelZendeskSyncing || !cancelReasonZendeskConfigured}
               loading={cancelZendeskSyncing}
               onClick={() => void syncCancellationReasonsToZendesk()}
             >
@@ -970,7 +1329,7 @@ export function SetupTab() {
             </Button>
           </div>
           <p className="text-[10px] text-text-tertiary leading-snug max-w-xl">
-            After save, reasons auto-sync when the cancellation reason field id is set under Integrations.
+            After save, reasons auto-sync when the cancellation field id is set (Integrations or ZENDESK_CANCELLATION_REASON_FIELD_ID env).
             Zendesk tag = <code className="text-[11px]">cancel_</code> + id (e.g. <code className="text-[11px]">cancel_client_requested</code>).
           </p>
         </div>
@@ -1052,14 +1411,19 @@ export function SetupTab() {
                         </>
                       ) : (
                         <>
-                          Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Work week
-                          ending {formatDate(partnerPayoutReference.weekEndYmd)} (Mon–Sun).
+                          Matches the <span className="font-medium">{partnerPayoutStandard}</span> schedule. Next pay{" "}
+                          {formatDate(partnerPayoutReference.payoutDueYmd)} covers work from{" "}
+                          {upcomingPayoutPreview[0]
+                            ? `${formatDate(upcomingPayoutPreview[0].periodStartYmd)} – ${formatDate(upcomingPayoutPreview[0].periodEndYmd)}`
+                            : formatDate(partnerPayoutReference.weekEndYmd)}
+                          .
                         </>
                       )}
                     </p>
                     <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
-                      Final review uses the same <span className="font-medium">Standard</span> rule when the partner has
-                      no custom terms.
+                      Jobs with a <span className="font-medium">start date</span> in that range are paid on the Friday
+                      shown. Self-bills are created when the job has a <span className="font-medium">completed date</span>.
+                      Partners without custom terms use this org standard in Final review.
                     </p>
                   </div>
                 </div>
@@ -1076,7 +1440,7 @@ export function SetupTab() {
                     <tr className="border-b border-border-light text-text-tertiary">
                       <th className="pb-1.5 pr-2 font-medium w-6">#</th>
                       <th className="pb-1.5 pr-2 font-medium">Pay date</th>
-                      <th className="pb-1.5 font-medium">Week end</th>
+                      <th className="pb-1.5 font-medium">Work period</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1087,7 +1451,7 @@ export function SetupTab() {
                           {formatDate(row.payoutDueYmd)}
                         </td>
                         <td className="py-1.5 text-text-secondary tabular-nums whitespace-nowrap">
-                          {formatDate(row.weekEndYmd)}
+                          {formatDate(row.periodStartYmd)} – {formatDate(row.periodEndYmd)}
                         </td>
                       </tr>
                     ))}
@@ -1365,7 +1729,7 @@ export function SetupTab() {
             <Button
               type="button"
               variant="outline"
-              disabled={!canEditConfig || onHoldZendeskSyncing || !zendeskOnHoldReasonFieldId.trim()}
+              disabled={!canEditConfig || onHoldZendeskSyncing || !holdReasonZendeskConfigured}
               loading={onHoldZendeskSyncing}
               onClick={() => void syncOnHoldReasonsToZendesk()}
             >
@@ -1374,7 +1738,7 @@ export function SetupTab() {
             <Button
               type="button"
               variant="outline"
-              disabled={!canEditConfig || cancelZendeskSyncing || !zendeskCancellationReasonFieldId.trim()}
+              disabled={!canEditConfig || cancelZendeskSyncing || !cancelReasonZendeskConfigured}
               loading={cancelZendeskSyncing}
               onClick={() => void syncCancellationReasonsToZendesk()}
             >

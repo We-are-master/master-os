@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import { dueDateIsoFromAccountPaymentTerms } from "@/lib/account-payment-due-date";
+import { loadOrgPartnerPayoutSettings } from "@/lib/org-partner-payout-settings-server";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
   } catch { /* no body */ }
 
   const admin = createServiceClient();
+  const orgCtx = await loadOrgPartnerPayoutSettings(admin);
 
   // ── 1. Eligible invoices ──────────────────────────────────────────────────
   let invoicesQuery = admin
@@ -155,7 +157,10 @@ export async function POST(req: NextRequest) {
       new Date().toISOString();
     const anchor = new Date(anchorStr + (anchorStr.length === 10 ? "T00:00:00" : ""));
 
-    const newDueDate = dueDateIsoFromPaymentTerms(anchor, account.payment_terms);
+    const newDueDate = dueDateIsoFromAccountPaymentTerms(anchor, account.payment_terms, {
+      orgStandardTerms: orgCtx.orgStandardTerms,
+      orgReferenceYmd: orgCtx.orgReferenceYmd ?? null,
+    });
 
     if (newDueDate !== inv.due_date) {
       changes.push({

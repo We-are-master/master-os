@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useBeaconJobsRealtime } from "@/hooks/use-beacon-jobs-realtime";
 import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
@@ -311,30 +312,9 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     };
   }, [jobs]);
 
-  /**
-   * Realtime: subscribe to changes on the `jobs` table and refetch on any
-   * INSERT / UPDATE / DELETE. RLS still applies on the WAL stream — users only
-   * get events for rows they're allowed to read. Debounced 300ms to avoid
-   * spamming refetches when several rows change at once (e.g. bulk updates).
-   */
-  useEffect(() => {
-    const supabase = getSupabase();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void loadJobs();
-      }, 300);
-    };
-    const channel = supabase
-      .channel("beacon_kanban_jobs")
-      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, schedule)
-      .subscribe();
-    return () => {
-      if (timer) clearTimeout(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [loadJobs]);
+  useBeaconJobsRealtime(() => {
+    void loadJobs();
+  }, "beacon_kanban_jobs");
 
   const grouped = useMemo(() => {
     const out = new Map<StageId, { items: KanbanJob[]; revenue: number; lostRevenue: number }>(

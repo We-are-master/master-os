@@ -8,6 +8,7 @@ import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
   ensureWeeklySelfBillForJob,
+  canLinkJobToSelfBill,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
@@ -955,15 +956,17 @@ export async function createJob(
 
 /** Slim read for `updateJob` gates — avoids loading the full jobs row before PATCH. */
 const JOB_UPDATE_GATE_COLUMNS =
-  "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date";
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date,completed_date";
 
 /** Same gates without `scheduled_finish_date` (migration 064) for DBs where PostgREST returns 400. */
 const JOB_UPDATE_GATE_COLUMNS_NO_FINISH =
-  "status,scheduled_date,scheduled_start_at,scheduled_end_at";
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+
+const JOB_EXECUTION_DONE_STATUSES = new Set<Job["status"]>(["final_check", "awaiting_payment", "completed"]);
 
 async function fetchJobGatesForUpdate(id: string): Promise<Pick<
   Job,
-  "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+  "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date" | "completed_date"
 > | null> {
   if (!id?.trim()) return null;
   const supabase = getSupabase();
@@ -978,7 +981,7 @@ async function fetchJobGatesForUpdate(id: string): Promise<Pick<
   if (error || !data) return null;
   return data as Pick<
     Job,
-    "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+    "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date" | "completed_date"
   >;
 }
 
@@ -1044,6 +1047,15 @@ export async function updateJob(
       }
     }
   }
+  const nextStatus = (effectivePatch.status ?? beforeGates.status) as Job["status"];
+  if (JOB_EXECUTION_DONE_STATUSES.has(nextStatus)) {
+    const patchCompleted =
+      typeof effectivePatch.completed_date === "string" ? effectivePatch.completed_date.trim().slice(0, 10) : "";
+    const existingCompleted = beforeGates.completed_date?.trim().slice(0, 10) ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(patchCompleted) && !/^\d{4}-\d{2}-\d{2}$/.test(existingCompleted)) {
+      effectivePatch.completed_date = new Date().toISOString().slice(0, 10);
+    }
+  }
   const patch = prepareJobRowForUpdate(effectivePatch);
 
   if (Object.prototype.hasOwnProperty.call(basePatch, "property_address")) {
@@ -1103,7 +1115,7 @@ export async function updateJob(
   if (!row.id?.toString().trim()) {
     throw new Error("Job update returned a row without id — refresh the page.");
   }
-  if (row.partner_id?.trim() && !row.self_bill_id?.trim()) {
+  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canLinkJobToSelfBill(row)) {
     try {
       const sbId = await ensureWeeklySelfBillForJob(row);
       if (sbId) row = { ...row, self_bill_id: sbId };

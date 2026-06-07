@@ -1,0 +1,104 @@
+.bl-standalone .cf {
+  display: flex;
+  gap: 2px;
+}
+
+.bl-standalone .cf__day {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  border-radius: 8px;
+  padding: 4px 3px;
+}
+
+.bl-standalone .cf__day.is-weekend {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 5px,
+    rgba(2, 0, 64, 0.025) 5px,
+    rgba(2, 0, 64, 0.025) 6px
+  );
+}
+
+.bl-standalone .cf__day.is-today {
+  background: #fff1ea;
+  box-shadow: inset 0 0 0 1px rgba(237, 75, 0, 0.28);
+}
+
+.bl-standalone .cf__amt {
+  height: 14px;
+  text-align: center;
+  font-size: 9px;
+  line-height: 14px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.bl-standalone .cf__amt--in {
+  color: #0f6e56;
+}
+
+.bl-standalone .cf__amt--out {
+  color: #ed4b00;
+}
+
+.bl-standalone .cf__amt.is-empty {
+  color: transparent;
+}
+
+.bl-standalone .cf__well {
+  height: 74px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.bl-standalone .cf__well--out {
+  align-items: flex-start;
+}
+
+.bl-standalone .cf__bar {
+  width: 62%;
+  max-width: 26px;
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+
+.bl-standalone .cf__bar--in {
+  background: linear-gradient(180deg, #16a06e, #0f6e56);
+}
+
+.bl-standalone .cf__bar--out {
+  background: linear-gradient(180deg, #ed4b00, #c43d00);
+  border-radius: 0 0 3px 3px;
+}
+
+.bl-standalone .cf__axis {
+  height: 1px;
+  background: #e8e8ee;
+  margin: 4px 0;
+}
+
+.bl-standalone .cf__lbl {
+  text-align: center;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9aa8;
+  line-height: 1.35;
+  padding-top: 2px;
+}
+
+.bl-standalone .cf__lbl b {
+  display: block;
+  color: #020040;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.bl-standalone .cf__day.is-today .cf__lbl b {
+  color: #ed4b00;
+}

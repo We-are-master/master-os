@@ -10,7 +10,7 @@
 import { baseStatusForCustomStatusId } from "@/lib/zendesk-statuses";
 
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN?.trim();
-const EMAIL     = process.env.ZENDESK_EMAIL?.trim();
+const EMAIL     = process.env.ZENDESK_EMAIL?.trim() || process.env.ZENDESK_API_EMAIL?.trim();
 const API_TOKEN = process.env.ZENDESK_API_TOKEN?.trim();
 
 function authHeader(): string {
@@ -524,9 +524,9 @@ export const ZENDESK_CANCELLATION_NOTES_FIELD_ID = Number(
   process.env.ZENDESK_CANCELLATION_NOTES_FIELD_ID?.trim() || "5834293455647",
 );
 
-/** Dropdown: on-hold reason id (same values as OS / Settings presets). 0 = disabled. */
+/** Dropdown: on-hold reason (`hold_{osId}`). 0 = disabled. */
 export const ZENDESK_ON_HOLD_REASON_FIELD_ID = Number(
-  process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "5834320428319",
 );
 
 /** Multiline: customer complaint description (partner email + Zendesk). 0 = disabled. */

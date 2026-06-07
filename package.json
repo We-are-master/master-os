@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:period": "npx tsx --test src/lib/billing-standalone-period.test.ts src/lib/partner-payout-schedule.test.ts src/lib/account-payment-due-date.test.ts src/lib/zendesk-reasons-sync.test.ts src/lib/pulse-revenue-goal.test.ts"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-geocoder": "^5.1.2",

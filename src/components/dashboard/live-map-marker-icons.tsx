@@ -290,11 +290,40 @@ export function createLiveMapMarkerElement(opts: {
  */
 
 /** Width of the pin element in px. */
-const JOB_PIN_WIDTH = 44;
+export const LIVE_MAP_JOB_PIN_WIDTH = 44;
 /** Height of the pin element in px — tail tip sits at the bottom-center.
  *  Shape: circle (r=20, cx=22, cy=22) + separate triangle tail tip at (22, 54).
  *  Anchor for Mapbox must be "bottom" so the tail tip lands on the lat/lng. */
-const JOB_PIN_HEIGHT = 54;
+export const LIVE_MAP_JOB_PIN_HEIGHT = 54;
+/** Y coordinate of the pin circle centre (trade icon sits here). */
+export const LIVE_MAP_JOB_PIN_CIRCLE_CENTER_Y = 22;
+/** Trade icon layer offset (ems) from bottom anchor — centres icon in pin body. */
+export const LIVE_MAP_JOB_TRADE_ICON_OFFSET_EMS: [number, number] = [
+  0,
+  -((LIVE_MAP_JOB_PIN_HEIGHT - LIVE_MAP_JOB_PIN_CIRCLE_CENTER_Y) / 20),
+];
+
+const JOB_PIN_PREFIX = "fixfy-job-pin-";
+
+export type JobPinVisualState = "default" | "selected" | "recent";
+
+export function liveMapJobPinImageId(
+  statusCategory: LiveMapJobStatusCategory,
+  state: JobPinVisualState,
+): string {
+  return `${JOB_PIN_PREFIX}${statusCategory}-${state}`;
+}
+
+export function liveMapJobPinImageIds(): string[] {
+  const categories: LiveMapJobStatusCategory[] = [
+    "unassigned",
+    "scheduled",
+    "in_progress",
+    "attention",
+  ];
+  const states: JobPinVisualState[] = ["default", "selected", "recent"];
+  return categories.flatMap((c) => states.map((s) => liveMapJobPinImageId(c, s)));
+}
 
 /**
  * Status bucket that drives the job-pin color.
@@ -317,6 +346,10 @@ const JOB_STATUS_STYLE: Record<LiveMapJobStatusCategory, { color: string }> = {
   attention:  { color: "#ED4B00" },
 };
 
+export function liveMapJobStatusColor(category: LiveMapJobStatusCategory): string {
+  return JOB_STATUS_STYLE[category].color;
+}
+
 export function liveMapJobStatusLegend(): Array<{
   key: LiveMapJobStatusCategory;
   color: string;
@@ -328,6 +361,41 @@ export function liveMapJobStatusLegend(): Array<{
     { key: "in_progress", color: JOB_STATUS_STYLE.in_progress.color, label: "In progress" },
     { key: "attention",   color: JOB_STATUS_STYLE.attention.color,   label: "Needs attention" },
   ];
+}
+
+/** Teardrop pin body (no trade icon) for Mapbox symbol layers or HTML markers. */
+export function buildJobTeardropSvg(opts: {
+  statusCategory: LiveMapJobStatusCategory;
+  selected?: boolean;
+  recent?: boolean;
+  /** Embed trade icon inside the pin (HTML markers only). */
+  includeTradeIcon?: boolean;
+  trade?: string;
+}): string {
+  const { statusCategory, selected = false, recent = false, includeTradeIcon = false, trade } = opts;
+  const { color } = JOB_STATUS_STYLE[statusCategory];
+  const stroke = recent ? "#ED4B00" : selected ? "#020040" : "white";
+  const strokeWidth = recent ? 4 : selected ? 3 : 2.5;
+
+  let tradeLayer = "";
+  if (includeTradeIcon) {
+    const Icon = iconForCanonicalTrade(trade || GENERAL_MAINTENANCE_LABEL);
+    tradeLayer = `<g transform="translate(13,13)">${staticIcon(Icon)}</g>`;
+  }
+
+  return (
+    `<svg width="${LIVE_MAP_JOB_PIN_WIDTH}" height="${LIVE_MAP_JOB_PIN_HEIGHT}" viewBox="0 0 ${LIVE_MAP_JOB_PIN_WIDTH} ${LIVE_MAP_JOB_PIN_HEIGHT}" xmlns="http://www.w3.org/2000/svg" style="display:block" fill="none">` +
+    `<path d="M22 54 L14 40 L30 40 Z" fill="${color}"/>` +
+    `<circle cx="22" cy="22" r="20" fill="${color}" stroke="${stroke}" stroke-width="${strokeWidth}"/>` +
+    tradeLayer +
+    `</svg>`
+  );
+}
+
+export function jobPinVisualState(selected: boolean, recent: boolean): JobPinVisualState {
+  if (recent) return "recent";
+  if (selected) return "selected";
+  return "default";
 }
 
 /**
@@ -346,39 +414,22 @@ export function createLiveMapJobMarkerElement(opts: {
   trade?: string;
 }): HTMLDivElement {
   const { selected, statusCategory, trade } = opts;
-  const { color } = JOB_STATUS_STYLE[statusCategory];
-
-  // Always show the trade icon. ShieldCheck is the fallback for
-  // unknown / general trades — never fall back to a status icon.
-  const Icon = iconForCanonicalTrade(trade || GENERAL_MAINTENANCE_LABEL);
-  // Icon is 18×18, centered in the circle (cx=22, cy=22, r=20):
-  //   translate(22 - 9, 22 - 9) = translate(13, 13)
-  const iconHtml = staticIcon(Icon);
-
-  // Selected = thick navy ring; default = white ring so the status color pops
-  const stroke = selected ? "#020040" : "white";
-  const strokeWidth = selected ? 3 : 2.5;
 
   const el = document.createElement("div");
   el.className = "live-map-job-marker";
   el.style.cssText = [
-    `width:${JOB_PIN_WIDTH}px`,
-    `height:${JOB_PIN_HEIGHT}px`,
+    `width:${LIVE_MAP_JOB_PIN_WIDTH}px`,
+    `height:${LIVE_MAP_JOB_PIN_HEIGHT}px`,
     "display:block",
     "cursor:pointer",
   ].join(";");
 
-  // Circle (body) + separate triangle tail — drawn bottom-to-top so the triangle
-  // sits behind the circle visually.  Tail tip at (22, 54) = Mapbox anchor point.
-  el.innerHTML =
-    `<svg width="${JOB_PIN_WIDTH}" height="${JOB_PIN_HEIGHT}" viewBox="0 0 ${JOB_PIN_WIDTH} ${JOB_PIN_HEIGHT}" xmlns="http://www.w3.org/2000/svg" style="display:block" fill="none">` +
-    // Triangle tail — drawn first so it renders behind the circle
-    `<path d="M22 54 L14 40 L30 40 Z" fill="${color}"/>` +
-    // Circle body
-    `<circle cx="22" cy="22" r="20" fill="${color}" stroke="${stroke}" stroke-width="${strokeWidth}"/>` +
-    // Trade icon centered inside the circle
-    `<g transform="translate(13,13)">${iconHtml}</g>` +
-    `</svg>`;
+  el.innerHTML = buildJobTeardropSvg({
+    statusCategory,
+    selected,
+    includeTradeIcon: true,
+    trade,
+  });
 
   return el;
 }

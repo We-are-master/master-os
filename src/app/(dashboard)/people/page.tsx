@@ -13,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
-import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat } from "lucide-react";
+import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat, CheckCircle2 } from "lucide-react";
+import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit } from "@/types/database";
@@ -100,6 +101,28 @@ export default function PeoplePage() {
   const [buModalOpen, setBuModalOpen] = useState(false);
   const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
   const [buSaving, setBuSaving] = useState(false);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
+
+  const handleActivatePerson = async (row: PeopleRow) => {
+    setActivatingId(row.id);
+    try {
+      await activateWorkforcePerson(row.id);
+      toast.success(`${row.payee_name ?? "Person"} activated`);
+      await load();
+      if (selected?.id === row.id) {
+        const { data } = await getSupabase()
+          .from("payroll_internal_costs")
+          .select("*, business_units(name)")
+          .eq("id", row.id)
+          .maybeSingle();
+        if (data) setSelected(mapCostRows([data])[0] ?? null);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to activate");
+    } finally {
+      setActivatingId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -621,15 +644,42 @@ export default function PeoplePage() {
                           <p className="text-text-tertiary uppercase tracking-wide">Next due</p>
                           <p className="font-medium text-text-primary">{r.due_date ? formatDate(r.due_date) : "—"}</p>
                         </div>
-                        <div className="col-span-2 flex items-center gap-3 text-text-tertiary">
-                          <span className="inline-flex items-center gap-1">
-                            <FileText className="h-3.5 w-3.5" />
-                            Documents
-                          </span>
-                          <span className="inline-flex items-center gap-1">
-                            <Wallet className="h-3.5 w-3.5" />
-                            Finance
-                          </span>
+                        <div className="col-span-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-3 text-text-tertiary">
+                            <span className="inline-flex items-center gap-1">
+                              <FileText className="h-3.5 w-3.5" />
+                              Documents
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <Wallet className="h-3.5 w-3.5" />
+                              Finance
+                            </span>
+                          </div>
+                          {stage === "onboarding" && (
+                            <span
+                              role="presentation"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[11px] shrink-0"
+                                disabled={activatingId === r.id}
+                                icon={
+                                  activatingId === r.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="h-3 w-3" />
+                                  )
+                                }
+                                onClick={() => void handleActivatePerson(r)}
+                              >
+                                Activate
+                              </Button>
+                            </span>
+                          )}
                         </div>
                       </div>
                     </motion.button>

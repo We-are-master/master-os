@@ -25,6 +25,7 @@ import {
 import { getCompanySettings } from "@/services/company";
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
+import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
 import {
   fetchPipelineJobsForDashboard,
   defaultMonthlySalesGoalGbp,
@@ -162,7 +163,10 @@ export function CeoFinancialDashboard() {
               return q;
             })(),
             (async () => {
-              let q = supabase.from("payroll_internal_costs").select("amount");
+              let q = supabase
+                .from("payroll_internal_costs")
+                .select("amount")
+                .or(WORKFORCE_COST_ACTIVE_OR_FILTER);
               if (bounds) {
                 q = q.not("due_date", "is", null).gte("due_date", fromDay).lte("due_date", toDay);
               }
@@ -215,6 +219,7 @@ export function CeoFinancialDashboard() {
             supabase
               .from("payroll_internal_costs")
               .select("amount")
+              .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
               .not("due_date", "is", null)
               .gte("due_date", pFrom)
               .lte("due_date", pTo),
@@ -291,6 +296,7 @@ export function CeoFinancialDashboard() {
           supabase
             .from("payroll_internal_costs")
             .select("amount, due_date")
+            .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
             .eq("status", "pending")
             .not("due_date", "is", null)
             .gte("due_date", fromDay)

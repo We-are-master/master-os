@@ -1,5 +1,5 @@
-import { InvoicesFinanceClient } from "../invoices-finance-client";
+import { redirect } from "next/navigation";
 
-export default function BillingInvoicesPage() {
-  return <InvoicesFinanceClient />;
+export default function BillingInvoicesRedirectPage() {
+  redirect("/finance/billing?tab=inv");
 }
