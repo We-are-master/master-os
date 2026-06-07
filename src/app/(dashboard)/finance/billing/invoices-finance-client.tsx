@@ -1770,7 +1770,7 @@ export function InvoicesFinanceClient() {
 
 /* ───────────────────── Invoice Detail Drawer ───────────────────── */
 
-function InvoiceDetailDrawer({
+export function InvoiceDetailDrawer({
   invoice,
   onClose,
   onStatusChange,

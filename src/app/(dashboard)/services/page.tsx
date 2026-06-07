@@ -1,6 +1,5 @@
-import { redirect } from "next/navigation";
+import { ServicesPricingClient } from "./services-pricing-client";
 
-/** Legacy route — catalog lives under Settings → Service catalog tab. */
-export default function ServicesCatalogRedirectPage() {
-  redirect("/settings?tab=service-catalog");
+export default function ServicesPage() {
+  return <ServicesPricingClient />;
 }

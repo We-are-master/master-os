@@ -24,7 +24,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus, Pencil,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -1476,39 +1476,69 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  const partnersTableCell = "px-3 sm:px-4 py-3";
+  const partnersTableHeader = "px-3 sm:px-4 py-3";
+
   const columns: Column<Partner>[] = [
     {
-      key: "company_name", label: "Partner",
+      key: "company_name",
+      label: "Partner",
+      width: "24%",
+      minWidth: "200px",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => (
-        <div className="flex items-center gap-3">
-          <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} />
-          <div>
-            <div className="flex items-center gap-1.5">
-              <p className="text-sm font-semibold text-text-primary">{item.company_name}</p>
-              {item.verified && <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />}
+        <div className="flex items-center gap-3 min-w-0">
+          <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} className="shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p className="text-sm font-semibold text-text-primary truncate">{item.company_name}</p>
+              {item.verified && <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
             </div>
-            <p className="text-[11px] text-text-tertiary">{item.contact_name}</p>
+            <p className="text-[11px] text-text-tertiary truncate">{item.contact_name}</p>
           </div>
         </div>
       ),
     },
     {
-      key: "trade", label: "Trade",
+      key: "trade",
+      label: "Trade",
+      width: "11%",
+      minWidth: "96px",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => (
-        <PartnerTradesIconStrip trades={partnerTradesForDisplay(item, partnerCatalogServices)} catalogServices={partnerCatalogServices} />
+        <div className="flex justify-center">
+          <PartnerTradesIconStrip
+            trades={partnerTradesForDisplay(item, partnerCatalogServices)}
+            catalogServices={partnerCatalogServices}
+            maxVisible={3}
+          />
+        </div>
       ),
     },
     {
-      key: "location", label: "Coverage",
+      key: "location",
+      label: "Coverage",
+      width: "14%",
+      minWidth: "120px",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => (
-        <div className="flex items-center gap-1.5 text-sm text-text-secondary max-w-[200px] truncate" title={formatPartnerCoverageSummary(item)}>
+        <div className="flex items-center gap-1.5 text-sm text-text-secondary min-w-0" title={formatPartnerCoverageSummary(item)}>
           <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
           <span className="truncate">{formatPartnerCoverageSummary(item) || "—"}</span>
         </div>
       ),
     },
     {
-      key: "status", label: "Status",
+      key: "status",
+      label: "Status",
+      width: "12%",
+      minWidth: "108px",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => {
         const cfg = statusConfig[item.status] ?? statusConfig.active;
         const reasons = item.partner_status_reasons ?? [];
@@ -1520,7 +1550,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           (item.status === "needs_attention" && reasonRows.length > 0) ||
           (item.status === "on_break" && reasonRows.length > 0);
         return (
-          <div className="flex flex-col gap-1 min-w-[8rem]">
+          <div className="flex flex-col gap-1 min-w-0">
             <Badge variant={cfg.variant} dot>
               {item.status === "on_break" ? "Inactive" : cfg.label}
             </Badge>
@@ -1548,14 +1578,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "compliance_score",
       label: "Compliance",
+      width: "11%",
+      minWidth: "96px",
       align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => {
         const raw = item.compliance_score;
         const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
         const colorClass =
           s >= 97 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
         return (
-          <div className="flex flex-col items-center min-w-[3.25rem]" title="Blended score (documents + profile), 0–100">
+          <div className="flex flex-col items-center" title="Blended score (documents + profile), 0–100">
             <span className={cn("text-sm font-bold tabular-nums", colorClass)}>
               {Math.round(s)}
               <span className="text-[10px] font-semibold text-text-tertiary ml-0.5">%</span>
@@ -1565,25 +1599,37 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       },
     },
     {
-      key: "jobs_completed", label: "Jobs", align: "center",
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{item.jobs_completed}</span>,
+      key: "jobs_completed",
+      label: "Jobs",
+      width: "10%",
+      minWidth: "72px",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: (item) => <span className="text-sm font-semibold text-text-primary tabular-nums">{item.jobs_completed}</span>,
     },
     {
-      key: "rating", label: "Rating",
+      key: "rating",
+      label: "Rating",
+      width: "10%",
+      minWidth: "80px",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
       render: (item) => (
-        <div className="flex items-center gap-1">
-          <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
-          <span className="text-sm font-semibold text-text-primary">{displayPartnerRating(item.rating)}</span>
+        <div className="flex items-center justify-center gap-1">
+          <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />
+          <span className="text-sm font-semibold text-text-primary tabular-nums">{displayPartnerRating(item.rating)}</span>
         </div>
       ),
     },
     {
-      key: "total_earnings", label: "Total Earnings", align: "right",
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.total_earnings)}</span>,
-    },
-    {
-      key: "actions", label: "", width: "40px",
-      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors" />,
+      key: "actions",
+      label: "",
+      width: "48px",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors mx-auto" />,
     },
   ];
 
@@ -1682,7 +1728,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
             <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end w-full lg:max-w-3xl lg:ml-auto">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end w-full">
                 <div
                   className={cn(
                     "inline-flex self-end sm:self-auto rounded-xl border border-primary/25 bg-gradient-to-b from-card to-primary/[0.06]",
@@ -1807,6 +1853,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 className="rounded-none rounded-b-2xl border-0 border-t border-border-light shadow-none bg-transparent"
+                tableClassName="w-full min-w-0 table-fixed"
                 bulkActions={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -3267,6 +3314,9 @@ function PartnerDetailDrawer({
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkedAppProfile, setLinkedAppProfile] = useState<Awaited<ReturnType<typeof getProfileById>>>(null);
   const [editingOverview, setEditingOverview] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameForm, setNameForm] = useState({ company_name: "", contact_name: "" });
   const [overviewForm, setOverviewForm] = useState({
     company_name: "",
     vat_number: "",
@@ -3389,7 +3439,12 @@ function PartnerDetailDrawer({
     setLinkEmail(partner.email ?? "");
     loadAll(partner);
     setEditingOverview(false);
+    setEditingName(false);
     setOverviewForm(partnerOverviewFormFromPartner(partner));
+    setNameForm({
+      company_name: partner.company_name ?? "",
+      contact_name: partner.contact_name ?? "",
+    });
   }, [partner, loadAll, initialTab]);
 
   useEffect(() => {
@@ -3604,6 +3659,29 @@ function PartnerDetailDrawer({
       setLinkBusy(false);
     }
   };
+
+  const handleSaveName = useCallback(async () => {
+    if (!partner) return;
+    const company_name = nameForm.company_name.trim();
+    const contact_name = nameForm.contact_name.trim();
+    if (!company_name || !contact_name) {
+      toast.error("Company name and contact name are required.");
+      return;
+    }
+    setNameSaving(true);
+    try {
+      const updated = await updatePartner(partner.id, { company_name, contact_name });
+      onPartnerUpdate?.(updated);
+      setOverviewForm((prev) => ({ ...prev, company_name, contact_name }));
+      setEditingName(false);
+      toast.success("Name updated");
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      toast.error(e.message ?? "Failed to update name");
+    } finally {
+      setNameSaving(false);
+    }
+  }, [partner, nameForm, onPartnerUpdate]);
 
   const handleSaveOverview = useCallback(async () => {
     if (!partner) return;
@@ -4292,45 +4370,115 @@ function PartnerDetailDrawer({
                   {uploadingAvatar ? "…" : "Photo"}
                 </Button>
               </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  {editingOverview ? (
-                    <Input
-                      value={overviewForm.company_name}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, company_name: e.target.value }))}
-                      className="h-9"
-                    />
-                  ) : (
-                    <h3 className="text-lg font-bold text-text-primary">{partner.company_name}</h3>
-                  )}
-                  {partner.verified && <ShieldCheck className="h-4 w-4 text-emerald-500" />}
-                  {isAdmin && (
-                    <Button
-                      size="sm"
-                      variant={editingOverview ? "outline" : "ghost"}
-                      onClick={() => {
-                        if (editingOverview) {
-                          setEditingOverview(false);
-                          setOverviewForm(partnerOverviewFormFromPartner(partner));
-                        } else {
-                          setEditingOverview(true);
-                        }
-                      }}
-                    >
-                      {editingOverview ? "Cancel" : "Edit"}
-                    </Button>
-                  )}
-                </div>
-                {editingOverview ? (
-                  <div className="mt-2 space-y-2">
-                    <Input
-                      value={overviewForm.contact_name}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, contact_name: e.target.value }))}
-                      placeholder="Contact name"
-                    />
+              <div className="flex-1 min-w-0">
+                {editingName && !editingOverview ? (
+                  <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/[0.03] p-3">
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Company / display name
+                      </label>
+                      <Input
+                        value={nameForm.company_name}
+                        onChange={(e) => setNameForm((p) => ({ ...p, company_name: e.target.value }))}
+                        className="mt-1 h-9"
+                        placeholder="Acme Maintenance Ltd"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Contact name
+                      </label>
+                      <Input
+                        value={nameForm.contact_name}
+                        onChange={(e) => setNameForm((p) => ({ ...p, contact_name: e.target.value }))}
+                        className="mt-1 h-9"
+                        placeholder="John Smith"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button size="sm" onClick={() => void handleSaveName()} disabled={nameSaving}>
+                        {nameSaving ? "Saving…" : "Save name"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={nameSaving}
+                        onClick={() => {
+                          setEditingName(false);
+                          setNameForm({
+                            company_name: partner.company_name ?? "",
+                            contact_name: partner.contact_name ?? "",
+                          });
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      {editingOverview ? (
+                        <Input
+                          value={overviewForm.company_name}
+                          onChange={(e) => setOverviewForm((p) => ({ ...p, company_name: e.target.value }))}
+                          className="h-9"
+                        />
+                      ) : (
+                        <h3 className="text-lg font-bold text-text-primary truncate">{partner.company_name}</h3>
+                      )}
+                      <div className="flex shrink-0 items-center gap-1">
+                        {partner.verified ? <ShieldCheck className="h-4 w-4 text-emerald-500" /> : null}
+                        {isAdmin && !editingOverview ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 text-[11px]"
+                            icon={<Pencil className="h-3 w-3" />}
+                            onClick={() => {
+                              setNameForm({
+                                company_name: partner.company_name ?? "",
+                                contact_name: partner.contact_name ?? "",
+                              });
+                              setEditingName(true);
+                            }}
+                          >
+                            Edit name
+                          </Button>
+                        ) : null}
+                        {isAdmin ? (
+                          <Button
+                            size="sm"
+                            variant={editingOverview ? "outline" : "ghost"}
+                            className="h-8 text-[11px]"
+                            onClick={() => {
+                              if (editingOverview) {
+                                setEditingOverview(false);
+                                setOverviewForm(partnerOverviewFormFromPartner(partner));
+                              } else {
+                                setEditingName(false);
+                                setEditingOverview(true);
+                              }
+                            }}
+                          >
+                            {editingOverview ? "Cancel" : "Edit all"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    {editingOverview ? (
+                      <div className="mt-2 space-y-2">
+                        <Input
+                          value={overviewForm.contact_name}
+                          onChange={(e) => setOverviewForm((p) => ({ ...p, contact_name: e.target.value }))}
+                          placeholder="Contact name"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
+                    )}
+                  </>
                 )}
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <Badge variant={config.variant} dot size="md">

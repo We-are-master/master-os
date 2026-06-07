@@ -8,6 +8,7 @@ import { getSupabase } from "@/services/base";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { buildWeeklyCashPositionBuckets, type WeeklyCashPositionRow } from "@/lib/dashboard-cashflow-buckets";
+import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
 
 export function FinanceFlow() {
   const { bounds } = useDashboardDateRange();
@@ -56,6 +57,7 @@ export function FinanceFlow() {
           supabase
             .from("payroll_internal_costs")
             .select("amount, due_date")
+            .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
             .eq("status", "pending")
             .not("due_date", "is", null)
             .gte("due_date", fromDay)

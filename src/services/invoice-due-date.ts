@@ -1,17 +1,38 @@
 import { getSupabase } from "./base";
 import { getClient } from "./clients";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import { getCompanySettings } from "./company";
+import {
+  dueDateIsoFromAccountPaymentTerms,
+  orgCtxFromSetup,
+  type AccountPaymentOrgContext,
+} from "@/lib/account-payment-due-date";
+import { parseFrontendSetup } from "@/lib/frontend-setup";
+
+let cachedOrgCtx: AccountPaymentOrgContext | undefined;
+
+async function loadAccountPaymentOrgContext(): Promise<AccountPaymentOrgContext> {
+  if (cachedOrgCtx) return cachedOrgCtx;
+  try {
+    const row = await getCompanySettings();
+    cachedOrgCtx = orgCtxFromSetup(parseFrontendSetup(row?.frontend_setup));
+  } catch {
+    cachedOrgCtx = orgCtxFromSetup(null);
+  }
+  return cachedOrgCtx;
+}
 
 /**
  * Resolves `accounts.payment_terms` for a client linked to `source_account_id`, then returns due date YYYY-MM-DD.
- * If the client has no account or terms are missing, uses default Net 30 from `dueDateIsoFromPaymentTerms`.
+ * Biweekly accounts on the org standard grid use the same reference Friday as partner self-bills (Setup).
  */
 export async function getInvoiceDueDateIsoForClient(
   clientId: string | null | undefined,
   baseDate: Date = new Date(),
+  orgCtx?: AccountPaymentOrgContext | null,
 ): Promise<string> {
   const terms = await getPaymentTermsForClient(clientId);
-  return dueDateIsoFromPaymentTerms(baseDate, terms);
+  const ctx = orgCtx ?? (await loadAccountPaymentOrgContext());
+  return dueDateIsoFromAccountPaymentTerms(baseDate, terms, ctx);
 }
 
 export async function getPaymentTermsForClient(clientId: string | null | undefined): Promise<string | null> {

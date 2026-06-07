@@ -14,6 +14,10 @@ import {
   type FrontendSetup,
 } from "@/lib/frontend-setup";
 import { MicroLabel, SectionCard } from "@/components/fx/primitives";
+import {
+  WORKFORCE_COST_ACTIVE_OR_FILTER,
+  sumWorkforcePayrollAmount,
+} from "@/lib/workforce-lifecycle";
 
 type Pnl = {
   revenue: number;
@@ -85,11 +89,11 @@ export function PnlSnapshot() {
           .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date")
           .is("archived_at", null)
           .neq("status", "rejected"),
-        // ALL active/onboarding payroll rows — each row is a monthly commitment.
+        // Activated workforce only — onboarding excluded until Activate.
         supabase
           .from("payroll_internal_costs")
           .select("id, amount, lifecycle_stage")
-          .neq("lifecycle_stage", "offboard"),
+          .or(WORKFORCE_COST_ACTIVE_OR_FILTER),
         // Ad-hoc internal self-bills (week_start in window, dedupe vs payroll catalog).
         supabase
           .from("self_bills")
@@ -166,10 +170,7 @@ export function PnlSnapshot() {
       // ── Workforce: monthly payroll burn + ad-hoc self-bills (deduped) ────
       type PayrollRow = { id: string | null; amount: number | null; lifecycle_stage: string | null };
       const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
-      const monthlyBurnPayroll = payrollRows.reduce(
-        (a, r) => a + (Number(r.amount) || 0),
-        0,
-      );
+      const monthlyBurnPayroll = sumWorkforcePayrollAmount(payrollRows);
       const payrollIds = new Set(
         payrollRows.map((p) => p.id?.trim()).filter((id): id is string => !!id),
       );

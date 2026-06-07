@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { BeaconHeader, type BeaconView } from "@/components/beacon/beacon-header";
 import { BeaconKanban } from "@/components/beacon/beacon-kanban";
@@ -20,9 +20,13 @@ import {
   type ScheduleLiveMapPoint,
 } from "@/components/dashboard/schedule-live-map";
 import {
-  liveMapTradeFilterOptions,
+  liveMapJobStatusColor,
   type LiveMapJobStatusCategory,
 } from "@/components/dashboard/live-map-marker-icons";
+import {
+  LiveMapCoverageScout,
+  type LiveMapCoverageSearchState,
+} from "@/components/dashboard/live-map-coverage-scout";
 import { LiveMapPartnersPanel } from "@/components/dashboard/live-map-partners-panel";
 import { LiveMapJobsPanel } from "@/components/dashboard/live-map-jobs-panel";
 import {
@@ -31,13 +35,19 @@ import {
 } from "@/lib/live-map-partner-status";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
 import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
+import { MAPBOX_UK_CENTER_LON_LAT } from "@/lib/mapbox-uk-geography";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { RefreshCw, ChevronDown } from "lucide-react";
+import { MapPin, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
-import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
+import { useBeaconJobsRealtime } from "@/hooks/use-beacon-jobs-realtime";
+import {
+  activePartnersCoveringTarget,
+  type PartnerCoverageRow,
+} from "@/lib/live-map-coverage-match";
+import { getLatestLocation } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
   formatJobScheduleLine,
@@ -53,12 +63,8 @@ import type { BadgeVariant } from "@/components/ui/badge";
 
 const LIVE_MAP_INACTIVE_MINUTES = 15;
 
-const LIVE_MAP_REGION_OPTIONS: { value: LiveMapRegionPreset; label: string }[] = [
-  { value: "london", label: "London" },
-  { value: "fit_all", label: "All" },
-  { value: "uk", label: "United Kingdom" },
-  { value: "europe", label: "Europe" },
-];
+const COVERAGE_PARTNER_SELECT =
+  "id, company_name, contact_name, trade, trades, status, auth_user_id, coverage_mode, service_radius_miles, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, uk_coverage_regions, excluded_postcodes, location";
 
 const DATE_MODE_LABEL: Record<string, string> = {
   today: "Today",
@@ -89,6 +95,111 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
  *  jobs + heartbeat freshness, so it lives outside the loader. */
 type RawLiveMapPoint = Omit<ScheduleLiveMapPoint, "status"> & { inactive: boolean };
 
+type ActivePartnerMapRow = {
+  id: string;
+  company_name: string | null;
+  auth_user_id: string | null;
+  trade: string | null;
+  trades: string[] | null;
+  coverage_latitude: number | null;
+  coverage_longitude: number | null;
+  coverage_base_postcode: string | null;
+  included_postcodes: string[] | null;
+  coverage_cities: string[] | null;
+  service_radius_miles: number | null;
+};
+
+const LIVE_MAP_PARTNER_SELECT =
+  "id, company_name, auth_user_id, trade, trades, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, service_radius_miles";
+
+/** Spread markers that share the same fallback hub so they remain clickable. */
+function partnerMapJitter(partnerId: string, spreadDeg: number): { dLat: number; dLng: number } {
+  let hash = 0;
+  for (let i = 0; i < partnerId.length; i++) {
+    hash = (hash * 31 + partnerId.charCodeAt(i)) >>> 0;
+  }
+  const angle = ((hash % 360) * Math.PI) / 180;
+  const radius = spreadDeg * (0.35 + ((hash >> 8) % 65) / 100);
+  return {
+    dLat: Math.sin(angle) * radius,
+    dLng: Math.cos(angle) * radius,
+  };
+}
+
+function fallbackPartnerMapCoordinates(
+  partner: ActivePartnerMapRow,
+): { latitude: number; longitude: number } {
+  const fromCoverage = normalizeLiveMapCoordinate(
+    partner.coverage_latitude,
+    partner.coverage_longitude,
+  );
+  if (fromCoverage) {
+    return { latitude: fromCoverage.latitude, longitude: fromCoverage.longitude };
+  }
+
+  const hasCoverage =
+    (partner.included_postcodes?.length ?? 0) > 0 ||
+    (partner.coverage_cities?.length ?? 0) > 0 ||
+    Number(partner.service_radius_miles ?? 0) > 0 ||
+    Boolean(partner.coverage_base_postcode?.trim());
+
+  const [baseLng, baseLat] = MAPBOX_UK_CENTER_LON_LAT;
+  const jitter = partnerMapJitter(partner.id, hasCoverage ? 0.06 : 0.2);
+  return {
+    latitude: baseLat + jitter.dLat,
+    longitude: baseLng + jitter.dLng,
+  };
+}
+
+async function resolveActivePartnerMapPoint(
+  partner: ActivePartnerMapRow,
+  nowMs: number,
+): Promise<RawLiveMapPoint> {
+  const mapId = partner.auth_user_id?.trim() || partner.id;
+  const name = partner.company_name?.trim() || "Partner";
+  const trade = (partner.trade ?? "").trim() || "General";
+  const trades = Array.isArray(partner.trades) && partner.trades.length > 0 ? partner.trades : null;
+
+  let latitude: number | null = null;
+  let longitude: number | null = null;
+  let lastUpdateIso = new Date(0).toISOString();
+  let inactive = true;
+
+  const authUserId = partner.auth_user_id?.trim();
+  if (authUserId) {
+    const loc = await getLatestLocation(authUserId);
+    if (loc) {
+      const normalized = normalizeLiveMapCoordinate(loc.latitude, loc.longitude);
+      if (normalized) {
+        latitude = normalized.latitude;
+        longitude = normalized.longitude;
+        lastUpdateIso = loc.created_at;
+        const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
+        inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
+      }
+    }
+  }
+
+  if (latitude == null || longitude == null) {
+    const fallback = fallbackPartnerMapCoordinates(partner);
+    latitude = fallback.latitude;
+    longitude = fallback.longitude;
+    lastUpdateIso = new Date().toISOString();
+    inactive = true;
+  }
+
+  return {
+    id: mapId,
+    name,
+    latitude,
+    longitude,
+    lastUpdateIso,
+    inactive,
+    trade,
+    trades,
+  };
+}
+
 function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
   if (status === "unassigned" || status === "auto_assigning") return "unassigned";
   if (status === "scheduled" || status === "late") return "scheduled";
@@ -101,6 +212,31 @@ function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
     return "in_progress";
   }
   return "attention";
+}
+
+const ACTIVE_PARTNER_JOB_STATUSES = new Set([
+  "in_progress",
+  "late",
+  "final_check",
+  "on_hold",
+  "need_attention",
+]);
+const UPCOMING_PARTNER_JOB_STATUSES = new Set(["scheduled", "auto_assigning", "unassigned"]);
+
+/** Partner ring colour = active/upcoming job status; white when idle. */
+function partnerJobStrokeColor(partnerId: string, jobs: Job[]): string {
+  const mine = jobs.filter((j) => j.partner_id === partnerId);
+  for (const j of mine) {
+    if (ACTIVE_PARTNER_JOB_STATUSES.has(j.status) || j.status.startsWith("in_progress")) {
+      return liveMapJobStatusColor(liveMapCategoryForStatus(j.status));
+    }
+  }
+  for (const j of mine) {
+    if (UPCOMING_PARTNER_JOB_STATUSES.has(j.status)) {
+      return liveMapJobStatusColor(liveMapCategoryForStatus(j.status));
+    }
+  }
+  return "#FFFFFF";
 }
 
 export default function SchedulePage() {
@@ -154,8 +290,16 @@ export default function SchedulePage() {
   const [liveMapPoints, setLiveMapPoints] = useState<RawLiveMapPoint[]>([]);
   const [loadingLiveMap, setLoadingLiveMap] = useState(false);
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
-  const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("london");
+  const liveMapRegionPreset: LiveMapRegionPreset = "london";
   const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
+  const [coveragePartners, setCoveragePartners] = useState<PartnerCoverageRow[]>([]);
+  const [coverageDraft, setCoverageDraft] = useState<{
+    target: LiveMapCoverageSearchState["target"];
+    radiusMiles: number;
+  } | null>(null);
+  const [recentJobIds, setRecentJobIds] = useState<Set<string>>(() => new Set());
+  const prevUnassignedJobIdsRef = useRef<Set<string>>(new Set());
+  const didInitRecentJobsRef = useRef(false);
   const [liveMapSelectedJobIds, setLiveMapSelectedJobIds] = useState<Set<string>>(() => new Set());
   /** Resolved client_ids for the active account filter (null when filter = "all"). */
   const [liveMapAccountClientIds, setLiveMapAccountClientIds] = useState<Set<string> | null>(null);
@@ -166,6 +310,9 @@ export default function SchedulePage() {
   const [liveMapRouteLoading, setLiveMapRouteLoading] = useState(false);
   /** Status row scoping the partner pins on the map (left panel). */
   const [liveMapPartnerStatus, setLiveMapPartnerStatus] = useState<LiveMapPartnerStatus | null>(null);
+  const [liveMapPanNonce, setLiveMapPanNonce] = useState(0);
+  const [liveMapLondonNonce, setLiveMapLondonNonce] = useState(0);
+  const [mapViewAwayFromLondon, setMapViewAwayFromLondon] = useState(false);
   /** Status row scoping the job pins on the map (right panel). */
   const [liveMapJobStatusFilter, setLiveMapJobStatusFilter] = useState<LiveMapJobStatusCategory | null>(null);
   /** Matches Live View trade filter + job title parsing to Admin → Services catalog names. */
@@ -174,6 +321,27 @@ export default function SchedulePage() {
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
+
+  const refreshJobsForBeacon = useCallback(() => {
+    void loadJobs();
+  }, [loadJobs]);
+
+  useBeaconJobsRealtime(refreshJobsForBeacon, "beacon_schedule_jobs");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabase();
+      const { data } = await supabase
+        .from("partners")
+        .select(COVERAGE_PARTNER_SELECT)
+        .eq("status", "active");
+      if (!cancelled) setCoveragePartners((data ?? []) as PartnerCoverageRow[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     void listCatalogServicesForPicker()
@@ -197,61 +365,19 @@ export default function SchedulePage() {
     setLoadingLiveMap(true);
     const supabase = getSupabase();
     try {
-      const members = await getTeamMembers();
-      const byId = new Map<string, string>();
-      for (const m of members) {
-        if (m?.id) byId.set(m.id, m.full_name?.trim() || "Partner");
-      }
-
-      const { data: linkedPartners } = await supabase
+      const { data: activePartners } = await supabase
         .from("partners")
-        .select("company_name, auth_user_id, trade, trades")
-        .not("auth_user_id", "is", null);
-      const tradeByAuthUserId = new Map<string, { trade: string; trades: string[] | null }>();
-      for (const p of (linkedPartners ?? []) as Array<{
-        company_name: string | null;
-        auth_user_id: string | null;
-        trade: string | null;
-        trades: string[] | null;
-      }>) {
-        if (p.auth_user_id && !byId.has(p.auth_user_id)) {
-          byId.set(p.auth_user_id, p.company_name?.trim() || "Partner");
-        }
-        if (p.auth_user_id) {
-          const tr = (p.trade ?? "").trim() || "General";
-          tradeByAuthUserId.set(p.auth_user_id, {
-            trade: tr,
-            trades: Array.isArray(p.trades) && p.trades.length > 0 ? p.trades : null,
-          });
-        }
-      }
+        .select(LIVE_MAP_PARTNER_SELECT)
+        .eq("status", "active");
 
-      const list = Array.from(byId.entries()).map(([userId, name]) => ({ userId, name }));
       const nowMs = Date.now();
-
       const rows = await Promise.all(
-        list.map(async (p) => {
-          const loc = await getLatestLocation(p.userId);
-          if (!loc) return null;
-          const normalized = normalizeLiveMapCoordinate(loc.latitude, loc.longitude);
-          if (!normalized) return null;
-          const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
-          const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
-          const tr = tradeByAuthUserId.get(p.userId);
-          return {
-            id: p.userId,
-            name: p.name,
-            latitude: normalized.latitude,
-            longitude: normalized.longitude,
-            lastUpdateIso: loc.created_at,
-            inactive,
-            trade: tr?.trade ?? "General",
-            trades: tr?.trades ?? null,
-          } as RawLiveMapPoint;
-        }),
+        ((activePartners ?? []) as ActivePartnerMapRow[]).map((p) =>
+          resolveActivePartnerMapPoint(p, nowMs),
+        ),
       );
 
-      setLiveMapPoints(rows.filter((r): r is RawLiveMapPoint => r !== null));
+      setLiveMapPoints(rows);
       setLiveMapUpdatedAt(new Date().toISOString());
     } catch {
       /* ignore */
@@ -408,6 +534,36 @@ export default function SchedulePage() {
     return stats;
   }, [jobsTouchingCalendarMonth, jobsForSelectedDay]);
 
+  useEffect(() => {
+    const current = new Set(
+      jobs
+        .filter((j) => j.status === "unassigned" || j.status === "auto_assigning")
+        .map((j) => j.id),
+    );
+    if (!didInitRecentJobsRef.current) {
+      didInitRecentJobsRef.current = true;
+      prevUnassignedJobIdsRef.current = current;
+      return;
+    }
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const prev = prevUnassignedJobIdsRef.current;
+    for (const id of current) {
+      if (prev.has(id)) continue;
+      setRecentJobIds((s) => new Set(s).add(id));
+      timers.push(
+        setTimeout(() => {
+          setRecentJobIds((s) => {
+            const n = new Set(s);
+            n.delete(id);
+            return n;
+          });
+        }, 60_000),
+      );
+    }
+    prevUnassignedJobIdsRef.current = current;
+    return () => timers.forEach(clearTimeout);
+  }, [jobs]);
+
   const partnerPointsForMap = useMemo<ScheduleLiveMapPoint[]>(() => {
     const nowMs = Date.now();
     return filteredLiveMapPoints.map((p) => {
@@ -437,9 +593,59 @@ export default function SchedulePage() {
         status,
         jobsCompleted: s?.completed,
         jobsInWindow: s?.inWindow,
+        jobStrokeColor:
+          status === "offline" ? "#9A9AA0" : partnerJobStrokeColor(p.id, jobs),
       } satisfies ScheduleLiveMapPoint;
     });
   }, [filteredLiveMapPoints, partnerStatsById, jobs]);
+
+  const coverageSearch = useMemo<LiveMapCoverageSearchState | null>(() => {
+    if (!coverageDraft) return null;
+    const onlineAuthUserIds = new Set(
+      partnerPointsForMap.filter((p) => p.status !== "offline").map((p) => p.id),
+    );
+    const matches = activePartnersCoveringTarget(
+      coveragePartners,
+      coverageDraft.target,
+      liveMapTradeFilter,
+      onlineAuthUserIds,
+    );
+    return { ...coverageDraft, matches };
+  }, [coverageDraft, coveragePartners, liveMapTradeFilter, partnerPointsForMap]);
+
+  const coverageHighlightUserIds = useMemo(() => {
+    if (!coverageSearch?.matches.length) return null;
+    const ids = coverageSearch.matches
+      .map((m) => m.partner.auth_user_id?.trim())
+      .filter(Boolean) as string[];
+    return ids.length > 0 ? new Set(ids) : null;
+  }, [coverageSearch]);
+
+  const coverageSearchMarker = useMemo(() => {
+    if (!coverageSearch) return null;
+    return {
+      latitude: coverageSearch.target.latitude,
+      longitude: coverageSearch.target.longitude,
+      label: coverageSearch.target.label,
+    };
+  }, [coverageSearch]);
+
+  const coverageCircle = useMemo(() => {
+    if (!coverageSearch) return null;
+    return {
+      latitude: coverageSearch.target.latitude,
+      longitude: coverageSearch.target.longitude,
+      radiusMiles: coverageSearch.radiusMiles,
+    };
+  }, [coverageSearch]);
+
+  const handleCoverageSearchChange = useCallback((next: LiveMapCoverageSearchState | null) => {
+    if (!next) {
+      setCoverageDraft(null);
+      return;
+    }
+    setCoverageDraft({ target: next.target, radiusMiles: next.radiusMiles });
+  }, []);
 
   const liveMapJobPoints = useMemo<ScheduleLiveMapJobPoint[]>(() => {
     const points: ScheduleLiveMapJobPoint[] = [];
@@ -530,7 +736,14 @@ export default function SchedulePage() {
   }, [liveMapRoutedPartnerId, liveMapPoints, jobs]);
 
   const handlePartnerMarkerClick = useCallback((partnerId: string) => {
-    setLiveMapRoutedPartnerId((cur) => (cur === partnerId ? null : partnerId));
+    setLiveMapRoutedPartnerId((cur) => {
+      const next = cur === partnerId ? null : partnerId;
+      if (next) {
+        setLiveMapPanNonce((n) => n + 1);
+        setMapViewAwayFromLondon(true);
+      }
+      return next;
+    });
   }, []);
 
   const clearRoute = useCallback(() => {
@@ -567,7 +780,16 @@ export default function SchedulePage() {
   const beaconLiveCount = realTimeLiveCount;
 
   const togglePartnerStatus = useCallback((status: LiveMapPartnerStatus) => {
-    setLiveMapPartnerStatus((cur) => (cur === status ? null : status));
+    setLiveMapPartnerStatus((cur) => {
+      const next = cur === status ? null : status;
+      if (next) setMapViewAwayFromLondon(true);
+      return next;
+    });
+  }, []);
+
+  const backToLondon = useCallback(() => {
+    setLiveMapLondonNonce((n) => n + 1);
+    setMapViewAwayFromLondon(false);
   }, []);
 
   const toggleJobStatus = useCallback((category: LiveMapJobStatusCategory) => {
@@ -576,6 +798,8 @@ export default function SchedulePage() {
 
   const focusPartner = useCallback((partnerId: string) => {
     setLiveMapRoutedPartnerId(partnerId);
+    setLiveMapPanNonce((n) => n + 1);
+    setMapViewAwayFromLondon(true);
   }, []);
 
   return (
@@ -620,53 +844,47 @@ export default function SchedulePage() {
           onPartnerMarkerClick={handlePartnerMarkerClick}
           routeGeometry={liveMapRoute?.geometry ?? null}
           toolbarExtra={
-            <button
-              type="button"
-              className={LIVE_MAP_TOOLBAR_BTN_CLASS}
-              onClick={() => void loadLiveMap()}
-            >
-              <RefreshCw className={cn("h-3 w-3 shrink-0", loadingLiveMap && "animate-spin")} aria-hidden />
-              Refresh
-            </button>
+            <>
+              <button
+                type="button"
+                className={LIVE_MAP_TOOLBAR_BTN_CLASS}
+                onClick={() => void loadLiveMap()}
+              >
+                <RefreshCw className={cn("h-3 w-3 shrink-0", loadingLiveMap && "animate-spin")} aria-hidden />
+                Refresh
+              </button>
+              {mapViewAwayFromLondon ? (
+                <button
+                  type="button"
+                  className={cn(
+                    LIVE_MAP_TOOLBAR_BTN_CLASS,
+                    "border-[#020040]/20 bg-[#020040]/5 text-[#020040] hover:bg-[#020040]/10",
+                  )}
+                  onClick={backToLondon}
+                >
+                  <MapPin className="h-3 w-3 shrink-0" aria-hidden />
+                  Back to London
+                </button>
+              ) : null}
+            </>
           }
           partnerStatusFilter={liveMapPartnerStatus}
+          panToPartnerId={liveMapRoutedPartnerId}
+          panNonce={liveMapPanNonce}
+          resetToLondonNonce={liveMapLondonNonce}
           jobStatusFilter={liveMapJobStatusFilter}
+          searchMarker={coverageSearchMarker}
+          coverageCircle={coverageCircle}
+          coverageHighlightUserIds={coverageHighlightUserIds}
+          recentJobIds={recentJobIds}
           filterOverlay={
-            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 px-2 py-1.5 shadow-md backdrop-blur-sm sm:gap-2 sm:py-2">
-              <div className="relative">
-                <select
-                  aria-label="Map area"
-                  value={liveMapRegionPreset}
-                  onChange={(e) => setLiveMapRegionPreset(e.target.value as LiveMapRegionPreset)}
-                  className="h-7 min-w-[110px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
-                >
-                  {LIVE_MAP_REGION_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-              </div>
-              <div className="relative">
-                <select
-                  aria-label="Trade filter"
-                  value={liveMapTradeFilter}
-                  onChange={(e) => setLiveMapTradeFilter(e.target.value)}
-                  className="h-7 min-w-[118px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
-                >
-                  {liveMapTradeFilterOptions(serviceCatalogTypeNames).map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-              </div>
-              {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
-                <span className="text-[11px] font-medium text-red-500">No partners match</span>
-              )}
-            </div>
+            <LiveMapCoverageScout
+              tradeFilter={liveMapTradeFilter}
+              onTradeFilterChange={setLiveMapTradeFilter}
+              catalogTradeNames={serviceCatalogTypeNames}
+              search={coverageSearch}
+              onSearchChange={handleCoverageSearchChange}
+            />
           }
           bottomLeftOverlay={
             <div className="flex flex-col gap-2">
@@ -685,13 +903,22 @@ export default function SchedulePage() {
                           {partner?.name ?? "Partner"}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={clearRoute}
-                        className="text-[10px] font-medium text-[#64748B] hover:text-[#020040]"
-                      >
-                        Clear ✕
-                      </button>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={backToLondon}
+                          className="text-[10px] font-medium text-[#020040] hover:underline"
+                        >
+                          London
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearRoute}
+                          className="text-[10px] font-medium text-[#64748B] hover:text-[#020040]"
+                        >
+                          Clear ✕
+                        </button>
+                      </div>
                     </div>
                     {liveMapRouteLoading ? (
                       <p className="text-[11px] text-[#64748B]">Calculating route…</p>

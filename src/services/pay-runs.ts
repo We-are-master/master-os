@@ -2,6 +2,7 @@ import { getSupabase } from "./base";
 import type { PayRun, PayRunItem } from "@/types/database";
 import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
+import { isWorkforceCostActive } from "@/lib/workforce-lifecycle";
 
 /** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
 export function getWeekBounds(date: Date): { week_start: string; week_end: string } {
@@ -140,8 +141,8 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     });
   }
 
-  const payrollSelectFull = "id, payee_name, description, amount, due_date, status";
-  const payrollSelectBase = "id, description, amount, due_date, status";
+  const payrollSelectFull = "id, payee_name, description, amount, due_date, status, lifecycle_stage";
+  const payrollSelectBase = "id, description, amount, due_date, status, lifecycle_stage";
 
   type PayrollFetchRow = {
     id: string;
@@ -188,9 +189,10 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   if (internalErr) throw internalErr;
 
   const payrollFiltered = (internalRows ?? []).filter((r) => {
-    const row = r as { amount?: number; due_date?: string | null };
+    const row = r as { amount?: number; due_date?: string | null; lifecycle_stage?: string | null };
     if (row.due_date == null || String(row.due_date).trim() === "") return false;
     if (Number(row.amount ?? 0) <= 0) return false;
+    if (!isWorkforceCostActive(row.lifecycle_stage)) return false;
     return true;
   });
 

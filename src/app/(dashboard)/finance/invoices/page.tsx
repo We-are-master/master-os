@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function FinanceInvoicesRedirectPage() {
-  redirect("/finance/billing/invoices");
+  redirect("/finance/billing");
 }

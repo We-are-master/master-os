@@ -6,10 +6,25 @@ Each **partner + ISO week** (Monday–Sunday) gets one self-bill row. Multiple j
 
 | Event | Self-bill status |
 |-------|------------------|
-| Job created / partner assigned | `draft` (weekly bucket created or job linked) |
+| Job completed (`completed_date`) with partner + start date | `draft` (weekly bucket created or job linked) |
 | Review & approve on job | `awaiting_payment` or `ready_to_pay` |
 | Finance / Sync | `ready_to_pay` when all linked jobs are approved |
 | Mark paid (UI or pay run) | `paid` (+ `paid_at`) |
+
+## Biweekly pay periods (org standard)
+
+Default org schedule: **Every 2 weeks on Friday** (`Settings → Setup → Partner payout standard`).
+
+| Pay date (example) | Work period (job **start** date) |
+|--------------------|----------------------------------|
+| Fri **12 Jun 2026** | **25 May – 7 Jun** (14 days) |
+| Fri **26 Jun 2026** | **8 Jun – 21 Jun** |
+
+- **Which period?** Job `scheduled_start_at` (fallback `scheduled_date`) must fall inside the work period.
+- **When is a self-bill created?** Only when the job also has `completed_date` (execution done).
+- **ISO week bucket** still follows the job start date (Mon–Sun week containing that start).
+- **`due_date`** on the self-bill follows the **biweekly pay Friday** for that work period (both ISO weeks in the same period share one pay date).
+- **Setup anchor:** `partner_payout_reference_ymd` (e.g. `2026-06-12`) locks the pay rhythm.
 
 ## Status flow (DB: `self_bills.status`)
 
@@ -29,8 +44,9 @@ Each **partner + ISO week** (Monday–Sunday) gets one self-bill row. Multiple j
 | Tab | Period filter | Sort / group |
 |-----|---------------|--------------|
 | **Draft** | Header **Created** date | `created_at` desc |
-| **Ready to Pay / Overdue** | **Payment due** (This Friday, Next Friday, custom) | `due_date` asc; grouped by payout Friday |
+| **Ready to Pay / Overdue** | **Payment due** (This Friday, Next Friday, custom) | `due_date` asc; grouped by payout Friday + work period |
 | **Closed** | Header **Created** date | `created_at` desc |
+| **Billing standalone · Going out** | Current **biweekly work period** when “This week” | Grouped by pay date → partner |
 
 Partner payout **due date**:
 - Partner has `payment_terms` on profile → use that schedule.
@@ -39,10 +55,9 @@ Partner payout **due date**:
 
 ## Auto-linking jobs
 
-- `createJob` with partner → weekly self-bill in `draft`.
-- `updateJob` when partner is set and no `self_bill_id` → creates/links bucket.
-- Recurring series jobs with partner → same on insert.
-- **Sync** (`POST /api/admin/selfbills/full-sync`): backfills orphan jobs, promotes approved buckets, refreshes totals and due dates.
+- `updateJob` when partner is set, `completed_date` + start date present, and no `self_bill_id` → creates/links bucket.
+- Recurring series jobs with partner → same on insert when gates pass.
+- **Sync** (`POST /api/admin/selfbills/full-sync`): backfills `completed_date` where missing, orphan jobs, rebuckets by start date, promotes approved buckets, refreshes totals and due dates.
 
 ## Week close (Sunday 23:59 → Review)
 
@@ -55,6 +70,6 @@ When a pay run item of type `self_bill` is marked paid, `self_bills.status` is s
 
 ## UI defaults
 
-- Tab default: **Ready to Pay** (grouped by payment due date).
+- Tab default: **Ready to Pay** (grouped by payment due date + work period).
 - Header created-date filter applies to Draft / Closed / All.
 - Realtime: client subscribes to `postgres_changes` on `self_bills`.

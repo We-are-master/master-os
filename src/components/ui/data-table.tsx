@@ -320,6 +320,7 @@ export function DataTable<T>({
                   <th
                     key={col.key}
                     style={{
+                      ...(col.width ? { width: col.width } : {}),
                       /** Prefer minWidth so header text stays one line; horizontal scroll handles overflow. */
                       minWidth: col.minWidth ?? col.width,
                     }}
@@ -569,7 +570,10 @@ export function DataTable<T>({
                           {visibleColumns.map((col) => (
                             <td
                               key={col.key}
-                              style={{ minWidth: col.minWidth ?? col.width }}
+                              style={{
+                                ...(col.width ? { width: col.width } : {}),
+                                minWidth: col.minWidth ?? col.width,
+                              }}
                               className={cn(
                                 "px-2 sm:px-3 py-1.5 text-sm align-middle",
                                 col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
@@ -627,7 +631,10 @@ export function DataTable<T>({
                       {visibleColumns.map((col) => (
                         <td
                           key={col.key}
-                          style={{ minWidth: col.minWidth ?? col.width }}
+                          style={{
+                            ...(col.width ? { width: col.width } : {}),
+                            minWidth: col.minWidth ?? col.width,
+                          }}
                           className={cn(
                             "px-2 sm:px-3 py-1.5 text-sm align-middle",
                             col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",

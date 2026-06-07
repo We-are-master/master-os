@@ -3,7 +3,8 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient, isServiceRoleConfigured } from "@/lib/supabase/service";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
-import { backfillOnHoldPresetsToZendesk } from "@/lib/zendesk-job-on-hold-reasons-sync";
+import { resolveJobOnHoldPresets } from "@/lib/frontend-setup";
+import { syncReasonsToZendesk } from "@/services/zendesk-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,11 +45,12 @@ export async function POST(req: NextRequest) {
   const { data: row } = await db.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
   const setup = parseFrontendSetup(row?.frontend_setup ?? null);
 
-  const result = await backfillOnHoldPresetsToZendesk({
-    setup,
-    client: db,
-    dryRun: body.dryRun === true,
-  });
+  const presets = resolveJobOnHoldPresets(setup);
+  const result = await syncReasonsToZendesk(
+    "hold",
+    presets.map((p) => ({ id: p.id, label: p.label })),
+    { setup, dryRun: body.dryRun === true },
+  );
 
   return NextResponse.json({ dryRun: body.dryRun === true, ...result });
 }

@@ -8513,7 +8513,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
-                  <Link href="/finance/billing/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
+                  <Link href="/finance/billing" className="text-primary hover:underline inline-flex items-center gap-1">
                     All invoices <ExternalLink className="h-3 w-3" />
                   </Link>
                   <Link href="/finance/billing/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
