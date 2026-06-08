@@ -15,6 +15,7 @@ import {
   sortPricingPresetsDisplay,
   type ServicePricingPreset,
 } from "@/lib/catalog-pricing-presets";
+import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import { resolveJobPricing } from "@/lib/job-pricing-resolver";
 import type { AccountServicePrice, CatalogService, PartnerServicePrice } from "@/types/database";
 
@@ -128,6 +129,38 @@ export function resolveWebhookFixedPricing(input: WebhookFixedPricingInput): Web
   return { clientPrice, partnerCost, bandId, bandLabel };
 }
 
+/** Job status after partner match when auto_assign is requested. */
+export function resolveWebhookAutoAssignStatus(
+  autoAssign: boolean,
+  matchedPartnerIds: string[],
+): "auto_assigning" | "unassigned" {
+  return autoAssign && matchedPartnerIds.length > 0 ? "auto_assigning" : "unassigned";
+}
+
+/**
+ * When Zendesk omits Rate Type, infer hourly for catalog rows that only support Smart Price.
+ */
+export function inferWebhookRateTypeFromCatalog(
+  catalog: Pick<CatalogService, "pricing_mode" | "accepts_smart_price">,
+): "hourly" | null {
+  if (catalog.pricing_mode === "hourly" || catalog.accepts_smart_price === true) {
+    return "hourly";
+  }
+  return null;
+}
+
+/** Band default_hours wins over catalog default_hours for initial billed_hours. */
+export function catalogDefaultHoursForBilling(
+  catalog: Pick<CatalogService, "default_hours">,
+  band?: ServicePricingPreset | null,
+): number | null {
+  const fromBand = band?.default_hours != null ? Number(band.default_hours) : null;
+  if (Number.isFinite(fromBand) && fromBand! > 0) return fromBand!;
+  const fromCatalog = catalog.default_hours != null ? Number(catalog.default_hours) : null;
+  if (Number.isFinite(fromCatalog) && fromCatalog! > 0) return fromCatalog!;
+  return null;
+}
+
 /** Normalise Zendesk rate_type / job_type tag to OS job_type. */
 export function normalizeWebhookRateType(raw: unknown): "fixed" | "hourly" | null {
   const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
@@ -160,9 +193,7 @@ function smartPriceBilledHours(
   catalog: Pick<CatalogService, "default_hours">,
   band?: ServicePricingPreset | null,
 ): number {
-  const fromBand = band?.default_hours != null ? Number(band.default_hours) : null;
-  const fromCatalog = catalog.default_hours != null ? Number(catalog.default_hours) : null;
-  return Math.max(0.25, fromBand ?? fromCatalog ?? 2);
+  return resolveInitialBilledHours(catalogDefaultHoursForBilling(catalog, band));
 }
 
 /**

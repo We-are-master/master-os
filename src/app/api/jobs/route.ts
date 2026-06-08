@@ -24,12 +24,16 @@ import {
 } from "@/lib/zendesk-job-ingest";
 import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import {
+  catalogDefaultHoursForBilling,
+  inferWebhookRateTypeFromCatalog,
   normalizeBandId,
   normalizeWebhookRateType,
-  validateServiceBand,
   resolveFixedManualPricing,
   resolveSmartPriceRates,
+  resolveWebhookAutoAssignStatus,
+  validateServiceBand,
 } from "@/lib/zendesk-webhook-pricing";
+import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
@@ -258,7 +262,8 @@ export async function POST(req: NextRequest) {
   const description     = str(body.description) || null;
   // Accept bare values, Zendesk tags (`job_type_hourly` / `job_type_fixed`), or
   // Smart Price alias (`job_type_smart_price` → hourly).
-  const rateType        = normalizeWebhookRateType(body.rate_type) ?? "fixed";
+  const rateTypeFromBody = normalizeWebhookRateType(body.rate_type);
+  let rateType: "fixed" | "hourly" = rateTypeFromBody ?? "fixed";
   // `let` because we drop the value to service_type below when it isn't a UUID
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
   let catalogServiceIdIn = str(body.catalog_service_id)?.replace(/^os_/i, "") || null;
@@ -382,7 +387,7 @@ export async function POST(req: NextRequest) {
   if (catalogServiceIdIn) {
     const { data: catRow, error: catErr } = await supabase
       .from("service_catalog")
-      .select("name")
+      .select("name, pricing_mode, accepts_smart_price")
       .eq("id", catalogServiceIdIn)
       .is("deleted_at", null)
       .maybeSingle();
@@ -393,7 +398,18 @@ export async function POST(req: NextRequest) {
     if (!catRow) {
       return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
     }
-    serviceType = String((catRow as { name: string }).name).trim();
+    const typedCat = catRow as Pick<CatalogService, "name" | "pricing_mode" | "accepts_smart_price">;
+    serviceType = String(typedCat.name).trim();
+    if (rateTypeFromBody === null) {
+      const inferred = inferWebhookRateTypeFromCatalog(typedCat);
+      if (inferred) {
+        rateType = inferred;
+        zendeskCorrections.push("inferred_rate_type_hourly_from_catalog");
+      } else {
+        console.warn("[api/jobs] rate_type empty; defaulting to fixed", { catalogServiceIdIn });
+        zendeskCorrections.push("rate_type_defaulted_fixed");
+      }
+    }
   }
 
   // Idempotency: if a Zendesk ticket id was supplied and we already have a
@@ -589,6 +605,7 @@ export async function POST(req: NextRequest) {
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
   let hourlyCatalogDefaultHours: number | null = null;
+  let hourlyBillingBand: ServicePricingPreset | null = null;
 
   if (rateType === "hourly") {
     const catalog = await resolveCatalogServiceForSmartPrice(
@@ -600,8 +617,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: catalog.error }, { status: catalog.status });
     }
     resolvedCatalogServiceId = catalog.row.id;
-    hourlyCatalogDefaultHours =
-      catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
     const bandResult = validateServiceBand(catalog.row, bandId);
     if (!bandResult.ok) {
@@ -610,7 +625,9 @@ export async function POST(req: NextRequest) {
     if (bandResult.hasBands && bandResult.band) {
       catalogPresetId = bandResult.band.id;
       catalogBandLabel = bandResult.band.label ?? null;
+      hourlyBillingBand = bandResult.band;
     }
+    hourlyCatalogDefaultHours = catalogDefaultHoursForBilling(catalog.row, hourlyBillingBand);
 
     const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
     const hourlyResolved = resolveSmartPriceRates({
@@ -667,7 +684,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Determine status ───────────────────────────────────────────────
-  const status = autoAssign ? "auto_assigning" : "unassigned";
+  const noMatchingPartners = autoAssign && matchedPartnerIds.length === 0;
+  if (noMatchingPartners) {
+    console.warn("[api/jobs] auto_assign: no matching partners", {
+      serviceType,
+      catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
+      postcode: extractUkPostcode(propertyAddress),
+      scheduledDate: isoDate,
+    });
+  }
+  const status = resolveWebhookAutoAssignStatus(autoAssign, matchedPartnerIds);
 
   // ─── Reference ──────────────────────────────────────────────────────
   const { data: ref, error: refErr } = await supabase.rpc("next_job_ref");
@@ -814,6 +840,7 @@ export async function POST(req: NextRequest) {
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
+      ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
     },
     { status: 201 },

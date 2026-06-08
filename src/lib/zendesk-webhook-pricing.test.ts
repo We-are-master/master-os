@@ -2,12 +2,16 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   autoMarginFromPct,
+  catalogDefaultHoursForBilling,
+  inferWebhookRateTypeFromCatalog,
   normalizeBandId,
   normalizeWebhookRateType,
   resolveFixedManualPricing,
   resolveSmartPriceRates,
+  resolveWebhookAutoAssignStatus,
   validateServiceBand,
 } from "./zendesk-webhook-pricing";
+import { resolveInitialBilledHours } from "./job-hourly-billing";
 import { resolvePartnerHourlyForJob } from "./job-pricing-resolver";
 import type { CatalogService } from "@/types/database";
 
@@ -53,6 +57,69 @@ describe("normalizeWebhookRateType", () => {
   it("maps fixed tags", () => {
     assert.equal(normalizeWebhookRateType("job_type_fixed"), "fixed");
     assert.equal(normalizeWebhookRateType("fixed"), "fixed");
+  });
+  it("returns null for empty rate_type from Zendesk", () => {
+    assert.equal(normalizeWebhookRateType(""), null);
+    assert.equal(normalizeWebhookRateType("   "), null);
+  });
+});
+
+describe("inferWebhookRateTypeFromCatalog", () => {
+  it("infers hourly for Gardener-style smart-price catalog", () => {
+    assert.equal(
+      inferWebhookRateTypeFromCatalog({ pricing_mode: "hourly", accepts_smart_price: true }),
+      "hourly",
+    );
+  });
+  it("infers hourly when only pricing_mode is hourly", () => {
+    assert.equal(
+      inferWebhookRateTypeFromCatalog({ pricing_mode: "hourly", accepts_smart_price: false }),
+      "hourly",
+    );
+  });
+  it("returns null for fixed-only catalog", () => {
+    assert.equal(
+      inferWebhookRateTypeFromCatalog({ pricing_mode: "fixed", accepts_smart_price: false }),
+      null,
+    );
+  });
+});
+
+describe("resolveWebhookAutoAssignStatus", () => {
+  it("auto_assign with zero matches → unassigned", () => {
+    assert.equal(resolveWebhookAutoAssignStatus(true, []), "unassigned");
+  });
+  it("auto_assign with partners → auto_assigning", () => {
+    assert.equal(resolveWebhookAutoAssignStatus(true, ["p1"]), "auto_assigning");
+  });
+  it("no auto_assign → unassigned", () => {
+    assert.equal(resolveWebhookAutoAssignStatus(false, ["p1"]), "unassigned");
+  });
+});
+
+describe("catalogDefaultHoursForBilling", () => {
+  const catalog = { default_hours: 2 };
+
+  it("prefers band default_hours over catalog", () => {
+    assert.equal(
+      catalogDefaultHoursForBilling(catalog, { default_hours: 3 } as never),
+      3,
+    );
+  });
+
+  it("Gardener hourly webhook billed_hours floor is at least 2h", () => {
+    const gardenerCatalog = { default_hours: 1 };
+    const hours = resolveInitialBilledHours(
+      catalogDefaultHoursForBilling(gardenerCatalog, null),
+    );
+    assert.ok(hours >= 2);
+  });
+
+  it("band with sub-2 default still floors to 2h billed", () => {
+    const hours = resolveInitialBilledHours(
+      catalogDefaultHoursForBilling(catalog, { default_hours: 0.5 } as never),
+    );
+    assert.equal(hours, 2);
   });
 });
 
