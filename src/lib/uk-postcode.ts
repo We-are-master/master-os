@@ -20,3 +20,29 @@ export function extractUkPostcode(text: string): string | null {
   if (!m) return null;
   return normalizeUkPostcode(m[0]);
 }
+
+/**
+ * Postcode for partner match / geocoding: explicit `postcode` field wins,
+ * otherwise parse from free-text property_address.
+ */
+export function resolvePropertyPostcode(
+  explicitPostcode: string | null | undefined,
+  propertyAddress: string,
+): string | null {
+  const raw = String(explicitPostcode ?? "").trim();
+  if (raw) {
+    const fromField = extractUkPostcode(raw);
+    if (fromField) return fromField;
+  }
+  return extractUkPostcode(propertyAddress);
+}
+
+/** Append postcode to address when sent separately (storage + geocoding). */
+export function propertyAddressWithPostcode(
+  propertyAddress: string,
+  postcode: string | null,
+): string {
+  const trimmed = propertyAddress.trim();
+  if (!postcode || extractUkPostcode(trimmed)) return trimmed;
+  return `${trimmed}, ${postcode}`;
+}
