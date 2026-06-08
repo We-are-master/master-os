@@ -1384,7 +1384,7 @@
       <li>Client Name preenchido</li>
       <li>Client Email preenchido</li>
       <li>Client Phone</li>
-      <li>Address (completo)</li>
+      <li>Address (completo, <strong>com postcode UK obrigatório</strong> — ex. 14 Park Lane, London W1K 1BE)</li>
       <li>Type of Work</li>
       <li>Job Date</li>
       <li>Arrival Time</li>
@@ -1398,8 +1398,10 @@
   <ul>
     <li>Zendesk dispara webhook pro OS com payload</li>
     <li>OS cria job, responde com job_id (ex: JB-2026-1234)</li>
-    <li>Se Auto-Assign=True: status vira 🤖 Auto Assigning, OS busca partner</li>
+    <li>Se Auto-Assign=True e houver partners: status vira 🤖 Auto Assigning, OS envia convites</li>
+    <li>Se Auto-Assign=True mas nenhum partner (trade, postcode, slot): 🔴 Unassigned — atribua manual ou corrija morada/postcode</li>
     <li>Se Auto-Assign=False: vira 🔴 Unassigned, voce atribui manual</li>
+    <li>Rate Type vazio em serviços smart-price (Gardener, Plumber…): OS infere hourly com min 2h — mesmo assim preencha Rate Type no ticket</li>
     <li>Ticket sai da Action Required - vai pra Isabela</li>
   </ul>
 
@@ -1626,7 +1628,7 @@
     <p><strong>DIA-A-DIA:</strong> 1) Abre Action Required. 2) Abre ticket de cima. 3) Triagem. 4) Preenche campos. 5) Apply macro. 6) Submit. 7) Proximo.</p>
     <p><strong>6 MACROS:</strong> Move to Job · Move to Quote · Move to Complaint · Move to Finance · Mark as Cancelled · Mark as Solved</p>
     <p><strong>AUTO-ROUTING:</strong> Status New/Open/Quote/Bidding/Approval → Carlos · Status Unassigned/Auto Assigning/Schedule/In Progress/Final Checks/On Hold/Complaint → Isabela · Status Finance → Victor</p>
-    <p><strong>OBRIGATORIO:</strong> Job (Client Name + Email + Address + TOW + Rate Type + Scope) · Quote (Address + TOW + Scope + Quote Mode) · Cancelled (Cancellation Reason)</p>
+    <p><strong>OBRIGATORIO:</strong> Job (Client Name + Email + Address <em>com postcode UK</em> + TOW + Rate Type + Scope) · Quote (Address + TOW + Scope + Quote Mode) · Cancelled (Cancellation Reason)</p>
   </div>
   <div class="callout danger">
     <div class="callout-title">REGRA DE OURO</div>
