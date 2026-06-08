@@ -41,7 +41,7 @@ export const runtime  = "nodejs";
 /**
  * POST /api/jobs
  *
- * Creates a job from an external caller (n8n, integration scripts).
+ * Creates a job from an external caller (Zendesk webhooks, integration scripts).
  * Auth: header `X-API-Key` must match env `MASTER_OS_JOB_WEBHOOK_API_KEY`.
  *
  * Body (JSON):
@@ -825,8 +825,8 @@ export async function POST(req: NextRequest) {
 /**
  * Partner app URL for the job report submission page. Same shape the Zoho
  * Desk webhook and partner email use (`${partnerAppBase}/jobs/{reference}/report`)
- * so anything carrying this link — Zendesk macros, partner emails, n8n
- * forwards — resolves to the same destination. Bare URL with no token:
+ * so anything carrying this link — Zendesk macros, partner emails, external
+ * integrations — resolves to the same destination. Bare URL with no token:
  * the partner needs to be logged in to the partner app to view the report.
  */
 function buildReportLink(reference: string): string {

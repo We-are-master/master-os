@@ -10,7 +10,7 @@ Convenções de autenticação:
 - **role-gated** → session + check de `profiles.role` (admin / manager / operator)
 - **portal session** → cookie de portal user
 - **bearer** → header `Authorization: Bearer <token>` (app móvel)
-- **API key** → header `X-API-Key` (integrações externas — n8n / Zoho / Zendesk)
+- **API key** → header `X-API-Key` (integrações externas — Zendesk webhooks / Zoho / scripts)
 - **signed token** → query/body `token=…` HMAC assinado (links públicos)
 - **cron secret** → `Authorization: Bearer <CRON_SECRET>` (comparação constant-time)
 - **public** → sem autenticação
@@ -29,7 +29,9 @@ Convenções de autenticação:
 
 ## 2. API externa (integrações)
 
-Para n8n / scripts. Header obrigatório: `X-API-Key`.
+Para Zendesk webhooks e scripts. Header obrigatório: `X-API-Key`.
+
+> Create Job (macro Move to Job): [`docs/zendesk-create-job-webhook.md`](zendesk-create-job-webhook.md)
 
 | Rota | Métodos | Auth | O que faz |
 |---|---|---|---|

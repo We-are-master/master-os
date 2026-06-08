@@ -11,6 +11,9 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { loadEnvLocal } from "./load-env-local.mjs";
+
+loadEnvLocal();
 
 const FIX = process.argv.includes("--fix");
 
@@ -74,9 +77,10 @@ async function main() {
   }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) {
-    console.error("Missing SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
+    console.error("Missing SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SERVICE_ROLE_KEY)");
     process.exit(1);
   }
 

@@ -9,7 +9,10 @@
     "lint": "eslint",
     "test:period": "npx tsx --test src/lib/billing-standalone-period.test.ts src/lib/partner-payout-schedule.test.ts src/lib/account-payment-due-date.test.ts src/lib/zendesk-reasons-sync.test.ts src/lib/pulse-revenue-goal.test.ts",
     "test:zendesk-sync": "npx tsx --test src/lib/zendesk-os-catalog-mapping.test.ts src/lib/zendesk-service-catalog-sync.test.ts src/lib/zendesk-service-bands-sync.test.ts",
-    "audit:zendesk-catalog": "node scripts/audit-zendesk-catalog-sync.mjs"
+    "audit:zendesk-catalog": "node scripts/audit-zendesk-catalog-sync.mjs",
+    "verify:zendesk-schema": "node scripts/verify-zendesk-schema.mjs",
+    "sync:zendesk-catalog": "npx tsx scripts/run-zendesk-catalog-sync.mts",
+    "apply:zendesk-migrations": "node supabase/scripts/apply-zendesk-pricing-migrations.mjs"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-geocoder": "^5.1.2",
@@ -46,6 +49,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "pg": "^8.21.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

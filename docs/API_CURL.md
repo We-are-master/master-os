@@ -96,6 +96,9 @@ Se enviares o mesmo `ticket_id` duas vezes, a segunda chamada devolve a quote ex
 
 ## 2. POST `/api/jobs` — criar job externo
 
+> **Zendesk (produção):** macro *Move to Job* → trigger `5703043672095` → webhook nativo com body Liquid.
+> Documentação completa: [`docs/zendesk-create-job-webhook.md`](zendesk-create-job-webhook.md).
+
 **Auth**: `X-API-Key: $JOB_KEY`
 **Requeridos**: `account_id`, `date`, `hour`, `title`, `client_name`, `client_email`, `property_address`, `service_type`.
 **Opcionais**: `description`, `client_price`, `partner_cost`, `auto_assign`, `ticket_id`.
@@ -470,7 +473,7 @@ As rotas com auth de sessão precisam do cookie Supabase. Mais fácil:
 export SB_COOKIE='sb-abc123-auth-token=eyJhbGciOi…'
 ```
 
-Para integrações de produção (n8n / scripts), prefere as rotas externas com `X-API-Key` em vez de impersonar uma sessão.
+Para integrações de produção (Zendesk webhooks / scripts), prefere as rotas externas com `X-API-Key` em vez de impersonar uma sessão.
 
 ---
 
@@ -510,13 +513,28 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 
 ### Zendesk catalog sync (Type of Work + bands)
 
-Audit OS vs live Zendesk (requires Zendesk + Supabase service role env):
+**Schema** (prod must have migrations 202 + 219; optional 220 backfill):
+
+```bash
+npm run verify:zendesk-schema
+# If missing columns — add DATABASE_URL to .env.local, then:
+npm run apply:zendesk-migrations
+```
+
+Audit OS vs live Zendesk (`.env.local` with Zendesk + `SERVICE_ROLE_KEY`):
 
 ```bash
 npm run audit:zendesk-catalog
 ```
 
-Backfill after deploy (admin session cookie; pushes `os_<uuid>` TOW tags + `band_<uuid>` for EPC/FRA/EICR/PAT/GSC/FAC):
+CLI backfill (no admin cookie; same as dashboard sync):
+
+```bash
+npm run sync:zendesk-catalog
+npm run sync:zendesk-catalog -- --dry-run
+```
+
+Dashboard backfill (admin session cookie; pushes `os_<uuid>` TOW tags + `band_<uuid>` for EPC/FRA/EICR/PAT/GSC/FAC):
 
 ```bash
 curl -sS -X POST "$BASE/api/admin/service-catalog/zendesk-sync" \

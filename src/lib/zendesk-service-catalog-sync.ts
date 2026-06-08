@@ -26,21 +26,29 @@ import {
 } from "@/lib/zendesk-os-catalog-mapping";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
-const SUBDOMAIN  = process.env.ZENDESK_SUBDOMAIN?.trim();
-const EMAIL      = process.env.ZENDESK_EMAIL?.trim();
-const API_TOKEN  = process.env.ZENDESK_API_TOKEN?.trim();
-const FIELD_ID   = process.env.ZENDESK_TYPE_OF_WORK_FIELD_ID?.trim();
+function zendeskCatalogSyncEnv() {
+  return {
+    subdomain: process.env.ZENDESK_SUBDOMAIN?.trim() ?? "",
+    email: process.env.ZENDESK_EMAIL?.trim() ?? "",
+    apiToken: process.env.ZENDESK_API_TOKEN?.trim() ?? "",
+    fieldId:
+      process.env.ZENDESK_TYPE_OF_WORK_FIELD_ID?.trim() || "5687087915551",
+  };
+}
 
 function isConfigured(): boolean {
-  return Boolean(SUBDOMAIN && EMAIL && API_TOKEN && FIELD_ID);
+  const { subdomain, email, apiToken, fieldId } = zendeskCatalogSyncEnv();
+  return Boolean(subdomain && email && apiToken && fieldId);
 }
 
 function authHeader(): string {
-  return "Basic " + Buffer.from(`${EMAIL}/token:${API_TOKEN}`).toString("base64");
+  const { email, apiToken } = zendeskCatalogSyncEnv();
+  return "Basic " + Buffer.from(`${email}/token:${apiToken}`).toString("base64");
 }
 
 function fieldUrl(): string {
-  return `https://${SUBDOMAIN}.zendesk.com/api/v2/ticket_fields/${FIELD_ID}.json`;
+  const { subdomain, fieldId } = zendeskCatalogSyncEnv();
+  return `https://${subdomain}.zendesk.com/api/v2/ticket_fields/${fieldId}.json`;
 }
 
 /** Single option on a Zendesk tagger ticket field. */
