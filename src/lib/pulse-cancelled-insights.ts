@@ -183,7 +183,12 @@ type RawCancelledRow = {
   cancellation_reason_preset_id?: string | null;
   cancelled_client_price: number | null;
   cancelled_extras_amount: number | null;
-  quote_id: string | null;
+  quote_id?: string | null;
+};
+
+type CancelledJobsQueryResult = {
+  data: RawCancelledRow[] | null;
+  error: { message?: string; code?: string } | null;
 };
 
 function applyBounds<T extends { gte: (c: string, v: string) => T; lte: (c: string, v: string) => T }>(
@@ -218,7 +223,7 @@ async function attachQuoteServiceTypes(
     cancellation_reason_preset_id: r.cancellation_reason_preset_id ?? null,
     cancelled_client_price: r.cancelled_client_price,
     cancelled_extras_amount: r.cancelled_extras_amount,
-    quote_id: r.quote_id,
+    quote_id: r.quote_id ?? null,
     service_type: r.quote_id ? serviceByQuote.get(r.quote_id) ?? null : null,
   }));
 }
@@ -245,7 +250,7 @@ export async function fetchPulseCancelledJobs(
     bounds,
   );
 
-  let res = await query;
+  let res: CancelledJobsQueryResult = await query;
 
   if (res.error && isPostgrestSelectSchemaError(res.error)) {
     res = await applyBounds(
@@ -276,7 +281,7 @@ export async function fetchPulseCancelledJobs(
     return null;
   }
 
-  const rows = await attachQuoteServiceTypes(supabase, res.data as RawCancelledRow[]);
+  const rows = await attachQuoteServiceTypes(supabase, res.data ?? []);
   const lostTotal = rows.reduce((sum, j) => sum + jobLostGbp(j), 0);
 
   return {
