@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
   const partnerCostSent      = isPresent(body.partner_cost);
   const partnerCostIn        = partnerCostSent ? num(body.partner_cost) : 0;
   let partnerCost            = partnerCostSent ? partnerCostIn : 0;
-  const bandId               = normalizeBandId(body.band_id, body.catalog_pricing_preset_id);
+  let bandId                 = normalizeBandId(body.band_id, body.catalog_pricing_preset_id);
   let catalogPresetId: string | null = null;
   let catalogBandLabel: string | null = null;
   // For hourly: the body values act as caller overrides; when omitted (or
@@ -467,6 +467,7 @@ export async function POST(req: NextRequest) {
       propertyAddress,
       autoAssign,
       catalogServiceId: catalogServiceIdIn,
+      bandId,
       accountCompanyName: accountCompanyName || null,
     });
     clientName = reconciled.clientName;
@@ -474,6 +475,7 @@ export async function POST(req: NextRequest) {
     propertyAddress = reconciled.propertyAddress;
     autoAssign = reconciled.autoAssign;
     if (reconciled.catalogServiceId) catalogServiceIdIn = reconciled.catalogServiceId;
+    if (reconciled.bandId) bandId = reconciled.bandId;
     zendeskCorrections = reconciled.corrections;
     if (zendeskCorrections.length > 0) {
       console.info("[api/jobs] Zendesk ingest corrections:", zendeskCorrections.join(", "));

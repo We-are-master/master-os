@@ -20,6 +20,10 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  catalogIdFromZendeskOptionValue,
+  toZendeskServiceTag,
+} from "@/lib/zendesk-os-catalog-mapping";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 const SUBDOMAIN  = process.env.ZENDESK_SUBDOMAIN?.trim();
@@ -94,9 +98,9 @@ async function putFieldOptions(options: ZendeskFieldOption[]): Promise<{
  * Create or update the Zendesk option for a single service_catalog row.
  * Persists the resulting option id back on the row when present.
  *
- * Match key inside Zendesk's options array: `value === catalogId` (the OS
- * UUID is the option's tag). When found, the option's `name` is updated to
- * match the catalog row's name; otherwise a new option is appended.
+ * Match key inside Zendesk's options array: `value === os_<catalogId>` (or
+ * legacy bare UUID). When found, the option's `name` is updated to match the
+ * catalog row's name; otherwise a new option is appended.
  */
 export async function upsertCatalogOptionInZendesk(
   catalogId: string,
@@ -138,18 +142,19 @@ export async function upsertCatalogOptionInZendesk(
   // Use `value` (the tag) as the match key. The Zendesk option id is
   // unstable across deletes, so we don't rely on it for matching — but we
   // still write it back to the row for fast lookup later.
+  const tag = toZendeskServiceTag(r.id);
   const next = [...cur.options];
-  const idx  = next.findIndex((o) => o.value === r.id);
+  const idx = next.findIndex((o) => catalogIdFromZendeskOptionValue(o.value ?? "") === r.id);
   if (idx >= 0) {
-    next[idx] = { ...next[idx], name, value: r.id };
+    next[idx] = { ...next[idx], name, value: tag };
   } else {
-    next.push({ name, value: r.id });
+    next.push({ name, value: tag });
   }
 
   const put = await putFieldOptions(next);
   if (!put.ok) return { ok: false, error: put.error };
 
-  const stored = put.options.find((o) => o.value === r.id);
+  const stored = put.options.find((o) => catalogIdFromZendeskOptionValue(o.value ?? "") === r.id);
   const optionId = stored?.id != null ? String(stored.id) : null;
 
   if (optionId && optionId !== r.zendesk_option_id) {
@@ -180,7 +185,9 @@ export async function removeCatalogOptionFromZendesk(
   const cur = await fetchFieldOptions();
   if (!cur.ok) return { ok: false, error: cur.error };
 
-  const filtered = cur.options.filter((o) => o.value !== catalogId);
+  const filtered = cur.options.filter(
+    (o) => catalogIdFromZendeskOptionValue(o.value ?? "") !== catalogId,
+  );
   if (filtered.length === cur.options.length) {
     // Nothing to remove on the Zendesk side, but clear the local id anyway
     // so the row matches reality.
@@ -252,72 +259,84 @@ export function planCatalogBackfill(
   const stats = { rewrite: 0, rename: 0, unchanged: 0, keep: 0, prune: 0, append: 0 };
 
   for (const o of zendeskOptions) {
-    if (looksLikeUuid(o.value)) {
-      // Already keyed by UUID — fast path.
-      const row = remaining.get(o.value);
+    const catalogId = catalogIdFromZendeskOptionValue(o.value ?? "");
+    if (catalogId) {
+      const row = remaining.get(catalogId);
+      const taggedValue = toZendeskServiceTag(catalogId);
       if (!row) {
-        // UUID points to a catalog row that's gone (soft-deleted or never existed).
         entries.push({ action: "prune", optionId: o.id, fromValue: o.value, fromName: o.name });
         stats.prune++;
         continue;
       }
-      if (o.name === row.name) {
+      if (o.name === row.name && o.value === taggedValue) {
         next.push(o);
         entries.push({
-          action:    "unchanged",
-          optionId:  o.id,
+          action: "unchanged",
+          optionId: o.id,
           fromValue: o.value,
-          fromName:  o.name,
+          fromName: o.name,
           catalogId: row.id,
         });
         stats.unchanged++;
-      } else {
-        next.push({ ...o, name: row.name });
+      } else if (o.value === taggedValue) {
+        next.push({ ...o, name: row.name, value: taggedValue });
         entries.push({
-          action:    "rename",
-          optionId:  o.id,
+          action: "rename",
+          optionId: o.id,
           fromValue: o.value,
-          fromName:  o.name,
-          toName:    row.name,
+          fromName: o.name,
+          toName: row.name,
+          toValue: taggedValue,
           catalogId: row.id,
         });
         stats.rename++;
+      } else {
+        next.push({ ...o, value: taggedValue, name: row.name });
+        entries.push({
+          action: "rewrite",
+          optionId: o.id,
+          fromValue: o.value,
+          fromName: o.name,
+          toValue: taggedValue,
+          toName: row.name,
+          catalogId: row.id,
+        });
+        stats.rewrite++;
       }
       remaining.delete(row.id);
       continue;
     }
 
-    // Non-UUID value — attempt to migrate slug → UUID by name heuristic.
     const matchId = matchOptionToCatalog(o.name, activeRows, catalogIds);
     if (matchId && remaining.has(matchId)) {
       const row = remaining.get(matchId)!;
-      next.push({ ...o, value: row.id, name: row.name });
+      const taggedValue = toZendeskServiceTag(row.id);
+      next.push({ ...o, value: taggedValue, name: row.name });
       entries.push({
-        action:    "rewrite",
-        optionId:  o.id,
+        action: "rewrite",
+        optionId: o.id,
         fromValue: o.value,
-        fromName:  o.name,
-        toValue:   row.id,
-        toName:    row.name,
+        fromName: o.name,
+        toValue: taggedValue,
+        toName: row.name,
         catalogId: row.id,
       });
       stats.rewrite++;
       remaining.delete(row.id);
     } else {
-      // Either a Zendesk-only legacy entry or a name we can't safely link.
       next.push(o);
       entries.push({ action: "keep", optionId: o.id, fromValue: o.value, fromName: o.name });
       stats.keep++;
     }
   }
 
-  // Whatever OS rows are still unmatched get appended.
   for (const row of remaining.values()) {
-    next.push({ name: row.name, value: row.id });
+    const taggedValue = toZendeskServiceTag(row.id);
+    next.push({ name: row.name, value: taggedValue });
     entries.push({
-      action:    "append",
-      toValue:   row.id,
-      toName:    row.name,
+      action: "append",
+      toValue: taggedValue,
+      toName: row.name,
       catalogId: row.id,
     });
     stats.append++;
@@ -376,9 +395,8 @@ export async function backfillCatalogOptionsToZendesk(opts?: {
   }
   for (const e of plan.entries) {
     if (!e.catalogId) continue;
-    const value = e.toValue ?? e.fromValue;
-    if (!value) continue;
-    const optionId = byValue.get(value);
+    const taggedValue = toZendeskServiceTag(e.catalogId);
+    const optionId = byValue.get(taggedValue) ?? (e.toValue ? byValue.get(e.toValue) : undefined);
     if (optionId == null) continue;
     await supabase
       .from("service_catalog")
@@ -387,10 +405,6 @@ export async function backfillCatalogOptionsToZendesk(opts?: {
   }
 
   return { ok: true, stats: plan.stats, entries: plan.entries };
-}
-
-function looksLikeUuid(v: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 /** Strip a leading `(XXX)` initialism prefix. */

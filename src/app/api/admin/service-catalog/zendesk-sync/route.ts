@@ -36,7 +36,7 @@ const ALLOWED_ROLES = new Set(["admin", "manager", "operator"]);
  *   - dryRun: only meaningful for the backfill path; returns the planned
  *     inserted/updated/pruned counts without writing to Zendesk.
  *   - syncBands: when true (default on backfill), also mirror pricing bands
- *     into per-service Zendesk dropdown fields (EPC, FRA, EICR, PAT, GSC).
+ *     into per-service Zendesk dropdown fields (EPC, FRA, EICR, PAT, GSC, FAC).
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();

@@ -12,6 +12,10 @@ import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { isValidUUID } from "@/lib/auth-api";
 import {
+  fromZendeskBandTag,
+  getBandFieldForService,
+} from "@/lib/zendesk-os-catalog-mapping";
+import {
   getZendeskTicketSnapshot,
   ZENDESK_AUTO_ASSIGN_FIELD_ID,
   ZENDESK_CLIENT_EMAIL_FIELD_ID,
@@ -101,6 +105,7 @@ export type ZendeskJobIngestInput = {
   propertyAddress: string;
   autoAssign: boolean;
   catalogServiceId: string | null;
+  bandId: string | null;
   accountCompanyName: string | null;
 };
 
@@ -118,10 +123,20 @@ export async function reconcileZendeskJobIngest(
   let propertyAddress = input.propertyAddress.trim();
   let autoAssign = input.autoAssign;
   let catalogServiceId = input.catalogServiceId;
+  let bandId = input.bandId;
 
   const snap = await getZendeskTicketSnapshot(input.ticketId);
   if (!snap.ok || !snap.ticket) {
-    return { ...input, clientName, clientEmail, propertyAddress, autoAssign, catalogServiceId, corrections };
+    return {
+      ...input,
+      clientName,
+      clientEmail,
+      propertyAddress,
+      autoAssign,
+      catalogServiceId,
+      bandId,
+      corrections,
+    };
   }
 
   const { fields } = snap.ticket;
@@ -171,6 +186,18 @@ export async function reconcileZendeskJobIngest(
     }
   }
 
+  if (!bandId && catalogServiceId) {
+    const bandFieldId = getBandFieldForService(catalogServiceId);
+    if (bandFieldId) {
+      const ticketBand = fieldValue(fields, bandFieldId);
+      const normalizedBand = ticketBand ? fromZendeskBandTag(ticketBand) : null;
+      if (normalizedBand && isValidUUID(normalizedBand)) {
+        bandId = normalizedBand;
+        corrections.push("band_id_from_ticket");
+      }
+    }
+  }
+
   return {
     ticketId: input.ticketId,
     clientName,
@@ -178,6 +205,7 @@ export async function reconcileZendeskJobIngest(
     propertyAddress,
     autoAssign,
     catalogServiceId,
+    bandId,
     accountCompanyName: input.accountCompanyName,
     corrections,
   };
@@ -237,6 +265,7 @@ export async function repairJobIngestFromZendeskTicket(
     propertyAddress: job.property_address?.trim() || "",
     autoAssign: job.status === "auto_assigning" && !jobHasPartnerSet(job),
     catalogServiceId: job.catalog_service_id?.trim() || null,
+    bandId: null,
     accountCompanyName: accountCompanyName ?? null,
   });
 

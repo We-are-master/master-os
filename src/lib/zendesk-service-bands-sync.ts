@@ -5,6 +5,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
+  BAND_FIELD_BY_SERVICE_ID,
+  fromZendeskBandTag,
+  toZendeskBandTag,
+  zendeskBandFieldIdForCatalog,
+} from "@/lib/zendesk-os-catalog-mapping";
+import {
   parsePricingPresets,
   sortPricingPresetsDisplay,
   type ServicePricingPreset,
@@ -16,23 +22,15 @@ import {
   type ZendeskFieldOption,
 } from "@/lib/zendesk-ticket-field-api";
 
-export const ZENDESK_BAND_FIELD_BY_CATALOG_ID: Record<string, number> = {
-  "06271726-30ca-4f5f-9579-384de83d8ecf": 5853839193247,
-  "a1f8b034-28d4-4775-8c47-272df6701aa2": 5853837434527,
-  "e0cbd852-c10c-4aac-b52c-dfd274b65848": 5853864806559,
-  "7796473e-c22b-4452-a22f-de1b8a87045a": 5853839199903,
-  "d978384e-d1be-45ef-914a-9172f8d9fe62": 5853819554335,
-};
+/** @deprecated Use BAND_FIELD_BY_SERVICE_ID from zendesk-os-catalog-mapping */
+export const ZENDESK_BAND_FIELD_BY_CATALOG_ID = BAND_FIELD_BY_SERVICE_ID;
 
 export function bandIdToZendeskTag(presetId: string): string {
-  return `band_${presetId.trim()}`;
+  return toZendeskBandTag(presetId);
 }
 
 export function zendeskTagToBandId(tag: string): string | null {
-  const t = tag.trim();
-  if (!t) return null;
-  if (t.toLowerCase().startsWith("band_")) return t.slice(5).trim() || null;
-  return t;
+  return fromZendeskBandTag(tag);
 }
 
 export function formatBandZendeskOptionName(
@@ -101,11 +99,6 @@ export type ServiceBandsZendeskSyncResult = {
   stats?: ReturnType<typeof planBandsZendeskSync>["stats"];
 };
 
-export function zendeskBandFieldIdForCatalog(catalogServiceId: string): number | null {
-  const id = ZENDESK_BAND_FIELD_BY_CATALOG_ID[catalogServiceId.trim()];
-  return typeof id === "number" && id > 0 ? id : null;
-}
-
 export async function syncBandsToZendesk(
   catalogServiceId: string,
   presetsRaw: unknown,
@@ -139,7 +132,7 @@ export async function backfillAllBandsToZendesk(opts?: {
   error?: string;
 }> {
   const supabase = opts?.client ?? createServiceClient();
-  const catalogIds = Object.keys(ZENDESK_BAND_FIELD_BY_CATALOG_ID);
+  const catalogIds = Object.keys(BAND_FIELD_BY_SERVICE_ID);
   const results: Record<string, ServiceBandsZendeskSyncResult> = {};
 
   const { data: rows, error } = await supabase
