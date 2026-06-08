@@ -18,6 +18,8 @@
  * catalog standard, so the UI can render Standard / Custom chips.
  */
 
+import { resolveCatalogLinePricing } from "@/lib/catalog-line-pricing";
+import { presetPricingMode, parsePricingPresets, sortPricingPresetsDisplay } from "@/lib/catalog-pricing-presets";
 import type {
   AccountServicePrice,
   CatalogPricingMode,
@@ -140,19 +142,51 @@ function pickPartnerDefaultHours(
   return { value: catalog.default_hours ?? null, source: "standard" };
 }
 
-/** Partner £/h for Smart Price jobs (rate card → catalog ceiling). */
+/** Partner £/h for Smart Price jobs (rate card → catalog/band ceiling). */
 export function resolvePartnerHourlyForJob(input: {
-  catalog: Pick<CatalogService, "partner_cost" | "default_hours" | "pricing_mode">;
-  partnerOverride: Pick<PartnerServicePrice, "use_standard" | "hourly_partner_rate"> | null;
-}): { value: number | null; source: PriceSource } {
-  return pickPartnerHourly(input.catalog, input.partnerOverride);
+  catalog: Pick<CatalogService, "partner_cost" | "default_hours" | "pricing_mode" | "pricing_presets">;
+  partnerOverride: Pick<
+    PartnerServicePrice,
+    "use_standard" | "hourly_partner_rate" | "fixed_partner_cost" | "preset_overrides"
+  > | null;
+  presetId?: string | null;
+}): { value: number | null; source: PriceSource; fixedPartnerTotal?: number | null } {
+  const presetId = input.presetId?.trim();
+  if (presetId && "pricing_presets" in input.catalog) {
+    const fullCatalog = input.catalog as CatalogService;
+    const resolved = resolveCatalogLinePricing({
+      catalog: fullCatalog,
+      presetId,
+      partnerPrice: (input.partnerOverride as PartnerServicePrice | null) ?? null,
+    });
+    if (resolved && resolved.partnerTotal > 0) {
+      const preset = sortPricingPresetsDisplay(parsePricingPresets(fullCatalog.pricing_presets))
+        .find((p) => p.id === presetId);
+      const hours = Math.max(
+        0.25,
+        Number(preset?.default_hours ?? fullCatalog.default_hours) || 2,
+      );
+      const isFixedBand = preset ? presetPricingMode(preset) === "fixed" : false;
+      return {
+        value: resolved.partnerTotal / hours,
+        source: resolved.lines[0]?.partnerSource ?? "standard",
+        fixedPartnerTotal: isFixedBand ? resolved.partnerTotal : null,
+      };
+    }
+  }
+  const hourly = pickPartnerHourly(input.catalog, input.partnerOverride);
+  return { ...hourly, fixedPartnerTotal: null };
 }
 
 export function formatPartnerJobPriceDisplay(
   jobType: "hourly" | "fixed" | null | undefined,
   hourlyPartnerRate: number | null | undefined,
   partnerCost: number | null | undefined,
+  fixedBandTotal?: number | null,
 ): string {
+  if (jobType === "hourly" && fixedBandTotal != null && fixedBandTotal > 0) {
+    return `£${fixedBandTotal.toFixed(2)}`;
+  }
   if (jobType === "hourly") {
     return `£${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
   }

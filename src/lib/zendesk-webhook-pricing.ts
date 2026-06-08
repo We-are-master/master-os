@@ -11,6 +11,7 @@ import {
 } from "@/lib/catalog-pricing-floor-ceiling";
 import {
   parsePricingPresets,
+  presetPricingMode,
   sortPricingPresetsDisplay,
   type ServicePricingPreset,
 } from "@/lib/catalog-pricing-presets";
@@ -56,7 +57,7 @@ export function validateServiceBand(
     return {
       ok: false,
       status: 400,
-      error: `Service ${service.name} requires a band selection. Send band_id in payload.`,
+      error: `Service ${service.name} requires a band selection for Smart Pricing. Send band_id in payload.`,
     };
   }
 
@@ -151,18 +152,71 @@ export type SmartPriceRatesInput = {
   catalog: CatalogService;
   accountOverride: AccountServicePrice | null;
   partnerOverride?: PartnerServicePrice | null;
+  band?: ServicePricingPreset | null;
   setupMarginPct: number;
 };
 
+function smartPriceBilledHours(
+  catalog: Pick<CatalogService, "default_hours">,
+  band?: ServicePricingPreset | null,
+): number {
+  const fromBand = band?.default_hours != null ? Number(band.default_hours) : null;
+  const fromCatalog = catalog.default_hours != null ? Number(catalog.default_hours) : null;
+  return Math.max(0.25, fromBand ?? fromCatalog ?? 2);
+}
+
 /**
- * Smart Price (hourly): sell from account rate card → catalog standard.
+ * Smart Price: account + partner rate cards; bands (EPC/FRA/…) pick the price tier.
  * Partner £/h from partner rate card when override is known (invite/accept);
- * otherwise catalog ceiling placeholder on webhook create.
+ * otherwise catalog/band placeholder on webhook create.
  */
 export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
   hourlyClientRate: number;
   hourlyPartnerRate: number;
 } {
+  if (input.band) {
+    const resolved = resolveCatalogLinePricing({
+      catalog: input.catalog,
+      presetId: input.band.id,
+      addonIds: [],
+      accountPrice: input.accountOverride,
+      partnerPrice: input.partnerOverride ?? null,
+    });
+    if (resolved) {
+      const hours = smartPriceBilledHours(input.catalog, input.band);
+      const mode = presetPricingMode(input.band);
+      if (mode === "hourly" && Number(input.band.hourly_rate) > 0) {
+        const floorH = Number(input.band.hourly_rate) || 0;
+        const customClient =
+          input.accountOverride
+          && !input.accountOverride.use_standard
+          && input.accountOverride.hourly_rate != null
+            ? Number(input.accountOverride.hourly_rate)
+            : null;
+        const hourlyClientRate = input.hourlyClientRateSent
+          ? input.hourlyClientRateFromBody
+          : resolveAccountSell(floorH, customClient);
+        let hourlyPartnerRate = input.hourlyPartnerRateSent
+          ? input.hourlyPartnerRateFromBody
+          : resolved.partnerTotal / hours;
+        if (!(hourlyPartnerRate > 0) && hourlyClientRate > 0) {
+          hourlyPartnerRate = autoMarginFromPct(hourlyClientRate, input.setupMarginPct);
+        }
+        return { hourlyClientRate, hourlyPartnerRate };
+      }
+      const hourlyClientRate = input.hourlyClientRateSent
+        ? input.hourlyClientRateFromBody
+        : resolved.clientTotal / hours;
+      let hourlyPartnerRate = input.hourlyPartnerRateSent
+        ? input.hourlyPartnerRateFromBody
+        : resolved.partnerTotal / hours;
+      if (!(hourlyPartnerRate > 0) && hourlyClientRate > 0) {
+        hourlyPartnerRate = autoMarginFromPct(hourlyClientRate, input.setupMarginPct);
+      }
+      return { hourlyClientRate, hourlyPartnerRate };
+    }
+  }
+
   const floorHourly = Number(input.catalog.hourly_rate) || 0;
   const customClient =
     input.accountOverride && !input.accountOverride.use_standard && input.accountOverride.hourly_rate != null
@@ -240,4 +294,18 @@ export function resolveWebhookHourlyRates(input: {
 export function autoMarginFromPct(clientSide: number, targetPct: number): number {
   const clamped = Math.max(0, Math.min(100, targetPct));
   return Math.round(clientSide * (100 - clamped)) / 100;
+}
+
+/** Fixed: manual client_price only; partner_cost from Setup margin (ignores bands/catalog). */
+export function resolveFixedManualPricing(input: {
+  clientPrice: number;
+  partnerCostSent: boolean;
+  partnerCost: number;
+  targetMarginPct: number;
+}): { clientPrice: number; partnerCost: number } {
+  let partnerCost = input.partnerCost;
+  if (!input.partnerCostSent && input.clientPrice > 0) {
+    partnerCost = autoMarginFromPct(input.clientPrice, input.targetMarginPct);
+  }
+  return { clientPrice: input.clientPrice, partnerCost };
 }

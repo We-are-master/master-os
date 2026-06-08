@@ -24,6 +24,7 @@ export type JobForPartnerAcceptance = {
   property_address: string | null;
   scheduled_date: string | null;
   catalog_service_id: string | null;
+  catalog_pricing_preset_id: string | null;
   scope: string | null;
   job_type: "hourly" | "fixed" | null;
   hourly_client_rate: number | null;
@@ -53,10 +54,10 @@ export type BookedEmailResult = {
 };
 
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, catalog_pricing_preset_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
 
 const CATALOG_PRICING_SELECT =
-  "id, pricing_mode, partner_cost, default_hours";
+  "id, pricing_mode, partner_cost, default_hours, pricing_presets, pricing_addons";
 
 /** Smart Price: persist winner's partner rate card £/h on the job row. */
 async function applySmartPriceWinnerRate(args: {
@@ -65,7 +66,11 @@ async function applySmartPriceWinnerRate(args: {
   partnerId: string;
   job: Pick<
     JobForPartnerAcceptance,
-    "job_type" | "catalog_service_id" | "hourly_client_rate" | "hourly_partner_rate"
+    | "job_type"
+    | "catalog_service_id"
+    | "catalog_pricing_preset_id"
+    | "hourly_client_rate"
+    | "hourly_partner_rate"
   >;
 }): Promise<void> {
   if (args.job.job_type !== "hourly" || !args.job.catalog_service_id) return;
@@ -79,7 +84,7 @@ async function applySmartPriceWinnerRate(args: {
       .maybeSingle(),
     args.supabase
       .from("partner_service_prices")
-      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate")
+      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate, fixed_partner_cost, preset_overrides")
       .eq("partner_id", args.partnerId)
       .eq("catalog_service_id", args.job.catalog_service_id)
       .is("deleted_at", null)
@@ -92,6 +97,7 @@ async function applySmartPriceWinnerRate(args: {
   const { value: partnerRate } = resolvePartnerHourlyForJob({
     catalog,
     partnerOverride: (partnerPrice as PartnerServicePrice | null) ?? null,
+    presetId: args.job.catalog_pricing_preset_id,
   });
   if (!(partnerRate != null && partnerRate > 0)) return;
 

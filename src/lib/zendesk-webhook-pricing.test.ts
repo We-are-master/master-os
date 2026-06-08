@@ -4,9 +4,9 @@ import {
   autoMarginFromPct,
   normalizeBandId,
   normalizeWebhookRateType,
+  resolveFixedManualPricing,
   resolveSmartPriceRates,
   validateServiceBand,
-  resolveWebhookFixedPricing,
 } from "./zendesk-webhook-pricing";
 import { resolvePartnerHourlyForJob } from "./job-pricing-resolver";
 import type { CatalogService } from "@/types/database";
@@ -110,6 +110,30 @@ describe("resolveSmartPriceRates", () => {
     });
     assert.equal(r.hourlyPartnerRate, 50);
   });
+
+  it("uses band pricing with account rate card for Smart Pricing", () => {
+    const bandCatalog = {
+      ...catalog,
+      name: "EPC",
+      pricing_presets: svcWithBands.pricing_presets,
+      hourly_rate: 0,
+      fixed_price: 0,
+      default_hours: 2,
+    };
+    const band = svcWithBands.pricing_presets![0];
+    const r = resolveSmartPriceRates({
+      hourlyClientRateFromBody: 0,
+      hourlyClientRateSent: false,
+      hourlyPartnerRateFromBody: 0,
+      hourlyPartnerRateSent: false,
+      catalog: bandCatalog,
+      accountOverride: null,
+      band,
+      setupMarginPct: 40,
+    });
+    assert.equal(r.hourlyClientRate, 37.175);
+    assert.equal(r.hourlyPartnerRate, 22.305);
+  });
 });
 
 describe("resolvePartnerHourlyForJob", () => {
@@ -166,34 +190,25 @@ describe("autoMarginFromPct", () => {
   });
 });
 
-describe("resolveWebhookFixedPricing", () => {
-  it("uses band pricing when no body override", () => {
-    const catalog = {
-      name: "EPC",
-      pricing_presets: svcWithBands.pricing_presets,
-      fixed_price: 0,
-      hourly_rate: 0,
-      default_hours: 2,
-      pricing_mode: "fixed" as const,
-      partner_cost: 0,
-      sort_order: 0,
-      is_active: true,
-      id: "x",
-      created_at: "",
-      updated_at: "",
-    };
-    const band = svcWithBands.pricing_presets![0];
-    const r = resolveWebhookFixedPricing({
-      clientPriceFromBody: 0,
-      clientPriceSent: false,
-      partnerCostFromBody: 0,
+describe("resolveFixedManualPricing", () => {
+  it("applies Setup margin to manual client price", () => {
+    const r = resolveFixedManualPricing({
+      clientPrice: 100,
       partnerCostSent: false,
-      catalog,
-      band,
-      accountOverride: null,
+      partnerCost: 0,
+      targetMarginPct: 40,
     });
-    assert.equal(r.clientPrice, 74.35);
-    assert.equal(r.partnerCost, 44.61);
-    assert.equal(r.bandLabel, "3 Bed House");
+    assert.equal(r.clientPrice, 100);
+    assert.equal(r.partnerCost, 60);
+  });
+
+  it("keeps explicit partner_cost when sent", () => {
+    const r = resolveFixedManualPricing({
+      clientPrice: 100,
+      partnerCostSent: true,
+      partnerCost: 55,
+      targetMarginPct: 40,
+    });
+    assert.equal(r.partnerCost, 55);
   });
 });

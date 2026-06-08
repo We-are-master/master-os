@@ -27,7 +27,7 @@ import {
   normalizeBandId,
   normalizeWebhookRateType,
   validateServiceBand,
-  resolveWebhookFixedPricing,
+  resolveFixedManualPricing,
   resolveSmartPriceRates,
 } from "@/lib/zendesk-webhook-pricing";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
@@ -283,7 +283,6 @@ export async function POST(req: NextRequest) {
   const bandId               = normalizeBandId(body.band_id, body.catalog_pricing_preset_id);
   let catalogPresetId: string | null = null;
   let catalogBandLabel: string | null = null;
-  let fixedPricingResolved   = false;
   // For hourly: the body values act as caller overrides; when omitted (or
   // explicitly 0, which a Zendesk macro will send when the rate field on the
   // ticket is left blank), rates are resolved from the Services catalog
@@ -590,7 +589,7 @@ export async function POST(req: NextRequest) {
   let hourlyCatalogDefaultHours: number | null = null;
 
   if (rateType === "hourly") {
-    const catalog = await resolveCatalogServiceForHourly(
+    const catalog = await resolveCatalogServiceForSmartPrice(
       supabase,
       catalogServiceIdIn,
       serviceType,
@@ -602,6 +601,15 @@ export async function POST(req: NextRequest) {
     hourlyCatalogDefaultHours =
       catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
+    const bandResult = validateServiceBand(catalog.row, bandId);
+    if (!bandResult.ok) {
+      return NextResponse.json({ error: bandResult.error }, { status: bandResult.status });
+    }
+    if (bandResult.hasBands && bandResult.band) {
+      catalogPresetId = bandResult.band.id;
+      catalogBandLabel = bandResult.band.label ?? null;
+    }
+
     const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
     const hourlyResolved = resolveSmartPriceRates({
       hourlyClientRateFromBody: hourlyClientRateIn,
@@ -610,6 +618,7 @@ export async function POST(req: NextRequest) {
       hourlyPartnerRateSent: hourlyPartnerRateSet,
       catalog: catalog.row,
       accountOverride,
+      band: bandResult.hasBands ? bandResult.band : null,
       setupMarginPct: targetMarginPct,
     });
     hourlyClientRate = hourlyResolved.hourlyClientRate;
@@ -627,45 +636,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (rateType === "fixed" && catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
-    const { data: catalogRow, error: catFullErr } = await supabase
-      .from("service_catalog")
-      .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets")
-      .eq("id", catalogServiceIdIn)
-      .is("deleted_at", null)
-      .maybeSingle();
-    if (catFullErr) {
-      console.error("[api/jobs] catalog pricing lookup failed:", catFullErr.message);
-      return NextResponse.json({ error: "Catalog lookup failed." }, { status: 500 });
+  if (rateType === "fixed") {
+    if (catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
+      resolvedCatalogServiceId = catalogServiceIdIn;
     }
-    if (!catalogRow) {
-      return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
-    }
-    const catalog = catalogRow as CatalogService;
-    const bandResult = validateServiceBand(catalog, bandId);
-    if (!bandResult.ok) {
-      return NextResponse.json({ error: bandResult.error }, { status: bandResult.status });
-    }
-    const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.id);
-    const fixedResolved = resolveWebhookFixedPricing({
-      clientPriceFromBody: clientPrice,
-      clientPriceSent,
-      partnerCostFromBody: partnerCost,
+    const fixedResolved = resolveFixedManualPricing({
+      clientPrice,
       partnerCostSent,
-      catalog,
-      band: bandResult.hasBands ? bandResult.band : null,
-      accountOverride,
+      partnerCost,
+      targetMarginPct,
     });
     clientPrice = fixedResolved.clientPrice;
-    if (!partnerCostSent) partnerCost = fixedResolved.partnerCost;
-    catalogPresetId = fixedResolved.bandId;
-    catalogBandLabel = fixedResolved.bandLabel;
-    resolvedCatalogServiceId = catalog.id;
-    fixedPricingResolved = true;
-  }
-
-  if (rateType === "fixed" && !fixedPricingResolved && !partnerCostSent && clientPrice > 0) {
-    partnerCost = autoMargin(clientPrice, targetMarginPct);
+    partnerCost = fixedResolved.partnerCost;
   }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
@@ -862,7 +844,10 @@ type CatalogResolveResult =
  * type-of-work) so Zendesk macros can keep sending "deep_cleaning" /
  * "Cleaning" / "General Maintenance" without learning UUIDs.
  */
-async function resolveCatalogServiceForHourly(
+const CATALOG_SMART_PRICE_SELECT =
+  "id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets, pricing_addons";
+
+async function resolveCatalogServiceForSmartPrice(
   supabase: SupabaseClient,
   catalogServiceIdIn: string | null,
   serviceType: string,
@@ -870,7 +855,7 @@ async function resolveCatalogServiceForHourly(
   if (catalogServiceIdIn) {
     const { data, error } = await supabase
       .from("service_catalog")
-      .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+      .select(CATALOG_SMART_PRICE_SELECT)
       .eq("id", catalogServiceIdIn)
       .is("deleted_at", null)
       .maybeSingle();
@@ -886,7 +871,7 @@ async function resolveCatalogServiceForHourly(
 
   const { data: catalogRows, error: listErr } = await supabase
     .from("service_catalog")
-    .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+    .select(CATALOG_SMART_PRICE_SELECT)
     .eq("is_active", true)
     .is("deleted_at", null);
   if (listErr) {
@@ -985,16 +970,6 @@ async function fetchAccountServiceOverride(
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
-}
-
-/**
- * Partner side of the company margin target. With targetPct = 40 returns
- * round(clientSide * 0.60, 2) — but the caller passes the value from
- * Settings → Setup, so it always reflects current configuration.
- */
-function autoMargin(clientSide: number, targetPct: number): number {
-  const clamped = Math.max(0, Math.min(100, targetPct));
-  return Math.round(clientSide * (100 - clamped)) / 100;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */

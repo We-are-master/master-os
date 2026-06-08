@@ -22,7 +22,7 @@ import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 const CATALOG_PRICING_SELECT =
-  "id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost";
+  "id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets, pricing_addons";
 
 async function loadSmartPriceInviteContext(
   supabase: SupabaseClient,
@@ -46,7 +46,7 @@ async function loadSmartPriceInviteContext(
       .maybeSingle(),
     supabase
       .from("partner_service_prices")
-      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate, fixed_partner_cost, default_hours")
+      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate, fixed_partner_cost, default_hours, preset_overrides")
       .eq("catalog_service_id", catalogServiceId)
       .in("partner_id", partnerIds)
       .is("deleted_at", null),
@@ -68,14 +68,16 @@ function partnerPriceDisplayForInvite(
   jobPartnerCost: number | null,
   catalog: CatalogService | null,
   partnerOverride: PartnerServicePrice | null | undefined,
+  presetId?: string | null,
 ): string {
   if (jobType === "hourly" && catalog) {
-    const { value } = resolvePartnerHourlyForJob({
+    const { value, fixedPartnerTotal } = resolvePartnerHourlyForJob({
       catalog,
       partnerOverride: partnerOverride ?? null,
+      presetId,
     });
     if (value != null && value > 0) {
-      return formatPartnerJobPriceDisplay("hourly", value, null);
+      return formatPartnerJobPriceDisplay("hourly", value, null, fixedPartnerTotal);
     }
   }
   return formatPartnerJobPriceDisplay(jobType, jobHourlyPartnerRate, jobPartnerCost);
@@ -175,7 +177,7 @@ export async function broadcastAutoAssignInvites(
 
   const { data: jobInfo } = await supabase
     .from("jobs")
-    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, title")
+    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id, title")
     .eq("id", params.jobId)
     .maybeSingle();
   const ji = jobInfo as {
@@ -183,9 +185,11 @@ export async function broadcastAutoAssignInvites(
     hourly_partner_rate: number | null;
     partner_cost: number | null;
     catalog_service_id: string | null;
+    catalog_pricing_preset_id: string | null;
     title: string | null;
   } | null;
   const isHourly = ji?.job_type === "hourly";
+  const presetId = ji?.catalog_pricing_preset_id ?? null;
   const smartPriceCtx = isHourly
     ? await loadSmartPriceInviteContext(supabase, ji?.catalog_service_id ?? null, params.partnerIds)
     : { catalog: null, overridesByPartnerId: new Map<string, PartnerServicePrice>() };
@@ -207,6 +211,7 @@ export async function broadcastAutoAssignInvites(
       ji?.partner_cost ?? null,
       smartPriceCtx.catalog,
       smartPriceCtx.overridesByPartnerId.get(row.id),
+      presetId,
     );
 
     let sideConversationId: string | null = null;
@@ -306,7 +311,7 @@ export async function dispatchAutoAssignJobInvites(
   if (args.sendPush !== false) {
     const { data: jobInfo } = await supabase
       .from("jobs")
-      .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id")
+      .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id")
       .eq("id", args.jobId)
       .maybeSingle();
     const ji = jobInfo as {
@@ -314,8 +319,10 @@ export async function dispatchAutoAssignJobInvites(
       hourly_partner_rate: number | null;
       partner_cost: number | null;
       catalog_service_id: string | null;
+      catalog_pricing_preset_id: string | null;
     } | null;
     const isHourly = ji?.job_type === "hourly";
+    const presetId = ji?.catalog_pricing_preset_id ?? null;
     const smartPriceCtx = isHourly
       ? await loadSmartPriceInviteContext(
           supabase,
@@ -332,6 +339,7 @@ export async function dispatchAutoAssignJobInvites(
           ji?.partner_cost ?? null,
           smartPriceCtx.catalog,
           smartPriceCtx.overridesByPartnerId.get(partnerId),
+          presetId,
         );
         pushSent += await sendPushToPartners(supabase, [partnerId], {
           title: "New job available",
