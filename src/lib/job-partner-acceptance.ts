@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
+import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
+import {
+  formatPartnerJobPriceDisplay,
+  resolvePartnerHourlyForJob,
+} from "@/lib/job-pricing-resolver";
 import { createSideConversation } from "@/lib/zendesk";
+import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
@@ -20,6 +26,7 @@ export type JobForPartnerAcceptance = {
   catalog_service_id: string | null;
   scope: string | null;
   job_type: "hourly" | "fixed" | null;
+  hourly_client_rate: number | null;
   hourly_partner_rate: number | null;
   partner_cost: number | null;
   external_source: string | null;
@@ -46,7 +53,59 @@ export type BookedEmailResult = {
 };
 
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+
+const CATALOG_PRICING_SELECT =
+  "id, pricing_mode, partner_cost, default_hours";
+
+/** Smart Price: persist winner's partner rate card £/h on the job row. */
+async function applySmartPriceWinnerRate(args: {
+  supabase: SupabaseClient;
+  jobId: string;
+  partnerId: string;
+  job: Pick<
+    JobForPartnerAcceptance,
+    "job_type" | "catalog_service_id" | "hourly_client_rate" | "hourly_partner_rate"
+  >;
+}): Promise<void> {
+  if (args.job.job_type !== "hourly" || !args.job.catalog_service_id) return;
+
+  const [{ data: catalogRow }, { data: partnerPrice }] = await Promise.all([
+    args.supabase
+      .from("service_catalog")
+      .select(CATALOG_PRICING_SELECT)
+      .eq("id", args.job.catalog_service_id)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    args.supabase
+      .from("partner_service_prices")
+      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate")
+      .eq("partner_id", args.partnerId)
+      .eq("catalog_service_id", args.job.catalog_service_id)
+      .is("deleted_at", null)
+      .maybeSingle(),
+  ]);
+
+  const catalog = catalogRow as CatalogService | null;
+  if (!catalog) return;
+
+  const { value: partnerRate } = resolvePartnerHourlyForJob({
+    catalog,
+    partnerOverride: (partnerPrice as PartnerServicePrice | null) ?? null,
+  });
+  if (!(partnerRate != null && partnerRate > 0)) return;
+
+  const clientRate = Number(args.job.hourly_client_rate) || 0;
+  const patch: Record<string, unknown> = { hourly_partner_rate: partnerRate };
+  if (clientRate > 0) {
+    patch.margin_percent = marginPercent(clientRate, partnerRate) ?? 0;
+  }
+
+  const { error } = await args.supabase.from("jobs").update(patch).eq("id", args.jobId);
+  if (error) {
+    console.error("[applySmartPriceWinnerRate] update failed:", error.message);
+  }
+}
 
 /** Atomically claim the one-time Job booked email send for this job. */
 async function tryClaimPartnerBookedEmailSend(
@@ -284,6 +343,13 @@ export async function processAutoAssignJobAccept(args: {
     };
   }
 
+  await applySmartPriceWinnerRate({
+    supabase: args.supabase,
+    jobId: args.jobId,
+    partnerId: args.partnerId,
+    job,
+  });
+
   const freshJob = (await loadJobForPartnerAcceptance(args.supabase, args.jobId)) ?? job;
   const { bookedEmail } = await finalizeAutoAssignWinner({
     supabase: args.supabase,
@@ -401,9 +467,11 @@ export async function sendBookedSideConvReply(args: {
   if (!claimed) return { sent: false, skipped: "claim_lost" };
 
   const isHourly = job.job_type === "hourly";
-  const priceDisplay = isHourly
-    ? `£${Number(job.hourly_partner_rate ?? 0).toFixed(2)}/hr`
-    : `£${Number(job.partner_cost ?? 0).toFixed(2)}`;
+  const priceDisplay = formatPartnerJobPriceDisplay(
+    job.job_type,
+    job.hourly_partner_rate,
+    job.partner_cost,
+  );
   const partnerFirstName =
     partner.contact_name?.trim().split(/\s+/)[0] ||
     partner.company_name?.trim() ||

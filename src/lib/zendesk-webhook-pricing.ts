@@ -14,7 +14,8 @@ import {
   sortPricingPresetsDisplay,
   type ServicePricingPreset,
 } from "@/lib/catalog-pricing-presets";
-import type { AccountServicePrice, CatalogService } from "@/types/database";
+import { resolveJobPricing } from "@/lib/job-pricing-resolver";
+import type { AccountServicePrice, CatalogService, PartnerServicePrice } from "@/types/database";
 
 export function normalizeBandId(
   bandIdRaw: unknown,
@@ -125,6 +126,80 @@ export function resolveWebhookFixedPricing(input: WebhookFixedPricingInput): Web
 
   return { clientPrice, partnerCost, bandId, bandLabel };
 }
+
+/** Normalise Zendesk rate_type / job_type tag to OS job_type. */
+export function normalizeWebhookRateType(raw: unknown): "fixed" | "hourly" | null {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!s) return null;
+  const stripped = s.replace(/^job[_-]type[_-]/, "");
+  if (stripped === "fixed" || stripped === "fixed_price") return "fixed";
+  if (
+    stripped === "hourly"
+    || stripped === "smart_price"
+    || stripped === "smart price"
+  ) {
+    return "hourly";
+  }
+  return null;
+}
+
+export type SmartPriceRatesInput = {
+  hourlyClientRateFromBody: number;
+  hourlyClientRateSent: boolean;
+  hourlyPartnerRateFromBody: number;
+  hourlyPartnerRateSent: boolean;
+  catalog: CatalogService;
+  accountOverride: AccountServicePrice | null;
+  partnerOverride?: PartnerServicePrice | null;
+  setupMarginPct: number;
+};
+
+/**
+ * Smart Price (hourly): sell from account rate card → catalog standard.
+ * Partner £/h from partner rate card when override is known (invite/accept);
+ * otherwise catalog ceiling placeholder on webhook create.
+ */
+export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
+  hourlyClientRate: number;
+  hourlyPartnerRate: number;
+} {
+  const floorHourly = Number(input.catalog.hourly_rate) || 0;
+  const customClient =
+    input.accountOverride && !input.accountOverride.use_standard && input.accountOverride.hourly_rate != null
+      ? Number(input.accountOverride.hourly_rate)
+      : null;
+  const hourlyClientRate = input.hourlyClientRateSent
+    ? input.hourlyClientRateFromBody
+    : resolveAccountSell(floorHourly, customClient);
+
+  if (input.partnerOverride) {
+    const pricing = resolveJobPricing({
+      catalog: input.catalog,
+      accountOverride: input.accountOverride,
+      partnerOverride: input.partnerOverride,
+    });
+    const partnerRate = pricing.partner.hourly_partner_rate ?? 0;
+    return {
+      hourlyClientRate,
+      hourlyPartnerRate: input.hourlyPartnerRateSent
+        ? input.hourlyPartnerRateFromBody
+        : partnerRate,
+    };
+  }
+
+  return resolveWebhookHourlyRates({
+    hourlyClientRateFromBody: input.hourlyClientRateFromBody,
+    hourlyClientRateSent: input.hourlyClientRateSent,
+    hourlyPartnerRateFromBody: input.hourlyPartnerRateFromBody,
+    hourlyPartnerRateSent: input.hourlyPartnerRateSent,
+    catalog: input.catalog,
+    accountOverride: input.accountOverride,
+    setupMarginPct: input.setupMarginPct,
+  });
+}
+
+/** @deprecated Use resolveWebhookFixedPricing — kept as alias for clarity in docs. */
+export const resolveFixedJobPricing = resolveWebhookFixedPricing;
 
 export function resolveWebhookHourlyRates(input: {
   hourlyClientRateFromBody: number;

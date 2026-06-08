@@ -25,9 +25,10 @@ import {
 import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import {
   normalizeBandId,
+  normalizeWebhookRateType,
   validateServiceBand,
   resolveWebhookFixedPricing,
-  resolveWebhookHourlyRates,
+  resolveSmartPriceRates,
 } from "@/lib/zendesk-webhook-pricing";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 
@@ -255,12 +256,9 @@ export async function POST(req: NextRequest) {
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
   const description     = str(body.description) || null;
-  // Accept either the bare value (`hourly` / `fixed`) or the Zendesk Job Type
-  // field tag form (`job_type_hourly` / `job_type_fixed`) — the prefix is
-  // stripped so the macro can post the tag straight through.
-  const rateType        = (
-    str(body.rate_type).toLowerCase().replace(/^job[_-]type[_-]/, "") || "fixed"
-  ) as "fixed" | "hourly";
+  // Accept bare values, Zendesk tags (`job_type_hourly` / `job_type_fixed`), or
+  // Smart Price alias (`job_type_smart_price` → hourly).
+  const rateType        = normalizeWebhookRateType(body.rate_type) ?? "fixed";
   // `let` because we drop the value to service_type below when it isn't a UUID
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
   let catalogServiceIdIn = str(body.catalog_service_id)?.replace(/^os_/i, "") || null;
@@ -605,7 +603,7 @@ export async function POST(req: NextRequest) {
       catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
     const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
-    const hourlyResolved = resolveWebhookHourlyRates({
+    const hourlyResolved = resolveSmartPriceRates({
       hourlyClientRateFromBody: hourlyClientRateIn,
       hourlyClientRateSent,
       hourlyPartnerRateFromBody: hourlyPartnerRateIn,

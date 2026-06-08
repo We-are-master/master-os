@@ -19,7 +19,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
-  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus,
+  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus, ArrowRight,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
@@ -114,7 +114,41 @@ function accountOwnerLabel(
   }
   const leg = legacyOwnerName?.trim();
   if (leg) return leg;
-  return "—";
+  return "";
+}
+
+function formatCreditLimitCompact(amount: number): string {
+  const n = Number(amount) || 0;
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `£${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (n >= 10_000) {
+    const k = n / 1_000;
+    return `£${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  return formatCurrency(n);
+}
+
+function AccountOwnerCell({
+  accountOwnerId,
+  legacyOwnerName,
+  users,
+}: {
+  accountOwnerId: string | null | undefined;
+  legacyOwnerName: string | null | undefined;
+  users: AssignableUser[];
+}) {
+  const label = accountOwnerLabel(accountOwnerId, legacyOwnerName, users);
+  if (!label) {
+    return <span className="text-sm text-text-tertiary italic">Unassigned</span>;
+  }
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Avatar name={label} size="sm" className="shrink-0" />
+      <span className="text-sm text-text-secondary truncate">{label}</span>
+    </div>
+  );
 }
 
 function renderAccountNextPayment(item: Account, orgCtx: AccountPaymentOrgContext) {
@@ -200,6 +234,8 @@ export default function AccountsPage() {
   const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [accountsDisplayMode, setAccountsDisplayMode] = useState<AccountsDisplayMode>("list");
+  const [listSortKey, setListSortKey] = useState<string | null>(null);
+  const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
 
   /** Avoid SSR/localStorage mismatch — restore saved view after mount. */
   useEffect(() => {
@@ -266,6 +302,29 @@ export default function AccountsPage() {
   }, [createOpen]);
 
   const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
+  const activeAccountCount = accountStatusCounts.active ?? 0;
+  const inactiveAccountCount = accountStatusCounts.inactive ?? 0;
+
+  const sortedListData = useMemo(() => {
+    if (!listSortKey) return data;
+    const rows = [...data];
+    const dir = listSortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = listSortKey === "active_jobs"
+        ? Number(a.active_jobs) || 0
+        : Number(b.total_revenue) || 0;
+      const bv = listSortKey === "active_jobs"
+        ? Number(b.active_jobs) || 0
+        : Number(b.total_revenue) || 0;
+      return (av - bv) * dir;
+    });
+    return rows;
+  }, [data, listSortKey, listSortDir]);
+
+  const maxRevenueInView = useMemo(
+    () => Math.max(1, ...sortedListData.map((a) => Number(a.total_revenue) || 0)),
+    [sortedListData],
+  );
 
   const handleSyncDueDates = async () => {
     setSyncing(true);
@@ -408,87 +467,157 @@ export default function AccountsPage() {
     }
   };
 
+  const accountsTableCell = "px-4 py-3";
+  const accountsTableHeader = "px-4 py-3";
+
   const columns: Column<Account>[] = [
     {
       key: "company_name",
-      label: "Company",
-      render: (item) => (
-        <div className="flex items-center gap-3">
-          <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} />
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{item.company_name}</p>
-            <p className="text-[11px] text-text-tertiary">{item.contact_name}</p>
+      label: "Account",
+      width: "28%",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
+      render: (item) => {
+        const isActive = item.status === "active";
+        const meta = [
+          accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory),
+          item.industry,
+        ].filter(Boolean).join(" · ");
+        return (
+          <div className="flex items-center gap-3 min-w-0">
+            <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 min-w-0">
+                <p className="text-sm font-semibold text-text-primary truncate">{item.company_name}</p>
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full shrink-0",
+                    isActive ? "bg-emerald-500" : item.status === "onboarding" ? "bg-amber-400" : "bg-stone-300",
+                  )}
+                  title={statusConfig[item.status]?.label ?? item.status}
+                />
+              </div>
+              {meta ? (
+                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary truncate mt-0.5">
+                  {meta}
+                </p>
+              ) : (
+                <p className="text-[11px] text-text-tertiary truncate">{item.contact_name}</p>
+              )}
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
-      key: "owner_name",
-      label: "Account owner",
+      key: "active_jobs",
+      label: "Jobs",
+      width: "14%",
+      align: "center",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
+      sortable: true,
       render: (item) => (
-        <span className="text-sm text-text-secondary">
-          {accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory)}
+        <span
+          className={cn(
+            "inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded-full px-2 text-xs font-semibold tabular-nums",
+            item.active_jobs > 0 ? "bg-primary/10 text-primary" : "bg-surface-tertiary/80 text-text-tertiary",
+          )}
+        >
+          {item.active_jobs}
         </span>
       ),
     },
     {
-      key: "industry",
-      label: "Industry",
-      render: (item) => (
-        <span className="text-sm text-text-secondary">{item.industry}</span>
-      ),
+      key: "total_revenue",
+      label: "Revenue",
+      width: "22%",
+      align: "right",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
+      sortable: true,
+      render: (item) => {
+        const rev = Number(item.total_revenue) || 0;
+        const pct = Math.round((rev / maxRevenueInView) * 100);
+        return (
+          <div className="ml-auto w-full max-w-[9rem] space-y-1.5">
+            <span className="block text-sm font-bold tabular-nums text-text-primary">
+              {formatCurrency(rev)}
+            </span>
+            <div className="h-1 w-full rounded-full bg-surface-tertiary overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary/75 transition-all"
+                style={{ width: `${Math.max(pct, rev > 0 ? 4 : 0)}%` }}
+              />
+            </div>
+          </div>
+        );
+      },
     },
     {
-      key: "status",
-      label: "Status",
+      key: "billing",
+      label: "Billing",
+      width: "22%",
+      align: "right",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
       render: (item) => {
-        const config = statusConfig[item.status] ?? statusConfig.inactive;
-        return <Badge variant={config.variant} dot>{config.label}</Badge>;
+        const termsLabel = shortenPaymentTerms(item.payment_terms);
+        return (
+          <div className="ml-auto min-w-0 max-w-[10rem] space-y-1 text-right">
+            <Badge variant="outline" size="sm" className="max-w-full truncate">
+              {termsLabel}
+            </Badge>
+            <div className="text-[11px]">{renderAccountNextPayment(item, paymentOrgCtx)}</div>
+          </div>
+        );
       },
+    },
+    {
+      key: "owner_name",
+      label: "Owner",
+      width: "14%",
+      headerClassName: cn(accountsTableHeader, "hidden xl:table-cell"),
+      cellClassName: cn(accountsTableCell, "hidden xl:table-cell"),
+      render: (item) => (
+        <AccountOwnerCell
+          accountOwnerId={item.account_owner_id}
+          legacyOwnerName={item.owner_name}
+          users={accountOwnerDirectory}
+        />
+      ),
     },
     {
       key: "credit_limit",
-      label: "Credit Limit",
+      label: "Credit",
+      width: "10%",
       align: "right",
+      headerClassName: cn(accountsTableHeader, "hidden 2xl:table-cell"),
+      cellClassName: cn(accountsTableCell, "hidden 2xl:table-cell"),
       render: (item) => (
-        <span className="text-sm text-text-primary">{formatCurrency(item.credit_limit)}</span>
+        <span
+          className="text-sm tabular-nums text-text-secondary"
+          title={formatCurrency(item.credit_limit)}
+        >
+          {formatCreditLimitCompact(item.credit_limit)}
+        </span>
       ),
     },
     {
-      key: "active_jobs",
-      label: "Active Jobs",
-      align: "center",
-      render: (item) => (
-        <span className="text-sm font-semibold text-text-primary">{item.active_jobs}</span>
-      ),
-    },
-    {
-      key: "total_revenue",
-      label: "Total Revenue",
-      align: "right",
-      render: (item) => (
-        <span className="text-sm font-bold text-text-primary">{formatCurrency(item.total_revenue)}</span>
-      ),
-    },
-    {
-      key: "payment_terms",
-      label: "Terms",
-      render: (item) => {
-        const label = shortenPaymentTerms(item.payment_terms);
-        return <Badge variant="outline" size="sm" className="max-w-[7rem] truncate block">{label}</Badge>;
-      },
-    },
-    {
-      key: "next_payment",
-      label: "Next payment",
-      render: (item) => renderAccountNextPayment(item, paymentOrgCtx),
+      key: "actions",
+      label: "",
+      width: "48px",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
+      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto" aria-hidden />,
     },
   ];
+
 
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Accounts" subtitle="Manage corporate client accounts and billing.">
+        <PageHeader title="Accounts" subtitle="Corporate clients — billing, jobs, and rate cards in one place.">
           {isAdmin && (
             <Button size="sm" variant="outline" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setSyncOpen(true)}>
               Sync due dates
@@ -498,69 +627,106 @@ export default function AccountsPage() {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Accounts" value={totalAccounts} format="number" change={8} changeLabel="this quarter" icon={Building} accent="blue" />
-          <KpiCard title="Total Revenue" value={totalRevenue} format="currency" change={22.4} changeLabel="YoY growth" icon={DollarSign} accent="emerald" />
-          <KpiCard title="Active Jobs" value={totalJobs} format="number" description="Across all accounts" icon={Briefcase} accent="primary" />
-          <KpiCard title="Avg Deal Size" value={avgDeal} format="currency" change={14.2} changeLabel="vs last year" icon={TrendingUp} accent="purple" />
+          <KpiCard
+            title="Total Accounts"
+            value={totalAccounts}
+            format="number"
+            description={`${activeAccountCount} active · ${inactiveAccountCount} inactive`}
+            icon={Building}
+            accent="blue"
+          />
+          <KpiCard
+            title="Total Revenue"
+            value={totalRevenue}
+            format="currency"
+            description="All-time across accounts"
+            icon={DollarSign}
+            accent="emerald"
+          />
+          <KpiCard title="Active Jobs" value={totalJobs} format="number" description="Open jobs in pipeline" icon={Briefcase} accent="primary" />
+          <KpiCard
+            title="Avg Deal Size"
+            value={avgDeal}
+            format="currency"
+            description="Revenue per account"
+            icon={TrendingUp}
+            accent="purple"
+          />
         </StaggerContainer>
 
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
-            <div className="min-w-0 flex-1 pb-1 -mb-1 overflow-x-auto">
+        <motion.div
+          variants={fadeInUp}
+          initial="hidden"
+          animate="visible"
+          className="rounded-xl border border-border-light bg-card shadow-soft overflow-hidden"
+        >
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between px-4 sm:px-5 py-3 border-b border-border-light bg-surface/40 min-w-0">
+            <div className="w-full min-w-0 md:flex-1 md:pr-4">
               <Tabs
                 tabs={accountListTabs.map(({ id, label, count, accent }) => ({ id, label, count, accent }))}
                 activeTab={status}
                 onChange={setStatus}
+                className="border-b-0"
               />
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end shrink-0 w-full sm:w-auto min-w-0">
-              <div
-                className="inline-flex self-end sm:self-auto rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
-                role="group"
-                aria-label="Accounts view mode"
-              >
-                <button
-                  type="button"
-                  aria-pressed={accountsDisplayMode === "list"}
-                  onClick={() => setAccountsDisplayMode("list")}
-                  className={cn(
-                    "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                    accountsDisplayMode === "list"
-                      ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
-                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
-                  )}
-                  title="List view"
+            <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:min-w-[18rem] md:max-w-[34rem] shrink-0">
+              <p className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap md:hidden">
+                {totalItems} {totalItems === 1 ? "account" : "accounts"}
+              </p>
+              <div className="flex items-center gap-2 w-full min-w-0">
+                <div
+                  className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
+                  role="group"
+                  aria-label="Accounts view mode"
                 >
-                  <LayoutList className="h-4 w-4" aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={accountsDisplayMode === "grid"}
-                  onClick={() => setAccountsDisplayMode("grid")}
-                  className={cn(
-                    "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                    accountsDisplayMode === "grid"
-                      ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
-                      : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
-                  )}
-                  title="Grid view"
-                >
-                  <LayoutGrid className="h-4 w-4" aria-hidden />
-                </button>
+                  <button
+                    type="button"
+                    aria-pressed={accountsDisplayMode === "list"}
+                    onClick={() => setAccountsDisplayMode("list")}
+                    className={cn(
+                      "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                      accountsDisplayMode === "list"
+                        ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                        : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                    )}
+                    title="List view"
+                  >
+                    <LayoutList className="h-4 w-4" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={accountsDisplayMode === "grid"}
+                    onClick={() => setAccountsDisplayMode("grid")}
+                    className={cn(
+                      "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                      accountsDisplayMode === "grid"
+                        ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                        : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                    )}
+                    title="Grid view"
+                  >
+                    <LayoutGrid className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+                <SearchInput
+                  placeholder="Search accounts…"
+                  className="min-w-0 flex-1"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
               </div>
-              <SearchInput
-                placeholder="Search accounts..."
-                className="w-full min-w-0 sm:w-56 shrink-0"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
             </div>
           </div>
 
           {accountsDisplayMode === "list" ? (
+          <>
           <DataTable
             columns={columns}
-            data={data}
+            data={sortedListData}
+            columnConfigKey="accounts-columns"
+            columnConfigScope={status}
+            tableClassName="w-full table-fixed"
+            className="border-0 shadow-none rounded-none"
             getRowId={(item) => item.id}
             loading={loading}
             page={page}
@@ -573,6 +739,13 @@ export default function AccountsPage() {
             selectable
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
+            sortColumnKey={listSortKey}
+            sortDirection={listSortDir}
+            onSortChange={(key, direction) => {
+              setListSortKey(key);
+              setListSortDir(direction);
+            }}
+            emptyMessage={search.trim() ? "No accounts match your search." : "No accounts in this view yet."}
             bulkActions={
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
@@ -582,8 +755,20 @@ export default function AccountsPage() {
               </div>
             }
           />
+          {accountsDisplayMode === "list" && totalItems > 0 ? (
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+              <span>
+                Showing {(page - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(page * ACCOUNTS_LIST_PAGE_SIZE, totalItems)} of {totalItems} accounts
+              </span>
+              <span className="tabular-nums">
+                Total revenue {formatCurrency(totalRevenue)} · Active jobs {totalJobs}
+              </span>
+            </div>
+          ) : null}
+          </>
           ) : (
             <AccountsGridView
+              embedded
               data={data}
               loading={loading}
               page={page}
@@ -831,6 +1016,12 @@ function AccountsGridCheckbox({
   );
 }
 
+const ACCOUNT_STATUS_ACCENT: Record<string, string> = {
+  active: "border-l-emerald-500",
+  onboarding: "border-l-amber-400",
+  inactive: "border-l-border",
+};
+
 function AccountsGridView({
   data,
   loading,
@@ -845,6 +1036,7 @@ function AccountsGridView({
   accountOwnerDirectory,
   paymentOrgCtx,
   bulkActionButtons,
+  embedded = false,
 }: {
   data: Account[];
   loading: boolean;
@@ -859,6 +1051,7 @@ function AccountsGridView({
   accountOwnerDirectory: AssignableUser[];
   paymentOrgCtx: AccountPaymentOrgContext;
   bulkActionButtons: ReactNode;
+  embedded?: boolean;
 }) {
   const allIds = data.map((a) => a.id);
   const allSelected = data.length > 0 && allIds.every((id) => selectedIds.has(id));
@@ -886,7 +1079,12 @@ function AccountsGridView({
   const selectionCount = selectedIds.size;
 
   return (
-    <div className="bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative">
+    <div
+      className={cn(
+        "overflow-hidden relative",
+        embedded ? "bg-transparent" : "bg-card rounded-xl border border-card-border shadow-soft",
+      )}
+    >
       <AnimatePresence>
         {selectionCount > 0 && (
           <motion.div
@@ -933,6 +1131,7 @@ function AccountsGridView({
               <Building className="h-6 w-6 text-text-tertiary" />
             </div>
             <p className="text-sm font-medium text-text-secondary">No accounts found</p>
+            <p className="text-xs text-text-tertiary max-w-xs">Try another status tab or clear your search.</p>
           </div>
         </div>
       ) : (
@@ -943,6 +1142,7 @@ function AccountsGridView({
             const isOpen = selectedDetailId === id;
             const cfg = statusConfig[item.status] ?? statusConfig.inactive;
             const termsLabel = shortenPaymentTerms(item.payment_terms);
+            const statusAccent = ACCOUNT_STATUS_ACCENT[item.status] ?? ACCOUNT_STATUS_ACCENT.inactive;
             return (
               <div
                 key={id}
@@ -956,12 +1156,13 @@ function AccountsGridView({
                   }
                 }}
                 className={cn(
-                  "relative rounded-xl border text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                  "relative rounded-xl border border-l-[3px] text-left outline-none transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                  statusAccent,
                   isChecked
                     ? "border-primary bg-primary/[0.04]"
                     : isOpen
-                      ? "border-primary/45 bg-primary/[0.02]"
-                      : "border-border-light hover:border-primary/30 hover:bg-surface-hover/70",
+                      ? "border-primary/45 bg-primary/[0.02] shadow-sm"
+                      : "border-border-light hover:border-primary/30 hover:bg-surface-hover/70 hover:shadow-sm",
                 )}
               >
                 <div
@@ -985,24 +1186,42 @@ function AccountsGridView({
                     <div className="min-w-0 flex-1 pr-1">
                       <p className="text-sm font-semibold text-text-primary leading-snug truncate">{item.company_name}</p>
                       <p className="text-[11px] text-text-tertiary truncate mt-0.5">{item.contact_name}</p>
-                      <p className="text-[11px] text-text-secondary truncate mt-1">
-                        {accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory)} · {item.industry}
-                      </p>
+                      <p className="text-[10px] text-text-tertiary truncate mt-1">{item.industry}</p>
                     </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <AccountOwnerCell
+                      accountOwnerId={item.account_owner_id}
+                      legacyOwnerName={item.owner_name}
+                      users={accountOwnerDirectory}
+                    />
                   </div>
 
                   <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border-light/80 pt-4">
                     <div>
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Active jobs</dt>
-                      <dd className="text-lg font-semibold tabular-nums text-text-primary">{item.active_jobs}</dd>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Jobs</dt>
+                      <dd
+                        className={cn(
+                          "text-lg font-semibold tabular-nums",
+                          item.active_jobs > 0 ? "text-primary" : "text-text-tertiary",
+                        )}
+                      >
+                        {item.active_jobs}
+                      </dd>
                     </div>
                     <div>
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total revenue</dt>
-                      <dd className="text-lg font-semibold tabular-nums text-text-primary">{formatCurrency(item.total_revenue)}</dd>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Revenue</dt>
+                      <dd className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(item.total_revenue)}</dd>
                     </div>
                     <div className="col-span-2">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit limit</dt>
-                      <dd className="text-sm font-medium tabular-nums text-text-secondary">{formatCurrency(item.credit_limit)}</dd>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit</dt>
+                      <dd
+                        className="text-sm font-medium tabular-nums text-text-secondary"
+                        title={formatCurrency(item.credit_limit)}
+                      >
+                        {formatCreditLimitCompact(item.credit_limit)}
+                      </dd>
                     </div>
                   </dl>
 
@@ -1452,12 +1671,12 @@ function AccountDetailDrawer({
           onChange={setTab}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "trades", label: "Trades & skills" },
-            { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
-            { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
-            { id: "finance",  label: "Finance",   count: invoices.length || undefined },
-            { id: "rates",    label: "Rate card" },
-            { id: "portal",   label: "Portal users" },
+            { id: "trades", label: "Trades & Skills" },
+            { id: "rates", label: "Rates" },
+            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
+            { id: "clients", label: "Clients", count: clientsTotal || undefined },
+            { id: "finance", label: "Finance", count: invoices.length || undefined },
+            { id: "portal", label: "Portal User" },
           ]}
         />
       </div>

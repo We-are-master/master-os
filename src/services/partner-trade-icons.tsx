@@ -10,7 +10,7 @@ import {
   type PartnerTradeIconEntry,
 } from "@/lib/service-display-icons";
 import { cn } from "@/lib/utils";
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 
 export type { PartnerTradeIconEntry };
 
@@ -30,23 +30,51 @@ function catalogByNameLc(
   return m;
 }
 
+function tradeDisplayLabel(trade: string, row: CatalogService | null | undefined): string {
+  return row?.name?.trim() || String(trade).trim() || "Trade";
+}
+
 function TradeIconBadge({
   trade,
-  index,
   byLc,
+  tooltipPlacement = "bottom",
 }: {
   trade: string;
-  index: number;
+  index?: number;
   byLc: Map<string, CatalogService> | null;
+  /** Below avoids clipping in table rows; above for overflow “+N” panel. */
+  tooltipPlacement?: "top" | "bottom";
 }) {
   const k = String(trade).trim().toLowerCase();
   const row = byLc?.get(k);
+  const label = tradeDisplayLabel(trade, row);
   const { Icon } = resolveServiceDisplayIcon({ tradeLabel: trade, catalogService: row ?? undefined });
+  const tipPos =
+    tooltipPlacement === "top"
+      ? "bottom-full left-1/2 mb-1.5 -translate-x-1/2"
+      : "top-full left-1/2 mt-1.5 -translate-x-1/2";
+
   return (
-    <span title={trade} className={SERVICE_ICON_CELL_CLASSES}>
-      <Icon className={SERVICE_ICON_INNER_CLASSES} aria-hidden />
-      <span className="sr-only">{trade}</span>
-    </span>
+    <div className="group/trade-tip relative shrink-0">
+      <span
+        className={cn(SERVICE_ICON_CELL_CLASSES, "cursor-default")}
+        aria-label={label}
+        title={label}
+      >
+        <Icon className={SERVICE_ICON_INNER_CLASSES} aria-hidden />
+      </span>
+      <div
+        role="tooltip"
+        className={cn(
+          "pointer-events-none absolute z-[80] hidden whitespace-nowrap rounded-md border border-border-light",
+          "bg-card px-2 py-1 text-[10px] font-semibold text-text-primary shadow-md",
+          "group-hover/trade-tip:block group-focus-within/trade-tip:block",
+          tipPos,
+        )}
+      >
+        {label}
+      </div>
+    </div>
   );
 }
 
@@ -75,7 +103,10 @@ export function PartnerTradesIconStrip({
   const hasOverflow = list.length > cap;
   const visible = hasOverflow ? list.slice(0, cap) : list;
   const hiddenCount = hasOverflow ? list.length - cap : 0;
+  const hiddenTrades = hasOverflow ? list.slice(cap) : [];
   const title = list.join(" · ");
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
@@ -87,35 +118,47 @@ export function PartnerTradesIconStrip({
       title={maxVisible == null ? title : undefined}
     >
       {visible.map((t, i) => (
-        <TradeIconBadge key={`vis-${i}`} trade={t} index={i} byLc={byLc} />
+        <TradeIconBadge key={`vis-${i}`} trade={t} byLc={byLc} tooltipPlacement="bottom" />
       ))}
       {hasOverflow ? (
-        <div className="group/trade-more relative shrink-0">
-          <span
+        <div
+          ref={overflowRef}
+          className="relative shrink-0"
+          onMouseEnter={() => setOverflowOpen(true)}
+          onMouseLeave={() => setOverflowOpen(false)}
+        >
+          <button
+            type="button"
+            aria-expanded={overflowOpen}
+            aria-label={`${hiddenCount} more trades: ${hiddenTrades.join(", ")}`}
+            title={hiddenTrades.join(" · ")}
+            onClick={() => setOverflowOpen((v) => !v)}
             className={cn(
               SERVICE_ICON_CELL_CLASSES,
-              "cursor-default text-[10px] font-bold text-text-secondary hover:border-primary/30 hover:bg-primary/[0.06] hover:text-primary",
+              "cursor-pointer text-[10px] font-bold text-text-secondary transition-colors",
+              "hover:border-primary/30 hover:bg-primary/[0.06] hover:text-primary",
+              overflowOpen && "border-primary/30 bg-primary/[0.06] text-primary",
             )}
-            aria-label={`${hiddenCount} more trades: ${list.slice(cap).join(", ")}`}
           >
             +{hiddenCount}
-          </span>
-          <div
-            role="tooltip"
-            className={cn(
-              "pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2",
-              "group-hover/trade-more:flex",
-            )}
-          >
-            <div className="flex max-w-[14rem] flex-wrap items-center justify-center gap-0.5 rounded-lg border border-border-light bg-card px-2 py-1.5 shadow-lg">
-              {list.map((t, i) => (
-                <TradeIconBadge key={`all-${i}`} trade={t} index={i} byLc={byLc} />
-              ))}
+          </button>
+          {overflowOpen ? (
+            <div
+              role="tooltip"
+              className={cn(
+                "absolute top-full left-1/2 z-[90] mt-1.5 -translate-x-1/2",
+                "rounded-lg border border-border-light bg-card px-2 py-1.5 shadow-lg",
+              )}
+              onMouseEnter={() => setOverflowOpen(true)}
+              onMouseLeave={() => setOverflowOpen(false)}
+            >
+              <div className="flex flex-nowrap items-center gap-0.5 max-w-[min(16rem,70vw)] overflow-x-auto [scrollbar-width:thin]">
+                {hiddenTrades.map((t, i) => (
+                  <TradeIconBadge key={`more-${i}`} trade={t} byLc={byLc} tooltipPlacement="bottom" />
+                ))}
+              </div>
             </div>
-            <p className="mt-1 max-w-[14rem] text-center text-[9px] font-medium leading-snug text-text-tertiary">
-              {title}
-            </p>
-          </div>
+          ) : null}
         </div>
       ) : null}
     </div>

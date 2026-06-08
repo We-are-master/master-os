@@ -182,7 +182,7 @@ export function PartnerServiceRatesTabSection({
       <div>
         <h4 className="text-sm font-bold text-text-primary flex items-center gap-2">
           <Wrench className="h-4 w-4 text-text-tertiary" />
-          Rate card
+          Rate Card
         </h4>
         <p className="text-xs text-text-tertiary mt-0.5">
           Your cost per service. Use the Fixfy standard or set your own — toggle off &quot;Use standard&quot; for a custom

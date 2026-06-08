@@ -140,6 +140,25 @@ function pickPartnerDefaultHours(
   return { value: catalog.default_hours ?? null, source: "standard" };
 }
 
+/** Partner £/h for Smart Price jobs (rate card → catalog ceiling). */
+export function resolvePartnerHourlyForJob(input: {
+  catalog: Pick<CatalogService, "partner_cost" | "default_hours" | "pricing_mode">;
+  partnerOverride: Pick<PartnerServicePrice, "use_standard" | "hourly_partner_rate"> | null;
+}): { value: number | null; source: PriceSource } {
+  return pickPartnerHourly(input.catalog, input.partnerOverride);
+}
+
+export function formatPartnerJobPriceDisplay(
+  jobType: "hourly" | "fixed" | null | undefined,
+  hourlyPartnerRate: number | null | undefined,
+  partnerCost: number | null | undefined,
+): string {
+  if (jobType === "hourly") {
+    return `£${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
+  }
+  return `£${Number(partnerCost ?? 0).toFixed(2)}`;
+}
+
 export function resolveJobPricing(input: {
   catalog: CatalogService;
   accountOverride: AccountServicePrice | null;
