@@ -7,7 +7,7 @@ import { extractUkPostcode } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
-import { setTicketJobReference } from "@/lib/zendesk";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
 import { resolveJobPricing } from "@/lib/job-pricing-resolver";
@@ -17,6 +17,13 @@ import type {
   CatalogService,
 } from "@/types/database";
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
+import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
+import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import {
+  parseAutoAssignFlag,
+  reconcileZendeskJobIngest,
+} from "@/lib/zendesk-job-ingest";
+import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -143,6 +150,11 @@ export const runtime  = "nodejs";
  *                                    //   configured, falls back to the company
  *                                    //   margin target × hourly_client_rate
  *                                    //   (40% if unset).
+ *     billed_hours?:    number|str,  // [hourly] Minimum billed hours for the
+ *                                    //   job. Optional — when omitted, uses
+ *                                    //   max(2, service_catalog.default_hours).
+ *                                    //   Send an explicit value (e.g. 1) to
+ *                                    //   override the 2h floor.
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
  *                                    //   via the existing offer-window mechanism
@@ -183,11 +195,12 @@ export const runtime  = "nodejs";
  *     service_catalog (partner_cost / default_hours) when configured; the
  *     same margin target × hourly_client_rate is used as the last-resort
  *     fallback if the catalog row has no partner amount yet.
- *   - When auto_assign=true: matches active partners by service_type
- *     (using the same partnerMatchesTypeOfWork rules the Desk webhook
- *     uses), stores their ids in auto_assign_invited_partner_ids, and
- *     sends an Expo push. Falls back to status='unassigned' if no
- *     partner matched.
+ *   - When auto_assign=true: status='auto_assigning', matches active partners
+ *     by service_type (partnerMatchesTypeOfWork), stores ids in
+ *     auto_assign_invited_partner_ids when any match, and sends push +
+ *     Zendesk invites. With ticket_id, macro fields are reconciled against
+ *     the Zendesk ticket (client name, postcode from subject when the
+ *     address field carries an email, auto_assign checkbox, catalog id).
  *
  * Response: 201 { id, reference, status, report_link, partners_notified? }
  *
@@ -223,15 +236,15 @@ export async function POST(req: NextRequest) {
   const date            = str(body.date);
   const arrivalTime     = str(body.arrival_time);
   const title           = str(body.title);
-  const clientName      = str(body.client_name);
+  let clientName        = str(body.client_name);
   // Free-text contact fields tolerate the placeholders a Zendesk macro emits
   // when the corresponding ticket field is left blank ("", "0", "A", "n/a"…).
   // We normalise to null so the OS row stays clean and the email lookup
   // doesn't ilike against junk strings.
   const clientEmailRaw  = nullish(body.client_email)?.toLowerCase() ?? null;
-  const clientEmail     = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
+  let clientEmail       = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
   const clientPhone     = nullish(body.client_phone);
-  const propertyAddress = str(body.property_address);
+  let propertyAddress   = str(body.property_address);
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
@@ -244,9 +257,10 @@ export async function POST(req: NextRequest) {
   ) as "fixed" | "hourly";
   // `let` because we drop the value to service_type below when it isn't a UUID
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
-  let catalogServiceIdIn = str(body.catalog_service_id) || null;
-  const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
+  let catalogServiceIdIn = str(body.catalog_service_id)?.replace(/^os_/i, "") || null;
+  let autoAssign        = parseAutoAssignFlag(body);
   const ticketId        = str(body.ticket_id) || null;
+  let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
@@ -271,6 +285,7 @@ export async function POST(req: NextRequest) {
   const hourlyClientRateSent = isPresent(body.hourly_client_rate) && hourlyClientRateIn > 0;
   const hourlyPartnerRateIn  = num(body.hourly_partner_rate);
   const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate) && hourlyPartnerRateIn > 0;
+  const billedHoursIn        = isPresent(body.billed_hours) ? num(body.billed_hours) : undefined;
 
   // ─── Validation ──────────────────────────────────────────────────────
   // client_email / client_phone are optional — Zendesk forms often leave one
@@ -283,8 +298,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "account_id, date, arrival_time, client_name, property_address, " +
-          "and either service_type or catalog_service_id are required.",
+          "account_id, date, arrival_time, client_name, property_address " +
+          "(required for geocoding), and either service_type or catalog_service_id are required.",
       },
       { status: 400 },
     );
@@ -381,11 +396,6 @@ export async function POST(req: NextRequest) {
     serviceType = String((catRow as { name: string }).name).trim();
   }
 
-  // service_type doubles as title when the caller doesn't supply one. The jobs
-  // table has a `title` column, no `service_type` column — the trade label is
-  // stored there and also used at runtime for partner matching / catalog lookup.
-  const titleResolved = title || serviceType;
-
   // Idempotency: if a Zendesk ticket id was supplied and we already have a
   // job for it, return the existing row instead of duplicating.
   let convertingFromQuote: { id: string; clientId: string | null } | null = null;
@@ -445,6 +455,62 @@ export async function POST(req: NextRequest) {
   if (!account) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
+
+  const accountCompanyName = String((account as { company_name?: string }).company_name ?? "").trim();
+  const catalogServiceIdBeforeReconcile = catalogServiceIdIn;
+
+  if (ticketId) {
+    const reconciled = await reconcileZendeskJobIngest({
+      ticketId,
+      clientName,
+      clientEmail,
+      propertyAddress,
+      autoAssign,
+      catalogServiceId: catalogServiceIdIn,
+      accountCompanyName: accountCompanyName || null,
+    });
+    clientName = reconciled.clientName;
+    clientEmail = reconciled.clientEmail;
+    propertyAddress = reconciled.propertyAddress;
+    autoAssign = reconciled.autoAssign;
+    if (reconciled.catalogServiceId) catalogServiceIdIn = reconciled.catalogServiceId;
+    zendeskCorrections = reconciled.corrections;
+    if (zendeskCorrections.length > 0) {
+      console.info("[api/jobs] Zendesk ingest corrections:", zendeskCorrections.join(", "));
+    }
+  }
+
+  propertyAddress = propertyAddress.trim();
+  if (!propertyAddress) {
+    return NextResponse.json(
+      { error: "property_address is required for geocoding." },
+      { status: 400 },
+    );
+  }
+
+  if (
+    catalogServiceIdIn &&
+    isValidUUID(catalogServiceIdIn) &&
+    catalogServiceIdIn !== catalogServiceIdBeforeReconcile
+  ) {
+    const { data: catRow, error: catErr } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", catalogServiceIdIn)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (catErr) {
+      console.error("[api/jobs] catalog name lookup (post-reconcile) failed:", catErr.message);
+      return NextResponse.json({ error: "Catalog lookup failed." }, { status: 500 });
+    }
+    if (!catRow) {
+      return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
+    }
+    serviceType = String((catRow as { name: string }).name).trim();
+  }
+
+  // service_type doubles as title when the caller doesn't supply one.
+  const titleResolved = title || serviceType;
 
   // Find or create a client in this account — unless we're converting an
   // existing quote, in which case we trust its linkage.
@@ -506,6 +572,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (convertingFromQuote && clientId && clientName) {
+    const { error: nameErr } = await supabase
+      .from("clients")
+      .update({ full_name: clientName })
+      .eq("id", clientId);
+    if (nameErr) {
+      console.error("[api/jobs] client name update on quote conversion failed:", nameErr.message);
+    }
+  }
+
   // ─── Hourly: resolve rates from Services catalog ────────────────────
   // For hourly jobs the rate is sourced from the Services catalog instead of
   // the payload. Resolution order for hourly_client_rate:
@@ -521,6 +597,7 @@ export async function POST(req: NextRequest) {
   let resolvedCatalogServiceId: string | null = null;
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
+  let hourlyCatalogDefaultHours: number | null = null;
   if (rateType === "hourly") {
     const catalog = await resolveCatalogServiceForHourly(
       supabase,
@@ -531,6 +608,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: catalog.error }, { status: catalog.status });
     }
     resolvedCatalogServiceId = catalog.row.id;
+    hourlyCatalogDefaultHours =
+      catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
     if (!hourlyClientRateSent) {
       const override = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
@@ -571,6 +650,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (rateType === "fixed" && catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
+    resolvedCatalogServiceId = catalogServiceIdIn;
+  }
+
   // ─── Partner matching (when auto_assign is on) ──────────────────────
   let matchedPartnerIds: string[] = [];
   if (autoAssign) {
@@ -578,6 +661,7 @@ export async function POST(req: NextRequest) {
     // direct job assignment (kind: "job").
     matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
       serviceType,
+      catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
       postcode: extractUkPostcode(propertyAddress),
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
@@ -585,8 +669,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Determine status ───────────────────────────────────────────────
-  const status =
-    autoAssign && matchedPartnerIds.length > 0 ? "auto_assigning" : "unassigned";
+  const status = autoAssign ? "auto_assigning" : "unassigned";
 
   // ─── Reference ──────────────────────────────────────────────────────
   const { data: ref, error: refErr } = await supabase.rpc("next_job_ref");
@@ -631,12 +714,14 @@ export async function POST(req: NextRequest) {
   if (rateType === "hourly") {
     jobRow.hourly_client_rate  = hourlyClientRate;
     jobRow.hourly_partner_rate = hourlyPartnerRate;
-    if (resolvedCatalogServiceId) {
-      jobRow.catalog_service_id = resolvedCatalogServiceId;
-    }
+    jobRow.billed_hours        = resolveInitialBilledHours(hourlyCatalogDefaultHours, billedHoursIn);
+  }
+  if (resolvedCatalogServiceId) {
+    jobRow.catalog_service_id = resolvedCatalogServiceId;
   }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
+    jobRow.auto_assign_expires_at = autoAssignExpiresAtIso();
   }
   if (ticketId) {
     jobRow.external_source = "zendesk";
@@ -659,6 +744,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
   }
 
+  void geocodeUkAddressServer(propertyAddress)
+    .then((coords) => {
+      if (!coords) return;
+      return supabase
+        .from("jobs")
+        .update({ latitude: coords.latitude, longitude: coords.longitude })
+        .eq("id", (inserted as { id: string }).id);
+    })
+    .catch((err) => console.error("[api/jobs] geocode failed:", err));
+
   // Mark the source quote as converted (best-effort — the job is already in,
   // so don't fail the request if the status flip stumbles).
   if (convertingFromQuote) {
@@ -680,7 +775,7 @@ export async function POST(req: NextRequest) {
     void Promise.all([
       syncJobZendeskStatus(inserted.id, supabase),
       dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
-      setTicketJobReference(ticketId, inserted.reference),
+      syncJobZendeskFormFields(inserted.id, supabase),
     ]).catch((err) => {
       console.error("[api/jobs] Zendesk dispatch failed:", err);
     });
@@ -718,6 +813,8 @@ export async function POST(req: NextRequest) {
       report_link: reportLinkIn ?? buildReportLink(String(inserted.reference)),
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
+      ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
+      ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
     },
     { status: 201 },
   );

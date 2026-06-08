@@ -3,6 +3,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -41,14 +42,23 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const admin = createServiceClient();
-  const result = await syncJobZendeskStatus(jobId, admin);
+  const [result, formFields] = await Promise.all([
+    syncJobZendeskStatus(jobId, admin),
+    syncJobZendeskFormFields(jobId, admin),
+  ]);
 
   return NextResponse.json({
-    ok: result.ok,
+    ok: result.ok && formFields.ok,
     synced: result.synced,
-    ticketId: result.ticketId ?? null,
+    ticketId: result.ticketId ?? formFields.ticketId ?? null,
     customStatusId: result.customStatusId ?? null,
     skip: result.skip ?? null,
-    error: result.error ?? null,
+    error: result.error ?? formFields.error ?? null,
+    formFields: {
+      ok: formFields.ok,
+      syncedFields: formFields.syncedFields,
+      skip: formFields.skipped ?? null,
+      error: formFields.error ?? null,
+    },
   });
 }

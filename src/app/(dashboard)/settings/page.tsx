@@ -47,10 +47,6 @@ import { saveUserPermissions, resolvePermission } from "@/services/admin-config"
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
-import { ServiceCatalogTab } from "./service-catalog-tab";
-
-const SERVICE_CATALOG_TAB_ID = "service-catalog";
-
 const settingsAdminTabs = [
   { id: "tiers", label: "Dashboard" },
   { id: "ai-briefs", label: "AI & Daily brief" },
@@ -72,21 +68,23 @@ function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const { can, loading: configLoading } = useAdminConfig();
+  const { loading: configLoading } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
-  const canCatalog = can("service_catalog");
 
   const visibleTabs = useMemo(() => {
     const tabs: { id: string; label: string }[] = [{ id: "profile", label: "My Profile" }];
-    if (canCatalog) tabs.push({ id: SERVICE_CATALOG_TAB_ID, label: "Services" });
     if (isAdmin) tabs.push(...settingsAdminTabs.map((t) => ({ id: t.id, label: t.label })));
     return tabs;
-  }, [isAdmin, canCatalog]);
+  }, [isAdmin]);
 
   const tabFromUrl = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState("profile");
 
   useEffect(() => {
+    if (tabFromUrl === "service-catalog") {
+      router.replace("/services");
+      return;
+    }
     if (configLoading || visibleTabs.length === 0) return;
     queueMicrotask(() => {
       if (tabFromUrl && visibleTabs.some((t) => t.id === tabFromUrl)) {
@@ -97,7 +95,7 @@ function SettingsPageInner() {
         setActiveTab(visibleTabs[0]!.id);
       }
     });
-  }, [tabFromUrl, visibleTabs, configLoading, activeTab]);
+  }, [tabFromUrl, visibleTabs, configLoading, activeTab, router]);
 
   const handleTabChange = (id: string) => {
     setActiveTab(id);
@@ -126,7 +124,6 @@ function SettingsPageInner() {
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
-          {activeTab === SERVICE_CATALOG_TAB_ID && canCatalog && <ServiceCatalogTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
           {activeTab === "tiers" && isAdmin && <DashboardTab />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}

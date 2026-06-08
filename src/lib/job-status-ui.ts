@@ -68,6 +68,40 @@ export function jobPartnerListKind(job: {
   return "unassigned";
 }
 
+export function isJobOnHoldComplaint(job: {
+  status?: string | null;
+  on_hold_reason_preset_id?: string | null;
+}): boolean {
+  return job.status === "on_hold" && (job.on_hold_reason_preset_id ?? "").trim() === "complaint";
+}
+
+/** Display badge for on-hold jobs — Complaint (red) vs On Hold (amber). */
+export function jobOnHoldDisplayBadge(job: {
+  status?: string | null;
+  on_hold_reason_preset_id?: string | null;
+}): { label: string; variant: BadgeVariant; dot: true } | null {
+  if (job.status !== "on_hold") return null;
+  if (isJobOnHoldComplaint(job)) {
+    return { label: "Complaint", variant: "danger", dot: true };
+  }
+  return { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true };
+}
+
+/** Status list/detail badge — uses complaint label when on hold + complaint preset. */
+export function jobStatusDisplayBadge(job: {
+  status?: string | null;
+  on_hold_reason_preset_id?: string | null;
+}): { label: string; variant: BadgeVariant; dot?: boolean } {
+  const onHold = jobOnHoldDisplayBadge(job);
+  if (onHold) return onHold;
+  const st = (job.status ?? "").trim() as JobStatus;
+  return {
+    label: jobStatusLabel(st),
+    variant: jobStatusBadgeVariant(st),
+    dot: true,
+  };
+}
+
 /** Accent for Jobs management tabs (underline + count chip when active). */
 export type JobsManagementTabAccent =
   | "neutral"

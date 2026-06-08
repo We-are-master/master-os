@@ -188,10 +188,18 @@ export async function createPartner(
     data = fallback.data;
     error = fallback.error;
   }
-  if (error && ("uk_coverage_regions" in input || "partner_address" in input)) {
-    const { uk_coverage_regions: _uk, partner_address: _pa, ...legacyInput } = input as typeof input & {
+  if (error && ("uk_coverage_regions" in input || "partner_address" in input || "partner_address_latitude" in input)) {
+    const {
+      uk_coverage_regions: _uk,
+      partner_address: _pa,
+      partner_address_latitude: _palat,
+      partner_address_longitude: _palng,
+      ...legacyInput
+    } = input as typeof input & {
       uk_coverage_regions?: unknown;
       partner_address?: unknown;
+      partner_address_latitude?: unknown;
+      partner_address_longitude?: unknown;
     };
     const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
     data = fallback.data;
@@ -268,10 +276,18 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     data = fallback.data;
     error = fallback.error;
   }
-  if (error && ("uk_coverage_regions" in input || "partner_address" in input)) {
-    const { uk_coverage_regions: _uk, partner_address: _pa, ...legacyInput } = input as typeof input & {
+  if (error && ("uk_coverage_regions" in input || "partner_address" in input || "partner_address_latitude" in input)) {
+    const {
+      uk_coverage_regions: _uk,
+      partner_address: _pa,
+      partner_address_latitude: _palat,
+      partner_address_longitude: _palng,
+      ...legacyInput
+    } = input as typeof input & {
       uk_coverage_regions?: unknown;
       partner_address?: unknown;
+      partner_address_latitude?: unknown;
+      partner_address_longitude?: unknown;
     };
     const fallback = await supabase
       .from("partners")

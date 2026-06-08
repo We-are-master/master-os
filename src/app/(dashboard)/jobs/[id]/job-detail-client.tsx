@@ -164,7 +164,6 @@ import {
 } from "@/lib/job-phases";
 import {
   jobBillableRevenue,
-  jobDirectCost,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerCashOutDisplaySplit,
@@ -184,10 +183,12 @@ import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-f
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import {
+  clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
+  partnerAssignStatusPatch,
 } from "@/lib/job-partner-assign";
 import {
   computePartnerLiveTimerActiveMs,
@@ -203,6 +204,7 @@ import {
 import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
+  resolveInitialBilledHours,
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import {
@@ -223,6 +225,7 @@ import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-pa
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { getAccountServicePrice } from "@/services/account-service-prices";
 import { resolveCatalogAddonChargeOptions } from "@/lib/catalog-line-pricing";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -233,7 +236,12 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
-import { patchOfficeCancelZeroJobEconomics, partnerCancellationClawbackOwedGbp } from "@/lib/job-cancel-economics";
+import {
+  officeCancellationPartnerClawbackGbp,
+  officeCancellationPartnerPayoutGbp,
+  patchOfficeCancelZeroJobEconomics,
+  partnerCancellationClawbackOwedGbp,
+} from "@/lib/job-cancel-economics";
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
@@ -258,7 +266,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
-import { JOB_STATUS_BADGE_VARIANT, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
+import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
@@ -324,7 +332,10 @@ function jobDetailMarginAppearance(marginPct: number): {
   };
 }
 
-function getStatusColors(status: string): {
+function getStatusColors(
+  status: string,
+  job?: { status?: string | null; on_hold_reason_preset_id?: string | null },
+): {
   healthBarClass: string;
   activeStepDotClass: string;
   activeStepLabelClass: string;
@@ -332,6 +343,15 @@ function getStatusColors(status: string): {
   completedAllSteps: boolean;
 } {
   const s = status.trim().toLowerCase();
+  if (job && isJobOnHoldComplaint(job)) {
+    return {
+      healthBarClass: "bg-red-600",
+      activeStepDotClass: "bg-red-50 border-red-600 text-red-600 dark:bg-red-950/40 dark:border-red-500 dark:text-red-400",
+      activeStepLabelClass: "text-red-600 dark:text-red-400 font-semibold",
+      topBadgeClass: "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-200 dark:border-red-800",
+      completedAllSteps: false,
+    };
+  }
   if (s === "on_hold") {
     return {
       healthBarClass: "bg-[#d97706]",
@@ -893,6 +913,49 @@ function FinSetupFieldLabel({
   );
 }
 
+/** Billing type modal — fixed-price confirm row (gross margin % on labour). */
+function FixedValuesConfirmPreview({
+  clientRate,
+  partnerCost,
+  fallbackSale,
+  fallbackCost,
+}: {
+  clientRate: string;
+  partnerCost: string;
+  fallbackSale: number;
+  fallbackCost: number;
+}) {
+  const sale = Math.max(0, Number(clientRate) || fallbackSale);
+  const cost = Math.max(0, Number(partnerCost) || fallbackCost);
+  const marginPct = sale > 0 ? Math.round(((sale - cost) / sale) * 1000) / 10 : 0;
+  return (
+    <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
+      <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Client value (sale)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sale)}</p>
+        </div>
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Partner cost</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(cost)}</p>
+        </div>
+        <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+          <p className="text-text-tertiary">Margin %</p>
+          <p
+            className={cn(
+              "font-semibold tabular-nums",
+              marginPct >= 0 ? "text-emerald-700" : "text-red-600",
+            )}
+          >
+            {marginPct}%
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Schedule tab — CCZ / Parking toggles share the same off-state (light gray container + track). */
 function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
   return cn(
@@ -1096,6 +1159,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [selectedPartnerId, setSelectedPartnerId] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
   const [signingOffPartner, setSigningOffPartner] = useState(false);
+  const [dispatchingAutoAssign, setDispatchingAutoAssign] = useState(false);
+  const [cancellingAutoAssign, setCancellingAutoAssign] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
   const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
@@ -1104,7 +1169,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [partnerAssignRateType, setPartnerAssignRateType] = useState<"fixed" | "hourly">("fixed");
   const [partnerAssignServiceId, setPartnerAssignServiceId] = useState("");
   const [partnerAssignFixedCost, setPartnerAssignFixedCost] = useState("");
-  const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("1");
+  const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("2");
   const [partnerAssignClientHourlyRate, setPartnerAssignClientHourlyRate] = useState("");
   const [partnerAssignPartnerHourlyRate, setPartnerAssignPartnerHourlyRate] = useState("");
   const [partnerAssignExtraInputs, setPartnerAssignExtraInputs] = useState<{
@@ -2129,7 +2194,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
     );
     if (job.job_type === "hourly") {
-      setPartnerAssignBilledHours(String(Math.max(0.5, Number(job.billed_hours) || 1)));
+      setPartnerAssignBilledHours(String(resolveInitialBilledHours(job.billed_hours)));
       setPartnerAssignClientHourlyRate(String(Math.max(0, Number(job.hourly_client_rate) || 0)));
       setPartnerAssignPartnerHourlyRate(String(Math.max(0, Number(job.hourly_partner_rate) || 0)));
     } else {
@@ -2543,6 +2608,71 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job?.id, job?.partner_id, job?.status, handleJobUpdate]);
 
+  const handleQuickAutoAssign = useCallback(async () => {
+    if (!job || jobHasPartnerSet(job)) return;
+    setDispatchingAutoAssign(true);
+    try {
+      if (job.status !== "auto_assigning") {
+        const updated = await handleJobUpdate(
+          job.id,
+          { status: "auto_assigning" },
+          { silent: true },
+        );
+        if (!updated) return;
+      }
+      const res = await fetch(
+        `/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`,
+        { method: "POST" },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        partnerCount?: number;
+        error?: string;
+      } | null;
+      if (res.ok) {
+        const n = body?.partnerCount ?? 0;
+        toast.success(
+          n > 0
+            ? `Auto assign — ${n} partner${n === 1 ? "" : "s"} invited`
+            : "Auto assign — invites sent",
+        );
+      } else {
+        toast.error(body?.error ?? "Could not send auto assign invites");
+        const refreshed = await getJob(job.id).catch(() => null);
+        if (refreshed) setJob(refreshed);
+      }
+    } catch {
+      toast.error("Could not send auto assign invites");
+    } finally {
+      setDispatchingAutoAssign(false);
+    }
+  }, [job, handleJobUpdate]);
+
+  const handleCancelAutoAssign = useCallback(async () => {
+    if (!job || job.status !== "auto_assigning" || jobHasPartnerSet(job)) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Cancel auto assign? Matched partners will no longer be able to accept this job from the offer.",
+      )
+    ) {
+      return;
+    }
+    setCancellingAutoAssign(true);
+    try {
+      const updated = await handleJobUpdate(
+        job.id,
+        { status: "unassigned", ...clearAutoAssignQueuePatch() },
+        { silent: true },
+      );
+      if (updated) {
+        toast.success("Auto assign cancelled — job is Unassigned");
+      }
+    } finally {
+      setCancellingAutoAssign(false);
+    }
+  }, [job, handleJobUpdate]);
+
   const openJobBillingTypeEdit = useCallback(() => {
     if (!job) return;
     setFixedRatesInlineOpen(false);
@@ -2566,7 +2696,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         return { patch: { status: "auto_assigning" }, dispatchAutoAssign: true };
       }
       if (current.status === "auto_assigning") {
-        return { patch: { status: "unassigned", auto_assign_invited_partner_ids: null }, dispatchAutoAssign: false };
+        return { patch: { status: "unassigned", ...clearAutoAssignQueuePatch() }, dispatchAutoAssign: false };
       }
       return null;
     },
@@ -2586,7 +2716,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         toast.error("Select a Call Out type from Services.");
         return;
       }
-      const hrs = Math.max(1, Number(service.default_hours) || 1);
+      const hrs = resolveInitialBilledHours(service.default_hours);
       const clientRate = Number(service.hourly_rate) || 0;
       const partnerRate = partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours);
       const totals = computeHourlyTotals({
@@ -2670,7 +2800,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const b = titleOut.trim().toLowerCase();
       return a === b || a.includes(b) || b.includes(a);
     });
-    const defaultHours = Math.max(1, Number(matchedService?.default_hours) || 1);
+    const defaultHours = resolveInitialBilledHours(matchedService?.default_hours);
     const clientRate = Number(matchedService?.hourly_rate ?? 0) || 0;
     const partnerRate = matchedService
       ? partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours)
@@ -3294,18 +3424,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           statusLabel,
         });
         // Map OS status → Zendesk email kind so the partner gets the right copy.
-        const zdKind: "on_hold" | "resumed" | "completed" | "status_changed" =
+        const zdKind: "on_hold" | "resumed" | "completed" | "cancelled" | "status_changed" =
           newStatus === "on_hold"
             ? "on_hold"
-            : j.status === "on_hold"
-              ? "resumed"
-              : newStatus === "completed"
-                ? "completed"
-                : "status_changed";
+            : newStatus === "cancelled"
+              ? "cancelled"
+              : j.status === "on_hold"
+                ? "resumed"
+                : newStatus === "completed"
+                  ? "completed"
+                  : "status_changed";
         const reason =
           newStatus === "on_hold"
             ? (updated.on_hold_complaint_description?.trim() || updated.on_hold_reason || null)
-            : null;
+            : newStatus === "cancelled"
+              ? (updated.cancellation_reason?.trim() || null)
+              : null;
         void notifyPartnerJobChange({
           jobId: updated.id,
           jobReference: updated.reference,
@@ -5101,7 +5235,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return a === b || a.includes(b) || b.includes(a);
     });
     if (matchedService) {
-      const hrs = Math.max(1, Number(matchedService.default_hours) || 1);
+      const hrs = resolveInitialBilledHours(matchedService.default_hours);
       const clientRate = Number(matchedService.hourly_rate) || 0;
       const partnerRate = partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours);
       const totals = computeHourlyTotals({
@@ -5176,8 +5310,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }
 
   const displayStatus = effectiveJobStatusForDisplay(job);
-  const config = statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
-  const statusColors = getStatusColors(displayStatus);
+  const onHoldBadge = jobOnHoldDisplayBadge(job);
+  const config = onHoldBadge ?? statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
+  const statusColors = getStatusColors(displayStatus, job);
   /**
    * Ledger-derived sums of client/partner extras (excluding materials, which
    * is tracked separately in `materials_cost`). Used below as a defensive
@@ -5242,7 +5377,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
-      : jobDirectCost(job);
+      : partnerPaymentCap(job) + Number(job.materials_cost ?? 0);
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -5250,10 +5385,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
   const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerPayRemaining = Math.max(0, partnerCashOutTotal - partnerPaidTotal);
-  const partnerClawbackOwed = partnerCancellationClawbackOwedGbp(job);
+  const partnerClawbackOwed =
+    partnerCancellationClawbackOwedGbp(job) + officeCancellationPartnerClawbackGbp(job);
+  const officePartnerCompensation = officeCancellationPartnerPayoutGbp(job);
+  const officeClientCancelFee = Math.max(0, Number(job.cancellation_fee_client_gbp ?? 0));
   const partnerUsesClawbackUi = job.status === "cancelled" && partnerClawbackOwed > 0.02;
+  const partnerUsesCompensationUi = job.status === "cancelled" && officePartnerCompensation > 0.02;
   /** Partner owes office after cancel — ledger stays positive (`partner_cancellation_fee` / snapshot); payout column shows minus. */
-  const partnerCashOutSummaryAmount = partnerUsesClawbackUi ? -partnerClawbackOwed : partnerCashOutTotal;
+  const partnerCashOutSummaryAmount = partnerUsesClawbackUi
+    ? -partnerClawbackOwed
+    : partnerUsesCompensationUi
+      ? officePartnerCompensation
+      : partnerCashOutTotal;
   const partnerPayoutLedgerRows = partnerPayments.filter(
     (p) => p.type === "partner" && !isLegacyMisclassifiedPartnerPayment(p),
   );
@@ -5270,7 +5413,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
   // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
-  const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
+  const amountDue =
+    job.status === "cancelled" && officeClientCancelFee > 0.02
+      ? Math.max(0, officeClientCancelFee - customerPaidTotal)
+      : Math.max(0, billableRevenue - customerPaidTotal);
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
   /** `extras_amount` includes manual extras and access fees folded in by CCZ/parking toggles — split display so CCZ/parking stay positive lines, not double-counted under “Extra charges”. */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
@@ -5661,13 +5807,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           <div className="space-y-1.5 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">
-                {partnerUsesClawbackUi ? "Cancellation clawback (partner owes)" : "Partner total (incl. materials)"}
+                {partnerUsesClawbackUi
+                  ? "Cancellation clawback (partner owes)"
+                  : partnerUsesCompensationUi
+                    ? "Cancellation compensation (Fixfy pays)"
+                    : "Partner total (incl. materials)"}
               </span>
               <span className="font-semibold tabular-nums text-rose-700">
-                {partnerUsesClawbackUi ? formatCurrencyPrecise(-partnerClawbackOwed) : formatCurrency(partnerCashOutTotal)}
+                {partnerUsesClawbackUi
+                  ? formatCurrencyPrecise(-partnerClawbackOwed)
+                  : partnerUsesCompensationUi
+                    ? formatCurrency(officePartnerCompensation)
+                    : formatCurrency(partnerCashOutTotal)}
               </span>
             </div>
-            {!partnerUsesClawbackUi ? (
+            {!partnerUsesClawbackUi && !partnerUsesCompensationUi ? (
               <>
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">Base labour</span>
@@ -6096,7 +6250,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner Cost</p>
-            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
+            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(partnerCapBase)}</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin</p>
@@ -7630,14 +7784,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             {/* PRIMARY PARTNER */}
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   {job.partner_id?.trim() ? (
                     <Avatar
                       src={partners.find((p) => p.id === job.partner_id)?.avatar_url}
                       name={job.partner_name || "Partner"}
                       size="sm"
-                      className="h-8 w-8 border border-border-light ring-0"
+                      className="h-8 w-8 shrink-0 border border-border-light ring-0"
                     />
                   ) : (
                     <div
@@ -7648,7 +7802,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                   {job.partner_name ? (
-                    <div className="group/partner-name relative min-w-0">
+                    <div className="group/partner-name relative min-w-0 flex-1">
                       <p className="truncate text-xs font-bold text-text-primary cursor-default">{job.partner_name}</p>
                       {job.partner_id ? (
                         <span
@@ -7660,14 +7814,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ) : null}
                     </div>
                   ) : jobPartnerListKind(job) === "auto_assign" ? (
-                    <Badge variant="info" dot className="text-[10px] font-medium normal-case">
+                    <Badge variant="info" dot className="max-w-full truncate text-[10px] font-medium normal-case">
                       Auto assign
                     </Badge>
                   ) : (
-                    <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
+                    <p className="min-w-0 truncate text-xs font-medium text-text-tertiary">Unassigned</p>
                   )}
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
                   {job.partner_id?.trim() ? (
                     <button
                       type="button"
@@ -7676,7 +7828,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       disabled={signingOffPartner || savingPartner}
                       onClick={() => void handleQuickUnassignPartner()}
                       className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-full border border-border-light bg-surface-hover text-text-tertiary transition-colors",
+                        "ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border-light bg-surface-hover text-text-tertiary transition-colors",
                         "hover:border-primary/30 hover:bg-primary-light/80 hover:text-primary",
                         "dark:hover:bg-primary/10",
                         "disabled:pointer-events-none disabled:opacity-45",
@@ -7685,11 +7837,46 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <UserX className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
                     </button>
                   ) : null}
+                </div>
+                <div className="flex w-full min-w-0 flex-col gap-1.5">
+                  {!jobHasPartnerSet(job) && job.status === "auto_assigning" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={cancellingAutoAssign}
+                      disabled={
+                        signingOffPartner ||
+                        savingPartner ||
+                        dispatchingAutoAssign ||
+                        cancellingAutoAssign
+                      }
+                      className="h-auto min-w-0 w-full rounded-md border-amber-500/35 bg-amber-500/5 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
+                      onClick={() => void handleCancelAutoAssign()}
+                    >
+                      Cancel auto assign
+                    </Button>
+                  ) : !jobHasPartnerSet(job) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={dispatchingAutoAssign}
+                      disabled={
+                        signingOffPartner ||
+                        savingPartner ||
+                        dispatchingAutoAssign ||
+                        cancellingAutoAssign
+                      }
+                      className="h-auto min-w-0 w-full rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
+                      onClick={() => void handleQuickAutoAssign()}
+                    >
+                      Auto assign
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={signingOffPartner}
-                    className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                    disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
+                    className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
                     onClick={() => setPartnerModalOpen(true)}
                   >
                     {job.partner_id ? "Swap" : "Assign"}
@@ -8327,7 +8514,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
-                  <Link href="/finance/billing/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
+                  <Link href="/finance/billing" className="text-primary hover:underline inline-flex items-center gap-1">
                     All invoices <ExternalLink className="h-3 w-3" />
                   </Link>
                   <Link href="/finance/billing/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
@@ -9079,6 +9266,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       <CancelJobModal
         jobId={job.id}
         jobReference={job.reference}
+        jobHint={job}
         isOpen={cancelJobOpen}
         onClose={() => setCancelJobOpen(false)}
         onCancelled={(updated) => {
@@ -9177,61 +9365,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
               </div>
               {fixedSwitchPreview ? (
-                <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
-                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Client value (sale)</p>
-                      <p className="font-semibold tabular-nums text-text-primary">
-                        {formatCurrency(Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Partner cost</p>
-                      <p className="font-semibold tabular-nums text-text-primary">
-                        {formatCurrency(Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost))}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Margin</p>
-                      <p
-                        className={cn(
-                          "font-semibold tabular-nums",
-                          (Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) >= 0
-                            ? "text-emerald-700"
-                            : "text-red-600",
-                        )}
-                      >
-                        {formatCurrency(
-                          Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost),
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
-                      <p className="text-text-tertiary">Margin %</p>
-                      <p
-                        className={cn(
-                          "font-semibold tabular-nums",
-                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
-                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) >= 0
-                            ? "text-emerald-700"
-                            : "text-red-600",
-                        )}
-                      >
-                        {Math.round(
-                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
-                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
-                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) *
-                            1000,
-                        ) / 10}
-                        %
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <FixedValuesConfirmPreview
+                  clientRate={fixedInlineClientRate}
+                  partnerCost={fixedInlinePartnerCost}
+                  fallbackSale={fixedSwitchPreview.sale}
+                  fallbackCost={fixedSwitchPreview.cost}
+                />
               ) : null}
             </div>
           )}
@@ -9711,7 +9850,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 </span>
                               ) : null}
                             </div>
-                            {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
+                            <p className="text-[11px] text-text-tertiary truncate">
+                              {formatPartnerPrimaryTradeLabel(p, catalogServicesJobType)}
+                            </p>
                           </div>
                           {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
                         </button>
@@ -9769,7 +9910,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ),
                       ),
                     );
-                    setPartnerAssignBilledHours(String(Math.max(0.5, Number(service.default_hours) || 1)));
+                    setPartnerAssignBilledHours(String(resolveInitialBilledHours(service.default_hours)));
                   }}
                   className="h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                 >
@@ -9994,8 +10135,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.materials_cost = materialsExtra;
                     partnerPatch.partner_agreed_value = Math.round((Number(partnerPatch.partner_cost ?? 0) + materialsExtra) * 100) / 100;
                   }
-                  if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
-                    partnerPatch.status = "scheduled";
+                  if (selectedPartnerId) {
+                    Object.assign(partnerPatch, partnerAssignStatusPatch(job.status));
                   }
                   if (
                     !selectedPartnerId &&
@@ -10187,7 +10328,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <option value="">— No Partner —</option>
               {partners.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
+                  {p.company_name?.trim() || p.contact_name} · {formatPartnerPrimaryTradeLabel(p, catalogServicesJobType)}
                 </option>
               ))}
             </select>

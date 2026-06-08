@@ -25,7 +25,9 @@ import {
   ZD_STATUS_READY_TO_QUOTE,
   ZD_STATUS_SCHEDULED,
   ZD_STATUS_UNASSIGNED,
+  ZD_STATUS_AUTO_ASSIGNING,
 } from "@/lib/zendesk-statuses";
+import { jobStatusForZendeskSync, stalePartnerBookedJobPatch } from "@/lib/job-partner-assign";
 import type { JobStatus, QuoteStatus } from "@/types/database";
 
 // ─── Status maps ─────────────────────────────────────────────────────────────
@@ -62,8 +64,9 @@ export function quoteStatusToZendesk(status: QuoteStatus): number | null {
 export function jobStatusToZendesk(status: JobStatus): number | null {
   switch (status) {
     case "unassigned":
-    case "auto_assigning":
       return ZD_STATUS_UNASSIGNED;
+    case "auto_assigning":
+      return ZD_STATUS_AUTO_ASSIGNING;
     case "scheduled":
     case "late":
     case "need_attention":
@@ -126,7 +129,9 @@ export async function syncJobZendeskStatus(
 
   const { data: job, error } = await supabase
     .from("jobs")
-    .select("id, status, external_source, external_ref")
+    .select(
+      "id, status, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at",
+    )
     .eq("id", jobId)
     .single();
 
@@ -142,7 +147,22 @@ export async function syncJobZendeskStatus(
     return { ok: true, synced: false, skip: "zendesk_not_configured" };
   }
 
-  const customStatusId = jobStatusToZendesk(job.status as JobStatus);
+  const repairPatch = stalePartnerBookedJobPatch(
+    job as Parameters<typeof stalePartnerBookedJobPatch>[0],
+  );
+  if (Object.keys(repairPatch).length > 0) {
+    const { error: repairErr } = await supabase.from("jobs").update(repairPatch).eq("id", jobId);
+    if (repairErr) {
+      console.error(`[zendesk-status-sync] stale partner repair failed job=${jobId}:`, repairErr);
+    } else {
+      Object.assign(job, repairPatch);
+    }
+  }
+
+  const syncStatus = jobStatusForZendeskSync(
+    job as Parameters<typeof jobStatusForZendeskSync>[0],
+  );
+  const customStatusId = jobStatusToZendesk(syncStatus);
   if (customStatusId == null) {
     return { ok: true, synced: false, ticketId, skip: "no_status_mapping" };
   }

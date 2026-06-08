@@ -77,7 +77,7 @@ export function PriorityTasks() {
             id: inv.id,
             title: `Collect overdue ${inv.reference} — ${inv.client_name}`,
             module: "Finance",
-            href: "/finance/billing/invoices",
+            href: "/finance/billing",
             priority: "high",
             deadline: "Overdue",
             assignee: undefined,

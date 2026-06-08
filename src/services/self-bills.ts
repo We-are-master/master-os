@@ -2,8 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
 import {
+  officeCancellationPartnerClawbackGbp,
+  officeCancellationPartnerPayoutGbp,
   partnerCancellationClawbackOwedGbp,
 } from "@/lib/job-cancel-economics";
+import {
+  computePartnerSelfBillDueIso,
+  partnerPayoutCadenceFromTerms,
+  type SelfBillDueResolveContext,
+} from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import {
   isPostgresCheckViolationError,
@@ -87,6 +94,11 @@ export function isSelfBillPayoutVoided(sb: Pick<SelfBill, "status">): boolean {
   return SELF_BILL_PAYOUT_VOID_STATUSES.includes(sb.status);
 }
 
+/** Paid, office-cancelled, or partner void — hide from active ledgers. */
+export function isSelfBillClosed(sb: Pick<SelfBill, "status">): boolean {
+  return sb.status === "paid" || sb.status === "rejected" || isSelfBillPayoutVoided(sb);
+}
+
 function uniqueRef(weekLabel: string, jobRef: string): string {
   const short = jobRef.replace(/\s/g, "").slice(0, 8);
   return `SB-${weekLabel}-${short}`;
@@ -99,6 +111,8 @@ type JobPayoutRow = {
   deleted_at?: string | null;
   partner_cancelled_at?: string | null;
   partner_cancellation_fee?: number | null;
+  cancellation_fee_partner_gbp?: number | null;
+  partner_cancellation_compensation_gbp?: number | null;
 };
 
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
@@ -164,23 +178,32 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   if (!before) return;
   if (before.bill_origin === "internal") return;
   if (before.status === "paid") return;
+  /** Manual office cancel / reject must not be reopened by linked jobs until user explicitly reopens. */
+  if (SELF_BILL_TERMINAL_STATUSES.includes(before.status)) return;
 
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
 
-  /** One jobs query — prefer partner clawback columns when present */
+  /** One jobs query — prefer partner clawback / office cancel fee columns when present */
+  const jobColsWithOfficeFees =
+    "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
   const jobColsWithPartnerClaw =
     "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at, partner_cancellation_fee";
   const jobColsLegacy = "partner_cost, materials_cost, status, deleted_at";
 
   let jobs: JobPayoutRow[];
-  const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
-  if (!try1.error) {
-    jobs = (try1.data ?? []) as JobPayoutRow[];
+  const tryOffice = await supabase.from("jobs").select(jobColsWithOfficeFees).eq("self_bill_id", selfBillId);
+  if (!tryOffice.error) {
+    jobs = (tryOffice.data ?? []) as JobPayoutRow[];
   } else {
-    const tryLegacy = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
-    if (tryLegacy.error) throw try1.error;
-    jobs = (tryLegacy.data ?? []) as JobPayoutRow[];
+    const try1 = await supabase.from("jobs").select(jobColsWithPartnerClaw).eq("self_bill_id", selfBillId);
+    if (!try1.error) {
+      jobs = (try1.data ?? []) as JobPayoutRow[];
+    } else {
+      const tryLegacy = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
+      if (tryLegacy.error) throw tryOffice.error;
+      jobs = (tryLegacy.data ?? []) as JobPayoutRow[];
+    }
   }
 
   const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
@@ -193,11 +216,15 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   }
   const commission = 0;
   let clawAdjustAll = 0;
+  let officePayoutAdjustAll = 0;
   for (const r of jobs) {
     clawAdjustAll += partnerCancellationClawbackOwedGbp(r as Job);
+    clawAdjustAll += officeCancellationPartnerClawbackGbp(r as Job);
+    officePayoutAdjustAll += officeCancellationPartnerPayoutGbp(r as Job);
   }
   const grossLabour = jobValue + materials - commission;
-  const netPayout = Math.round(Math.max(0, grossLabour - clawAdjustAll) * 100) / 100;
+  const netPayout =
+    Math.round(Math.max(0, grossLabour - clawAdjustAll + officePayoutAdjustAll) * 100) / 100;
 
   const { error: uErr } = await supabase
     .from("self_bills")
@@ -229,6 +256,28 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
       }
     }
     return;
+  }
+
+  /** Cancelled jobs with office partner compensation — fee-only payout, no labour lines. */
+  if (netPayout > 0.02) {
+    const reopenPatch: Record<string, unknown> = {
+      status: "accumulating",
+      jobs_count: jobsCount,
+      job_value: jobValue,
+      materials,
+      commission,
+      net_payout: netPayout,
+      payout_void_reason: null,
+      partner_status_label: null,
+    };
+    const { error: reopenErr } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+    if (!reopenErr) return;
+    if (isSupabaseMissingColumnError(reopenErr)) {
+      delete reopenPatch.payout_void_reason;
+      delete reopenPatch.partner_status_label;
+      const { error: retry } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+      if (!retry) return;
+    }
   }
 
   if (jobs.length === 0) return;
@@ -332,12 +381,51 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   if (voidErr) throw voidErr;
 }
 
+/** ISO week bucket follows job start (`scheduled_start_at` → `scheduled_date`). */
+export function jobSelfBillPeriodAnchorYmd(
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date">,
+): string | null {
+  const fromStart = job.scheduled_start_at?.trim().slice(0, 10) ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromStart)) return fromStart;
+  const fromSched = job.scheduled_date?.trim().slice(0, 10) ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromSched)) return fromSched;
+  return null;
+}
+
+/** Self-bill link requires completed execution (`completed_date`). */
+export function jobSelfBillCompletedGateYmd(job: Pick<Job, "completed_date">): string | null {
+  const ymd = job.completed_date?.trim().slice(0, 10) ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+}
+
+/** @deprecated Use `jobSelfBillPeriodAnchorYmd` — kept for imports during transition. */
+export function jobSelfBillWeekAnchorYmd(
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date" | "completed_date">,
+): string | null {
+  return jobSelfBillPeriodAnchorYmd(job);
+}
+
+export function canLinkJobToSelfBill(
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date" | "completed_date">,
+): boolean {
+  return Boolean(jobSelfBillCompletedGateYmd(job) && jobSelfBillPeriodAnchorYmd(job));
+}
+
+export function resolveJobSelfBillWeekAnchor(
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date">,
+): Date | null {
+  const ymd = jobSelfBillPeriodAnchorYmd(job);
+  return ymd ? new Date(`${ymd}T12:00:00`) : null;
+}
+
 export type EnsureWeeklySelfBillOptions = {
   weekAnchorDate?: Date;
+  dueCtx?: SelfBillDueResolveContext;
 };
 
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
+  if (!canLinkJobToSelfBill(job)) return null;
   const supabase = getSupabase();
   let partnerId = job.partner_id.trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
@@ -380,8 +468,20 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     const { error: repairErr } = await supabase.from("jobs").update({ partner_id: partnerId }).eq("id", job.id);
     if (repairErr) throw repairErr;
   }
-  const anchor = options?.weekAnchorDate ?? new Date(job.created_at);
+  const anchor = options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(job);
+  if (!anchor) return null;
   const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
+  const orgTerms = options?.dueCtx?.orgStandardTerms ?? null;
+  const cadence = partnerPayoutCadenceFromTerms(orgTerms);
+  const dueDate =
+    options?.dueCtx && weekEnd
+      ? computePartnerSelfBillDueIso(
+          weekEnd,
+          options.dueCtx.partnerTerms ?? null,
+          options.dueCtx.orgStandardTerms,
+          options.dueCtx.orgReferenceYmd,
+        )
+      : null;
 
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
@@ -418,7 +518,8 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       commission: 0,
       net_payout: 0,
       status: "draft" as const,
-      payment_cadence: "weekly",
+      payment_cadence: cadence,
+      ...(dueDate ? { due_date: dueDate } : {}),
     };
     let { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
     if (insErr && isSupabaseMissingColumnError(insErr, "bill_origin")) {
@@ -484,6 +585,51 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
   });
   return sbId;
+}
+
+/** Office cancel: void self-bill(s) and unlink jobs so refresh/sync cannot reopen them. */
+export async function cancelSelfBillsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const supabase = getSupabase();
+  const patch: Record<string, unknown> = {
+    status: "payout_cancelled",
+    partner_status_label: "Cancelled",
+    jobs_count: 0,
+    job_value: 0,
+    materials: 0,
+    commission: 0,
+    net_payout: 0,
+  };
+  let lastErr: unknown = null;
+  let triedRejectedFallback = false;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { error } = await supabase.from("self_bills").update(patch).in("id", ids);
+    if (!error) {
+      lastErr = null;
+      break;
+    }
+    lastErr = error;
+    const code = (error as { code?: string }).code;
+    const msg = (error as { message?: string }).message ?? "";
+    if (code === "PGRST204" || msg.includes("schema cache") || msg.includes("Could not find")) {
+      delete patch.partner_status_label;
+      continue;
+    }
+    if (
+      (code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint")) &&
+      !triedRejectedFallback
+    ) {
+      patch.status = "rejected";
+      delete patch.partner_status_label;
+      triedRejectedFallback = true;
+      continue;
+    }
+    break;
+  }
+  if (lastErr) throw lastErr;
+
+  const { error: unlinkErr } = await supabase.from("jobs").update({ self_bill_id: null }).in("self_bill_id", ids);
+  if (unlinkErr) throw unlinkErr;
 }
 
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
@@ -636,18 +782,11 @@ export async function createSelfBillFromJob(
   if (fullErr) throw fullErr;
   if (!full) throw new Error("Job not found");
   const j = full as Job;
-  let weekAnchorDate: Date;
-  if (options?.weekAnchorDate) {
-    weekAnchorDate = options.weekAnchorDate;
-  } else {
-    /** Week for the self-bill bucket: scheduled day if set, else job creation (not “today”, which mis-buckets approvals). */
-    const sched = typeof j.scheduled_date === "string" ? j.scheduled_date.trim().slice(0, 10) : "";
-    const anchorDay =
-      sched && /^\d{4}-\d{2}-\d{2}$/.test(sched)
-        ? sched
-        : (j.created_at ? String(j.created_at).slice(0, 10) : "");
-    weekAnchorDate = anchorDay ? new Date(`${anchorDay}T12:00:00`) : new Date();
+  if (!canLinkJobToSelfBill(j)) {
+    throw new Error("Job must have completed_date and a scheduled start before creating a self-bill");
   }
+  const weekAnchorDate = options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(j);
+  if (!weekAnchorDate) throw new Error("Job must have a scheduled start date for self-bill week");
   const id = await ensureWeeklySelfBillForJob(j, { weekAnchorDate });
   if (!id) throw new Error("Partner required for self-bill");
   const row = await getSelfBill(id);

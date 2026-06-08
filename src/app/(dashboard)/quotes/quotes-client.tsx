@@ -46,6 +46,14 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import {
+  ZENDESK_QUOTE_TICKET_FORM_ID,
+  ZENDESK_FIELD_SCOPE,
+  ZENDESK_FIELD_REPLY_STATUS,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
+  buildZendeskCustomFields,
+} from "@/lib/zendesk-form-ids";
+import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { resolveCorporateAccountIdForClient } from "@/services/clients";
@@ -115,6 +123,7 @@ import {
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import {
   clampDepositPercent,
   depositAmountFromPercent,
@@ -1234,7 +1243,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       // the user — opening a ticket first is fine and keeps the flow simple.
       if (formData.__createZendeskTicket) {
         try {
-          const subject = `${formData.title?.trim() || "Quote"} — ${formData.client_name?.trim() || formData.property_address?.trim() || "New quote"}`;
+          const subject = osZendeskCreateTicketSubject(
+            "quote",
+            formData.title,
+            formData.property_address,
+          );
           const lines = [
             `A new quote is being created in the OS.`,
             ``,
@@ -1254,6 +1267,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               entityType:  "quote",
               subject,
               commentBody: lines.join("\n"),
+              ticketFormId: ZENDESK_QUOTE_TICKET_FORM_ID || undefined,
+              customFields: buildZendeskCustomFields([
+                [ZENDESK_FIELD_SCOPE, formData.scope],
+                [ZENDESK_FIELD_REPLY_STATUS, ZENDESK_REPLY_STATUS_SENT_VALUE],
+              ]),
             }),
           });
           const j = await res.json();
@@ -1419,6 +1437,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           userId: profile?.id,
           userName: profile?.full_name,
         });
+
+        if (result.external_source === "zendesk" && result.external_ref?.trim()) {
+          void fetch(`/api/quotes/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+            .catch((err) => console.error("[quotes/create] zendesk sync failed:", err));
+        }
 
         // Close create modal immediately so it never stacks over the drawer; drawer stays hidden while createOpen.
         setCreateOpen(false);
@@ -2732,8 +2755,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         }
         size="lg"
         scrollBody={false}
+        className={cn(
+          routingCreateEntry === "bidding" && createFormVariant === "routing_minimal" && "!h-auto max-h-[min(90dvh,920px)]",
+        )}
       >
-        <div className="grid h-full min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+        <div
+          className={cn(
+            "grid min-h-0 overflow-hidden",
+            routingCreateEntry === "bidding" && createFormVariant === "routing_minimal"
+              ? "max-h-[min(82dvh,800px)] grid-rows-[auto_minmax(0,1fr)]"
+              : "h-full flex-1 grid-rows-[auto_minmax(0,1fr)]",
+          )}
+        >
         {/* Mode toggle — same segmented-control pattern as the Jobs "Rate Type" tabs. */}
         <div className="shrink-0 px-4 pt-3 sm:px-5">
           <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
@@ -6458,7 +6491,7 @@ function QuoteDetailDrawer({
                       <div className="min-w-0 flex-1 py-0.5">
                         <p className="text-sm font-semibold leading-tight text-text-primary line-clamp-2 sm:line-clamp-1">{p.company_name}</p>
                         <p className="mt-0.5 line-clamp-2 text-xs text-text-tertiary sm:line-clamp-1">
-                          {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "Trade not set")}
+                          {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : formatPartnerPrimaryTradeLabel(p, routingTypeOfWorkCatalog)}
                           {p.location?.trim() ? <> · {p.location}</> : null}
                         </p>
                       </div>
@@ -7610,6 +7643,19 @@ function seedManualProposalLines(typeOfWorkTitle: string): ProposalLineRow[] {
   ];
 }
 
+/** Toggle partner pick without focusing a hidden checkbox (avoids scroll jump in tall create-quote modals). */
+function toggleCreateQuotePartnerSelection(
+  setSelectedPartnerIds: React.Dispatch<React.SetStateAction<Set<string>>>,
+  partnerId: string,
+) {
+  setSelectedPartnerIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(partnerId)) next.delete(partnerId);
+    else next.add(partnerId);
+    return next;
+  });
+}
+
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({
   onSubmit,
@@ -8218,10 +8264,17 @@ function CreateQuoteForm({
     }
   };
 
+  const routingInviteLayout = variant === "routing_minimal" && !continuationQuote;
+
   return (
     <form
       onSubmit={handleSubmit}
-      className="grid h-full min-h-0 w-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+      className={cn(
+        "grid w-full overflow-hidden",
+        routingInviteLayout
+          ? "max-h-[min(78dvh,680px)] grid-rows-[minmax(0,1fr)_auto]"
+          : "h-full min-h-0 grid-rows-[minmax(0,1fr)_auto]",
+      )}
     >
       <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
         <div className="space-y-4">
@@ -8488,9 +8541,12 @@ function CreateQuoteForm({
                     const isMatched = partnersForTrade.some((m) => m.id === p.id);
                     const isSelected = selectedPartnerIds.has(p.id);
                     return (
-                      <label
+                      <button
                         key={p.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => toggleCreateQuotePartnerSelection(setSelectedPartnerIds, p.id)}
+                        className={`flex w-full items-center gap-3 p-3 rounded-xl border text-left transition-all ${
                           isSelected
                             ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
                             : isMatched
@@ -8498,17 +8554,6 @@ function CreateQuoteForm({
                               : "border-border bg-card hover:border-border-strong hover:bg-surface-hover"
                         }`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            const next = new Set(selectedPartnerIds);
-                            if (e.target.checked) next.add(p.id);
-                            else next.delete(p.id);
-                            setSelectedPartnerIds(next);
-                          }}
-                          className="sr-only"
-                        />
                         <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
@@ -8536,12 +8581,17 @@ function CreateQuoteForm({
                             {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
                           </span>
                         </div>
-                      </label>
+                      </button>
                     );
                   })
                 )}
               </div>
               <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
+              {selectedPartnerIds.size > 0 ? (
+                <p className="text-[10px] text-text-tertiary mt-1 leading-snug">
+                  Account, scope and photos are above — scroll up to review before creating.
+                </p>
+              ) : null}
             </div>
           ) : null}
         </>
@@ -9005,25 +9055,17 @@ function CreateQuoteForm({
                 partnersForTrade.map((p) => {
                   const isSelected = selectedPartnerIds.has(p.id);
                   return (
-                    <label
+                    <button
                       key={p.id}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => toggleCreateQuotePartnerSelection(setSelectedPartnerIds, p.id)}
+                      className={`flex w-full items-center gap-3 p-3 rounded-xl border text-left transition-all ${
                         isSelected
                           ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
                           : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
                       }`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={(e) => {
-                          const next = new Set(selectedPartnerIds);
-                          if (e.target.checked) next.add(p.id);
-                          else next.delete(p.id);
-                          setSelectedPartnerIds(next);
-                        }}
-                        className="sr-only"
-                      />
                       <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
@@ -9045,7 +9087,7 @@ function CreateQuoteForm({
                           {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
                         </span>
                       </div>
-                    </label>
+                    </button>
                   );
                 })
               )}

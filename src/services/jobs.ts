@@ -8,6 +8,7 @@ import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
   ensureWeeklySelfBillForJob,
+  canLinkJobToSelfBill,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
@@ -29,6 +30,7 @@ import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
   jobIsBookedPipelineWithoutPartner,
+  partnerAssignStatusPatch,
 } from "@/lib/job-partner-assign";
 import { resolveJobGeocode } from "@/lib/job-geocode-client";
 import { officePartnerTimerResetPatch } from "@/lib/partner-live-timer";
@@ -954,15 +956,17 @@ export async function createJob(
 
 /** Slim read for `updateJob` gates — avoids loading the full jobs row before PATCH. */
 const JOB_UPDATE_GATE_COLUMNS =
-  "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date";
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date,completed_date";
 
 /** Same gates without `scheduled_finish_date` (migration 064) for DBs where PostgREST returns 400. */
 const JOB_UPDATE_GATE_COLUMNS_NO_FINISH =
-  "status,scheduled_date,scheduled_start_at,scheduled_end_at";
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+
+const JOB_EXECUTION_DONE_STATUSES = new Set<Job["status"]>(["final_check", "awaiting_payment", "completed"]);
 
 async function fetchJobGatesForUpdate(id: string): Promise<Pick<
   Job,
-  "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+  "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date" | "completed_date"
 > | null> {
   if (!id?.trim()) return null;
   const supabase = getSupabase();
@@ -977,7 +981,7 @@ async function fetchJobGatesForUpdate(id: string): Promise<Pick<
   if (error || !data) return null;
   return data as Pick<
     Job,
-    "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+    "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date" | "completed_date"
   >;
 }
 
@@ -986,6 +990,8 @@ export type UpdateJobOptions = {
   skipSelfBillSync?: boolean;
   /** When cancelling + creating a cancellation-fee invoice first, exclude those ids from void. */
   preserveInvoiceIdsOnCancel?: string[];
+  /** Office cancel with fees: `applyOfficeCancellationFees` voids docs after the row patch. */
+  skipCancelDocVoid?: boolean;
 };
 
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
@@ -1029,11 +1035,25 @@ export async function updateJob(
       Object.assign(effectivePatch, officePartnerTimerResetPatch());
     }
     if (jobHasPartnerSet(mergedPartner as Job)) {
-      const tentativeStatus =
-        effectivePatch.status !== undefined ? (effectivePatch.status as Job["status"]) : beforeGates.status;
-      if (tentativeStatus === "unassigned") {
-        effectivePatch.status = "scheduled";
+      const hadPartnerBefore = partnerRow ? jobHasPartnerSet(partnerRow as Job) : false;
+      if (!hadPartnerBefore) {
+        Object.assign(effectivePatch, partnerAssignStatusPatch(beforeGates.status as Job["status"]));
+      } else {
+        const tentativeStatus =
+          effectivePatch.status !== undefined ? (effectivePatch.status as Job["status"]) : beforeGates.status;
+        if (tentativeStatus === "unassigned") {
+          effectivePatch.status = "scheduled";
+        }
       }
+    }
+  }
+  const nextStatus = (effectivePatch.status ?? beforeGates.status) as Job["status"];
+  if (JOB_EXECUTION_DONE_STATUSES.has(nextStatus)) {
+    const patchCompleted =
+      typeof effectivePatch.completed_date === "string" ? effectivePatch.completed_date.trim().slice(0, 10) : "";
+    const existingCompleted = beforeGates.completed_date?.trim().slice(0, 10) ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(patchCompleted) && !/^\d{4}-\d{2}-\d{2}$/.test(existingCompleted)) {
+      effectivePatch.completed_date = new Date().toISOString().slice(0, 10);
     }
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
@@ -1091,14 +1111,22 @@ export async function updateJob(
     throw new Error("Job update did not affect any row (check permissions or job id).");
   }
 
-  const row = rows[0] as Job;
+  let row = rows[0] as Job;
   if (!row.id?.toString().trim()) {
     throw new Error("Job update returned a row without id — refresh the page.");
+  }
+  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canLinkJobToSelfBill(row)) {
+    try {
+      const sbId = await ensureWeeklySelfBillForJob(row);
+      if (sbId) row = { ...row, self_bill_id: sbId };
+    } catch (e) {
+      console.error("updateJob: auto-link weekly self-bill failed", { jobId: row.id, ref: row.reference }, e);
+    }
   }
   if (!options?.skipSelfBillSync) {
     await syncSelfBillAfterJobChange(row);
   }
-  if (row.status === "cancelled") {
+  if (row.status === "cancelled" && !options?.skipCancelDocVoid) {
     try {
       await Promise.all([
         cancelOpenInvoicesForJobCancellation({

@@ -29,7 +29,13 @@ import {
 } from "@/lib/zendesk";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
+import {
+  buildJobConfirmationHtml,
+  formatJobConfirmationArrivalWindow,
+  formatJobConfirmationLongDate,
+  resolveCustomerGreetingName,
+  splitPropertyAddressAndPostcode,
+} from "@/lib/zendesk-job-confirmation";
 import {
   buildJobCancelledHtml,
   buildJobCompletedHtml,
@@ -39,6 +45,47 @@ import {
 import { createPartnerReportToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
+
+type PartnerEmbed = {
+  company_name?: string | null;
+  contact_name?: string | null;
+  email?: string | null;
+  zendesk_user_id?: number | string | null;
+};
+
+const CLIENT_CONFIRMATION_STATUSES = new Set(["scheduled", "late"]);
+
+async function resolveJobTypeOfWorkLabel(
+  supabase: SupabaseClient,
+  catalogServiceId: string | null | undefined,
+  title: string | null | undefined,
+): Promise<string> {
+  const id = catalogServiceId?.trim();
+  if (id) {
+    const { data } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", id)
+      .maybeSingle();
+    const name = (data as { name?: string | null } | null)?.name?.trim();
+    if (name) return name;
+  }
+  return title?.trim() || "Maintenance";
+}
+
+function partnerFromJobEmbed(job: unknown): {
+  email: string;
+  name: string;
+  zendeskUserId?: string;
+} {
+  const partnerRow = (job as { partners?: PartnerEmbed | PartnerEmbed[] | null }).partners;
+  const p = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
+  return {
+    email: p?.email?.trim() ?? "",
+    name: p?.company_name?.trim() || p?.contact_name?.trim() || "",
+    zendeskUserId: p?.zendesk_user_id != null ? String(p.zendesk_user_id) : undefined,
+  };
+}
 
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
 
@@ -50,19 +97,20 @@ import { appBaseUrl } from "@/lib/app-base-url";
 export async function dispatchJobCreatedZendesk(args: {
   jobId: string;
   client?: SupabaseClient;
-}): Promise<{ ok: boolean; mainPosted?: boolean; sideConvId?: string | null; error?: string }> {
+}): Promise<{ ok: boolean; mainPosted?: boolean; sideConvId?: string | null; skipped?: string; error?: string }> {
   const supabase = args.client ?? createServiceClient();
 
   const { data: job, error } = await supabase
     .from("jobs")
     .select(`
-      id, reference, title, property_address, scope,
-      scheduled_date, scheduled_start_at, total_value,
-      external_source, external_ref, partner_id, client_id,
+      id, reference, title, property_address, scope, status,
+      scheduled_date, scheduled_start_at, scheduled_end_at, total_value,
+      catalog_service_id,
+      external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
       clients ( name ),
-      partners ( name, email )
+      partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -75,14 +123,19 @@ export async function dispatchJobCreatedZendesk(args: {
   if (!ticketId) return { ok: true };
   if (!isZendeskConfigured()) return { ok: true };
 
-  // Idempotent claim. Two triggers fire on job creation — the /api/jobs call
-  // and the AFTER INSERT DB trigger (via /api/internal/zendesk/sync-status). A
-  // check-then-set would let both through (both read null) and post the partner
-  // "Job confirmed" side conversation twice. Claim the slot atomically so only
-  // the first caller proceeds; the loser sees 0 rows and bails.
   if ((job as { job_creation_notice_sent_at?: string | null }).job_creation_notice_sent_at) {
     return { ok: true };
   }
+
+  const jobStatus = String((job as { status?: string | null }).status ?? "");
+  const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
+  if (!CLIENT_CONFIRMATION_STATUSES.has(jobStatus) || !dateStr) {
+    return { ok: true, skipped: "not_scheduled" };
+  }
+
+  // Idempotent claim — only after we know the job is booked. Unassigned jobs
+  // created in the OS skip here without claiming so a later transition to
+  // scheduled can still send the customer confirmation.
   const { data: claimed } = await supabase
     .from("jobs")
     .update({ job_creation_notice_sent_at: new Date().toISOString() })
@@ -90,7 +143,7 @@ export async function dispatchJobCreatedZendesk(args: {
     .is("job_creation_notice_sent_at", null)
     .select("id")
     .maybeSingle();
-  if (!claimed) return { ok: true }; // another trigger already claimed → skip
+  if (!claimed) return { ok: true };
 
   type ClientRel = { name?: string | null };
   const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
@@ -110,25 +163,40 @@ export async function dispatchJobCreatedZendesk(args: {
   const clientEmail = billing.documentEmail?.trim() ?? "";
   const clientAccountId = billing.sourceAccountId?.trim() ?? "";
 
-  const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
-  const hour = job.scheduled_start_at
-    ? new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Europe/London",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }).format(new Date(String(job.scheduled_start_at)))
-    : "";
+  let organizationName: string | null = null;
+  if (clientAccountId) {
+    const { data: acct } = await supabase
+      .from("accounts")
+      .select("company_name, contact_name")
+      .eq("id", clientAccountId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    const row = acct as { company_name?: string | null; contact_name?: string | null } | null;
+    organizationName = row?.company_name?.trim() || row?.contact_name?.trim() || null;
+  }
+
+  const greetingName = resolveCustomerGreetingName(organizationName, clientName);
+  const { propertyAddress, propertyPostcode } = splitPropertyAddressAndPostcode(
+    String(job.property_address ?? ""),
+  );
+  const typeOfWork = await resolveJobTypeOfWorkLabel(
+    supabase,
+    (job as { catalog_service_id?: string | null }).catalog_service_id,
+    String(job.title ?? ""),
+  );
 
   const html = buildJobConfirmationHtml({
-    customerName: clientName,
-    reference: String(job.reference ?? ""),
-    title: String(job.title ?? ""),
-    propertyAddress: String(job.property_address ?? ""),
-    scope: (job.scope as string | null) ?? null,
-    scheduledDate: dateStr,
-    scheduledHour: hour,
-    totalGbp: Number(job.total_value ?? 0),
+    greetingName,
+    jobReference: String(job.reference ?? ""),
+    jobTitle: String(job.title ?? "Maintenance job"),
+    jobDate: formatJobConfirmationLongDate(dateStr),
+    arrivalWindow: formatJobConfirmationArrivalWindow({
+      scheduled_start_at: job.scheduled_start_at,
+      scheduled_end_at: (job as { scheduled_end_at?: string | null }).scheduled_end_at,
+    }),
+    propertyAddress,
+    propertyPostcode,
+    typeOfWork,
   });
 
   // Make the booking confirmation reach the CUSTOMER on this ticket. Jobs
@@ -185,16 +253,18 @@ export async function dispatchJobCreatedZendesk(args: {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
   }
 
-  // Open partner side conversation if a partner is already on the job.
+  // Partner side conv here only when a partner is on the job but not yet office-confirmed
+  // (e.g. quote accept). Create Job with a manual partner sets partner_confirmed_at and
+  // fires `assigned` via notifyPartnerJobZendesk — skip to avoid a duplicate thread.
   let sideConvId: string | null =
     (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
 
-  const partnerRow = (job as unknown as { partners?: { name?: string | null; email?: string | null } | { name?: string | null; email?: string | null }[] | null }).partners;
-  const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-  const partnerEmail = partner?.email?.trim() ?? "";
-  const partnerName = partner?.name?.trim() ?? "";
+  const { email: partnerEmail, name: partnerName, zendeskUserId } = partnerFromJobEmbed(job);
+  const partnerConfirmed = Boolean(
+    (job as { partner_confirmed_at?: string | null }).partner_confirmed_at,
+  );
 
-  if (!sideConvId && job.partner_id && partnerEmail) {
+  if (!sideConvId && job.partner_id && partnerEmail && !partnerConfirmed) {
     try {
       // Build the partner-scoped report URL up front and include it as the
       // primary CTA so the partner can submit the report without waiting
@@ -214,12 +284,20 @@ export async function dispatchJobCreatedZendesk(args: {
         console.error("[zendesk-lifecycle] short link upsert for report failed:", err);
       }
       const reportUrl = `${base}${reportShortPath}`;
+      const scheduledHour = job.scheduled_start_at
+        ? new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Europe/London",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }).format(new Date(String(job.scheduled_start_at)))
+        : "";
 
       const sideConvBody = buildPartnerJobConfirmedSideConvBody({
         reference: String(job.reference ?? ""),
         title: String(job.title ?? ""),
         scheduledDate: dateStr,
-        scheduledHour: hour,
+        scheduledHour,
         propertyAddress: String(job.property_address ?? ""),
         scope: (job.scope as string | null) ?? null,
         reportUrl,
@@ -228,6 +306,7 @@ export async function dispatchJobCreatedZendesk(args: {
         ticketId,
         toEmail: partnerEmail,
         toName: partnerName || null,
+        toUserId: zendeskUserId,
         subject: `Job confirmed — #${String(job.reference ?? "")}`,
         htmlBody: sideConvBody,
       });
@@ -265,7 +344,7 @@ async function dispatchJobTerminalNotice(args: {
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
       clients ( name ),
-      partners ( name, email, zendesk_user_id )
+      partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -306,64 +385,8 @@ async function dispatchJobTerminalNotice(args: {
     };
   }
 
-  // The public ticket comment above only reaches the customer. On cancellation
-  // (e.g. an on-hold job being scrapped) the assigned partner must also be told
-  // in their own side-conversation thread, otherwise they keep expecting the
-  // job. Reply on the existing thread, or open one if none exists yet.
-  // Non-fatal: a side-conv failure must not block marking the notice as sent.
-  if (args.status === "cancelled" && job.partner_id) {
-    const partnerRow = (job as unknown as {
-      partners?:
-        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }
-        | { name?: string | null; email?: string | null; zendesk_user_id?: number | string | null }[]
-        | null;
-    }).partners;
-    const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-    const partnerEmail = partner?.email?.trim() ?? "";
-    const partnerName = partner?.name?.trim() ?? "";
-    const partnerUserId =
-      partner?.zendesk_user_id != null ? String(partner.zendesk_user_id) : undefined;
-
-    if (partnerEmail) {
-      const partnerHtml = buildJobCancelledHtml({
-        customerName: partnerName,
-        reference: String(job.reference ?? ""),
-        title: String(job.title ?? ""),
-        reason: (job.cancellation_reason as string | null) ?? null,
-      });
-      const existingScId =
-        (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
-      try {
-        if (existingScId) {
-          await replyToSideConversation({
-            ticketId,
-            sideConversationId: existingScId,
-            toEmail: partnerEmail,
-            toName: partnerName || undefined,
-            toUserId: partnerUserId,
-            htmlBody: partnerHtml,
-          });
-        } else {
-          const created = await createSideConversation({
-            ticketId,
-            toEmail: partnerEmail,
-            toName: partnerName || undefined,
-            toUserId: partnerUserId,
-            subject: `Job cancelled — #${job.reference}`,
-            htmlBody: partnerHtml,
-          });
-          if (created.ok && created.id) {
-            await supabase
-              .from("jobs")
-              .update({ zendesk_side_conversation_id: created.id })
-              .eq("id", args.jobId);
-          }
-        }
-      } catch (err) {
-        console.error("[zendesk-lifecycle] cancel partner side conv failed:", err);
-      }
-    }
-  }
+  // Partner "Job cancelled" email is sent via notifyPartnerJobZendesk (office cancel /
+  // useCancelJob). This lifecycle step only posts the public customer notice on the ticket.
 
   await supabase.from("jobs").update({ [sentColumn]: new Date().toISOString() }).eq("id", args.jobId);
   return { ok: true, posted: true };

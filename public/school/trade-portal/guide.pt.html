@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Portal Trades — Fixfy School</title>
+<style>
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1A1A1A; font-size: 10.5pt; line-height: 1.55; background:#f5f5f0; }
+.content-inner { padding: 0 1.5rem 4rem; max-width: 900px; margin: 0 auto; }
+h1.section { color:#020040; font-size:24pt; font-weight:bold; margin: 0 0 4px 0; }
+.section-eyebrow { color:#059669; font-size:11pt; font-weight:bold; letter-spacing:4px; margin-bottom: 2px; }
+.section-divider { height:3px; background:#10B981; width:60px; margin:10px 0 22px 0; }
+h2.sub { color:#020040; font-size:15pt; font-weight:bold; margin: 22px 0 10px 0; }
+h3.subsub { color:#020040; font-size:12pt; font-weight:bold; margin: 16px 0 6px 0; }
+p { margin-bottom: 10px; } ul, ol { margin: 8px 0 12px 22px; } li { margin-bottom: 6px; }
+.lead { font-size: 12pt; color:#020040; font-weight:600; line-height:1.5; margin-bottom:16px; }
+.callout { background:#ECFDF5; border-left:5px solid #10B981; padding:14px 18px; margin:16px 0; border-radius:0 4px 4px 0; }
+.callout .ctitle { color:#059669; font-size:10pt; font-weight:bold; letter-spacing:2px; margin-bottom:6px; }
+.callout p { margin:0; color:#020040; }
+.callout.tip { background:#F2F0FA; border-left-color:#020040; } .callout.tip .ctitle { color:#020040; }
+table.data { width:100%; border-collapse:collapse; margin:14px 0; font-size:9.5pt; }
+table.data th { background:#020040; color:#fff; text-align:left; padding:9px 12px; font-weight:bold; }
+table.data td { border:1px solid #E0E0E8; padding:8px 12px; vertical-align:top; }
+table.data tr:nth-child(even) td { background:#F7F7FA; }
+.pill { display:inline-block; padding:3px 10px; border-radius:12px; font-size:8.5pt; font-weight:bold; }
+.pill.green { background:#DCFCE7; color:#166534; } .pill.amber { background:#FEF3C7; color:#92400E; }
+.pill.light { background:#F2F0FA; color:#020040; border:1px solid #020040; }
+.diagram { margin:16px 0; padding:18px; background:#F7F7FA; border-radius:8px; text-align:center; }
+.diagram svg { max-width:100%; height:auto; } .diagram .caption { font-size:9pt; color:#4A4A55; font-style:italic; margin-top:8px; }
+.section-start { margin-top:2.5rem; padding-top:1rem; scroll-margin-top:88px; }
+
+@media screen {
+  body { background: #f5f5f0; }
+  .layout { display: block !important; }
+  nav.sidebar { display: none !important; }
+  main { padding: 1.5rem 2rem 4rem !important; max-width: 920px; margin: 0 auto; }
+  section { scroll-margin-top: 88px; margin-top: 2rem; }
+  .hero { margin-top: 0; }
+}
+.school-shell { display: flex; gap: 0; min-height: 100vh; }
+.school-nav {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+  background: #020040; color: #fff; padding: 1rem 0; overflow-y: auto;
+  z-index: 100; box-shadow: 4px 0 24px rgba(2,0,64,.15);
+}
+.school-nav__brand { padding: 0 1rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); margin-bottom: 0.5rem; }
+.school-nav__brand strong { display: block; font-size: 0.95rem; }
+.school-nav__brand strong.phase-blue { color: #60A5FA; }
+.school-nav__brand strong.phase-emerald { color: #34D399; }
+.school-nav__brand span { font-size: 0.7rem; color: rgba(255,255,255,.5); letter-spacing: 0.08em; text-transform: uppercase; }
+.school-nav a {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 1rem; font-size: 0.8rem; color: rgba(255,255,255,.65);
+  text-decoration: none; border-left: 3px solid transparent; transition: all .15s;
+}
+.school-nav a:hover { color: #fff; background: rgba(255,255,255,.06); }
+.school-nav a.active { color: #fff; background: rgba(96,165,250,.25); border-left-color: #3B82F6; }
+.school-nav.trade a.active { background: rgba(52,211,153,.2); border-left-color: #10B981; }
+.school-progress-top { position: fixed; top: 0; left: 240px; right: 0; height: 4px; background: rgba(2,0,64,.08); z-index: 99; }
+.school-progress-top__bar { height: 100%; width: 0%; transition: width .4s ease; }
+.school-progress-top__bar.blue { background: linear-gradient(90deg, #3B82F6, #1D4ED8); }
+.school-progress-top__bar.emerald { background: linear-gradient(90deg, #34D399, #059669); }
+.school-main { margin-left: 240px; flex: 1; padding-top: 4px; }
+.school-chapter-banner {
+  display: flex; align-items: center; gap: 1rem;
+  color: #fff; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  box-shadow: 0 8px 24px rgba(2,0,64,.15);
+}
+.school-chapter-banner.blue { background: linear-gradient(135deg, #020040 0%, #1e3a8a 100%); }
+.school-chapter-banner.emerald { background: linear-gradient(135deg, #020034 0%, #065F46 100%); }
+.school-chapter-banner__icon { font-size: 2rem; line-height: 1; }
+.school-chapter-banner__label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+.school-chapter-banner__xp { margin: 0.15rem 0 0; font-size: 0.75rem; opacity: 0.9; }
+.school-chapter-banner.blue .school-chapter-banner__xp { color: #93C5FD; }
+.school-chapter-banner.emerald .school-chapter-banner__xp { color: #6EE7B7; }
+@media (max-width: 900px) {
+  .school-nav { display: none; }
+  .school-main { margin-left: 0; }
+  .school-progress-top { left: 0; }
+}
+
+.ui-mockup { margin:1.25rem 0; border-radius:12px; overflow:hidden; border:1px solid #e0e0e8; background:#fff; }
+.ui-mockup__bar { background:#1c1917; padding:0.5rem 0.75rem; display:flex; gap:0.35rem; }
+.ui-mockup__dot { width:8px; height:8px; border-radius:50%; }
+.ui-mockup__body { padding:1rem; }
+.ui-mockup__title { font-size:0.65rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#78716c; margin-bottom:0.75rem; }
+.module-icon { display:inline-block; padding:6px 14px; color:#fff; border-radius:4px; font-size:10pt; font-weight:bold; margin-bottom:8px; }
+.cover { background:linear-gradient(135deg,#020034 0%,#065F46 100%); color:#fff; padding:4rem 2rem; text-align:center; border-radius:0 0 16px 16px; margin-bottom:2rem; }
+.cover h1 { font-size:2rem; margin:0.5rem 0; } .cover p { color:rgba(255,255,255,.7); max-width:520px; margin:0 auto; }
+</style>
+</head>
+<body>
+<div class="school-shell">
+<div class="school-progress-top"><div class="school-progress-top__bar emerald" id="schoolScrollProgress"></div></div>
+<nav class="school-nav trade" aria-label="Trade Portal chapters">
+  <div class="school-nav__brand">
+    <span>Fixfy School</span>
+    <strong class="phase-emerald">Fase 3 · Portal Trades</strong>
+  </div>
+  <a href="#chapter-intro" data-nav="intro"><span class="nav-emoji">🤝</span>Fixfy Trade</a>
+  <a href="#chapter-onboarding" data-nav="onboarding"><span class="nav-emoji">📝</span>Candidatura & Login</a>
+  <a href="#chapter-app" data-nav="app"><span class="nav-emoji">📱</span>A App Partner</a>
+  <a href="#chapter-leads-bids" data-nav="leads-bids"><span class="nav-emoji">💰</span>Leads & Bidding</a>
+  <a href="#chapter-on-site" data-nav="on-site"><span class="nav-emoji">🔧</span>No local</a>
+  <a href="#chapter-documents" data-nav="documents"><span class="nav-emoji">📄</span>Documentos</a>
+  <a href="#chapter-payouts" data-nav="payouts"><span class="nav-emoji">💳</span>Pagamentos</a>
+  <a href="#chapter-rules" data-nav="rules"><span class="nav-emoji">⚡</span>Regras</a>
+  <a href="#chapter-faq" data-nav="faq"><span class="nav-emoji">❓</span>FAQ & Ajuda</a>
+</nav>
+<div class="school-main">
+<div class="cover">
+  <img src="/logos/fixfy-wordmark.png" alt="Fixfy" style="height:48px;margin-bottom:1.5rem">
+  <div class="section-eyebrow" style="color:#6EE7B7">FIXFY TRADE · PARTNER GUIDE</div>
+  <h1>Portal Trades Training</h1>
+  <p>Tudo o que um partner precisa — candidatura, app, leads, bids, jobs, documentos e pagamentos.</p>
+</div>
+<div class="content-inner">
+
+<div class="school-chapter-banner emerald" data-chapter="intro">
+  <div class="school-chapter-banner__icon">🤝</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Fixfy Trade</p>
+    <p class="school-chapter-banner__xp">+50 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-intro"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 1</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">O que é a rede de partners</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Fixfy Trade é a rede de partners da Fixfy. Como partner você recebe convites de trabalho, envia preços, executa jobs, entrega relatórios e recebe pagamentos — sem correr atrás do cliente.</p>
+<div class="callout"><div class="ctitle">DOIS LUGARES</div><p><strong>Site Fixfy Trade</strong> — login e candidatura no browser. <strong>App Fixfy Partner</strong> — dia a dia no telemóvel (jobs, agenda, ganhos).</p></div>
+<div class="diagram"><svg viewBox="0 0 680 100" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="70" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Convite / Lead</text>
+  <line x1="135" y1="50" x2="165" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="165,45 173,50 165,55" fill="#ED4B00"/>
+  <rect x="175" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="235" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Bid / Aceitar</text>
+  <line x1="300" y1="50" x2="330" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="330,45 338,50 330,55" fill="#ED4B00"/>
+  <rect x="340" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="400" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Trabalho</text>
+  <line x1="465" y1="50" x2="495" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="495,45 503,50 495,55" fill="#ED4B00"/>
+  <rect x="505" y="30" width="160" height="40" rx="6" fill="#059669"/><text x="585" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Self-bill & Payout</text>
+</svg><div class="caption">O ciclo do partner — da oportunidade ao pagamento</div></div>
+<table class="data"><tr><th>Benefício</th><th>O que significa</th></tr>
+<tr><td><strong>Jobs enviados para si</strong></td><td>Trabalho local qualificado pelo seu trade e postcode</td></tr>
+<tr><td><strong>Pagamento mais rápido</strong></td><td>A Fixfy fatura o cliente; você recebe em calendário claro</td></tr>
+<tr><td><strong>Menos admin</strong></td><td>Agenda, jobs e ganhos numa app só</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="onboarding">
+  <div class="school-chapter-banner__icon">📝</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Candidatura & Login</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-onboarding"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 2</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Apply, sign-in e app</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Passo 1 — Candidatar-se</h2>
+<p>Página <strong>Become a Partner</strong> — três etapas:</p>
+<table class="data"><tr><th>Etapa</th><th>O que enviar</th></tr>
+<tr><td><strong>Account</strong></td><td>Nome, email, telefone, password</td></tr>
+<tr><td><strong>Business</strong></td><td>Empresa, morada, trades, UTR (se self-employed)</td></tr>
+<tr><td><strong>Documents</strong></td><td>ID, seguro, morada, right to work</td></tr></table>
+<p>Após submit: status <span class="pill amber">Onboarding</span> até a equipa Fixfy ativar.</p>
+<h2 class="sub">Passo 2 — Sign in</h2>
+<ol><li>Email de trabalho em <strong>/trade/login</strong></li><li>Código de 6 dígitos por email</li><li>Entra na <strong>Fixfy Partner app</strong></li></ol>
+<p>Ajuda: <strong>support@getfixfy.com</strong></p>
+<h2 class="sub">Passo 3 — App no telemóvel</h2>
+<p>Instale <strong>Fixfy Partner</strong> (App Store). Notificações ligadas para não perder convites.</p>
+
+
+<div class="school-chapter-banner emerald" data-chapter="app">
+  <div class="school-chapter-banner__icon">📱</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · A App Partner</p>
+    <p class="school-chapter-banner__xp">+100 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-app"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 3</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Convites, agenda e jobs</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Áreas da app</h2>
+<table class="data"><tr><th>Área</th><th>Para que serve</th></tr>
+<tr><td><strong>Job invitations</strong></td><td>Quote em Bidding ou job já atribuído — responda rápido</td></tr>
+<tr><td><strong>My jobs / schedule</strong></td><td>Jobs atribuídos, datas, morada, navegação</td></tr>
+<tr><td><strong>Leads</strong></td><td>Oportunidades da ops antes de quote completo — tap <strong>Contact</strong></td></tr>
+<tr><td><strong>Profile & coverage</strong></td><td>Trades, raio/postcodes, dados da empresa</td></tr>
+<tr><td><strong>Documents</strong></td><td>Upload e renovação de compliance</td></tr>
+<tr><td><strong>Earnings</strong></td><td>Self-bills e histórico de pagamentos</td></tr></table>
+<div class="ui-mockup"><div class="ui-mockup__bar"><span class="ui-mockup__dot" style="background:#ef4444"></span><span class="ui-mockup__dot" style="background:#eab308"></span><span class="ui-mockup__dot" style="background:#22c55e"></span></div>
+<div class="ui-mockup__body"><p class="ui-mockup__title">Fixfy Partner — Home</p>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.7rem">
+<div style="background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:0.6rem"><strong style="color:#065f46">2</strong><br>Convites novos</div>
+<div style="background:#fff7ed;border:1px solid #ED4B00;border-radius:8px;padding:0.6rem"><strong style="color:#C73A00">1</strong><br>Lead disponível</div>
+<div style="background:#eff6ff;border:1px solid #3b82f6;border-radius:8px;padding:0.6rem"><strong style="color:#1d4ed8">3</strong><br>Jobs esta semana</div>
+<div style="background:#f5f5f4;border:1px solid #d6d3d1;border-radius:8px;padding:0.6rem"><strong>£2.4k</strong><br>Ganhos período</div>
+</div></div></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="leads-bids">
+  <div class="school-chapter-banner__icon">💰</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Leads & Bidding</p>
+    <p class="school-chapter-banner__xp">+100 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-leads-bids"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 4</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Contact e preços</h1>
+<div class="section-divider"></div>
+
+<div class="callout"><div class="ctitle">LEADS</div><p>A ops publica oportunidades na Trade. Só vê se o trade e a zona batem certo. <strong>Contact</strong> = quero estar envolvido. Não é job confirmado.</p></div>
+<h2 class="sub">Bidding (quoting)</h2>
+<p>Quote em <strong>Bidding</strong> — convite para enviar preço:</p>
+<ul><li>Preço de mão-de-obra</li><li>Materiais se aplicável</li><li>Notas (acesso, pressupostos)</li></ul>
+<p>A Fixfy compara bids e manda proposta ao cliente. <strong>Você não fala com o cliente diretamente.</strong></p>
+<div class="ui-mockup"><div class="ui-mockup__body"><p class="ui-mockup__title">Fluxo bidding</p>
+<div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;font-size:0.65rem;font-weight:700">
+<span style="background:#FEF3C7;padding:0.35rem 0.6rem;border-radius:6px">Convite app</span><span style="color:#ED4B00">→</span>
+<span style="background:#DBEAFE;padding:0.35rem 0.6rem;border-radius:6px">Seu preço</span><span style="color:#ED4B00">→</span>
+<span style="background:#EDE9FE;padding:0.35rem 0.6rem;border-radius:6px">Fixfy revisa</span><span style="color:#ED4B00">→</span>
+<span style="background:#DCFCE7;padding:0.35rem 0.6rem;border-radius:6px">Job atribuído</span></div></div></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="on-site">
+  <div class="school-chapter-banner__icon">🔧</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · No local</p>
+    <p class="school-chapter-banner__xp">+125 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-on-site"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 5</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Executar o job</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Workflow no local</h2>
+<table class="data"><tr><th>#</th><th>Ação</th></tr>
+<tr><td>1</td><td><strong>Aceitar</strong> — confirma data/hora</td></tr>
+<tr><td>2</td><td><strong>Travel</strong> — navegação na app</td></tr>
+<tr><td>3</td><td><strong>Start</strong> — inicia cronómetro ao chegar</td></tr>
+<tr><td>4</td><td><strong>Work</strong> — fotos durante o trabalho</td></tr>
+<tr><td>5</td><td><strong>Reports</strong> — start + final report</td></tr>
+<tr><td>6</td><td><strong>Complete</strong> — marca concluído</td></tr></table>
+<p>A ops aprova relatórios antes de faturar e pagar.</p>
+<h2 class="sub">Status do job (partner)</h2>
+<table class="data"><tr><th>Status</th><th>Significado</th></tr>
+<tr><td>Invitation / Bidding</td><td>Fixfy quer o seu preço</td></tr>
+<tr><td>Scheduled</td><td>Atribuído — comparecer</td></tr>
+<tr><td>In Progress</td><td>A trabalhar</td></tr>
+<tr><td>Final Checks</td><td>Relatórios em revisão</td></tr>
+<tr><td>Completed</td><td>Fechado — pagamento segue calendário</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="documents">
+  <div class="school-chapter-banner__icon">📄</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Documentos</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-documents"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 6</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Compliance e certificados</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Obrigatório para todos</h2>
+<table class="data"><tr><th>Documento</th><th>Porquê</th></tr>
+<tr><td>Photo ID</td><td>Identidade</td></tr>
+<tr><td>Proof of Address</td><td>Morada</td></tr>
+<tr><td>Right to Work</td><td>Permissão legal UK</td></tr>
+<tr><td>Public Liability</td><td>Seguro</td></tr></table>
+<p>Self-employed: <strong>UTR</strong>. Limited company: <strong>CRN</strong> + VAT se aplicável.</p>
+<p>Certificados por trade (Gas Safe, NICEIC, etc.) — a app indica o que falta.</p>
+<div class="callout tip"><div class="ctitle">SCORE</div><p>Documentos expirados baixam compliance e podem pausar novos convites. Renove antes de expirar.</p></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="payouts">
+  <div class="school-chapter-banner__icon">💳</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Pagamentos</p>
+    <p class="school-chapter-banner__xp">+100 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-payouts"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 7</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Self-bills e calendário</h1>
+<div class="section-divider"></div>
+
+<ol><li>Job completo + relatórios aprovados</li><li>Trabalho entra no <strong>self-bill semanal</strong></li><li>Pagamento em ciclo regular (tipicamente <strong>quinzenal às sextas</strong>)</li><li>Histórico na secção <strong>Earnings</strong></li></ol>
+<p>Você não fatura o cliente — a Fixfy fatura. Você recebe da Fixfy.</p>
+<h2 class="sub">Status da conta</h2>
+<table class="data"><tr><th>Status</th><th>Significado</th></tr>
+<tr><td><span class="pill amber">Onboarding</span></td><td>Em revisão</td></tr>
+<tr><td><span class="pill green">Active</span></td><td>Recebe convites</td></tr>
+<tr><td><span class="pill light">Needs Attention</span></td><td>Docs em falta/expirados</td></tr>
+<tr><td><span class="pill light">Inactive</span></td><td>Sem convites</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="rules">
+  <div class="school-chapter-banner__icon">⚡</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Regras</p>
+    <p class="school-chapter-banner__xp">+60 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-rules"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 8</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Expectativas e boas práticas</h1>
+<div class="section-divider"></div>
+
+<ul><li><strong>Responda rápido</strong> a bids, leads e convites</li><li><strong>App ativa</strong> — melhora visibilidade no mapa da ops (Available vs Offline)</li><li><strong>Cancelar cedo</strong> — menos de 24h pode ter taxa</li><li><strong>Relatórios completos</strong> — atrasam pagamento</li><li><strong>Coverage realista</strong> — só trades que domina</li></ul>
+
+
+<div class="school-chapter-banner emerald" data-chapter="faq">
+  <div class="school-chapter-banner__icon">❓</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · FAQ & Ajuda</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-faq"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MÓDULO 9</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Perguntas frequentes</h1>
+<div class="section-divider"></div>
+
+<h3 class="subsub">A Fixfy é meu empregador?</h3><p>Não. Você é partner independente.</p>
+<h3 class="subsub">Falo com o cliente?</h3><p>Não em quotes — envia bid à Fixfy.</p>
+<h3 class="subsub">Não recebo trabalho?</h3>
+<ol><li>Status Active?</li><li>Documentos válidos?</li><li>Coverage correta?</li><li>Trades certos?</li><li>Notificações ligadas?</li></ol>
+<p><strong>support@getfixfy.com</strong></p>
+
+
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+  const links = document.querySelectorAll('.school-nav a[data-nav]');
+  const bar = document.getElementById('schoolScrollProgress');
+  const chapters = [...document.querySelectorAll('[id^="chapter-"]')];
+  function onScroll(){
+    const doc = document.documentElement;
+    const pct = (doc.scrollHeight - doc.clientHeight) > 0 ? (doc.scrollTop / (doc.scrollHeight - doc.clientHeight)) * 100 : 0;
+    if (bar) bar.style.width = Math.min(100, pct) + '%';
+    let active = chapters[0];
+    for (const ch of chapters) { if (ch.getBoundingClientRect().top <= 120) active = ch; }
+    if (!active) return;
+    const id = active.id.replace('chapter-','');
+    links.forEach(a => a.classList.toggle('active', a.dataset.nav === id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  if (location.hash) {
+    const el = document.querySelector(location.hash);
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+})();
+</script>
+
+<script src="/school/school-embed.js"></script>
+</body>
+</html>

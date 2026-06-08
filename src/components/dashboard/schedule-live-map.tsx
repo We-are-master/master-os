@@ -12,6 +12,7 @@ import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
 import {
   buildLiveMapJobPopupHtml,
   buildLiveMapPopupHtml,
+  liveMapJobStatusLegend,
   liveMapTradeIconKey,
   liveMapTradeIconKeys,
   renderLiveMapTradeIconSvg,
@@ -21,6 +22,7 @@ import {
   LIVE_MAP_PARTNER_STATUS_COLOR,
   type LiveMapPartnerStatus,
 } from "@/lib/live-map-partner-status";
+import { circleBounds, circlePolygon } from "@/lib/map-circle-polygon";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -31,17 +33,24 @@ const PARTNER_CIRCLE_LAYER_ID = "live-map-partners-circle";
 const PARTNER_INITIALS_LAYER_ID = "live-map-partners-initials";
 const PARTNER_BADGE_LAYER_ID = "live-map-partners-badge";
 const PARTNER_BADGE_ICON_LAYER_ID = "live-map-partners-badge-icon";
-const PARTNER_ONSITE_DOT_LAYER_ID = "live-map-partners-onsite-dot";
-
 const JOB_SOURCE_ID = "live-map-jobs";
 const JOB_CIRCLE_LAYER_ID = "live-map-jobs-circle";
 const JOB_ICON_LAYER_ID = "live-map-jobs-icon";
+/** Removed teardrop pin layer from earlier experiment. */
+const LEGACY_JOB_PIN_LAYER_ID = "live-map-jobs-pin";
+
+const SEARCH_SOURCE_ID = "live-map-search";
+const SEARCH_MARKER_LAYER_ID = "live-map-search-marker";
+const COVERAGE_SOURCE_ID = "live-map-coverage-circle";
+const COVERAGE_FILL_LAYER_ID = "live-map-coverage-fill";
+const COVERAGE_LINE_LAYER_ID = "live-map-coverage-line";
 
 const PARTNER_BADGE_ACTIVE_ICON_PREFIX = "fixfy-partner-badge-active-";
 const PARTNER_BADGE_INACTIVE_ICON_PREFIX = "fixfy-partner-badge-inactive-";
 const JOB_ICON_PREFIX = "fixfy-job-center-";
 
-const PARTNER_BADGE_ACTIVE_COLOR = "#0F6E56";
+/** Trade icon on the white badge — navy for contrast; gray when offline. */
+const PARTNER_BADGE_TRADE_ICON_COLOR = "#020040";
 const PARTNER_BADGE_INACTIVE_COLOR = "#9A9AA0";
 const PARTNER_BADGE_ICON_SIZE = 14;
 const PARTNER_BADGE_RADIUS = 8;
@@ -54,6 +63,18 @@ function toInitials(name: string): string {
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? "")
     .join("");
+}
+
+/** Trade shown in the partner badge — filter wins when scoped, else primary trade (+N). */
+function partnerBadgeTradeLabel(
+  point: Pick<ScheduleLiveMapPoint, "trade" | "trades">,
+  tradeFilter: "all" | string,
+): string {
+  if (tradeFilter !== "all") return tradeFilter;
+  const primary = point.trade?.trim();
+  if (primary) return primary;
+  const fromList = point.trades?.[0]?.trim();
+  return fromList || "";
 }
 
 async function ensureMapImage(map: mapboxgl.Map, imageId: string, svg: string): Promise<void> {
@@ -125,6 +146,8 @@ export interface ScheduleLiveMapPoint {
   /** Optional stats for the hover preview — caller computes from jobs. */
   jobsCompleted?: number;
   jobsInWindow?: number;
+  /** Ring colour on the navy circle — matches the partner's active job status. */
+  jobStrokeColor?: string;
 }
 
 /**
@@ -177,8 +200,21 @@ interface ScheduleLiveMapProps {
   bottomRightOverlay?: ReactNode;
   /** When set, partner markers not matching this status are hidden. */
   partnerStatusFilter?: LiveMapPartnerStatus | null;
+  /** Fly the map to this partner (auth user id). Bump `panNonce` to re-pan the same id. */
+  panToPartnerId?: string | null;
+  panNonce?: number;
+  /** Bump to fly back to the default London framing. */
+  resetToLondonNonce?: number;
   /** When set, job markers not matching this status category are hidden. */
   jobStatusFilter?: LiveMapJobStatusCategory | null;
+  /** Coral pin for coverage scout search target. */
+  searchMarker?: { latitude: number; longitude: number; label?: string } | null;
+  /** Visual job-area circle (miles). */
+  coverageCircle?: { latitude: number; longitude: number; radiusMiles: number } | null;
+  /** When set, partner pins not in this set are dimmed (auth user ids). */
+  coverageHighlightUserIds?: ReadonlySet<string> | null;
+  /** Job ids to emphasize (e.g. just arrived via API). */
+  recentJobIds?: ReadonlySet<string>;
 }
 
 const LONDON_CENTER: [number, number] = [-0.1276, 51.5072];
@@ -225,6 +261,35 @@ function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolea
 export const LIVE_MAP_TOOLBAR_BTN_CLASS =
   "inline-flex items-center gap-1 rounded-md border border-border bg-card px-[9px] py-[5px] text-[11px] font-medium text-text-primary shadow-sm transition-colors hover:bg-surface-hover dark:border-border dark:hover:bg-surface-tertiary";
 
+function LiveMapMarkerLegend() {
+  const jobSampleColor = liveMapJobStatusLegend().find((e) => e.key === "scheduled")?.color ?? "#0F6E56";
+  return (
+    <div
+      className="pointer-events-none flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[#E4E4E8] bg-white/95 px-2.5 py-1.5 text-[10px] font-semibold text-[#020040] shadow-sm backdrop-blur-sm"
+      aria-label="Map marker legend"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 bg-[#020040] text-[7px] font-bold text-white shadow-sm"
+          style={{ borderColor: jobSampleColor }}
+          aria-hidden
+        >
+          HS
+        </span>
+        Partner
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-white shadow-sm"
+          style={{ backgroundColor: jobSampleColor }}
+          aria-hidden
+        />
+        Job
+      </span>
+    </div>
+  );
+}
+
 export function ScheduleLiveMap({
   points,
   className,
@@ -242,6 +307,13 @@ export function ScheduleLiveMap({
   bottomRightOverlay,
   partnerStatusFilter,
   jobStatusFilter,
+  searchMarker,
+  coverageCircle,
+  coverageHighlightUserIds,
+  recentJobIds,
+  panToPartnerId,
+  panNonce = 0,
+  resetToLondonNonce = 0,
 }: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -250,6 +322,7 @@ export function ScheduleLiveMap({
   const [fullscreen, setFullscreen] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const prevRegionRef = useRef<LiveMapRegionPreset | null>(null);
+  const prevPartnerStatusFilterRef = useRef<LiveMapPartnerStatus | null | undefined>(undefined);
 
   const validPoints = useMemo(
     () => {
@@ -375,7 +448,10 @@ export function ScheduleLiveMap({
         await ensureMapImage(
           map,
           `${PARTNER_BADGE_ACTIVE_ICON_PREFIX}${key}`,
-          renderLiveMapTradeIconSvg(key, { size: PARTNER_BADGE_ICON_SIZE, color: PARTNER_BADGE_ACTIVE_COLOR }),
+          renderLiveMapTradeIconSvg(key, {
+            size: PARTNER_BADGE_ICON_SIZE,
+            color: PARTNER_BADGE_TRADE_ICON_COLOR,
+          }),
         );
         await ensureMapImage(
           map,
@@ -402,8 +478,13 @@ export function ScheduleLiveMap({
     if (!map) return;
     if (!mapReady) return;
 
+    const highlightActive =
+      coverageHighlightUserIds != null && coverageHighlightUserIds.size > 0;
+
     const partnerFeatures = validPoints.map((p) => {
       const offline = p.status === "offline";
+      const dimmed = highlightActive && !coverageHighlightUserIds!.has(p.id) ? 1 : 0;
+      const badgeTrade = partnerBadgeTradeLabel(p, tradeFilter);
       return {
         type: "Feature" as const,
         geometry: {
@@ -416,10 +497,9 @@ export function ScheduleLiveMap({
           initials: toInitials(p.name),
           status: p.status,
           offline: offline ? 1 : 0,
-          onsite: p.status === "on_site" ? 1 : 0,
-          badgeIconId: `${offline ? PARTNER_BADGE_INACTIVE_ICON_PREFIX : PARTNER_BADGE_ACTIVE_ICON_PREFIX}${liveMapTradeIconKey(
-            tradeFilter === "all" ? p.trade : tradeFilter,
-          )}`,
+          dimmed,
+          badgeIconId: `${offline ? PARTNER_BADGE_INACTIVE_ICON_PREFIX : PARTNER_BADGE_ACTIVE_ICON_PREFIX}${liveMapTradeIconKey(badgeTrade)}`,
+          strokeColor: p.jobStrokeColor ?? (offline ? "#9A9AA0" : "#FFFFFF"),
         },
       };
     });
@@ -430,6 +510,7 @@ export function ScheduleLiveMap({
 
     const jobFeatures = validJobPoints.map((j) => {
       const selected = selectedJobIds?.has(j.id) ? 1 : 0;
+      const recent = recentJobIds?.has(j.id) ? 1 : 0;
       const statusColor =
         j.statusCategory === "unassigned"
           ? "#A32D2D"
@@ -449,6 +530,7 @@ export function ScheduleLiveMap({
           statusColor,
           jobIconId: `${JOB_ICON_PREFIX}${liveMapTradeIconKey(j.tradeLabel)}`,
           selected,
+          recent,
         },
       };
     });
@@ -457,14 +539,11 @@ export function ScheduleLiveMap({
       features: jobFeatures,
     };
 
-    const existingPartnerSource = map.getSource(PARTNER_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
-    if (existingPartnerSource) {
-      existingPartnerSource.setData(partnerCollection);
-    } else {
-      map.addSource(PARTNER_SOURCE_ID, {
-        type: "geojson",
-        data: partnerCollection,
-      });
+    if (map.getLayer(LEGACY_JOB_PIN_LAYER_ID)) {
+      map.removeLayer(LEGACY_JOB_PIN_LAYER_ID);
+    }
+    if (map.getLayer("live-map-partners-onsite-dot")) {
+      map.removeLayer("live-map-partners-onsite-dot");
     }
 
     const existingJobSource = map.getSource(JOB_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
@@ -477,6 +556,69 @@ export function ScheduleLiveMap({
       });
     }
 
+    const existingPartnerSource = map.getSource(PARTNER_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    if (existingPartnerSource) {
+      existingPartnerSource.setData(partnerCollection);
+    } else {
+      map.addSource(PARTNER_SOURCE_ID, {
+        type: "geojson",
+        data: partnerCollection,
+      });
+    }
+
+    const jobLayerBeforeId = map.getLayer(PARTNER_CIRCLE_LAYER_ID)
+      ? PARTNER_CIRCLE_LAYER_ID
+      : undefined;
+
+    if (!map.getLayer(JOB_CIRCLE_LAYER_ID)) {
+      map.addLayer(
+        {
+          id: JOB_CIRCLE_LAYER_ID,
+          type: "circle",
+          source: JOB_SOURCE_ID,
+          paint: {
+            "circle-color": ["coalesce", ["get", "statusColor"], "#ED4B00"],
+            "circle-radius": ["case", ["==", ["get", "recent"], 1], 24, 20],
+            "circle-stroke-width": [
+              "case",
+              ["==", ["get", "recent"], 1],
+              4,
+              ["==", ["get", "selected"], 1],
+              3,
+              2.5,
+            ],
+            "circle-stroke-color": [
+              "case",
+              ["==", ["get", "recent"], 1],
+              "#ED4B00",
+              ["==", ["get", "selected"], 1],
+              "#020040",
+              "#FFFFFF",
+            ],
+          },
+        },
+        jobLayerBeforeId,
+      );
+    }
+    if (!map.getLayer(JOB_ICON_LAYER_ID)) {
+      map.addLayer(
+        {
+          id: JOB_ICON_LAYER_ID,
+          type: "symbol",
+          source: JOB_SOURCE_ID,
+          layout: {
+            "icon-image": ["get", "jobIconId"],
+            "icon-size": 1,
+            "icon-allow-overlap": true,
+            "icon-anchor": "center",
+            "icon-pitch-alignment": "map",
+            "icon-rotation-alignment": "map",
+          },
+        },
+        jobLayerBeforeId,
+      );
+    }
+
     if (!map.getLayer(PARTNER_CIRCLE_LAYER_ID)) {
       map.addLayer({
         id: PARTNER_CIRCLE_LAYER_ID,
@@ -485,9 +627,16 @@ export function ScheduleLiveMap({
         paint: {
           "circle-color": "#020040",
           "circle-radius": 20,
-          "circle-opacity": ["case", ["==", ["get", "offline"], 1], 0.55, 1],
-          "circle-stroke-width": 2.5,
-          "circle-stroke-color": "white",
+          "circle-opacity": [
+            "case",
+            ["==", ["get", "dimmed"], 1],
+            0.18,
+            ["==", ["get", "offline"], 1],
+            0.55,
+            1,
+          ],
+          "circle-stroke-width": 3,
+          "circle-stroke-color": ["coalesce", ["get", "strokeColor"], "#FFFFFF"],
         },
       });
     }
@@ -523,9 +672,7 @@ export function ScheduleLiveMap({
           "circle-stroke-color": [
             "match",
             ["get", "status"],
-            "on_site", LIVE_MAP_PARTNER_STATUS_COLOR.on_site,
             "in_job", LIVE_MAP_PARTNER_STATUS_COLOR.in_job,
-            "en_route", LIVE_MAP_PARTNER_STATUS_COLOR.en_route,
             "available", LIVE_MAP_PARTNER_STATUS_COLOR.available,
             "offline", LIVE_MAP_PARTNER_STATUS_COLOR.offline,
             LIVE_MAP_PARTNER_STATUS_COLOR.available,
@@ -554,54 +701,147 @@ export function ScheduleLiveMap({
         },
       });
     }
-    if (!map.getLayer(PARTNER_ONSITE_DOT_LAYER_ID)) {
-      // Small white dot at bottom-center of the navy circle — only renders for
-      // on-site partners, so dispatchers can tell "in job" from "actually there".
-      map.addLayer({
-        id: PARTNER_ONSITE_DOT_LAYER_ID,
-        type: "circle",
-        source: PARTNER_SOURCE_ID,
-        filter: ["==", ["get", "onsite"], 1],
-        paint: {
-          "circle-color": "#FFFFFF",
-          "circle-radius": 3,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": LIVE_MAP_PARTNER_STATUS_COLOR.on_site,
-          "circle-translate": [0, 12],
-          "circle-translate-anchor": "viewport",
-        },
-      });
+    if (map.getLayer(PARTNER_CIRCLE_LAYER_ID)) {
+      map.setPaintProperty(PARTNER_CIRCLE_LAYER_ID, "circle-stroke-color", [
+        "coalesce",
+        ["get", "strokeColor"],
+        "#FFFFFF",
+      ]);
+      map.setPaintProperty(PARTNER_CIRCLE_LAYER_ID, "circle-stroke-width", 3);
+    }
+    if (map.getLayer(JOB_ICON_LAYER_ID)) {
+      map.setLayoutProperty(JOB_ICON_LAYER_ID, "icon-anchor", "center");
+      map.setLayoutProperty(JOB_ICON_LAYER_ID, "icon-offset", [0, 0]);
+    }
+  }, [
+    mapReady,
+    validPoints,
+    validJobPoints,
+    selectedJobIds,
+    tradeFilter,
+    coverageHighlightUserIds,
+    recentJobIds,
+  ]);
+
+  /** Coverage scout: search pin + area circle. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const emptyFc = { type: "FeatureCollection" as const, features: [] };
+
+    const ensureSearchLayers = () => {
+      if (!map.getSource(SEARCH_SOURCE_ID)) {
+        map.addSource(SEARCH_SOURCE_ID, { type: "geojson", data: emptyFc });
+      }
+      if (!map.getLayer(SEARCH_MARKER_LAYER_ID)) {
+        const before = map.getLayer(PARTNER_CIRCLE_LAYER_ID) ? PARTNER_CIRCLE_LAYER_ID : undefined;
+        map.addLayer(
+          {
+            id: SEARCH_MARKER_LAYER_ID,
+            type: "circle",
+            source: SEARCH_SOURCE_ID,
+            paint: {
+              "circle-color": "#ED4B00",
+              "circle-radius": 9,
+              "circle-stroke-width": 3,
+              "circle-stroke-color": "#FFFFFF",
+            },
+          },
+          before,
+        );
+      }
+    };
+
+    const ensureCoverageLayers = () => {
+      if (!map.getSource(COVERAGE_SOURCE_ID)) {
+        map.addSource(COVERAGE_SOURCE_ID, { type: "geojson", data: emptyFc });
+      }
+      if (!map.getLayer(COVERAGE_FILL_LAYER_ID)) {
+        const before = map.getLayer(SEARCH_MARKER_LAYER_ID) ? SEARCH_MARKER_LAYER_ID : undefined;
+        map.addLayer(
+          {
+            id: COVERAGE_FILL_LAYER_ID,
+            type: "fill",
+            source: COVERAGE_SOURCE_ID,
+            paint: {
+              "fill-color": "#ED4B00",
+              "fill-opacity": 0.12,
+            },
+          },
+          before,
+        );
+      }
+      if (!map.getLayer(COVERAGE_LINE_LAYER_ID)) {
+        map.addLayer(
+          {
+            id: COVERAGE_LINE_LAYER_ID,
+            type: "line",
+            source: COVERAGE_SOURCE_ID,
+            paint: {
+              "line-color": "#ED4B00",
+              "line-width": 2,
+              "line-opacity": 0.75,
+            },
+          },
+          COVERAGE_FILL_LAYER_ID,
+        );
+      }
+    };
+
+    ensureSearchLayers();
+    ensureCoverageLayers();
+
+    const searchSource = map.getSource(SEARCH_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    if (searchSource) {
+      if (searchMarker) {
+        searchSource.setData({
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: [searchMarker.longitude, searchMarker.latitude],
+              },
+              properties: { label: searchMarker.label ?? "" },
+            },
+          ],
+        });
+      } else {
+        searchSource.setData(emptyFc);
+      }
     }
 
-    if (!map.getLayer(JOB_CIRCLE_LAYER_ID)) {
-      map.addLayer({
-        id: JOB_CIRCLE_LAYER_ID,
-        type: "circle",
-        source: JOB_SOURCE_ID,
-        paint: {
-          "circle-color": ["coalesce", ["get", "statusColor"], "#ED4B00"],
-          "circle-radius": 20,
-          "circle-stroke-width": ["case", ["==", ["get", "selected"], 1], 3, 2.5],
-          "circle-stroke-color": ["case", ["==", ["get", "selected"], 1], "#020040", "#FFFFFF"],
-        },
-      });
+    const coverageSource = map.getSource(COVERAGE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    if (coverageSource) {
+      if (coverageCircle) {
+        const poly = circlePolygon(
+          coverageCircle.longitude,
+          coverageCircle.latitude,
+          coverageCircle.radiusMiles,
+        );
+        coverageSource.setData({
+          type: "FeatureCollection",
+          features: [{ type: "Feature", geometry: poly, properties: {} }],
+        });
+      } else {
+        coverageSource.setData(emptyFc);
+      }
     }
-    if (!map.getLayer(JOB_ICON_LAYER_ID)) {
-      map.addLayer({
-        id: JOB_ICON_LAYER_ID,
-        type: "symbol",
-        source: JOB_SOURCE_ID,
-        layout: {
-          "icon-image": ["get", "jobIconId"],
-          "icon-size": 1,
-          "icon-allow-overlap": true,
-          "icon-anchor": "center",
-          "icon-pitch-alignment": "map",
-          "icon-rotation-alignment": "map",
-        },
-      });
-    }
-  }, [mapReady, validPoints, validJobPoints, selectedJobIds, tradeFilter]);
+  }, [mapReady, searchMarker, coverageCircle]);
+
+  /** Fly to coverage search area when target changes. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !coverageCircle) return;
+    const bounds = circleBounds(
+      coverageCircle.longitude,
+      coverageCircle.latitude,
+      coverageCircle.radiusMiles,
+    );
+    map.fitBounds(bounds, { padding: 80, duration: 700, maxZoom: 13 });
+  }, [mapReady, coverageCircle?.latitude, coverageCircle?.longitude, coverageCircle?.radiusMiles]);
 
   /** Layer events: hover popups + job click selection. */
   useEffect(() => {
@@ -687,7 +927,10 @@ export function ScheduleLiveMap({
     map.on("mouseleave", PARTNER_CIRCLE_LAYER_ID, handlePartnerLeave);
     map.on("mouseenter", JOB_CIRCLE_LAYER_ID, handleJobEnter);
     map.on("mouseleave", JOB_CIRCLE_LAYER_ID, handleJobLeave);
+    map.on("mouseenter", JOB_ICON_LAYER_ID, handleJobEnter);
+    map.on("mouseleave", JOB_ICON_LAYER_ID, handleJobLeave);
     map.on("click", JOB_CIRCLE_LAYER_ID, handleJobClick);
+    map.on("click", JOB_ICON_LAYER_ID, handleJobClick);
     map.on("click", PARTNER_CIRCLE_LAYER_ID, handlePartnerClick);
 
     return () => {
@@ -695,7 +938,10 @@ export function ScheduleLiveMap({
       map.off("mouseleave", PARTNER_CIRCLE_LAYER_ID, handlePartnerLeave);
       map.off("mouseenter", JOB_CIRCLE_LAYER_ID, handleJobEnter);
       map.off("mouseleave", JOB_CIRCLE_LAYER_ID, handleJobLeave);
+      map.off("mouseenter", JOB_ICON_LAYER_ID, handleJobEnter);
+      map.off("mouseleave", JOB_ICON_LAYER_ID, handleJobLeave);
       map.off("click", JOB_CIRCLE_LAYER_ID, handleJobClick);
+      map.off("click", JOB_ICON_LAYER_ID, handleJobClick);
       map.off("click", PARTNER_CIRCLE_LAYER_ID, handlePartnerClick);
     };
   }, [mapReady, partnerById, jobById, onJobMarkerClick, onPartnerMarkerClick, selectedJobIds]);
@@ -753,6 +999,69 @@ export function ScheduleLiveMap({
       map.fitBounds(bounds, { padding: 60, duration: 600, maxZoom: 14 });
     }
   }, [mapReady, routeGeometry]);
+
+  /** Return to the default London view (toolbar / route panel). */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || resetToLondonNonce < 1) return;
+    map.flyTo({
+      center: LONDON_CENTER,
+      zoom: 10.5,
+      duration: 650,
+      essential: true,
+    });
+  }, [mapReady, resetToLondonNonce]);
+
+  /** Pan to a partner when selected from the sidebar or map pin. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !panToPartnerId) return;
+    const target = points.find((p) => p.id === panToPartnerId);
+    if (!target) return;
+    const normalized = normalizeLiveMapCoordinate(target.latitude, target.longitude);
+    if (!normalized) return;
+    map.flyTo({
+      center: [normalized.longitude, normalized.latitude],
+      zoom: 13,
+      duration: 750,
+      essential: true,
+    });
+  }, [mapReady, panToPartnerId, panNonce, points]);
+
+  /** When a partner status row is toggled on, frame every matching pin (not just the viewport). */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const prev = prevPartnerStatusFilterRef.current;
+    prevPartnerStatusFilterRef.current = partnerStatusFilter ?? null;
+    if (prev === undefined) return;
+    if (prev === (partnerStatusFilter ?? null)) return;
+    if (!partnerStatusFilter) return;
+
+    const matching = points.filter((p) => p.status === partnerStatusFilter);
+    const coords = matching
+      .map((p) => normalizeLiveMapCoordinate(p.latitude, p.longitude))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+    if (coords.length === 0) return;
+
+    if (coords.length === 1) {
+      const c = coords[0]!;
+      map.flyTo({
+        center: [c.longitude, c.latitude],
+        zoom: 12,
+        duration: 650,
+        essential: true,
+      });
+      return;
+    }
+
+    const bounds = new mapboxgl.LngLatBounds();
+    for (const c of coords) {
+      bounds.extend([c.longitude, c.latitude]);
+    }
+    map.fitBounds(bounds, { padding: 88, maxZoom: 12, duration: 700 });
+  }, [mapReady, partnerStatusFilter, points]);
 
   /** Fixed regions: only when the user changes the preset (not when filters change). */
   useEffect(() => {
@@ -833,26 +1142,22 @@ export function ScheduleLiveMap({
       aria-modal={fullscreen ? "true" : undefined}
       aria-label={fullscreen ? "Live team map fullscreen" : undefined}
     >
-      {fullscreen ? (
-        <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
-          <span className="truncate text-sm font-semibold text-text-primary">Live team map</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            icon={<Minimize2 className="h-3.5 w-3.5" />}
-            onClick={exitFullscreen}
-          >
-            Exit full screen
-          </Button>
-        </div>
-      ) : null}
-
       <div className="relative flex w-full min-h-0 flex-1 flex-col">
-        {!fullscreen ? (
-          <div className="absolute left-3 right-3 top-3 z-[2] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:justify-between">
-            <div className="flex shrink-0 items-center gap-2">
-              {toolbarExtra}
+        <div className="absolute left-3 right-3 top-3 z-[2] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:justify-between">
+          <div className="flex shrink-0 items-center gap-2">
+            {toolbarExtra}
+            {fullscreen ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2.5 text-xs shadow-sm"
+                icon={<Minimize2 className="h-3 w-3" />}
+                onClick={exitFullscreen}
+              >
+                Exit full screen
+              </Button>
+            ) : (
               <button
                 type="button"
                 className={LIVE_MAP_TOOLBAR_BTN_CLASS}
@@ -861,15 +1166,18 @@ export function ScheduleLiveMap({
                 <Maximize2 className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
                 Full screen
               </button>
-            </div>
-            {filterOverlay ? (
-              <div className="flex min-w-0 w-full flex-1 flex-wrap items-center justify-end gap-1.5 md:min-w-[200px] md:max-w-none sm:gap-2">
-                {filterOverlay}
-              </div>
-            ) : null}
+            )}
           </div>
-        ) : null}
-        {!fullscreen && (bottomLeftOverlay || bottomRightOverlay) ? (
+          {filterOverlay ? (
+            <div className="flex min-w-0 w-full flex-1 flex-wrap items-center justify-end gap-1.5 md:min-w-[200px] md:max-w-none sm:gap-2">
+              {filterOverlay}
+            </div>
+          ) : null}
+        </div>
+        <div className="absolute right-3 top-[3.75rem] z-[2] hidden sm:block">
+          <LiveMapMarkerLegend />
+        </div>
+        {bottomLeftOverlay || bottomRightOverlay ? (
           <>
             <div className="absolute inset-x-3 bottom-3 z-[2] space-y-2 sm:hidden">
               {bottomLeftOverlay ? <div className="w-full">{bottomLeftOverlay}</div> : null}

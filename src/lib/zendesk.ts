@@ -10,7 +10,7 @@
 import { baseStatusForCustomStatusId } from "@/lib/zendesk-statuses";
 
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN?.trim();
-const EMAIL     = process.env.ZENDESK_EMAIL?.trim();
+const EMAIL     = process.env.ZENDESK_EMAIL?.trim() || process.env.ZENDESK_API_EMAIL?.trim();
 const API_TOKEN = process.env.ZENDESK_API_TOKEN?.trim();
 
 function authHeader(): string {
@@ -58,6 +58,10 @@ export interface CreateTicketArgs {
   tags?:          string[];
   /** Optional external link back to the OS job/quote for support agents. */
   externalId?:    string;
+  /** Optional Zendesk ticket form id (Job / Quote form). */
+  ticketFormId?:  number;
+  /** Optional custom field values to prefill the form (id + value). */
+  customFields?:  Array<{ id: number; value: unknown }>;
 }
 
 export interface CreateTicketResult {
@@ -104,6 +108,14 @@ export async function createTicket(args: CreateTicketArgs): Promise<CreateTicket
   };
   if (args.tags && args.tags.length > 0) ticket.tags = args.tags;
   if (args.externalId) ticket.external_id = args.externalId;
+  if (args.ticketFormId && Number.isFinite(args.ticketFormId)) {
+    ticket.ticket_form_id = args.ticketFormId;
+  }
+  if (args.customFields && args.customFields.length > 0) {
+    ticket.custom_fields = args.customFields
+      .filter((f) => f && Number.isFinite(f.id) && f.value != null && f.value !== "")
+      .map((f) => ({ id: f.id, value: f.value }));
+  }
   if (args.customStatusId != null) {
     ticket.custom_status_id = args.customStatusId;
     const baseStatus = baseStatusForCustomStatusId(args.customStatusId);
@@ -336,6 +348,94 @@ export async function getTicketRequester(
   }
 }
 
+/** Read one ticket custom field (e.g. Complaint Description on the on-hold form). */
+export async function getTicketCustomFieldValue(
+  ticketId: string | number,
+  fieldId: number,
+): Promise<{ ok: boolean; value?: string | null; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+  if (!Number.isFinite(fieldId) || fieldId <= 0) {
+    return { ok: false, error: "invalid field id" };
+  }
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authHeader() },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      ticket?: { custom_fields?: Array<{ id?: number; value?: unknown }> };
+    };
+    const fields = json.ticket?.custom_fields ?? [];
+    const match = fields.find((f) => f.id === fieldId);
+    const raw = match?.value;
+    const value =
+      raw == null || raw === ""
+        ? null
+        : typeof raw === "string"
+          ? raw
+          : String(raw);
+    return { ok: true, status: res.status, value };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+export type ZendeskTicketSnapshot = {
+  subject: string | null;
+  /** Custom field id → string value (non-empty only). */
+  fields: Record<number, string>;
+};
+
+/** Load ticket subject + custom fields in one GET (job ingest / repair). */
+export async function getZendeskTicketSnapshot(
+  ticketId: string | number,
+): Promise<{ ok: boolean; ticket?: ZendeskTicketSnapshot; status?: number; error?: string }> {
+  if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
+
+  const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", Authorization: authHeader() },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, status: res.status, error: text.slice(0, 300) };
+    }
+    const json = (await res.json().catch(() => ({}))) as {
+      ticket?: {
+        subject?: string | null;
+        custom_fields?: Array<{ id?: number; value?: unknown }>;
+      };
+    };
+    const raw = json.ticket;
+    const fields: Record<number, string> = {};
+    for (const f of raw?.custom_fields ?? []) {
+      const id = f.id;
+      if (id == null || !Number.isFinite(id)) continue;
+      const rawVal = f.value;
+      if (rawVal == null || rawVal === "" || rawVal === false) continue;
+      fields[id] = typeof rawVal === "string" ? rawVal.trim() : String(rawVal).trim();
+    }
+    return {
+      ok: true,
+      status: res.status,
+      ticket: {
+        subject: raw?.subject?.trim() || null,
+        fields,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
 /**
  * Reassign an existing ticket's requester to `email` (and optionally file it
  * under a Zendesk organization). Updating the requester on an existing ticket
@@ -404,9 +504,29 @@ export const ZENDESK_JOB_ID_FIELD_ID = Number(
   process.env.ZENDESK_JOB_ID_FIELD_ID?.trim() || "5824403479839",
 );
 
-/** Dropdown: on-hold reason id (same values as OS / Settings presets). 0 = disabled. */
+/** Quote reference on ticket (QT-…). When 0, quote sync uses `ZENDESK_JOB_ID_FIELD_ID`. */
+export const ZENDESK_QUOTE_REF_FIELD_ID = Number(
+  process.env.ZENDESK_QUOTE_REF_FIELD_ID?.trim() || "0",
+);
+
+/** Effective ticket field id for quote reference. */
+export function zendeskQuoteRefFieldId(): number {
+  return ZENDESK_QUOTE_REF_FIELD_ID > 0 ? ZENDESK_QUOTE_REF_FIELD_ID : ZENDESK_JOB_ID_FIELD_ID;
+}
+
+/** Dropdown: office cancellation reason (`cancel_{osId}`). 0 = disabled. */
+export const ZENDESK_CANCELLATION_REASON_FIELD_ID = Number(
+  process.env.ZENDESK_CANCELLATION_REASON_FIELD_ID?.trim() || "5834334215583",
+);
+
+/** Multiline: cancellation notes (required when reason = cancel_other). 0 = disabled. */
+export const ZENDESK_CANCELLATION_NOTES_FIELD_ID = Number(
+  process.env.ZENDESK_CANCELLATION_NOTES_FIELD_ID?.trim() || "5834293455647",
+);
+
+/** Dropdown: on-hold reason (`hold_{osId}`). 0 = disabled. */
 export const ZENDESK_ON_HOLD_REASON_FIELD_ID = Number(
-  process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_ON_HOLD_REASON_FIELD_ID?.trim() || "5834320428319",
 );
 
 /** Multiline: customer complaint description (partner email + Zendesk). 0 = disabled. */
@@ -419,10 +539,69 @@ export const ZENDESK_COMPLAINT_SOLUTION_FIELD_ID = Number(
   process.env.ZENDESK_COMPLAINT_SOLUTION_FIELD_ID?.trim() || "0",
 );
 
+/** Tagger: service_catalog.id (UUID) — same field as ZENDESK_TYPE_OF_WORK_FIELD_ID in catalog sync. */
+export const ZENDESK_TYPE_OF_WORK_FIELD_ID = Number(
+  process.env.ZENDESK_TYPE_OF_WORK_FIELD_ID?.trim() || "5687087915551",
+);
+
+/** Tagger: `job_type_fixed` / `job_type_hourly` (Zendesk Job Type field). 0 = disabled. */
+export const ZENDESK_JOB_TYPE_FIELD_ID = Number(
+  process.env.ZENDESK_JOB_TYPE_FIELD_ID?.trim() || "0",
+);
+
+/** Tagger: arrival slot tags (`arrival_morning`, `arrival_early_afternoon`, …). 0 = disabled. */
+export const ZENDESK_ARRIVAL_WINDOW_FIELD_ID = Number(
+  process.env.ZENDESK_ARRIVAL_WINDOW_FIELD_ID?.trim() || "0",
+);
+
+/** Checkbox or dropdown: job created with auto-assign (true/false). 0 = disabled. */
+export const ZENDESK_AUTO_ASSIGN_FIELD_ID = Number(
+  process.env.ZENDESK_AUTO_ASSIGN_FIELD_ID?.trim() || "5811578972703",
+);
+
+/**
+ * Plain `fixed` / `hourly` when Zendesk uses a separate Rate Type field from the
+ * Job Type tagger (`ZENDESK_JOB_TYPE_FIELD_ID`). 0 = disabled.
+ */
+export const ZENDESK_RATE_TYPE_FIELD_ID = Number(
+  process.env.ZENDESK_RATE_TYPE_FIELD_ID?.trim() || "0",
+);
+
+export const ZENDESK_CLIENT_EMAIL_FIELD_ID = Number(
+  process.env.ZENDESK_CLIENT_EMAIL_FIELD_ID?.trim() || "5811705681183",
+);
+
+/** Text: end-client name on the job row (not account company name). 0 = disabled. */
+export const ZENDESK_CLIENT_NAME_FIELD_ID = Number(
+  process.env.ZENDESK_CLIENT_NAME_FIELD_ID?.trim() || "5693105918623",
+);
+
+export const ZENDESK_PROPERTY_ADDRESS_FIELD_ID = Number(
+  process.env.ZENDESK_PROPERTY_ADDRESS_FIELD_ID?.trim() || "5693026186527",
+);
+
+export const ZENDESK_CLIENT_PHONE_FIELD_ID = Number(
+  process.env.ZENDESK_CLIENT_PHONE_FIELD_ID?.trim() || "0",
+);
+
+export const ZENDESK_SCOPE_FIELD_ID = Number(
+  process.env.ZENDESK_SCOPE_FIELD_ID?.trim() || "0",
+);
+
+/** Tagger: Reply Status — OS-created jobs/quotes use the “Sent” option (`reply_replied`). 0 = disabled. */
+export const ZENDESK_REPLY_STATUS_FIELD_ID = Number(
+  process.env.ZENDESK_REPLY_STATUS_FIELD_ID?.trim() || "5698641403423",
+);
+
+/** Zendesk dropdown value for Reply Status = Sent (🟢 Sent). */
+export const ZENDESK_REPLY_STATUS_SENT_VALUE =
+  process.env.ZENDESK_REPLY_STATUS_SENT_VALUE?.trim() || "reply_replied";
+
 export interface SetCustomFieldResult {
   ok: boolean;
   status?: number;
   error?: string;
+  skipped?: string;
 }
 
 /**
@@ -433,22 +612,43 @@ export interface SetCustomFieldResult {
  * Zendesk merges `custom_fields` by id, so sending just this one field leaves
  * every other field on the ticket untouched.
  */
-export async function setTicketCustomField(args: {
+export type TicketCustomFieldEntry = {
+  fieldId: number;
+  value:   string | number | boolean | null;
+};
+
+/**
+ * Set multiple custom fields on one ticket PUT. Zendesk merges by field id.
+ * Skips entries with invalid field ids. No-op when the list is empty.
+ */
+export async function setTicketCustomFields(args: {
   ticketId: string | number;
-  fieldId:  number;
-  value:    string | number | boolean | null;
+  fields:   TicketCustomFieldEntry[];
+  /** When set, updates assignee_id in the same PUT (partner zendesk_user_id). */
+  assigneeId?: number | null;
 }): Promise<SetCustomFieldResult> {
   if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured" };
   }
-  if (!args.ticketId || !Number.isFinite(args.fieldId)) {
-    return { ok: false, error: "ticketId and a numeric fieldId are required" };
+  if (!args.ticketId) {
+    return { ok: false, error: "ticketId is required" };
+  }
+
+  const custom_fields = args.fields
+    .filter((f) => Number.isFinite(f.fieldId) && f.fieldId > 0)
+    .map((f) => ({ id: f.fieldId, value: f.value }));
+
+  const ticket: Record<string, unknown> = {};
+  if (custom_fields.length > 0) ticket.custom_fields = custom_fields;
+  if (args.assigneeId != null && Number.isFinite(args.assigneeId)) {
+    ticket.assignee_id = args.assigneeId;
+  }
+  if (Object.keys(ticket).length === 0) {
+    return { ok: true, skipped: "nothing_to_update" };
   }
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;
-  const body = JSON.stringify({
-    ticket: { custom_fields: [{ id: args.fieldId, value: args.value }] },
-  });
+  const body = JSON.stringify({ ticket });
 
   try {
     const res = await fetch(url, {
@@ -462,14 +662,28 @@ export async function setTicketCustomField(args: {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error(`[zendesk.setTicketCustomField] field=${args.fieldId} ticket=${args.ticketId} failed (${res.status}):`, text.slice(0, 300));
+      console.error(
+        `[zendesk.setTicketCustomFields] ticket=${args.ticketId} failed (${res.status}):`,
+        text.slice(0, 300),
+      );
       return { ok: false, status: res.status, error: text.slice(0, 300) };
     }
     return { ok: true, status: res.status };
   } catch (err) {
-    console.error("[zendesk.setTicketCustomField] network error:", err);
+    console.error("[zendesk.setTicketCustomFields] network error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
   }
+}
+
+export async function setTicketCustomField(args: {
+  ticketId: string | number;
+  fieldId:  number;
+  value:    string | number | boolean | null;
+}): Promise<SetCustomFieldResult> {
+  return setTicketCustomFields({
+    ticketId: args.ticketId,
+    fields:   [{ fieldId: args.fieldId, value: args.value }],
+  });
 }
 
 /**

@@ -92,7 +92,7 @@ function bankForBill(): string | null {
  * - payout_cancelled / payout_lost /
  *   payout_archived / rejected              → cancelled
  * - ready_to_pay / pending_review /
- *   awaiting_payment / audit_required       → approved (ready to release funds)
+ *   awaiting_payment                        → approved (ready to release funds)
  * - everything else (draft, accumulating,
  *   needs_attention)                        → draft (not yet signed off)
  */

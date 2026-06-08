@@ -1,3 +1,5 @@
+import { moneyIncVatLabel } from "@/lib/money-display-label";
+
 /**
  * Quote-sent email body for Zendesk public comments.
  * Posted on the main ticket when a quote PDF is sent to the customer —
@@ -57,10 +59,12 @@ function formatLongDate(iso: string): string {
 }
 
 function formatGbp(value: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style:    "currency",
-    currency: "GBP",
-  }).format(value);
+  return moneyIncVatLabel(
+    new Intl.NumberFormat("en-GB", {
+      style: "currency",
+      currency: "GBP",
+    }).format(value),
+  );
 }
 
 /**

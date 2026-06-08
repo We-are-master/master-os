@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DashboardDateBounds } from "@/lib/dashboard-date-range";
 import { jobBillableRevenue } from "@/lib/job-financials";
+import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
 
 export type PulseTopAccountRow = {
   rowId: string;
@@ -164,6 +165,26 @@ async function fetchViaRpc(
   return rows.slice(0, limit);
 }
 
+async function loadAccountsForPulseTop(supabase: SupabaseClient): Promise<AccountRow[]> {
+  const full = await supabase
+    .from("accounts")
+    .select("id, company_name, contact_name, account_owner_id")
+    .is("deleted_at", null)
+    .limit(5000);
+  if (!full.error) return (full.data ?? []) as AccountRow[];
+
+  if (isPostgrestSelectSchemaError(full.error)) {
+    const slim = await supabase
+      .from("accounts")
+      .select("id, company_name, contact_name")
+      .is("deleted_at", null)
+      .limit(5000);
+    if (!slim.error) return (slim.data ?? []) as AccountRow[];
+  }
+
+  throw full.error;
+}
+
 async function fetchViaClientJoin(
   supabase: SupabaseClient,
   bounds: DashboardDateBounds | null,
@@ -183,18 +204,13 @@ async function fetchViaClientJoin(
       .lte("scheduled_start_at", bounds.toIso);
   }
 
-  const [{ data: jobsData, error: jobsErr }, { data: accountsData }] = await Promise.all([
+  const [{ data: jobsData, error: jobsErr }, accounts] = await Promise.all([
     jobsQuery.limit(5000),
-    supabase
-      .from("accounts")
-      .select("id, company_name, contact_name, account_owner_id")
-      .is("deleted_at", null)
-      .limit(5000),
+    loadAccountsForPulseTop(supabase),
   ]);
   if (jobsErr) throw jobsErr;
 
   const jobs = (jobsData ?? []) as JobRow[];
-  const accounts = (accountsData ?? []) as AccountRow[];
   if (jobs.length === 0) return [];
 
   const accountMeta = new Map<string, AccountRow>();
@@ -445,7 +461,16 @@ export async function fetchPulseTopAccounts(
   bounds: DashboardDateBounds | null,
   limit = 5,
 ): Promise<PulseTopAccountRow[]> {
-  const fromRpc = await fetchViaRpc(supabase, bounds, limit);
-  if (fromRpc) return fromRpc;
-  return fetchViaClientJoin(supabase, bounds, limit);
+  const [fromRpc, fromClient] = await Promise.all([
+    fetchViaRpc(supabase, bounds, limit),
+    fetchViaClientJoin(supabase, bounds, limit),
+  ]);
+
+  const rpcAccounts = fromRpc?.filter((r) => r.isAccount) ?? [];
+  const clientAccounts = fromClient.filter((r) => r.isAccount);
+
+  if (clientAccounts.length > 0) return clientAccounts.slice(0, limit);
+  if (rpcAccounts.length > 0) return rpcAccounts.slice(0, limit);
+
+  return fromClient.length > 0 ? fromClient.slice(0, limit) : (fromRpc ?? []);
 }

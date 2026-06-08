@@ -10,6 +10,8 @@ import {
 } from "@/lib/emails/partner-job-confirmation";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { dispatchAutoAssignJobInvites, sendPushToPartners } from "@/lib/auto-assign-job-invites";
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
+import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -237,6 +239,16 @@ export async function POST(req: NextRequest) {
   const jobId = (inserted as { id: string }).id;
   const jobRef = (inserted as { reference: string }).reference;
 
+  void geocodeUkAddressServer(propertyAddress)
+    .then((coords) => {
+      if (!coords) return;
+      return supabase
+        .from("jobs")
+        .update({ latitude: coords.latitude, longitude: coords.longitude })
+        .eq("id", jobId);
+    })
+    .catch((err) => console.error("[webhook/desk/job] geocode failed:", err));
+
   // ─── Mirror job reference back into the Zendesk ticket field ────────
   // Best-effort, non-blocking — the field is informational for agents.
   void setTicketJobReference(ticketId, jobRef).then((r) => {
@@ -366,8 +378,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
   const partnerFirstName = (p.contact_name?.trim().split(/\s+/)[0])
     || (p.company_name?.trim() ?? "Partner");
 
-  const partnerAppBase = process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim()?.replace(/\/$/, "")
-    || "https://app.getfixfy.com";
+  const reportUrl = await buildPartnerJobReportUrl(params.jobId, params.partnerId);
 
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName,
@@ -380,7 +391,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobType: isHourly ? "hourly" : "fixed",
     priceDisplay,
     partnerNotes,
-    reportUrl: `${partnerAppBase}/jobs/${params.jobReference}/report`,
+    reportUrl,
   });
 
   await createSideConversation({

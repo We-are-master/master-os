@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyPartnerOnHoldToken } from "@/lib/quote-response-token";
+import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
+import type { FrontendSetup } from "@/lib/frontend-setup";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,7 +28,9 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceClient();
   const { data: jobRow, error } = await supabase
     .from("jobs")
-    .select("id, reference, title, property_address, status, partner_id, on_hold_reason, on_hold_submission_at")
+    .select(
+      "id, reference, title, property_address, status, partner_id, external_source, external_ref, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description, on_hold_submission_at",
+    )
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -41,7 +45,11 @@ export async function GET(req: NextRequest) {
     property_address: string | null;
     status: string;
     partner_id: string | null;
+    external_source: string | null;
+    external_ref: string | null;
     on_hold_reason: string | null;
+    on_hold_reason_preset_id: string | null;
+    on_hold_complaint_description: string | null;
     on_hold_submission_at: string | null;
   };
 
@@ -50,12 +58,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "partner_mismatch" }, { status: 403 });
   }
 
+  const { data: settingsRow } = await supabase
+    .from("company_settings")
+    .select("frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  const setup = (settingsRow?.frontend_setup ?? null) as FrontendSetup | null;
+
+  const customerReported = await resolvePartnerComplaintReportedText(job, {
+    setup,
+    client: supabase,
+    backfillOs: true,
+  });
+
   return NextResponse.json({
     ok: true,
     jobReference: job.reference,
     jobTitle: job.title,
     propertyAddress: job.property_address,
-    onHoldReason: job.on_hold_reason,
+    /** Zendesk Complaint Description / OS `on_hold_complaint_description`. */
+    onHoldReason: customerReported,
+    customerReported,
     isOnHold: job.status === "on_hold",
     alreadySubmitted: Boolean(job.on_hold_submission_at),
   });

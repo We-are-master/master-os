@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { setTicketJobReference, setTicketCustomField, ZENDESK_JOB_ID_FIELD_ID } from "@/lib/zendesk";
+import { setTicketCustomField, ZENDESK_JOB_ID_FIELD_ID } from "@/lib/zendesk";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -89,8 +90,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // Mirror the job reference into the ticket's job-id field on link, or clear
   // it on the previously-linked ticket on unlink. Best-effort, non-blocking.
   if (ticketRef) {
-    void setTicketJobReference(ticketRef, jobRef).then((r) => {
-      if (!r.ok) console.error("[zendesk-link] setTicketJobReference failed:", r.error);
+    void syncJobZendeskFormFields(jobId, admin).then((r) => {
+      if (!r.ok) console.error("[zendesk-link] syncJobZendeskFormFields failed:", r.error);
     });
   } else if (prevTicketId) {
     void setTicketCustomField({ ticketId: prevTicketId, fieldId: ZENDESK_JOB_ID_FIELD_ID, value: null });

@@ -9,6 +9,10 @@ import { localCalendarMonthYmdBounds } from "@/lib/overview-dashboard-kpis";
 import { jobBillableRevenue, jobDirectCost } from "@/lib/job-financials";
 import type { OverviewPipelineJobRow } from "@/lib/dashboard-overview-jobs";
 import { CalendarDays, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  WORKFORCE_COST_ACTIVE_OR_FILTER,
+  sumWorkforcePayrollAmount,
+} from "@/lib/workforce-lifecycle";
 
 /**
  * Fixfy brand palette — locked to 5 colors. Any new accent must re-use these.
@@ -143,12 +147,11 @@ export function useDailyOperations(): DailyOpsData {
             .neq("status", "rejected")
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
-          // Every active / onboarding payroll row at its declared amount
-          // (no due_date filter — matches how People → Workforce sums them).
+          // Activated workforce only — onboarding excluded until Activate.
           supabase
             .from("payroll_internal_costs")
             .select("id, amount, lifecycle_stage")
-            .neq("lifecycle_stage", "offboard"),
+            .or(WORKFORCE_COST_ACTIVE_OR_FILTER),
           // Internal self-bills — ad-hoc contractors not backed by a catalog row.
           supabase
             .from("self_bills")
@@ -179,17 +182,15 @@ export function useDailyOperations(): DailyOpsData {
         }
         const billsTotal = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         /**
-         * Workforce cost = every active / onboarding payroll_internal_costs row at
-         * its declared amount + ad-hoc internal self-bills for this month whose
-         * internal_cost_id doesn't match a catalog row (dedup to avoid doubles).
+         * Workforce cost = activated payroll_internal_costs rows only + ad-hoc
+         * internal self-bills (deduped by internal_cost_id).
          */
         type PayrollRow = { id?: string; amount?: number; lifecycle_stage?: string | null };
         type InternalSbRow = { internal_cost_id?: string | null; net_payout?: number };
         const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
         const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
         const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
-        let payrollTotal = 0;
-        for (const p of payrollRows) payrollTotal += Number(p.amount ?? 0);
+        let payrollTotal = sumWorkforcePayrollAmount(payrollRows);
         for (const sb of internalSbRows) {
           const linkedId = sb.internal_cost_id?.trim();
           if (!linkedId || !payrollIds.has(linkedId)) {

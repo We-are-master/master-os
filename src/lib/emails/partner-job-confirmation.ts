@@ -9,6 +9,16 @@
  * change per job.
  */
 
+import {
+  partnerEmailBaseStyles,
+  partnerEmailBodyOpen,
+  partnerEmailGreetingH1Html,
+  partnerEmailHeadBlock,
+  partnerEmailLogoHeaderRow,
+  partnerEmailPreheaderHtml,
+  partnerEmailSplitTitleHtml,
+} from "@/lib/emails/partner-email-layout";
+import { moneyIncVatLabel, splitMoneyIncVatParts } from "@/lib/money-display-label";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
 
@@ -49,7 +59,39 @@ function telHref(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
 }
 
-function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string {
+function partnerEmailEarningsPriceHtml(priceDisplay: string, largeFontPx = 36): string {
+  const { core, hasIncVat } = splitMoneyIncVatParts(priceDisplay);
+  const amount = escapeHtml(core);
+  const amountStyle = [
+    `font-size:${largeFontPx}px`,
+    "line-height:1.15",
+    "font-weight:700",
+    "color:#FFFFFF",
+    "letter-spacing:-1px",
+  ].join(";");
+  if (!hasIncVat) {
+    return `<span style="${amountStyle}">${amount}</span>`;
+  }
+  const vatStyle = [
+    "font-size:13px",
+    "line-height:1.2",
+    "font-weight:600",
+    "color:#ED4B00",
+    "letter-spacing:0",
+    "vertical-align:middle",
+  ].join(";");
+  return `<span style="${amountStyle}">${amount}</span> <span style="${vatStyle}">inc VAT</span>`;
+}
+
+/** JOB-9265 → 9265 */
+export function partnerJobEmailShortRef(jobReference: string): string {
+  return jobReference.replace(/^JOB-/i, "").trim() || jobReference.trim();
+}
+
+function formatPartnerJobEmailSubjectDate(
+  scheduledDate?: string | null,
+  opts?: { includeYear?: boolean },
+): string {
   const raw = scheduledDate?.trim();
   if (!raw) return "TBC";
   const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -59,7 +101,7 @@ function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string
       return d.toLocaleDateString("en-GB", {
         day: "numeric",
         month: "short",
-        year: "numeric",
+        ...(opts?.includeYear === true ? { year: "numeric" } : {}),
         timeZone: "UTC",
       });
     }
@@ -74,12 +116,23 @@ function partnerJobEmailSubject(args: {
   propertyAddress: string;
 }): string {
   const typeOfWork = args.jobTitle.trim() || "Job";
-  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
   const postcode = extractUkPostcode(args.propertyAddress) ?? "—";
   if (args.kind === "offer") {
-    return `New Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
+    const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
+    return `Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
   }
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
   return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
+}
+
+/** e.g. Job Cancelled: General Maintenance - 1 Jun */
+export function partnerJobCancelledEmailSubject(args: {
+  jobTitle: string;
+  scheduledDate?: string | null;
+}): string {
+  const typeOfWork = args.jobTitle.trim() || "Job";
+  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
+  return `Job Cancelled: ${typeOfWork} - ${date}`;
 }
 
 function partnerJobEmailNotesHtmlBlock(notes: string): string {
@@ -116,7 +169,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     client: escapeHtml(data.clientName),
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
-    price: escapeHtml(data.priceDisplay),
+    priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 36),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
     url: escapeHtml(data.reportUrl),
     support: escapeHtml(supportEmail),
@@ -133,54 +186,33 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="x-apple-disable-message-reformatting" />
-<meta name="color-scheme" content="light only" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .info-row td { display: block !important; width: 100% !important; padding: 4px 0 !important; }
-    .info-label { padding-bottom: 2px !important; }
-    .btn-mobile a { display: block !important; }
-    .price-mobile { font-size: 32px !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Job booked. Here's everything you need to get started.</div>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml("Job booked. Here's everything you need to get started.")}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <!-- Header -->
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
 
       <!-- Title -->
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, new job booked for you →</h1>
+        ${partnerEmailSplitTitleHtml(safe.name, "New job booked for you →")}
         <p style="margin:0 0 16px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">Here's everything you need to get started.</p>
       </td></tr>
 
       <!-- Price -->
       <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
+          <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td>
-                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
-                  <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:36px; line-height:42px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
+                  <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${safe.priceHtml}</p>
                 </td>
                 <td align="right" valign="top">
                   <div style="display:inline-block; background-color:#ED4B00; color:#FFFFFF; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">${safe.pill}</div>
@@ -249,12 +281,14 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 </table>
 </body></html>`;
 
-  const text = `Hi ${data.partnerFirstName || "there"}, new job booked for you.
+  const text = `Hi ${data.partnerFirstName || "there"},
+
+New job booked for you.
 
 Job #${data.jobReference}
 ${data.jobTitle}
 
-Earnings: ${data.priceDisplay} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
+Earnings: ${moneyIncVatLabel(data.priceDisplay)} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
 
 Client: ${data.clientName}
 Address: ${data.propertyAddress}
@@ -287,6 +321,8 @@ export interface PartnerJobStatusUpdateData {
   partnerFirstName: string;
   jobReference: string;
   jobTitle: string;
+  /** YYYY-MM-DD — used in cancelled email subject. */
+  scheduledDate?: string | null;
   clientName: string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
@@ -311,7 +347,7 @@ const KIND_HEADLINE: Record<PartnerJobStatusKind, string> = {
   // confirmation_request / booked are handled by their own dedicated builders
   // and never hit this generic status-update layout, but they still need to
   // satisfy the Record type (unused values).
-  confirmation_request: "Please confirm this job",
+  confirmation_request: "Action required",
   booked:               "Job booked",
 };
 
@@ -322,7 +358,8 @@ const KIND_INTRO: Record<PartnerJobStatusKind, string> = {
   resumed:              "This job has been resumed and is active again.",
   completed:            "This job has been marked as complete.",
   rescheduled:          "This job has been moved to a new date.",
-  confirmation_request: "We've allocated this job to you — please accept it.",
+  confirmation_request:
+    "Be quicker than others and secure this job before it gets taken.",
   booked:               "Your job is booked.",
 };
 
@@ -347,7 +384,13 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
   const headline = KIND_HEADLINE[data.kind];
   const intro = KIND_INTRO[data.kind];
   const pillColor = KIND_PILL_COLOR[data.kind];
-  const subject = `${headline} — ${data.jobReference}`;
+  const subject =
+    data.kind === "cancelled"
+      ? partnerJobCancelledEmailSubject({
+          jobTitle: data.jobTitle,
+          scheduledDate: data.scheduledDate,
+        })
+      : `${headline} — ${data.jobReference}`;
 
   const safe = {
     name: escapeHtml(data.partnerFirstName || "there"),
@@ -370,6 +413,16 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     ? `<div style="margin-top:14px; padding:14px; background:#FFF5EE; border:1px solid #FEE5D6; border-radius:6px; font-size:13px; color:#9A2A00;"><strong>Reason:</strong> ${safe.reason}</div>`
     : "";
 
+  const bodyFont =
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const titleBlock =
+    data.kind === "cancelled"
+      ? `${partnerEmailGreetingH1Html(safe.name, { marginBottom: "12px" })}
+        <p style="margin:0 0 12px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">This job has been cancelled.</p>
+        <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">The following job has been cancelled and will no longer be going ahead.</p>`
+      : `${partnerEmailSplitTitleHtml(safe.name, safe.headline)}
+        <p style="margin:0 0 16px 0; ${bodyFont}; font-size:16px; line-height:24px; color:#3A3A55;">${safe.intro}</p>`;
+
   const ctaBlock = data.kind === "cancelled"
     ? "" // No CTA for cancelled — nothing for the partner to do
     : `<tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
@@ -382,35 +435,21 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${safe.headline} — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .info-row td { display: block !important; width: 100% !important; padding: 4px 0 !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`${headline} — ${data.jobReference}`)}
 
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding: 32px 16px;">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+
+${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 8px 40px;" class="px-mobile">
         <div style="display:inline-block; background-color:${pillColor}; color:#FFFFFF; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; margin-bottom:16px;">${safe.status}</div>
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, ${safe.headline.toLowerCase()}</h1>
-        <p style="margin:0 0 16px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">${safe.intro}</p>
+        ${titleBlock}
         ${reasonBlock}
       </td></tr>
 
@@ -456,7 +495,17 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
 </body></html>`;
 
   const reasonText = data.reason ? `\nReason: ${data.reason}\n` : "";
-  const text = `Hi ${data.partnerFirstName || "there"}, ${headline.toLowerCase()}.
+  const name = data.partnerFirstName || "there";
+  const introText =
+    data.kind === "cancelled"
+      ? `Hi ${name},
+
+This job has been cancelled.
+The following job has been cancelled and will no longer be going ahead.`
+      : `Hi ${name},
+
+${headline}.`;
+  const text = `${introText}
 
 Status: ${data.newStatusLabel}
 ${reasonText}
@@ -521,35 +570,25 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Booking rescheduled — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .schedule-stack td { display: block !important; width: 100% !important; padding: 12px 0 !important; }
-    .schedule-arrow { display: none !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Your booking ${safe.ref} has been rescheduled to ${safe.newDate}${safe.newTime ? " at " + safe.newTime : ""}.</div>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles(`    .schedule-stack td { display: block !important; width: 100% !important; padding: 12px 0 !important; }
+    .schedule-arrow { display: none !important; }`)}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(`Your booking ${safe.ref} has been rescheduled to ${safe.newDate}${safe.newTime ? " at " + safe.newTime : ""}.`)}
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <tr><td align="center" style="background-color:#020040; padding:16px 40px;" class="px-mobile">
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:22px; font-weight:700; color:#FFFFFF; letter-spacing:-0.6px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow("16px 40px")}
 
       <tr><td style="padding:36px 40px 20px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:26px; line-height:34px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your booking has been rescheduled 🗓</h1>
+        ${partnerEmailSplitTitleHtml(safe.name, "Your booking has been rescheduled 🗓", {
+          marginBottomAfterHeadline: "10px",
+          fontSize: "26px",
+          lineHeight: "34px",
+        })}
         <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Just a quick heads up — your job has been moved to a new date. Please check the updated schedule below and save it to your calendar.</p>
       </td></tr>
 
@@ -600,7 +639,9 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 </table>
 </body></html>`;
 
-  const text = `Hi ${data.recipientFirstName || "there"}, your booking has been rescheduled.
+  const text = `Hi ${data.recipientFirstName || "there"},
+
+Your booking has been rescheduled.
 
 Was: ${data.oldDateLine}${data.oldTimeLine ? " · " + data.oldTimeLine : ""}
 Now: ${data.newDateLine}${data.newTimeLine ? " · " + data.newTimeLine : ""}
@@ -616,31 +657,82 @@ Fixfy · www.getfixfy.com`;
   return { subject, html, text };
 }
 
+export function partnerJobOnHoldIsComplaint(presetId: string | null | undefined): boolean {
+  return (presetId ?? "").trim() === "complaint";
+}
+
+/** Complaint: `9267 - Action Required: Complaint`. Other reasons: `9267 - Job On Hold - Awaiting Next Stage`. */
+export function partnerJobOnHoldEmailSubject(args: {
+  jobReference: string;
+  presetId: string | null | undefined;
+}): string {
+  const shortRef = partnerJobEmailShortRef(args.jobReference);
+  if (partnerJobOnHoldIsComplaint(args.presetId)) {
+    return `${shortRef} - Action Required: Complaint`;
+  }
+  return `${shortRef} - Job On Hold - Awaiting Next Stage`;
+}
+
 /**
- * Dedicated on-hold email — sent via Zendesk side conversation to the
- * assigned partner when the office puts a job on hold. Layout, copy and
- * styling mirror job-on-hold-partner-PREVIEW.html: red urgency strip,
- * payment-on-hold notice, "what we need from you" evidence list, and a
- * 12-hour deadline notice.
- *
- * The internal `on_hold_reason` is intentionally NOT shown — partners get
- * a fixed evidence checklist instead, matching the approved template.
+ * On-hold email — complaint variant (urgent) or general (awaiting next stage).
  */
 export interface PartnerJobOnHoldData {
   partnerFirstName: string;
   jobReference:     string;
   jobTitle:         string;
   propertyAddress:  string;
-  /** Partner-scoped link to the "resolve this job" form (notes + photos). Primary CTA. */
+  /** On-hold reason preset id from `jobs.on_hold_reason_preset_id`. */
+  presetId:         string | null | undefined;
+  /** Partner-scoped resolve form — complaint variant only. */
   resolveUrl:       string;
-  /**
-   * What the customer reported (the complaint reason). Shown to the partner
-   * so they know what to address. Omitted from the email when empty or when
-   * it's only the generic system placeholder.
-   */
+  /** What the customer reported — complaint variant only. */
   complaintReason?: string | null;
   supportEmail?:    string;
   supportPhone?:    string;
+}
+
+function partnerJobOnHoldJobCardHtml(safe: {
+  ref: string;
+  title: string;
+  address: string;
+  pillLabel: string;
+  pillBg: string;
+  pillColor: string;
+}): string {
+  return `      <tr><td style="padding:0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
+            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
+            <div style="display:inline-block; background-color:${safe.pillBg}; color:${safe.pillColor}; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">${safe.pillLabel}</div>
+            <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>`;
+}
+
+function partnerJobOnHoldFooterHtml(safe: {
+  resolveUrl?: string;
+  showResolveLink: boolean;
+  support: string;
+  supportTel: string;
+  supportTelHref: string;
+}): string {
+  const linkBlock = safe.showResolveLink
+    ? `<p style="margin:0 0 8px 0; font-size:12px; line-height:18px; color:#9A9AAE; word-break:break-all;">Button not working? Paste this link into your browser:<br/><a href="${safe.resolveUrl}" style="color:#ED4B00;">${safe.resolveUrl}</a></p>`
+    : "";
+  return `      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
+        ${linkBlock}
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
+      </td></tr>
+
+      <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
+        <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
+      </td></tr>`;
 }
 
 export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
@@ -650,12 +742,15 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Action required — a complaint was raised on Job ${data.jobReference}`;
+  const isComplaint = partnerJobOnHoldIsComplaint(data.presetId);
+  const subject = partnerJobOnHoldEmailSubject({
+    jobReference: data.jobReference,
+    presetId: data.presetId,
+  });
 
-  // Only surface the reason when it's a real description, not the generic
-  // system placeholder the webhook falls back to.
   const rawReason = (data.complaintReason ?? "").trim();
-  const showReason = rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
+  const showReason =
+    isComplaint && rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
 
   const safe = {
     name:           escapeHtml(data.partnerFirstName || "there"),
@@ -669,7 +764,15 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
     supportTelHref: telHref(supportPhone),
   };
 
-  // Optional "what the customer reported" block, inserted under the job card.
+  const jobCard = partnerJobOnHoldJobCardHtml({
+    ref: safe.ref,
+    title: safe.title,
+    address: safe.address,
+    pillLabel: isComplaint ? "⏸ On hold" : "⏸ Awaiting next stage",
+    pillBg: isComplaint ? "#FBEFD6" : "#E8F4FD",
+    pillColor: isComplaint ? "#C47A00" : "#0B5FFF",
+  });
+
   const reasonBlockHtml = showReason
     ? `
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
@@ -682,55 +785,35 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
       </td></tr>`
     : "";
 
-  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Job on hold — Fixfy</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Job ${safe.ref} is on hold. We need your help to resolve within 12 hours — please reply with the evidence requested.</div>
+  const footer = partnerJobOnHoldFooterHtml({
+    resolveUrl: safe.resolveUrl,
+    showResolveLink: isComplaint,
+    support: safe.support,
+    supportTel: safe.supportTel,
+    supportTelHref: safe.supportTelHref,
+  });
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+  let bodyMiddle: string;
+  let preheader: string;
+  let text: string;
 
-      <tr><td style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
+  if (isComplaint) {
+    preheader = `Job ${safe.ref} — complaint raised. Please respond within 12 hours.`;
+    bodyMiddle = `
+      <tr><td bgcolor="#C8102E" style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required — respond within 12 hours</p>
       </td></tr>
 
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, a complaint was raised on this job — we need your help to resolve</h1>
+        ${partnerEmailSplitTitleHtml(
+          safe.name,
+          "A complaint was raised on this job — we need your help to resolve.",
+        )}
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
-
-      <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
-            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
-            <div style="display:inline-block; background-color:#FBEFD6; color:#C47A00; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">⏸ On hold</div>
-            <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
-            </div>
-          </td></tr>
-        </table>
-      </td></tr>
+${jobCard}
 ${reasonBlockHtml}
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBE3E7; border-left:3px solid #C8102E; border-radius:8px;">
@@ -754,11 +837,10 @@ ${reasonBlockHtml}
         </table>
       </td></tr>
 
-      <!-- Primary CTA: open the resolution form -->
       <tr><td align="center" style="padding:28px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
           <tr><td align="center" style="border-radius:10px; background-color:#ED4B00; background-image:linear-gradient(135deg,#ED4B00 0%,#FF7A29 100%);">
-            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve this job →</a>
+            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve now</a>
           </td></tr>
         </table>
         <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Takes 2 minutes — add a note and snap a few photos, no app or login needed.</p>
@@ -771,211 +853,71 @@ ${reasonBlockHtml}
           </td></tr>
         </table>
       </td></tr>
+${footer}`;
 
-      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
-        <p style="margin:0 0 8px 0; font-size:12px; line-height:18px; color:#9A9AAE; word-break:break-all;">Button not working? Paste this link into your browser:<br/><a href="${safe.resolveUrl}" style="color:#ED4B00;">${safe.resolveUrl}</a></p>
-        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
-      </td></tr>
-
-      <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
-        <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
-        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
-      </td></tr>
-
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-
-  const text =
+    text =
 `ACTION REQUIRED — RESPOND WITHIN 12 HOURS
 
 Hi ${data.partnerFirstName || "there"},
 
-A complaint has been raised about this job, so we've placed it on hold
-while we look into it and we need your help to resolve it. We've committed
-to the customer that we'll resolve within 24 hours, so please reply within
-12 hours.
+A complaint was raised on this job — we need your help to resolve.
 
 Job #${data.jobReference} — ${data.jobTitle}
 Location: ${data.propertyAddress || "—"}
-Status: ON HOLD
 ${showReason ? `\nWhat the customer reported:\n${rawReason}\n` : ""}
 Payment on hold until resolved.
 
-Resolve this job (add a note + photos, no app or login needed):
+Resolve now (add a note + photos, no app or login needed):
 ${data.resolveUrl}
-
-Please send us:
-  • A short written summary of what was done and how you can resolve the issue
-  • Photos of the work area / completed work
-  • Anything relevant — receipts for materials, certificates (CP12, electrical), etc.
 
 Please respond within 12 hours.
 
 Need to talk this through? Call ${supportPhone} or email ${supportEmail}.
 
 Fixfy · www.getfixfy.com`;
+  } else {
+    preheader = `Job ${safe.ref} is on hold — awaiting next stage.`;
+    bodyMiddle = `
+${partnerEmailLogoHeaderRow()}
 
-  return { subject, html, text };
-}
+      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
+        ${partnerEmailSplitTitleHtml(safe.name, "This job is on hold — awaiting next stage")}
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've placed this job on hold while we coordinate the next step. No action is needed from you right now — we'll be in touch when the job is ready to move forward.</p>
+      </td></tr>
+${jobCard}
+${footer}`;
 
-/**
- * "Your bid was approved — you've been booked for this job".
- * Sent in a Side Conversation on the quote's parent ticket the moment OS
- * staff approve a partner's bid. No acceptance step — partner already
- * committed when they submitted the bid.
- */
-export interface PartnerJobBookedFromBidData {
-  partnerFirstName: string;
-  jobReference:     string;
-  jobTitle:         string;
-  clientName:       string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
-  propertyAddress:  string;
-  /** YYYY-MM-DD — used in the email subject line. */
-  scheduledDate?:   string | null;
-  scope:            string;
-  /** £ display value (e.g. "£280.00"). */
-  priceDisplay:     string;
-  /** Partner-scoped report URL — primary CTA. */
-  reportUrl:        string;
-  /** Hourly/fixed + type-of-work rules shown in the blue notice block. */
-  partnerNotes?:    string | null;
-  supportEmail?:    string;
-  supportPhone?:    string;
-}
+    text =
+`JOB ON HOLD — AWAITING NEXT STAGE
 
-export function buildPartnerJobBookedFromBidEmail(data: PartnerJobBookedFromBidData): {
-  subject: string;
-  html:    string;
-  text:    string;
-} {
-  const supportEmail = data.supportEmail ?? "support@getfixfy.com";
-  const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = partnerJobEmailSubject({
-    kind: "booked",
-    jobTitle: data.jobTitle,
-    scheduledDate: data.scheduledDate,
-    propertyAddress: data.propertyAddress,
-  });
+Hi ${data.partnerFirstName || "there"},
 
-  const partnerNotes = data.partnerNotes?.trim() || "";
-  const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
-  const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
+We've placed this job on hold while we coordinate the next step.
 
-  const safe = {
-    name:    escapeHtml(data.partnerFirstName || "there"),
-    ref:     escapeHtml(data.jobReference),
-    title:   escapeHtml(data.jobTitle),
-    client:  escapeHtml(data.clientName),
-    address: escapeHtml(data.propertyAddress),
-    scope:   escapeHtml(data.scope),
-    price:   escapeHtml(data.priceDisplay),
-    url:     escapeHtml(data.reportUrl),
-    support: escapeHtml(supportEmail),
-    supportTel:     escapeHtml(supportPhone),
-    supportTelHref: telHref(supportPhone),
-  };
+Job #${data.jobReference} — ${data.jobTitle}
+Location: ${data.propertyAddress || "—"}
+
+No action is needed from you right now. If you have questions, call ${supportPhone} or email ${supportEmail}.
+
+Fixfy · www.getfixfy.com`;
+  }
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
-      <tr><td style="background-color:#0E8A5F; padding:10px 40px; text-align:center;" class="px-mobile">
-        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">✓ Bid approved — job booked</p>
-      </td></tr>
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
-      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, your bid was approved 🎉</h1>
-        <p style="margin:0 0 8px 0; font-size:16px; line-height:24px; color:#3A3A55;">You've been booked for the job below. We'll handle the customer side from here — no need to confirm anything else.</p>
-      </td></tr>
-      <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
-            <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
-          </td></tr>
-        </table>
-      </td></tr>
-      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
-            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
-            <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Client</p>
-              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.client}</p>
-            </div>
-            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Address</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</p>
-            </div>
-            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Scope of work</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55; white-space:pre-wrap;">${safe.scope}</p>
-            </div>
-          </td></tr>
-        </table>
-      </td></tr>
-${notesBlock}
-      <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
-        <a href="${safe.url}" target="_blank" style="display:inline-block; padding:16px 36px; background-color:#ED4B00; color:#FFFFFF; font-size:15px; font-weight:600; text-decoration:none; border-radius:8px;">Open job in app</a>
-      </td></tr>
-      <tr><td align="center" style="padding:0 40px 16px 40px;" class="px-mobile">
-        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;">${reportDeadlineNote}</p>
-      </td></tr>
-      <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
-        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Questions? Email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a> or call <a href="tel:${safe.supportTelHref}" style="color:#ED4B00;">${safe.supportTel}</a>.</p>
-      </td></tr>
-      <tr><td style="background-color:#F7F7FB; padding:20px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
-        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a></p>
-      </td></tr>
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(preheader)}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+${bodyMiddle}
     </table>
   </td></tr>
 </table>
 </body></html>`;
-
-  const text =
-`BID APPROVED — JOB BOOKED
-
-Hi ${data.partnerFirstName || "there"},
-
-Your bid was approved. You've been booked for:
-Job #${data.jobReference} — ${data.jobTitle}
-Earnings: ${data.priceDisplay}
-Client:   ${data.clientName}
-Address:  ${data.propertyAddress}
-
-Scope:
-${data.scope}
-
-Open the job in the app: ${data.reportUrl}
-
-${partnerNotes ? `Important — before you start:\n${partnerNotes}\n\n` : ""}${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
-
-Questions? ${supportEmail} / ${supportPhone}
-
-Fixfy · www.getfixfy.com`;
 
   return { subject, html, text };
 }
@@ -1022,14 +964,15 @@ export function buildPartnerJobConfirmationRequestEmail(
     propertyAddress: data.propertyAddress,
   });
 
+  const postcode = extractUkPostcode(data.propertyAddress) ?? "—";
+
   const safe = {
     name:    escapeHtml(data.partnerFirstName || "there"),
     ref:     escapeHtml(data.jobReference),
     title:   escapeHtml(data.jobTitle),
-    client:  escapeHtml(data.clientName),
-    address: escapeHtml(data.propertyAddress),
+    postcode: escapeHtml(postcode),
     scope:   escapeHtml(data.scope),
-    price:   escapeHtml(data.priceDisplay),
+    priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 32),
     accept:  escapeHtml(data.acceptUrl),
     hours:   String(responseHours),
     support: escapeHtml(supportEmail),
@@ -1043,40 +986,30 @@ export function buildPartnerJobConfirmationRequestEmail(
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${escapeHtml(subject)}</title>
-<style>
-  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
-  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
-  a { color: #ED4B00; text-decoration: underline; }
-  @media screen and (max-width: 600px) {
-    .container { width: 100% !important; }
-    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
-    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
-    .btn-mobile a { display: block !important; }
-  }
-</style>
-</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+${partnerEmailHeadBlock()}
+${partnerEmailBaseStyles()}
+</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml("Be quicker than others and secure this job before it gets taken.")}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
-    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
-      <tr><td style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
-        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required — respond within ${safe.hours} hours</p>
+    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td bgcolor="#0B5FFF" style="background-color:#0B5FFF; padding:10px 40px; text-align:center;" class="px-mobile">
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⏱ Action required</p>
       </td></tr>
-      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
-        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
-      </td></tr>
+${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, please confirm this job</h1>
-        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the job below to you. Tap <strong style="color:#0A0A1F;">Accept job</strong> within ${safe.hours} hours so we can confirm the booking with the customer.</p>
+        ${partnerEmailGreetingH1Html(safe.name)}
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">Be quicker than others and secure this job before it gets taken.</p>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">We've allocated the live job below for you. Tap <strong style="color:#0A0A1F;">Accept Job Now</strong> so we can immediately confirm the booking with the customer.</p>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">The faster you accept, the higher your chances of securing the work.</p>
       </td></tr>
       <tr><td style="padding:0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#020040; background-image:linear-gradient(135deg,#020040 0%,#0A0A2E 100%); border-radius:10px;">
-          <tr><td style="padding:24px;">
-            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:rgba(255,255,255,0.64);">Your earnings</p>
-            <p style="margin:0; font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">${safe.price}</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#020040" style="background-color:#020040; border-radius:10px;">
+          <tr><td bgcolor="#020040" style="padding:24px; background-color:#020040;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#B8B8D0;">Your earnings</p>
+            <p class="price-mobile" style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${safe.priceHtml}</p>
           </td></tr>
         </table>
       </td></tr>
@@ -1086,12 +1019,8 @@ export function buildPartnerJobConfirmationRequestEmail(
             <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
             <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
             <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Client</p>
-              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.client}</p>
-            </div>
-            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
-              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Address</p>
-              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</p>
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Area</p>
+              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.postcode}</p>
             </div>
             <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
               <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Scope of work</p>
@@ -1102,7 +1031,7 @@ export function buildPartnerJobConfirmationRequestEmail(
       </td></tr>
       ${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
-        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">✓ Accept job</a>
+        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
         <p style="margin:0 0 8px 0; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
@@ -1117,23 +1046,26 @@ export function buildPartnerJobConfirmationRequestEmail(
 </body></html>`;
 
   const text =
-`ACTION REQUIRED — RESPOND WITHIN ${responseHours} HOURS
+`⏱ ACTION REQUIRED
 
 Hi ${data.partnerFirstName || "there"},
 
-We've allocated this job to you. Please confirm within ${responseHours} hours:
+Be quicker than others and secure this job before it gets taken.
+
+We've allocated the live job below for you. Tap "Accept Job Now" so we can immediately confirm the booking with the customer.
+
+The faster you accept, the higher your chances of securing the work.
 
 Job #${data.jobReference} — ${data.jobTitle}
-Earnings: ${data.priceDisplay}
-Client:   ${data.clientName}
-Address:  ${data.propertyAddress}
+Earnings: ${moneyIncVatLabel(data.priceDisplay)}
+Area:     ${postcode}
 
 Scope:
 ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
-Accept this job: ${data.acceptUrl}
+Accept Job Now: ${data.acceptUrl}
 
 Can't take it? Reply to this email and we'll reallocate.
 Otherwise: ${supportEmail} / ${supportPhone}

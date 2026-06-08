@@ -208,9 +208,9 @@ export function CatalogTradesSkillsTab(props: Props) {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+      <div className="rounded-xl border border-border-light bg-card p-4 space-y-3 @container">
         <p className="text-sm font-semibold text-text-primary">Trades</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 @md:grid-cols-2 gap-3">
           {tradeRows.map((row) => {
             const on = enabledIds.has(row.id);
             const isPrimary = primaryId === row.id && on;

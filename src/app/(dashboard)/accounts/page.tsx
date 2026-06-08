@@ -22,7 +22,12 @@ import {
   LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import {
+  dueDateIsoFromAccountPaymentTerms,
+  isAccountOrgBiweeklyGridTerms,
+  type AccountPaymentOrgContext,
+} from "@/lib/account-payment-due-date";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { toast } from "sonner";
 import type { Account, CatalogService, Client, Job, Invoice } from "@/types/database";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
@@ -112,9 +117,9 @@ function accountOwnerLabel(
   return "—";
 }
 
-function renderAccountNextPayment(item: Account) {
+function renderAccountNextPayment(item: Account, orgCtx: AccountPaymentOrgContext) {
   if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
-  const iso = dueDateIsoFromPaymentTerms(new Date(), item.payment_terms);
+  const iso = dueDateIsoFromAccountPaymentTerms(new Date(), item.payment_terms, orgCtx);
   const d = new Date(iso + "T12:00:00");
   const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   const isOverdue = d < new Date();
@@ -160,6 +165,15 @@ const emptyForm = {
 };
 
 export default function AccountsPage() {
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo<AccountPaymentOrgContext>(
+    () => ({
+      orgStandardTerms: partnerPayoutStandardTerms,
+      orgReferenceYmd: partnerPayoutReferenceYmd,
+    }),
+    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
+  );
+
   const {
     data,
     loading,
@@ -467,7 +481,7 @@ export default function AccountsPage() {
     {
       key: "next_payment",
       label: "Next payment",
-      render: (item) => renderAccountNextPayment(item),
+      render: (item) => renderAccountNextPayment(item, paymentOrgCtx),
     },
   ];
 
@@ -581,6 +595,7 @@ export default function AccountsPage() {
               selectedDetailId={selectedAccount?.id}
               onOpenAccount={openAccountDetail}
               accountOwnerDirectory={accountOwnerDirectory}
+              paymentOrgCtx={paymentOrgCtx}
               bulkActionButtons={
                 <>
                   <BulkBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -596,6 +611,7 @@ export default function AccountsPage() {
       <AccountDetailDrawer
         account={selectedAccount}
         loading={detailLoading}
+        paymentOrgCtx={paymentOrgCtx}
         onClose={() => setSelectedAccount(null)}
         onAccountUpdated={(a) => {
           setSelectedAccount(a);
@@ -827,6 +843,7 @@ function AccountsGridView({
   selectedDetailId,
   onOpenAccount,
   accountOwnerDirectory,
+  paymentOrgCtx,
   bulkActionButtons,
 }: {
   data: Account[];
@@ -840,6 +857,7 @@ function AccountsGridView({
   selectedDetailId?: string | null;
   onOpenAccount: (a: Account) => void;
   accountOwnerDirectory: AssignableUser[];
+  paymentOrgCtx: AccountPaymentOrgContext;
   bulkActionButtons: ReactNode;
 }) {
   const allIds = data.map((a) => a.id);
@@ -996,7 +1014,7 @@ function AccountsGridView({
                       <span className="block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                         Next payment
                       </span>
-                      <span className="inline-block mt-0.5">{renderAccountNextPayment(item)}</span>
+                      <span className="inline-block mt-0.5">{renderAccountNextPayment(item, paymentOrgCtx)}</span>
                     </div>
                   </div>
                 </div>
@@ -1059,11 +1077,13 @@ function AccountsGridView({
 function AccountDetailDrawer({
   account,
   loading,
+  paymentOrgCtx,
   onClose,
   onAccountUpdated,
 }: {
   account: Account | null;
   loading: boolean;
+  paymentOrgCtx: AccountPaymentOrgContext;
   onClose: () => void;
   onAccountUpdated: (a: Account) => void;
 }) {
@@ -1969,7 +1989,7 @@ function AccountDetailDrawer({
               {(() => {
                 const terms = edit.payment_terms;
                 if (!terms) return null;
-                const iso = dueDateIsoFromPaymentTerms(new Date(), terms);
+                const iso = dueDateIsoFromAccountPaymentTerms(new Date(), terms, paymentOrgCtx);
                 const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
                   weekday: "long",
                   day: "numeric",
@@ -2033,7 +2053,7 @@ function AccountDetailDrawer({
                     {syncingAccount ? "Syncing…" : "Sync due dates"}
                   </button>
                 )}
-                <Link href="/finance/billing/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                <Link href="/finance/billing" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
                   All invoices <ExternalLink className="h-3 w-3" />
                 </Link>
               </div>
@@ -2095,6 +2115,7 @@ function AccountDetailDrawer({
     <PaymentTermsModal
       open={termsModalOpen}
       value={edit.payment_terms}
+      paymentOrgCtx={paymentOrgCtx}
       onClose={() => setTermsModalOpen(false)}
       onSave={(v) => { setEdit((p) => ({ ...p, payment_terms: v })); setTermsModalOpen(false); }}
     />
@@ -2290,15 +2311,21 @@ function shortenPaymentTerms(t: string | null | undefined): string {
 
 // ─── PaymentTermsModal ────────────────────────────────────────────────────
 function PaymentTermsModal({
-  open, value, onClose, onSave,
-}: { open: boolean; value: string; onClose: () => void; onSave: (v: string) => void }) {
+  open, value, paymentOrgCtx, onClose, onSave,
+}: {
+  open: boolean;
+  value: string;
+  paymentOrgCtx: AccountPaymentOrgContext;
+  onClose: () => void;
+  onSave: (v: string) => void;
+}) {
   const [local, setLocal] = useState(value);
   useEffect(() => {
     if (!open) return;
     queueMicrotask(() => setLocal(value));
   }, [open, value]);
 
-  const iso = local ? dueDateIsoFromPaymentTerms(new Date(), local) : null;
+  const iso = local ? dueDateIsoFromAccountPaymentTerms(new Date(), local, paymentOrgCtx) : null;
   const nextLabel = iso
     ? new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
     : null;
@@ -2370,6 +2397,7 @@ function parseCycleValue(value: string) {
 }
 
 function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const parsed = parseCycleValue(value);
   const [mode,          setMode]          = useState<"standard" | "cycle">(parsed ? "cycle" : "standard");
   const [freq,          setFreq]          = useState<"monthly" | "biweekly">(parsed?.freq ?? "monthly");
@@ -2423,11 +2451,19 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
       </div>
 
       {mode === "standard" ? (
-        <Select
-          options={PAYMENT_TERMS_OPTIONS}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
+        <div className="space-y-2">
+          <Select
+            options={PAYMENT_TERMS_OPTIONS}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {isAccountOrgBiweeklyGridTerms(value, partnerPayoutStandardTerms) ? (
+            <p className="text-[11px] text-text-secondary leading-snug rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+              Uses the same biweekly pay grid as partner self-bills in Setup
+              {partnerPayoutReferenceYmd ? ` (reference Friday ${partnerPayoutReferenceYmd})` : ""}.
+            </p>
+          ) : null}
+        </div>
       ) : (
         <div className="rounded-xl border border-border-light bg-white p-3.5 space-y-3">
           <div>

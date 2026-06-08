@@ -231,24 +231,70 @@ curl -X POST "$BASE/api/webhooks/desk/job-created" \
 
 ---
 
-## 4b. POST `/api/webhooks/desk/job-on-hold` — Complaint / on hold (Zendesk macro + form)
+## 4b. POST `/api/holds` — On hold (Zendesk → OS)
+
+Configure a Zendesk trigger when tag `on_hold` is added (and not `sent-hold-os`). Action: notify webhook + add tag `sent-hold-os`.
 
 ```bash
-curl -X POST "$BASE/api/webhooks/desk/job-on-hold" \
+curl -X POST "$BASE/api/holds" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $DESK_KEY" \
   -d '{
     "ticket_id": "8472",
-    "on_hold_reason_id": "complaint",
-    "description": "Customer reports the leak was not fixed and wants a revisit."
+    "on_hold_reason_id": "hold_complaint",
+    "on_hold_notes": "Customer reports the leak was not fixed and wants a revisit."
   }'
 ```
 
-- `on_hold_reason_id` — stable id (same as OS Settings / Zendesk dropdown), e.g. `complaint`, `waiting_materials`.
-- `description` — complaint detail; sent to the partner email and synced to Zendesk (`ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID`).
-- Legacy: `reason` (label text) if id omitted.
+- `on_hold_reason_id` — bare OS id (`complaint`, …) or Zendesk tag (`hold_complaint`).
+- `on_hold_notes` — complaint detail; required when reason is `complaint`. Aliases: `description`, `complaint_description`.
+- Legacy path: `POST /api/webhooks/desk/job-on-hold` (same handler).
 
 See [zendesk-complaint-macro-form.md](./zendesk-complaint-macro-form.md) for macro + form setup.
+
+---
+
+## 4c. POST `/api/cancellations` — Mark as Cancelled (Zendesk → OS)
+
+Configure a Zendesk trigger when tag `cancelled` is added (and not `sent-cancel-os`). Action: notify webhook + add tag `sent-cancel-os`.
+
+```bash
+curl -X POST "$BASE/api/cancellations" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $DESK_KEY" \
+  -d '{
+    "ticket_id": "8472",
+    "cancellation_reason_id": "client_requested",
+    "cancellation_notes": "",
+    "lost_value_gbp": 450,
+    "cancelled_by_agent": "agent@getfixfy.com",
+    "cancelled_at": "2026-06-04T22:00:00Z"
+  }'
+```
+
+- `cancellation_reason_id` — bare OS id (`client_requested`, …) or Zendesk tag (`cancel_client_requested`).
+- `cancellation_notes` — required when reason is `other`.
+- `lost_value_gbp` — **required** agent-reported lost revenue (GBP). Stored on `jobs.cancelled_client_price` for Pulse lost-revenue KPIs.
+- Idempotent: same ticket already cancelled → `200` with `{ action: "existing" }`.
+
+Zendesk Liquid example for the lost-value custom field:
+
+```liquid
+"lost_value_gbp": {{ticket.ticket_field_<LOST_VALUE_FIELD_ID>}}
+```
+
+Zendesk dropdown values use prefix `cancel_*` (synced from Settings → Cancellation Reasons).
+
+### Zendesk reason tag prefixes
+
+Zendesk requires unique tag values across all custom fields. OS stores bare ids; Zendesk option values are prefixed:
+
+| Field | Prefix | Default field ID |
+|-------|--------|------------------|
+| Cancellation reason | `cancel_` | `5834334215583` |
+| On-hold reason | `hold_` | `5834320428319` |
+
+Both are synced from Settings when you save (or use **Sync … → Zendesk** under Integrations).
 
 ---
 
@@ -435,11 +481,29 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `MASTER_OS_QUOTE_WEBHOOK_API_KEY` | `/api/quotes` |
 | `MASTER_OS_JOB_WEBHOOK_API_KEY` | `/api/jobs` |
 | `ZENDESK_WEBHOOK_API_KEY` (ou `ZOHO_DESK_WEBHOOK_API_KEY`) | `/api/webhooks/desk/*` |
-| `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status` |
+| `INTERNAL_SYNC_SECRET` | `/api/internal/zendesk/sync-status`, `/api/internal/jobs/partner-portal-accept` (trade portal Accept job) |
+
+**Health (no auth):** `GET /api/health/internal-sync` on OS · `GET /api/health/accept-config` on trade portal — verify env before testing Accept.
 | `ZENDESK_SUBDOMAIN`, `ZENDESK_EMAIL`, `ZENDESK_API_TOKEN` | Comentários no ticket + side conversations |
+| `ZENDESK_CANCELLATION_REASON_FIELD_ID` | Dropdown: `cancel_{osId}` (default `5834334215583`) |
+| `ZENDESK_CANCELLATION_NOTES_FIELD_ID` | Cancellation notes textarea (default `5834293455647`) |
 | `ZENDESK_ON_HOLD_REASON_FIELD_ID` | Dropdown: on-hold reason id on ticket |
 | `ZENDESK_COMPLAINT_DESCRIPTION_FIELD_ID` | Complaint description (partner email + Zendesk) |
 | `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` | Partner solution after on-hold form submit |
+| `ZENDESK_JOB_ID_FIELD_ID` | Job reference on ticket (default `5824403479839`) |
+| `ZENDESK_QUOTE_REF_FIELD_ID` | Quote reference (QT-…); falls back to job id field when unset |
+| `ZENDESK_TYPE_OF_WORK_FIELD_ID` | Tagger: `service_catalog.id` UUID |
+| `ZENDESK_JOB_TYPE_FIELD_ID` | Tagger: `job_type_fixed` / `job_type_hourly` |
+| `ZENDESK_RATE_TYPE_FIELD_ID` | Text/dropdown: `fixed` / `hourly` (if separate from Job Type) |
+| `ZENDESK_ARRIVAL_WINDOW_FIELD_ID` | Tagger: `arrival_morning`, `arrival_early_afternoon`, … |
+| `ZENDESK_AUTO_ASSIGN_FIELD_ID` | Checkbox: `true` / `false` from job auto-assign |
+| `ZENDESK_CLIENT_EMAIL_FIELD_ID` | `clients.email` (not account finance email) |
+| `ZENDESK_CLIENT_NAME_FIELD_ID` | `jobs.client_name` (end client on the job row) |
+| `ZENDESK_PROPERTY_ADDRESS_FIELD_ID` | `jobs.property_address` |
+| `ZENDESK_CLIENT_PHONE_FIELD_ID` | `clients.phone` |
+| `ZENDESK_SCOPE_FIELD_ID` | `jobs.scope` (work brief) |
+| `ZENDESK_REPLY_STATUS_FIELD_ID` | Tagger Reply Status — OS create/sync → `reply_replied` (Sent); default field `5698641403423` |
+| `ZENDESK_REPLY_STATUS_SENT_VALUE` | Override Sent option value (default `reply_replied`) |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Emails Resend (fallback quando não há Zendesk) |
 | `CRON_SECRET` | `/api/cron/*` (`Authorization: Bearer …`) |
 | `QUOTE_RESPONSE_SECRET` | Assinar tokens de accept/reject |

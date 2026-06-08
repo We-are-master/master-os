@@ -149,6 +149,11 @@ async function buildPreview(req: NextRequest, payload?: {
       acceptUrl,
       rejectUrl,
       customMessage: customMessage || undefined,
+      context: {
+        propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+        postcode: (quote as { postcode?: string | null }).postcode ?? null,
+        serviceType: (quote as { service_type?: string | null }).service_type ?? null,
+      },
     });
 
     return new NextResponse(html, {

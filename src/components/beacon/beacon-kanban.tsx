@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useBeaconJobsRealtime } from "@/hooks/use-beacon-jobs-realtime";
 import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
@@ -16,9 +17,9 @@ import { jobStatusLabel } from "@/lib/job-status-ui";
 import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
-  getDateRangeForMode,
-  resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
+import { fetchBeaconBoardJobs } from "@/lib/beacon-jobs";
+import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
@@ -29,6 +30,8 @@ type KanbanJob = {
   status: JobStatus;
   client_id: string | null;
   partner_id: string | null;
+  partner_ids: string[] | null;
+  scheduled_date: string | null;
   client_name: string;
   property_address: string | null;
   partner_name: string | null;
@@ -172,7 +175,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
     // No-op if dropped on its own column.
-    if (stage.matches(job.status)) return;
+    if (stage.matches(effectiveJobStatusForDisplay(job))) return;
 
     // Cancel: open the in-place modal with the same validation + side effects
     // as the Jobs detail flow. Approve still navigates because FinalReviewModal
@@ -212,64 +215,36 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
    *  can call it on change without re-creating the channel each render. */
   const loadJobs = useCallback(
     async (signal?: { cancelled: boolean }) => {
-      const supabase = getSupabase();
-      // Cancelled stays visible in the Kanban so the user can see today's
-      // cancellations + can drag a job into the Cancelled column. `deleted` is
-      // still hidden (soft-deleted, out of the workflow).
       const baseCols =
-        "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
+        "id, reference, title, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
       const snapshotCols = "cancelled_client_price, cancelled_extras_amount";
 
-      // Account filter: jobs link via clients.source_account_id, so resolve
-      // the account → client_ids list once and apply with `.in(client_id, …)`.
-      // null = no account filter; [] = account has no clients → return zero rows.
-      const accountClientIds = await resolveAccountClientIds(filters.accountId);
-      if (signal?.cancelled) return;
-      if (accountClientIds !== null && accountClientIds.length === 0) {
-        setJobs([]);
-        return;
-      }
+      const load = async (cols: string) =>
+        fetchBeaconBoardJobs(filters, cols, { includeCancelled: true });
 
-      const buildQuery = (cols: string) => {
-        let q = supabase
-          .from("jobs")
-          .select(cols)
-          .neq("status", "deleted")
-          .is("deleted_at", null);
-        const range = getDateRangeForMode(filters);
-        if (range) {
-          q = q.gte("scheduled_start_at", range.fromIso).lte("scheduled_start_at", range.toIso);
-        }
-        if (filters.partnerId === "__unassigned__") {
-          q = q.is("partner_id", null);
-        } else if (filters.partnerId !== "all") {
-          q = q.eq("partner_id", filters.partnerId);
-        }
-        if (accountClientIds !== null) {
-          q = q.in("client_id", accountClientIds);
-        }
-        return q.order("scheduled_start_at", { ascending: true }).limit(200);
-      };
-
-      // Try with snapshot columns first (post-migration). If the DB hasn't
-      // been migrated yet, Postgres returns 42703 — fall back to the legacy
-      // shape so the Kanban keeps working until the migration runs.
-      let { data, error } = await buildQuery(`${baseCols}, ${snapshotCols}`);
-      if (error) {
-        const msg = error.message ?? "";
+      try {
+        let rows = await load(`${baseCols}, ${snapshotCols}`);
+        if (signal?.cancelled) return;
+        setJobs(rows as unknown as KanbanJob[]);
+      } catch (e) {
+        const msg = e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : "";
         const isMissingColumn =
-          error.code === "42703" ||
-          /cancelled_client_price|cancelled_extras_amount/i.test(msg);
-        if (isMissingColumn) {
-          ({ data, error } = await buildQuery(baseCols));
+          (e && typeof e === "object" && "code" in e && (e as { code: string }).code === "42703") ||
+          /cancelled_client_price|cancelled_extras_amount|partner_ids/i.test(msg);
+        if (!isMissingColumn) {
+          if (!signal?.cancelled) setJobs([]);
+          return;
+        }
+        try {
+          const slimCols =
+            "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
+          const rows = await load(slimCols);
+          if (signal?.cancelled) return;
+          setJobs(rows as unknown as KanbanJob[]);
+        } catch {
+          if (!signal?.cancelled) setJobs([]);
         }
       }
-      if (signal?.cancelled) return;
-      if (error) {
-        setJobs([]);
-        return;
-      }
-      setJobs((data ?? []) as unknown as KanbanJob[]);
     },
     [filters],
   );
@@ -337,37 +312,16 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     };
   }, [jobs]);
 
-  /**
-   * Realtime: subscribe to changes on the `jobs` table and refetch on any
-   * INSERT / UPDATE / DELETE. RLS still applies on the WAL stream — users only
-   * get events for rows they're allowed to read. Debounced 300ms to avoid
-   * spamming refetches when several rows change at once (e.g. bulk updates).
-   */
-  useEffect(() => {
-    const supabase = getSupabase();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void loadJobs();
-      }, 300);
-    };
-    const channel = supabase
-      .channel("beacon_kanban_jobs")
-      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, schedule)
-      .subscribe();
-    return () => {
-      if (timer) clearTimeout(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [loadJobs]);
+  useBeaconJobsRealtime(() => {
+    void loadJobs();
+  }, "beacon_kanban_jobs");
 
   const grouped = useMemo(() => {
     const out = new Map<StageId, { items: KanbanJob[]; revenue: number; lostRevenue: number }>(
       STAGES.map((s) => [s.id, { items: [], revenue: 0, lostRevenue: 0 }]),
     );
     for (const j of jobs) {
-      const stage = STAGES.find((s) => s.matches(j.status));
+      const stage = STAGES.find((s) => s.matches(effectiveJobStatusForDisplay(j)));
       if (!stage) continue;
       const bucket = out.get(stage.id)!;
       bucket.items.push(j);
@@ -573,10 +527,10 @@ function KanbanCard({
   const isOverdueArrival =
     !Number.isNaN(arrivalEndMs) &&
     arrivalEndMs < nowMs &&
-    (job.status === "unassigned" ||
-      job.status === "auto_assigning" ||
-      job.status === "scheduled" ||
-      job.status === "late");
+    (() => {
+      const st = effectiveJobStatusForDisplay(job);
+      return st === "unassigned" || st === "auto_assigning" || st === "scheduled" || st === "late";
+    })();
 
   return (
     <Link

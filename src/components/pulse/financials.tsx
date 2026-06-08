@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { startOfMonth, endOfMonth, startOfDay, endOfDay, formatISO, format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -12,12 +12,19 @@ import {
   parseFrontendSetup,
   type FrontendSetup,
 } from "@/lib/frontend-setup";
+import {
+  pulseRevenueGoalStatus,
+  resolvePulseMonthlyRevenueGoal,
+  resolvePulsePeriodRevenueGoal,
+} from "@/lib/pulse-revenue-goal";
 import { KpiCard, MicroLabel, Pill } from "@/components/fx/primitives";
 import { Modal } from "@/components/ui/modal";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { BreakdownTable, type BreakdownColumn } from "./financials-detail-modal";
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import { extractUkPostcode } from "@/lib/uk-postcode";
+import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
+import { useProfile } from "@/hooks/use-profile";
 
 const ACTIVE_OPS_STATUSES = [
   "unassigned",
@@ -72,11 +79,19 @@ type DetailModal = "revenue" | "operating" | "fixed" | "net" | null;
 
 export function Financials() {
   const { bounds, rangeLabel } = useDashboardDateRange();
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === "admin";
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [bills, setBills] = useState<BillDetail[]>([]);
   const [payroll, setPayroll] = useState<PayrollDetail[]>([]);
+  const [setup, setSetup] = useState<FrontendSetup>(() => parseFrontendSetup(null));
+  const [monthlyFixedCosts, setMonthlyFixedCosts] = useState(0);
   const [loading, setLoading] = useState(true);
   const [openModal, setOpenModal] = useState<DetailModal>(null);
+
+  useEffect(() => {
+    if (!isAdmin && openModal === "fixed") setOpenModal(null);
+  }, [isAdmin, openModal]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,8 +106,10 @@ export function Financials() {
       const { fromDay, toDay } = bounds
         ? dashboardBoundsToInclusiveLocalYmd(bounds)
         : { fromDay: ymd(startOfMonth(now)), toDay: ymd(endOfMonth(now)) };
+      const goalMonthFrom = ymd(startOfMonth(now));
+      const goalMonthTo = ymd(endOfMonth(now));
 
-      const [jobsRes, billsRes, payrollRes, settingsRes] = await Promise.all([
+      const [jobsRes, billsRes, goalBillsRes, payrollRes, settingsRes] = await Promise.all([
         supabase
           .from("jobs")
           .select(
@@ -113,9 +130,16 @@ export function Financials() {
           .lte("due_date", toDay)
           .order("due_date", { ascending: true }),
         supabase
+          .from("bills")
+          .select("amount")
+          .is("archived_at", null)
+          .neq("status", "rejected")
+          .gte("due_date", goalMonthFrom)
+          .lte("due_date", goalMonthTo),
+        supabase
           .from("payroll_internal_costs")
           .select("id, amount, lifecycle_stage, payee_name, description")
-          .neq("lifecycle_stage", "offboard")
+          .or(WORKFORCE_COST_ACTIVE_OR_FILTER)
           .order("payee_name", { ascending: true, nullsFirst: false }),
         supabase.from("company_settings").select("frontend_setup").limit(1).maybeSingle(),
       ]);
@@ -189,13 +213,13 @@ export function Financials() {
         category: b.category,
       }));
 
-      const setup: FrontendSetup = parseFrontendSetup(
+      const parsedSetup: FrontendSetup = parseFrontendSetup(
         (settingsRes.data as { frontend_setup?: unknown } | null)?.frontend_setup,
       );
       const fromDate = bounds ? new Date(bounds.fromIso) : startOfDay(now);
       const toDate = bounds ? new Date(bounds.toIso) : endOfDay(now);
-      const workingDaysInWindow = countWorkingDaysInRange(fromDate, toDate, setup);
-      const monthlyDivisor = monthlyWorkingDays(setup);
+      const workingDaysInWindow = countWorkingDaysInRange(fromDate, toDate, parsedSetup);
+      const monthlyDivisor = monthlyWorkingDays(parsedSetup);
       const workforceFactor =
         bounds && monthlyDivisor > 0 ? workingDaysInWindow / monthlyDivisor : 1;
 
@@ -215,9 +239,17 @@ export function Financials() {
         lifecycle_stage: r.lifecycle_stage,
       }));
 
+      const goalBillsTotal = ((goalBillsRes.data ?? []) as Array<{ amount: number | null }>).reduce(
+        (sum, row) => sum + (Number(row.amount) || 0),
+        0,
+      );
+      const workforceMonthly = payrollRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
       setJobs(jobsDetail);
       setBills(billsDetail);
       setPayroll(payrollDetail);
+      setSetup(parsedSetup);
+      setMonthlyFixedCosts(workforceMonthly + goalBillsTotal);
       setLoading(false);
     })();
     return () => {
@@ -258,23 +290,123 @@ export function Financials() {
     };
   }, [jobs, bills, payroll]);
 
+  const revenueGoal = useMemo(() => {
+    const now = new Date();
+    const fromDate = bounds ? new Date(bounds.fromIso) : startOfDay(startOfMonth(now));
+    const toDate = bounds ? new Date(bounds.toIso) : endOfDay(endOfMonth(now));
+    const { monthlyGoal, error } = resolvePulseMonthlyRevenueGoal(setup, monthlyFixedCosts);
+    const { periodGoal, workingDaysInPeriod, dailyGoal } = resolvePulsePeriodRevenueGoal(
+      { from: fromDate, to: toDate },
+      setup,
+      monthlyGoal,
+    );
+    const { status, pctOfGoal, delta } = pulseRevenueGoalStatus(totals.revenue, periodGoal);
+    const gapToGoal = Math.max(0, periodGoal - totals.revenue);
+    const aheadOfGoal = Math.max(0, totals.revenue - periodGoal);
+    return {
+      monthlyGoal,
+      periodGoal,
+      workingDaysInPeriod,
+      dailyGoal,
+      status,
+      pctOfGoal,
+      delta,
+      gapToGoal,
+      aheadOfGoal,
+      error,
+    };
+  }, [setup, monthlyFixedCosts, bounds, totals.revenue]);
+
   const periodLabel = bounds ? rangeLabel : "this month";
+
+  const revenueGoalUi = useMemo(() => {
+    if (loading) {
+      return { sub: "Loading…" as ReactNode, variant: "default" as const, topRight: <StatusDot color="bg-fx-green" /> };
+    }
+    if (revenueGoal.periodGoal <= 0 || revenueGoal.status === "unset") {
+      return {
+        sub: "Set revenue goal in Setup",
+        variant: "default" as const,
+        topRight: <StatusDot color="bg-fx-green" />,
+      };
+    }
+
+    const pct = Math.round(revenueGoal.pctOfGoal ?? 0);
+    const barPct = Math.min(100, revenueGoal.pctOfGoal ?? 0);
+    const goalLabel = formatGbpCompact(revenueGoal.periodGoal);
+
+    let pillLabel: string;
+    let gapLabel: string;
+    let gapClass: string;
+    let barClass: string;
+    let variant: "default" | "coral" | "alert";
+
+    if (revenueGoal.status === "above") {
+      pillLabel = `+${formatGbp(revenueGoal.aheadOfGoal)} ahead`;
+      gapLabel = `${pct}% of ${goalLabel} goal`;
+      gapClass = "text-fx-coral-p font-semibold";
+      barClass = "bg-fx-coral";
+      variant = "coral";
+    } else if (revenueGoal.status === "on_track") {
+      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      gapLabel = `${pct}% · almost there`;
+      gapClass = "text-fx-amber font-semibold";
+      barClass = "bg-fx-amber";
+      variant = "default";
+    } else {
+      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      gapLabel = `${pct}% of ${goalLabel} goal`;
+      gapClass = "text-fx-red font-semibold";
+      barClass = "bg-fx-red";
+      variant = "alert";
+    }
+
+    const wdPart =
+      revenueGoal.workingDaysInPeriod > 0
+        ? ` · ${revenueGoal.workingDaysInPeriod} working day${revenueGoal.workingDaysInPeriod === 1 ? "" : "s"}`
+        : "";
+
+    return {
+      variant,
+      topRight: (
+        <Pill tone={revenueGoal.status === "above" ? "ok" : revenueGoal.status === "on_track" ? "warn" : "bad"}>
+          {pillLabel}
+        </Pill>
+      ),
+      sub: (
+        <div className="flex flex-col gap-1.5">
+          <div
+            className="h-1.5 w-full overflow-hidden rounded-full bg-fx-line/80"
+            role="progressbar"
+            aria-valuenow={barPct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Revenue ${pct}% of period goal`}
+          >
+            <div
+              className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barClass)}
+              style={{ width: `${barPct}%` }}
+            />
+          </div>
+          <span className="font-mono text-[11.5px] leading-snug">
+            <span className={gapClass}>{gapLabel}</span>
+            <span className="text-fx-mute">{wdPart}</span>
+          </span>
+        </div>
+      ),
+    };
+  }, [loading, revenueGoal]);
 
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           label="Revenue"
-          hint="Total client price + extras for jobs in the active pipeline (excludes On Hold, Cancelled, Deleted)."
+          hint="Total client price + extras for jobs in the active pipeline. Goal comes from Setup (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days."
           value={loading ? "—" : formatGbp(totals.revenue)}
-          sub={
-            loading
-              ? "Loading…"
-              : `${totals.jobsCount} job${totals.jobsCount === 1 ? "" : "s"} · Active Pipeline${
-                  bounds ? ` · ${rangeLabel}` : ""
-                }`
-          }
-          topRight={<StatusDot color="bg-fx-green" />}
+          sub={revenueGoalUi.sub}
+          variant={revenueGoalUi.variant}
+          topRight={revenueGoalUi.topRight}
           onShowDetails={() => setOpenModal("revenue")}
           detailsLabel="View revenue breakdown"
         />
@@ -282,11 +414,6 @@ export function Financials() {
           label="Operating Cost"
           hint="Partner cost + materials + per-job expenses for the same pipeline."
           value={loading ? "—" : formatGbp(totals.operatingCost)}
-          sub={
-            loading
-              ? "Loading…"
-              : `${totals.opsPct.toFixed(1)}% · Partners · Materials · Expenses`
-          }
           topRight={<StatusDot color="bg-fx-amber" />}
           onShowDetails={() => setOpenModal("operating")}
           detailsLabel="View operating cost breakdown"
@@ -295,14 +422,9 @@ export function Financials() {
           label="Fixed Costs"
           hint="Workforce + bills allocated to this period. Workforce is each active person's monthly commitment pro-rated by working days in the window. Bills only count when their due_date falls inside the window."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
-          sub={
-            loading
-              ? "Loading…"
-              : `${totals.fixedPct.toFixed(1)}% · Workforce £${formatNum(totals.workforce)} + Bills £${formatNum(totals.bills)}`
-          }
           topRight={<StatusDot color="bg-fx-blue" />}
-          onShowDetails={() => setOpenModal("fixed")}
-          detailsLabel="View fixed cost breakdown"
+          onShowDetails={isAdmin ? () => setOpenModal("fixed") : undefined}
+          detailsLabel="View fixed cost breakdown (admin)"
         />
         <KpiCard
           label="Net Margin"
@@ -315,7 +437,6 @@ export function Financials() {
                 : "default"
           }
           value={loading ? "—" : formatGbp(totals.netMargin)}
-          sub={loading ? "Loading…" : `${totals.netPct.toFixed(1)}% of revenue`}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
           onShowDetails={() => setOpenModal("net")}
           detailsLabel="View net margin breakdown"
@@ -371,7 +492,7 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={openModal === "fixed"}
+        open={isAdmin && openModal === "fixed"}
         onClose={() => setOpenModal(null)}
         title="Fixed costs breakdown"
         subtitle={`Workforce ${formatGbp(totals.workforce)} + Bills ${formatGbp(totals.bills)} · ${periodLabel}`}
@@ -717,13 +838,19 @@ function formatGbp(n: number): string {
   }).format(n);
 }
 
+function formatGbpCompact(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    const k = n / 1000;
+    const rounded = Math.abs(k) >= 10 ? k.toFixed(0) : k.toFixed(1);
+    return `£${rounded}k`;
+  }
+  return formatGbp(n);
+}
+
 function formatGbpSigned(n: number): string {
   const sign = n < 0 ? "−" : "";
   return sign + formatGbp(Math.abs(n));
-}
-
-function formatNum(n: number): string {
-  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(n);
 }
 
 function formatWhen(iso: string | null): string {

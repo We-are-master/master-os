@@ -29,6 +29,62 @@ import {
   formatClientDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+
+function linkedAccountLabelForClient(
+  clientId: string,
+  labels: Map<string, string>,
+  restrictLabel?: string,
+): string {
+  return restrictLabel?.trim() || labels.get(clientId)?.trim() || "";
+}
+
+function formatClientNameWithAccount(
+  fullName: string,
+  clientId: string,
+  labels: Map<string, string>,
+  restrictLabel?: string,
+): string {
+  const acct = linkedAccountLabelForClient(clientId, labels, restrictLabel);
+  return acct ? `${fullName} (${acct})` : fullName;
+}
+
+function ClientSearchResultRow({
+  client,
+  accountLabel,
+  onSelect,
+  className,
+}: {
+  client: Client;
+  accountLabel: string;
+  onSelect: (client: Client) => void;
+  className?: string;
+}) {
+  const addrLine = [client.address?.trim(), client.city?.trim(), client.postcode?.trim()]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(client)}
+      className={cn(
+        "w-full border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-surface-hover",
+        className,
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate font-medium text-text-primary">{client.full_name}</span>
+        {accountLabel ? (
+          <span className="shrink-0 text-xs font-medium text-text-secondary">{accountLabel}</span>
+        ) : null}
+      </div>
+      {client.email ? <span className="block truncate text-xs text-text-tertiary">{client.email}</span> : null}
+      {addrLine ? (
+        <span className="mt-0.5 block truncate text-[11px] text-text-secondary">{addrLine}</span>
+      ) : null}
+    </button>
+  );
+}
 
 export interface ClientAndAddressValue {
   client_id?: string;
@@ -144,10 +200,49 @@ export function ClientAddressPicker({
   /** Create flow: searchable dropdown — starts closed once an address is selected, opens on "Change address". */
   const [addressPickerOpen, setAddressPickerOpen] = useState(false);
   const [addressSearch, setAddressSearch] = useState("");
+  const [accountLabelByClientId, setAccountLabelByClientId] = useState<Map<string, string>>(() => new Map());
 
   useEffect(() => {
     if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
   }, [value.client_id, jobCurrentAddressOnly]);
+
+  useEffect(() => {
+    const ids = [
+      ...new Set([
+        ...clientResults.map((c) => c.id),
+        ...(selectedClient?.id ? [selectedClient.id] : []),
+        ...(value.client_id ? [value.client_id] : []),
+      ]),
+    ].filter(Boolean);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resolved = await batchResolveLinkedAccountLabels(getSupabase(), ids);
+        if (cancelled) return;
+        setAccountLabelByClientId((prev) => {
+          const next = new Map(prev);
+          for (const [id, label] of resolved) next.set(id, label);
+          const fixed = restrictToSourceAccountLabel?.trim();
+          if (fixed && restrictToSourceAccountId?.trim()) {
+            for (const id of ids) next.set(id, fixed);
+          }
+          return next;
+        });
+      } catch {
+        /* labels are optional UI enrichment */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    clientResults,
+    selectedClient?.id,
+    value.client_id,
+    restrictToSourceAccountId,
+    restrictToSourceAccountLabel,
+  ]);
 
   useEffect(() => {
     if (!createClientOpen) return;
@@ -668,14 +763,39 @@ export function ClientAddressPicker({
         return;
       }
       const lower = q.toLowerCase();
-      const exact = rows.find(
-        (c) => c.full_name.toLowerCase() === lower || (c.email && c.email.toLowerCase() === lower)
-      );
+      const exact = rows.find((c) => {
+        if (c.full_name.toLowerCase() === lower) return true;
+        if (c.email && c.email.toLowerCase() === lower) return true;
+        const withAccount = formatClientNameWithAccount(
+          c.full_name,
+          c.id,
+          accountLabelByClientId,
+          restrictToSourceAccountLabel,
+        );
+        return withAccount.toLowerCase() === lower;
+      });
       if (exact) selectClient(exact);
     } catch {
       /* ignore */
     }
-  }, [selectedClient, clientSearch, selectClient, restrictToSourceAccountId]);
+  }, [
+    selectedClient,
+    clientSearch,
+    selectClient,
+    restrictToSourceAccountId,
+    accountLabelByClientId,
+    restrictToSourceAccountLabel,
+  ]);
+
+  const selectedClientDisplayName = useMemo(() => {
+    if (!selectedClient) return "";
+    return formatClientNameWithAccount(
+      selectedClient.full_name,
+      selectedClient.id,
+      accountLabelByClientId,
+      restrictToSourceAccountLabel,
+    );
+  }, [selectedClient, accountLabelByClientId, restrictToSourceAccountLabel]);
 
   const outerLayoutClass =
     layout === "grid-2" ? "grid grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:items-start" : "";
@@ -688,7 +808,7 @@ export function ClientAddressPicker({
           <div className="relative">
             <input
               type="text"
-              value={selectedClient ? selectedClient.full_name : clientSearch}
+              value={selectedClient ? selectedClientDisplayName : clientSearch}
               onChange={(e) => {
                 setClientSearch(e.target.value);
                 if (!selectedClient && !accountContactsMode) setClientDropdownOpen(true);
@@ -747,25 +867,19 @@ export function ClientAddressPicker({
                     >
                       <UserPlus className="h-4 w-4 shrink-0" /> Create new client
                     </button>
-                    {clientResults.map((c) => {
-                      const addrLine = [c.address?.trim(), c.city?.trim(), c.postcode?.trim()]
-                        .filter(Boolean)
-                        .join(", ");
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => selectClient(c)}
-                          className="w-full text-left px-3 py-2.5 hover:bg-surface-hover border-b border-border last:border-0 text-sm"
-                        >
-                          <span className="font-medium text-text-primary">{c.full_name}</span>
-                          {c.email ? <span className="text-text-tertiary text-xs block truncate">{c.email}</span> : null}
-                          {addrLine ? (
-                            <span className="text-text-secondary text-[11px] block truncate mt-0.5">{addrLine}</span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
+                    {clientResults.map((c) => (
+                      <ClientSearchResultRow
+                        key={c.id}
+                        client={c}
+                        accountLabel={linkedAccountLabelForClient(
+                          c.id,
+                          accountLabelByClientId,
+                          restrictToSourceAccountLabel,
+                        )}
+                        onSelect={selectClient}
+                        className="last:border-0"
+                      />
+                    ))}
                   </>
                 )}
               </div>
@@ -794,25 +908,18 @@ export function ClientAddressPicker({
                       No contacts linked to this account yet. Use &quot;Create new contact&quot; above.
                     </p>
                   ) : (
-                    clientResults.map((c) => {
-                      const addrLine = [c.address?.trim(), c.city?.trim(), c.postcode?.trim()]
-                        .filter(Boolean)
-                        .join(", ");
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => selectClient(c)}
-                          className="w-full border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-surface-hover"
-                        >
-                          <span className="font-medium text-text-primary">{c.full_name}</span>
-                          {c.email ? <span className="block truncate text-xs text-text-tertiary">{c.email}</span> : null}
-                          {addrLine ? (
-                            <span className="mt-0.5 block truncate text-[11px] text-text-secondary">{addrLine}</span>
-                          ) : null}
-                        </button>
-                      );
-                    })
+                    clientResults.map((c) => (
+                      <ClientSearchResultRow
+                        key={c.id}
+                        client={c}
+                        accountLabel={linkedAccountLabelForClient(
+                          c.id,
+                          accountLabelByClientId,
+                          restrictToSourceAccountLabel,
+                        )}
+                        onSelect={selectClient}
+                      />
+                    ))
                   )}
                 </div>
                 <p className="text-[10px] text-text-tertiary leading-snug">
@@ -832,7 +939,14 @@ export function ClientAddressPicker({
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelClient}</label>
           <div className="rounded-lg border border-border bg-surface-hover/80 px-3 py-2.5">
-            <p className="text-sm font-semibold text-text-primary">{value.client_name || selectedClient?.full_name}</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {formatClientNameWithAccount(
+                value.client_name || selectedClient?.full_name || "",
+                value.client_id || selectedClient?.id || "",
+                accountLabelByClientId,
+                restrictToSourceAccountLabel,
+              )}
+            </p>
             {(value.client_email || selectedClient?.email) && (
               <p className="text-xs text-text-tertiary mt-0.5">{value.client_email || selectedClient?.email}</p>
             )}

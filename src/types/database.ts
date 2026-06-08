@@ -168,6 +168,10 @@ export interface Profile {
   custom_permissions?: UserPermissionOverride | null;
   /** True when admin created this user with a temporary password — forces change on first login. */
   must_change_password?: boolean | null;
+  /** Fixfy School — denormalized from fixfy_school_progress. */
+  fixfy_school_xp?: number | null;
+  fixfy_school_certified_phases?: string[] | null;
+  fixfy_school_last_activity_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -451,6 +455,12 @@ export interface Job {
   partner_id?: string | null;
   partner_ids?: string[] | null;
   partner_name?: string | null;
+  /** Set when the partner accepts (portal/email) or office manually allocates at create. */
+  partner_confirmed_at?: string | null;
+  /** Partners invited to claim while status is auto_assigning (first accept wins). */
+  auto_assign_invited_partner_ids?: string[] | null;
+  /** Offer expiry for auto-assign invites (trade portal countdown). */
+  auto_assign_expires_at?: string | null;
   quote_id?: string;
   /** Optional link to Services catalog (call-out template) used at creation. */
   catalog_service_id?: string | null;
@@ -559,6 +569,8 @@ export interface Job {
   partner_cancellation_compensation_gbp?: number | null;
   /** Office-initiated cancellation (dashboard); visible internally and to partner notifications. */
   cancellation_reason?: string | null;
+  /** Preset id when cancelled from office or Zendesk (client_requested, other, …). */
+  cancellation_reason_preset_id?: string | null;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
   /** Snapshot of `client_price` at the moment the job was cancelled (pre-zeroing). Drives "lost revenue" KPIs in Pulse / Live View. */
@@ -747,6 +759,9 @@ export interface Partner {
   uk_coverage_regions?: string[] | null;
   /** Home or registered business address (distinct from coverage). */
   partner_address?: string | null;
+  /** Geocoded home address — Live map partner pin (not live GPS). */
+  partner_address_latitude?: number | null;
+  partner_address_longitude?: number | null;
   /** `radius` = miles from base pin; `postcodes` = included outward list. */
   coverage_mode?: PartnerCoverageMode | null;
   service_radius_miles?: number | null;

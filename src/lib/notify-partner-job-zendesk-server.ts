@@ -15,12 +15,14 @@
 
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
-import { createPartnerReportToken, createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
+import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
-import { partnerOnHoldComplaintReasonText } from "@/lib/job-on-hold-reasons";
+import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -126,6 +128,8 @@ export async function notifyPartnerJobZendesk(
     return { status: 200, body: { ok: true, skipped: "partner_not_found" } };
   }
 
+  const base = appBaseUrl();
+
   // Customer phone is intentionally NOT looked up — partner emails carry
   // name + address only (privacy decision: customer phone stays with OS).
 
@@ -139,24 +143,13 @@ export async function notifyPartnerJobZendesk(
   // partner email (assigned/completed/etc) so the partner can submit the
   // report straight from their inbox without the app. The token binds
   // (jobId, partnerId), so reassigning the partner invalidates older links.
-  const base = appBaseUrl();
-  let reportUrl = `${base}/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`;
-  try {
-    const r = await upsertShortLink({
-      targetPath: `/job/report?token=${encodeURIComponent(createPartnerReportToken(job.id, partner.id))}`,
-      kind:       "partner_report",
-      entityRef:  jobPartnerShortLinkEntityRef(job.id, partner.id, "report"),
-      createdBy:  actorUserId,
-    });
-    reportUrl = `${base}${r.shortPath}`;
-  } catch (err) {
-    console.error("[notify-partner-zendesk] short link upsert failed, using long URL:", err);
-  }
+  const reportUrl = await buildPartnerJobReportUrl(job.id, partner.id);
 
   // Resolve final reason / status label
-  const effectiveReason = reason
+  const effectiveReason =
+    reason
     ?? (kind === "cancelled" ? job.cancellation_reason : null)
-    ?? (kind === "on_hold" ? partnerOnHoldComplaintReasonText(job) ?? job.on_hold_reason : null);
+    ?? (kind === "on_hold" ? await resolvePartnerComplaintReportedText(job, { client: supabase }) : null);
   const effectiveStatusLabel = newStatusLabel ?? humanStatusLabel(job.status);
 
   const needsPartnerJobNotes = kind === "assigned" || kind === "confirmation_request" || kind === "booked";
@@ -216,6 +209,7 @@ export async function notifyPartnerJobZendesk(
       jobReference:    job.reference,
       jobTitle:        job.title || "Maintenance job",
       propertyAddress: job.property_address || "—",
+      presetId:        job.on_hold_reason_preset_id,
       resolveUrl,
       complaintReason: effectiveReason,
     });
@@ -270,6 +264,7 @@ export async function notifyPartnerJobZendesk(
       partnerFirstName,
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
+      scheduledDate: job.scheduled_date,
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
       scope: job.scope || "(no scope provided)",
@@ -289,13 +284,18 @@ export async function notifyPartnerJobZendesk(
       });
 
   // ─── Partner email policy ─────────────────────────────────────────
-  // Partners receive side-conv emails for: job confirmation (`assigned`),
-  // job finished (`completed`), and on-hold (`on_hold`) — the latter carries
-  // the "resolve this job" CTA so the partner can submit notes + photos to
-  // clear a complaint. All other lifecycle events still get the in-app push
-  // above, but we don't email them — status updates were noisy and the office
-  // handles those manually.
-  const PARTNER_EMAIL_KINDS = new Set<NotifyKind>(["assigned", "completed", "on_hold"]);
+  // Partners receive side-conv emails for: accept request (`confirmation_request`),
+  // job booked (`assigned` / `booked`), job finished (`completed`), on-hold
+  // (`on_hold`), and office cancel (`cancelled` → buildPartnerJobStatusUpdateEmail).
+  // Terminal customer notices on the main ticket still come from zendesk-lifecycle.
+  const PARTNER_EMAIL_KINDS = new Set<NotifyKind>([
+    "assigned",
+    "confirmation_request",
+    "booked",
+    "completed",
+    "on_hold",
+    "cancelled",
+  ]);
   const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
 
   // ─── Zendesk side conversation (only if we have the ticket) ──────
@@ -308,6 +308,20 @@ export async function notifyPartnerJobZendesk(
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
+    } else if (kind === "on_hold" || kind === "cancelled") {
+      // New side conversation — distinct subject in Zendesk sidebar + partner inbox
+      // (e.g. "9264 - Action Required: Complaint", "Job Cancelled: … - 1 Jun").
+      // Do not overwrite zendesk_side_conversation_id — booked thread stays canonical.
+      const r = await createSideConversation({
+        ticketId: zendeskTicketId,
+        toEmail:  partner.email,
+        toName:   partner.contact_name || partner.company_name || undefined,
+        toUserId: partner.zendesk_user_id ?? undefined,
+        subject:  email.subject,
+        htmlBody: email.html,
+        bodyText: email.text,
+      });
+      zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
     } else if (job.zendesk_side_conversation_id) {
       const r = await replyToSideConversation({
         ticketId: zendeskTicketId,
@@ -331,7 +345,7 @@ export async function notifyPartnerJobZendesk(
       });
       zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
       if (r.ok && r.id) {
-        // Persist for future replies
+        // Persist for future replies (booked / assigned thread)
         await supabase
           .from("jobs")
           .update({ zendesk_side_conversation_id: r.id })
@@ -357,27 +371,38 @@ export async function notifyPartnerJobZendesk(
   // without changing the job's status (e.g. clicking "Send via
   // Zendesk" on an already-scheduled job).
   if (zendeskTicketId) {
-    void syncJobZendeskStatus(job.id, supabase).then(
-      (r) => {
-        if (!r.ok) {
+    void Promise.all([
+      syncJobZendeskStatus(job.id, supabase),
+      syncJobZendeskFormFields(job.id, supabase),
+    ]).then(
+      ([statusRes, formRes]) => {
+        if (!statusRes.ok) {
           console.error(
             "[notify-partner-zendesk] status sync failed for ticket",
             zendeskTicketId,
             ":",
-            r.error ?? r.skip ?? "unknown",
+            statusRes.error ?? statusRes.skip ?? "unknown",
           );
         } else {
           console.log(
             "[notify-partner-zendesk] status synced for ticket",
             zendeskTicketId,
             "→",
-            r.customStatusId ?? "(skipped)",
+            statusRes.customStatusId ?? "(skipped)",
             "job",
             job.reference,
           );
         }
+        if (!formRes.ok) {
+          console.error(
+            "[notify-partner-zendesk] form fields sync failed for ticket",
+            zendeskTicketId,
+            ":",
+            formRes.error ?? formRes.skipped ?? "unknown",
+          );
+        }
       },
-      (err) => console.error("[notify-partner-zendesk] status sync threw:", err),
+      (err) => console.error("[notify-partner-zendesk] zendesk sync threw:", err),
     );
   }
 

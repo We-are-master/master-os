@@ -4,6 +4,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { dispatchQuoteBidInvites } from "@/lib/quote-bid-invites";
+import { syncQuoteZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
+import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -317,6 +319,15 @@ export async function POST(req: NextRequest) {
   if (insErr || !inserted) {
     console.error("[api/quotes] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create quote." }, { status: 500 });
+  }
+
+  if (ticketId) {
+    void Promise.all([
+      syncQuoteZendeskStatus(inserted.id, supabase),
+      syncQuoteZendeskFormFields(inserted.id, supabase),
+    ]).catch((err) => {
+      console.error("[api/quotes] Zendesk dispatch failed:", err);
+    });
   }
 
   // Broadcast to matching partners if this is a bidding quote.

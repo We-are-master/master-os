@@ -1,4 +1,5 @@
 import React from "react";
+import { formatGbpIncVat } from "@/lib/money-display-label";
 import {
   Document,
   Page,

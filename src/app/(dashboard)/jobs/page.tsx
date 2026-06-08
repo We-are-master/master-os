@@ -40,6 +40,20 @@ import {
   jobsManagementClosedBucketLabel,
   type JobsManagementClosedBucket,
 } from "@/services/jobs";
+import {
+  ZENDESK_JOB_TICKET_FORM_ID,
+  ZENDESK_FIELD_JOB_DATE,
+  ZENDESK_FIELD_CLIENT_NAME,
+  ZENDESK_FIELD_CLIENT_EMAIL,
+  ZENDESK_FIELD_CLIENT_PHONE,
+  ZENDESK_FIELD_ADDRESS,
+  ZENDESK_FIELD_CLIENT_PRICE,
+  ZENDESK_FIELD_SCOPE,
+  ZENDESK_FIELD_REPORT_LINK,
+  ZENDESK_FIELD_REPLY_STATUS,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
+  buildZendeskCustomFields,
+} from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
@@ -71,7 +85,7 @@ import {
   jobHasPartnerSet,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobPartnerListKind } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -108,6 +122,7 @@ import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
+  resolveInitialBilledHours,
 } from "@/lib/job-hourly-billing";
 import {
   defaultPricingPresetId,
@@ -126,6 +141,7 @@ import { getAccountServicePrice } from "@/services/account-service-prices";
 import { getPartnerServicePrice } from "@/services/partner-service-prices";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { partnerCoversJob } from "@/lib/partner-coverage";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
@@ -137,6 +153,8 @@ import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/sh
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { syncJobZendeskCancellationFields } from "@/lib/zendesk-job-cancellation-sync";
+import { osZendeskCreateTicketSubject } from "@/lib/zendesk-os-create-ticket-subject";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
@@ -1206,7 +1224,11 @@ function JobsPageContent() {
     // sync status / post side conversations to it).
     if (formData.__createZendeskTicket) {
       try {
-        const subject  = `${formData.title ?? "Job"} — ${formData.client_name ?? formData.property_address ?? "New job"}`;
+        const subject = osZendeskCreateTicketSubject(
+          "job",
+          formData.title,
+          formData.property_address,
+        );
         const lines: string[] = [
           `A new job is being created in the OS.`,
           ``,
@@ -1226,6 +1248,18 @@ function JobsPageContent() {
             entityType:  "job",
             subject,
             commentBody: lines.join("\n"),
+            ticketFormId: ZENDESK_JOB_TICKET_FORM_ID || undefined,
+            customFields: buildZendeskCustomFields([
+              [ZENDESK_FIELD_JOB_DATE, formData.scheduled_date ? String(formData.scheduled_date).slice(0, 10) : null],
+              [ZENDESK_FIELD_CLIENT_NAME, formData.client_name],
+              [ZENDESK_FIELD_CLIENT_EMAIL, (formData as { client_email?: string }).client_email],
+              [ZENDESK_FIELD_CLIENT_PHONE, (formData as { client_phone?: string }).client_phone],
+              [ZENDESK_FIELD_ADDRESS, formData.property_address],
+              [ZENDESK_FIELD_CLIENT_PRICE, formData.client_price],
+              [ZENDESK_FIELD_SCOPE, formData.scope],
+              [ZENDESK_FIELD_REPORT_LINK, (formData as { report_link?: string }).report_link],
+              [ZENDESK_FIELD_REPLY_STATUS, ZENDESK_REPLY_STATUS_SENT_VALUE],
+            ]),
           }),
         });
         const j = await res.json();
@@ -1370,6 +1404,13 @@ function JobsPageContent() {
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
         partner_ids: formData.partner_ids,
+        // Manual partner pick = office allocation (not auto-assign invite). Treat as
+        // already accepted so the partner gets Job booked, not Confirm this job.
+        partner_confirmed_at: (() => {
+          const st = formData.status as Job["status"] | undefined;
+          if (st === "auto_assigning") return undefined;
+          return jobHasPartnerSet(formData as Job) ? new Date().toISOString() : undefined;
+        })(),
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
         status: (() => {
@@ -1421,6 +1462,11 @@ function JobsPageContent() {
       void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       void loadDashboardStats();
       void Promise.resolve().then(() => refreshSilent());
+      // Status + ticket form fields (type of work, client, auto-assign, …).
+      if (result.external_source === "zendesk" && result.external_ref?.trim()) {
+        void fetch(`/api/jobs/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
+          .catch((err) => console.error("[jobs/create] zendesk sync failed:", err));
+      }
       if (result.status === "auto_assigning") {
         void fetch(`/api/jobs/${result.id}/dispatch-auto-assign-invites`, { method: "POST" }).catch((err) =>
           console.error("[jobs/create] auto-assign dispatch failed:", err),
@@ -1436,13 +1482,12 @@ function JobsPageContent() {
             data: { type: "job_assigned", jobId: result.id },
           }),
         }).catch(() => {});
-        // Direct-assign path: send the confirmation_request email with the
-        // tokenised Accept link. Partner clicks → /job/confirm → POST
-        // /api/jobs/confirm-acceptance → status flips + booked email follow-up.
+        // Manual partner allocation (not auto-assign): Job booked side conversation
+        // immediately — same as re-assigning a partner on the job detail page.
         void notifyPartnerJobChange({
           jobId:        result.id,
           jobReference: result.reference,
-          kind:         "confirmation_request",
+          kind:         "assigned",
           skipPush:     true,
         });
       }
@@ -1696,7 +1741,20 @@ function JobsPageContent() {
             kind: "job_cancelled_by_office",
             cancellationReason: reason,
           });
+          void notifyPartnerJobChange({
+            jobId: j.id,
+            jobReference: j.reference,
+            kind: "cancelled",
+            reason,
+            newStatusLabel: "Cancelled",
+            skipPush: true,
+            silent: true,
+          });
         }
+        void syncJobZendeskCancellationFields(j.id, {
+          presetId: bulkCancelPresetId,
+          notes: bulkCancelDetail.trim() || null,
+        }).catch((e) => console.error("syncJobZendeskCancellationFields", j.reference, e));
       }
       if (updatedCount === 0) {
         toast.message("No eligible jobs to cancel (already cancelled).");
@@ -1954,15 +2012,16 @@ function JobsPageContent() {
       sortOptions: JOB_SORT_STATUS,
       render: (item) => {
         if (status === "action_required") {
-          const label = item.status === "on_hold" ? "On Hold" : "Unassigned";
-          const variant = item.status === "on_hold" ? JOB_STATUS_BADGE_VARIANT.on_hold : JOB_STATUS_BADGE_VARIANT.unassigned;
+          const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
+          const st = effectiveJobStatusForDisplay(item);
+          const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
             <div className="inline-flex flex-col items-start gap-0.5">
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={variant} dot>{label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
               </div>
-              {item.status === "on_hold" ? (
+              {st === "on_hold" ? (
                 <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
               ) : null}
             </div>
@@ -1988,7 +2047,8 @@ function JobsPageContent() {
           );
         }
         const st = effectiveJobStatusForDisplay(item);
-        const c = statusConfig[st] ?? { label: st, variant: "default" as const };
+        const onHoldBadge = jobOnHoldDisplayBadge(item);
+        const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
           <div className="inline-flex flex-col items-start gap-0.5">
             <div className="inline-flex flex-wrap items-center gap-1.5">
@@ -2633,14 +2693,13 @@ function JobsPageContent() {
                   onCardClick={openJobDetail}
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
+                    const onHoldKanbanBadge = jobOnHoldDisplayBadge(j);
                     const statusCaption =
                       status === "action_required"
-                        ? j.status === "on_hold"
-                          ? "On Hold"
-                          : "Unassigned"
+                        ? onHoldKanbanBadge?.label ?? (statusConfig[disp]?.label ?? disp)
                         : status === "closed"
                           ? jobsManagementClosedBucketLabel(jobsManagementClosedBucket(j))
-                          : ((statusConfig[disp]?.label ?? disp) as string);
+                          : onHoldKanbanBadge?.label ?? ((statusConfig[disp]?.label ?? disp) as string);
                     const sched = formatJobScheduleListLabel(j);
                     const schedDetail = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);
@@ -2915,7 +2974,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
-    billed_hours: "1",
+    billed_hours: "2",
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -2976,7 +3035,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
   const { pricing, loading: pricingResolving } = useResolvedJobPricing({
     accountId: effectiveAccountId,
-    partnerId: form.assignment_mode === "manual" ? form.partner_id : null,
+    // Custom Price (fixed): client/catalog/account only — partner cost is manual or margin hint.
+    partnerId:
+      form.job_type === "hourly" && form.assignment_mode === "manual" ? form.partner_id : null,
     catalogServiceId: isStackablePricing ? null : form.catalog_service_id,
     pricingPresetId: isStackablePricing ? null : form.catalog_pricing_preset_id,
   });
@@ -3049,7 +3110,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
   const applyPartnerPricing = (partnerId: string) => {
     lastAutoPartnerCost.current = null;
-    setForm((prev) => ({ ...prev, partner_id: partnerId }));
+    setForm((prev) => ({
+      ...prev,
+      partner_id: partnerId,
+      ...(prev.job_type === "fixed" ? { partner_cost: "" } : {}),
+    }));
   };
 
   // Auto-fill prices whenever the resolver returns a fresh `pricing` object.
@@ -3062,14 +3127,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (!pricing) return;
     lastAutoPartnerCost.current = null;
     queueMicrotask(() =>
-      setForm((prev) => ({
-        ...prev,
-        hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
-        hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
-        billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
-        client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
-        partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
-      })),
+      setForm((prev) => {
+        const next = {
+          ...prev,
+          hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
+          hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
+          billed_hours: String(resolveInitialBilledHours(pricing.client.default_hours)),
+          client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
+        };
+        // Smart Pricing (hourly) auto-fills partner from rates; Custom Price leaves partner manual.
+        if (prev.job_type === "hourly") {
+          return {
+            ...next,
+            partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
+          };
+        }
+        return next;
+      }),
     );
   }, [pricing, isStackablePricing]);
   const catalogPricingPresetOptions = useMemo(() => {
@@ -3223,7 +3297,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
     const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
-    const initialBilledHours = Math.max(1, Number(form.billed_hours) || 1);
+    const initialBilledHours = resolveInitialBilledHours(
+      selectedCatalogService?.default_hours,
+      form.billed_hours,
+    );
     const hourlyTotals = computeHourlyTotals({
       elapsedSeconds: initialBilledHours * 3600,
       clientHourlyRate: hourlyClientRate,
@@ -3319,7 +3396,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       report_link: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
-      billed_hours: "1",
+      billed_hours: "2",
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -3339,7 +3416,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
         parkingFeeGbp: accessFees.parkingFeeGbp,
       });
   const hourlyPreview = computeHourlyTotals({
-    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
+    elapsedSeconds:
+      resolveInitialBilledHours(selectedCatalogService?.default_hours, form.billed_hours) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
     partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
   });
@@ -3371,10 +3449,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
       return;
     }
     if (form.job_type === "hourly") {
-      lastAutoPartnerCost.current = null;
-      return;
-    }
-    if (form.assignment_mode === "manual" && form.partner_id.trim()) {
       lastAutoPartnerCost.current = null;
       return;
     }
@@ -3430,7 +3504,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <button
                 type="button"
                 title="Set prices on this job"
-                onClick={() => setForm((p) => ({ ...p, job_type: "fixed" }))}
+                onClick={() => {
+                  lastAutoPartnerCost.current = null;
+                  setForm((p) => ({ ...p, job_type: "fixed", partner_cost: "" }));
+                }}
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "fixed"
@@ -3484,7 +3561,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         }
                         const presetId = defaultPricingPresetId(service);
                         const eff = mergeCatalogWithPricingPreset(service, presetId || null);
-                        const hrs = Math.max(1, Number(eff.default_hours) || 1);
+                        const hrs = resolveInitialBilledHours(eff.default_hours);
                         const clientRate = Number(eff.hourly_rate) || 0;
                         const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
                         const totals = computeHourlyTotals({
@@ -3845,11 +3922,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     ? "Auto from package"
                     : form.job_type === "hourly"
                       ? "Auto from rates × hours"
-                      : form.partner_id && form.assignment_mode === "manual"
-                        ? "From partner rates"
-                        : form.catalog_service_id
-                          ? "From catalogue"
-                          : "Manual entry"}
+                      : form.catalog_service_id
+                        ? "Client from catalogue · partner manual"
+                        : "Manual entry"}
               </span>
             </div>
             {isStackablePricing && stackableLinePricing ? (
@@ -3897,11 +3972,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
               <div className="min-w-0">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">
                   Partner Cost £
-                  {!isStackablePricing && pricing ? (
+                  {form.job_type === "hourly" && !isStackablePricing && pricing ? (
                     <span className="ml-1.5">
-                      <PricingSourceChip
-                        source={form.job_type === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
-                      />
+                      <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
                     </span>
                   ) : null}
                 </label>
@@ -4048,7 +4121,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                               match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
                             )}
                           >
-                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : formatPartnerPrimaryTradeLabel(p, catalogServices))} · {p.location ?? "—"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

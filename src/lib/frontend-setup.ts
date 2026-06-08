@@ -54,6 +54,13 @@ export type FrontendSetup = {
   pulse_revenue_weeks?: number;
   pulse_low_margin_pct?: number;
 
+  /** Pulse revenue goal — monthly £ target (manual mode) or resolved from breakeven/healthy. */
+  pulse_revenue_goal_monthly_gbp?: number | null;
+  /** How the Pulse revenue goal is derived. */
+  pulse_revenue_goal_mode?: PulseRevenueGoalMode;
+  /** Target net margin % after fixed costs — used in the healthy revenue formula. */
+  pulse_healthy_net_margin_pct?: number;
+
   /**
    * Target gross margin % the company aims for on a job. Drives green / neutral
    * / red colouring on margin chips across the app (Beacon Kanban, future
@@ -88,6 +95,10 @@ export type FrontendSetup = {
   zendesk_on_hold_reason_field_id?: number;
   zendesk_complaint_description_field_id?: number;
   zendesk_complaint_solution_field_id?: number;
+  /** Cancellation reason dropdown (`cancel_{osId}`). */
+  zendesk_cancellation_reason_field_id?: number;
+  /** Cancellation notes textarea (required when reason = other). */
+  zendesk_cancellation_notes_field_id?: number;
 
   /** Customer CCZ (congestion charge) surcharge per job when applied (GBP). */
   access_ccz_fee_gbp?: number;
@@ -115,6 +126,7 @@ export type AccessFees = {
 };
 
 export type PulsePresetId = "1d" | "wtd" | "mtd" | "qtd" | "all";
+export type PulseRevenueGoalMode = "manual" | "breakeven" | "healthy";
 export type BeaconViewId = "list" | "kanban" | "map";
 export type BeaconDateFilterId = "today" | "tomorrow" | "week" | "month" | "all";
 export type BeaconRegionId = "london" | "fit_all" | "uk" | "europe";
@@ -152,6 +164,10 @@ export const DEFAULT_PULSE_TOP_ACCOUNTS_COUNT = 5;
 export const DEFAULT_PULSE_REVENUE_WEEKS = 8;
 export const DEFAULT_PULSE_LOW_MARGIN_PCT = 20;
 export const DEFAULT_TARGET_MARGIN_PCT = 40;
+export const DEFAULT_PULSE_REVENUE_GOAL_MODE: PulseRevenueGoalMode = "healthy";
+export const DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT = 30;
+export const MIN_PULSE_HEALTHY_NET_MARGIN_PCT = 1;
+export const MAX_PULSE_HEALTHY_NET_MARGIN_PCT = 99;
 export const MIN_PULSE_ROW_COUNT = 3;
 export const MAX_PULSE_ROW_COUNT = 20;
 export const MIN_PULSE_REVENUE_WEEKS = 4;
@@ -202,6 +218,9 @@ export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
   pulse_top_accounts_count: DEFAULT_PULSE_TOP_ACCOUNTS_COUNT,
   pulse_revenue_weeks: DEFAULT_PULSE_REVENUE_WEEKS,
   pulse_low_margin_pct: DEFAULT_PULSE_LOW_MARGIN_PCT,
+  pulse_revenue_goal_monthly_gbp: null,
+  pulse_revenue_goal_mode: DEFAULT_PULSE_REVENUE_GOAL_MODE,
+  pulse_healthy_net_margin_pct: DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT,
   target_margin_pct: DEFAULT_TARGET_MARGIN_PCT,
   beacon_default_view: DEFAULT_BEACON_VIEW,
   beacon_default_date_filter: DEFAULT_BEACON_DATE_FILTER,
@@ -218,6 +237,7 @@ export const DEFAULT_FRONTEND_SETUP: FrontendSetup = {
 };
 
 const PULSE_PRESET_IDS: PulsePresetId[] = ["1d", "wtd", "mtd", "qtd", "all"];
+const PULSE_REVENUE_GOAL_MODES: PulseRevenueGoalMode[] = ["manual", "breakeven", "healthy"];
 const BEACON_VIEW_IDS: BeaconViewId[] = ["list", "kanban", "map"];
 const BEACON_DATE_FILTER_IDS: BeaconDateFilterId[] = ["today", "tomorrow", "week", "month", "all"];
 const BEACON_REGION_IDS: BeaconRegionId[] = ["london", "fit_all", "uk", "europe"];
@@ -362,6 +382,13 @@ function normalizeHHMM(raw: unknown, fallback: string): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+export function normalizePulseRevenueGoalMonthlyGbp(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 export function normalizeWorkingHours(raw: unknown): { start: string; end: string } {
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
     return { ...DEFAULT_WORKING_HOURS };
@@ -396,6 +423,18 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.pulse_top_accounts_count = clampInt(o.pulse_top_accounts_count, DEFAULT_PULSE_TOP_ACCOUNTS_COUNT, MIN_PULSE_ROW_COUNT, MAX_PULSE_ROW_COUNT);
   base.pulse_revenue_weeks = clampInt(o.pulse_revenue_weeks, DEFAULT_PULSE_REVENUE_WEEKS, MIN_PULSE_REVENUE_WEEKS, MAX_PULSE_REVENUE_WEEKS);
   base.pulse_low_margin_pct = clampNum(o.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100);
+  base.pulse_revenue_goal_monthly_gbp = normalizePulseRevenueGoalMonthlyGbp(o.pulse_revenue_goal_monthly_gbp);
+  base.pulse_revenue_goal_mode = pickEnum(
+    o.pulse_revenue_goal_mode,
+    PULSE_REVENUE_GOAL_MODES,
+    DEFAULT_PULSE_REVENUE_GOAL_MODE,
+  );
+  base.pulse_healthy_net_margin_pct = clampNum(
+    o.pulse_healthy_net_margin_pct,
+    DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT,
+    MIN_PULSE_HEALTHY_NET_MARGIN_PCT,
+    MAX_PULSE_HEALTHY_NET_MARGIN_PCT,
+  );
   base.target_margin_pct = clampNum(o.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
   base.beacon_default_view = pickEnum(o.beacon_default_view, BEACON_VIEW_IDS, DEFAULT_BEACON_VIEW);
   base.beacon_default_date_filter = pickEnum(o.beacon_default_date_filter, BEACON_DATE_FILTER_IDS, DEFAULT_BEACON_DATE_FILTER);
@@ -418,6 +457,10 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (zdDesc) base.zendesk_complaint_description_field_id = zdDesc;
   const zdSol = normalizeZendeskFieldId(o.zendesk_complaint_solution_field_id);
   if (zdSol) base.zendesk_complaint_solution_field_id = zdSol;
+  const zdCancelReason = normalizeZendeskFieldId(o.zendesk_cancellation_reason_field_id);
+  if (zdCancelReason) base.zendesk_cancellation_reason_field_id = zdCancelReason;
+  const zdCancelNotes = normalizeZendeskFieldId(o.zendesk_cancellation_notes_field_id);
+  if (zdCancelNotes) base.zendesk_cancellation_notes_field_id = zdCancelNotes;
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
@@ -498,6 +541,24 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.pulse_low_margin_pct !== undefined) {
     base.pulse_low_margin_pct = clampNum(patch.pulse_low_margin_pct, DEFAULT_PULSE_LOW_MARGIN_PCT, 0, 100);
   }
+  if (patch.pulse_revenue_goal_monthly_gbp !== undefined) {
+    base.pulse_revenue_goal_monthly_gbp = normalizePulseRevenueGoalMonthlyGbp(patch.pulse_revenue_goal_monthly_gbp);
+  }
+  if (patch.pulse_revenue_goal_mode !== undefined) {
+    base.pulse_revenue_goal_mode = pickEnum(
+      patch.pulse_revenue_goal_mode,
+      PULSE_REVENUE_GOAL_MODES,
+      DEFAULT_PULSE_REVENUE_GOAL_MODE,
+    );
+  }
+  if (patch.pulse_healthy_net_margin_pct !== undefined) {
+    base.pulse_healthy_net_margin_pct = clampNum(
+      patch.pulse_healthy_net_margin_pct,
+      DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT,
+      MIN_PULSE_HEALTHY_NET_MARGIN_PCT,
+      MAX_PULSE_HEALTHY_NET_MARGIN_PCT,
+    );
+  }
   if (patch.target_margin_pct !== undefined) {
     base.target_margin_pct = clampNum(patch.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
   }
@@ -543,6 +604,12 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.zendesk_complaint_solution_field_id !== undefined) {
     base.zendesk_complaint_solution_field_id = normalizeZendeskFieldId(patch.zendesk_complaint_solution_field_id);
+  }
+  if (patch.zendesk_cancellation_reason_field_id !== undefined) {
+    base.zendesk_cancellation_reason_field_id = normalizeZendeskFieldId(patch.zendesk_cancellation_reason_field_id);
+  }
+  if (patch.zendesk_cancellation_notes_field_id !== undefined) {
+    base.zendesk_cancellation_notes_field_id = normalizeZendeskFieldId(patch.zendesk_cancellation_notes_field_id);
   }
   if (patch.access_ccz_fee_gbp !== undefined) {
     base.access_ccz_fee_gbp = clampAccessFeeGbp(patch.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);

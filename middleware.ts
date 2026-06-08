@@ -40,7 +40,9 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/job/report") ||   // partner work-report submission (rewrites to /quote/respond)
     pathname.startsWith("/r/") ||           // short-link resolver
     pathname.startsWith("/portal/login") ||
-    pathname.startsWith("/portal/auth/");
+    pathname.startsWith("/portal/auth/") ||
+    pathname.startsWith("/trade/login") ||
+    pathname.startsWith("/trade/auth/");
 
   // ─── Detect session cookie without instantiating Supabase client ──────────
   // Supabase sets cookies named `sb-<project-ref>-auth-token*`. We only need to
@@ -123,7 +125,7 @@ const CSP_DIRECTIVES = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https: http:",
   "font-src 'self' data: https://fonts.gstatic.com",
-  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.up.railway.app https://api.mapbox.com https://*.tiles.mapbox.com https://events.mapbox.com https://api.stripe.com https://exp.host https://*.openai.com",
+  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.up.railway.app wss://*.supabase.co wss://*.supabase.in wss://*.up.railway.app https://api.mapbox.com https://*.tiles.mapbox.com https://events.mapbox.com https://api.stripe.com https://exp.host https://*.openai.com",
   "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://*.stripe.com",
   "object-src 'none'",
   "base-uri 'self'",

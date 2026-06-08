@@ -1,0 +1,1673 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zendesk Completo — Fixfy School</title>
+<style>
+
+  :root {
+    --navy: #020040;
+    --orange: #ED4B00;
+    --purple: #5A2B91;
+    --grey: #555555;
+    --light: #F2F4F8;
+    --soft-orange: #FFE8D5;
+    --soft-purple: #EDE5F8;
+    --soft-green: #DDF0E0;
+    --soft-red: #FFE8E8;
+    --border: #CCCCCC;
+    --red: #CC0000;
+    --green: #2E7D32;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; line-height: 1.6; color: var(--navy); background: #FAFBFD; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav.sidebar {
+    background: var(--navy); color: white; padding: 30px 20px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  nav.sidebar h1 { font-size: 18px; margin-bottom: 6px; color: white; }
+  nav.sidebar .subtitle { font-size: 11px; color: var(--soft-orange); margin-bottom: 28px; }
+  nav.sidebar h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--orange); margin: 24px 0 8px; }
+  nav.sidebar ul { list-style: none; }
+  nav.sidebar li { margin: 4px 0; }
+  nav.sidebar a { color: #DCE0EC; text-decoration: none; font-size: 13px; padding: 6px 10px; display: block; border-radius: 4px; transition: all 0.2s; }
+  nav.sidebar a:hover { background: rgba(247,119,55,0.2); color: white; }
+  main { padding: 40px 60px; max-width: 1100px; }
+  .hero {
+    background: linear-gradient(135deg, var(--navy) 0%, #1a2a5a 100%);
+    color: white; padding: 60px 50px; border-radius: 16px; margin-bottom: 40px;
+  }
+  .hero h1 { font-size: 42px; margin-bottom: 12px; }
+  .hero .brand { color: var(--orange); font-size: 56px; font-weight: 800; margin-bottom: 20px; }
+  .hero p { font-size: 16px; color: #DCE0EC; max-width: 700px; }
+  .hero .version { display: inline-block; margin-top: 24px; padding: 6px 14px; background: var(--orange); color: white; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  section { background: white; padding: 40px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 2px 8px rgba(13,27,61,0.05); }
+  h1 { color: var(--navy); font-size: 32px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 3px solid var(--orange); }
+  h2 { color: var(--navy); font-size: 22px; margin: 30px 0 14px; }
+  h3 { color: var(--orange); font-size: 16px; margin: 22px 0 10px; }
+  p { margin-bottom: 12px; }
+  ul, ol { margin: 12px 0 18px 24px; }
+  li { margin-bottom: 6px; }
+  strong { color: var(--navy); }
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+  th { background: var(--navy); color: white; padding: 12px; text-align: left; font-size: 14px; }
+  td { padding: 10px 12px; border: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+  tr:nth-child(even) td { background: var(--light); }
+  .callout {
+    background: var(--soft-orange); border-left: 6px solid var(--orange);
+    padding: 16px 20px; margin: 20px 0; border-radius: 6px;
+  }
+  .callout-title { font-weight: 700; color: var(--navy); margin-bottom: 6px; font-size: 15px; }
+  .callout.danger { background: var(--soft-red); border-color: var(--red); }
+  .callout.danger .callout-title { color: var(--red); }
+  .callout.info { background: var(--light); border-color: var(--navy); }
+  .callout.success { background: var(--soft-green); border-color: var(--green); }
+  .diagram { margin: 20px 0; padding: 16px; background: white; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  .diagram svg { width: 100%; height: auto; max-width: 1000px; display: block; margin: 0 auto; }
+  .role-card { background: white; border: 2px solid var(--border); border-radius: 10px; padding: 20px; margin: 12px 0; }
+  .role-card.carlos { border-color: var(--orange); background: linear-gradient(to bottom, var(--soft-orange), white); }
+  .role-card.isabela { border-color: var(--navy); background: linear-gradient(to bottom, #E8E5F8, white); }
+  .role-card.victor { border-color: var(--purple); background: linear-gradient(to bottom, var(--soft-purple), white); }
+  .role-card h3 { margin-top: 0; }
+  .macro-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 20px 0; }
+  .macro-card { padding: 20px; border-radius: 10px; border: 2px solid; }
+  .macro-card.m-job, .macro-card.m-quote, .macro-card.m-complaint { border-color: var(--orange); background: #FFF6EC; }
+  .macro-card.m-finance { border-color: var(--purple); background: var(--soft-purple); }
+  .macro-card.m-cancel { border-color: var(--red); background: var(--soft-red); }
+  .macro-card.m-solved { border-color: var(--green); background: var(--soft-green); }
+  .macro-card h4 { font-size: 16px; margin-bottom: 8px; }
+  .macro-card ul { font-size: 13px; margin-left: 18px; }
+  .tag { display: inline-block; padding: 2px 8px; background: var(--navy); color: white; border-radius: 12px; font-size: 11px; font-family: monospace; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 14px; font-size: 12px; font-weight: 600; }
+  .b-carlos { background: var(--soft-orange); color: var(--navy); }
+  .b-isabela { background: #E8E5F8; color: var(--navy); }
+  .b-victor { background: var(--soft-purple); color: var(--navy); }
+  .b-success { background: var(--soft-green); color: var(--green); }
+  .b-danger { background: var(--soft-red); color: var(--red); }
+  .checklist { background: white; border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin: 14px 0; }
+  .checklist li { list-style: none; padding-left: 30px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "▢"; position: absolute; left: 0; color: var(--orange); font-size: 18px; }
+  .step { background: var(--light); padding: 14px; border-radius: 8px; margin: 8px 0; border-left: 4px solid var(--orange); }
+  .step-num { background: var(--orange); color: white; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; margin-right: 10px; }
+  code { background: var(--light); padding: 2px 6px; border-radius: 4px; font-size: 13px; color: var(--navy); font-family: "SF Mono", Consolas, monospace; }
+  .footer { text-align: center; padding: 30px; color: var(--grey); font-size: 13px; }
+  @media print {
+    .layout { grid-template-columns: 1fr; }
+    nav.sidebar { display: none; }
+    main { padding: 20px; }
+    section { box-shadow: none; page-break-inside: avoid; }
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.sidebar { position: static; height: auto; }
+    main { padding: 20px; }
+  }
+
+
+@media screen {
+  body { background: #f5f5f0; }
+  .layout { display: block !important; }
+  nav.sidebar { display: none !important; }
+  main { padding: 1.5rem 2rem 4rem !important; max-width: 920px; margin: 0 auto; }
+  section { scroll-margin-top: 88px; margin-top: 2rem; }
+  .hero { margin-top: 0; }
+}
+.school-shell { display: flex; gap: 0; min-height: 100vh; }
+.school-nav {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+  background: #020040; color: #fff; padding: 1rem 0; overflow-y: auto;
+  z-index: 100; box-shadow: 4px 0 24px rgba(2,0,64,.15);
+}
+.school-nav__brand { padding: 0 1rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); margin-bottom: 0.5rem; }
+.school-nav__brand strong { display: block; font-size: 0.95rem; }
+.school-nav__brand strong.phase-blue { color: #60A5FA; }
+.school-nav__brand strong.phase-emerald { color: #34D399; }
+.school-nav__brand span { font-size: 0.7rem; color: rgba(255,255,255,.5); letter-spacing: 0.08em; text-transform: uppercase; }
+.school-nav a {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 1rem; font-size: 0.8rem; color: rgba(255,255,255,.65);
+  text-decoration: none; border-left: 3px solid transparent; transition: all .15s;
+}
+.school-nav a:hover { color: #fff; background: rgba(255,255,255,.06); }
+.school-nav a.active { color: #fff; background: rgba(96,165,250,.25); border-left-color: #3B82F6; }
+.school-nav.trade a.active { background: rgba(52,211,153,.2); border-left-color: #10B981; }
+.school-progress-top { position: fixed; top: 0; left: 240px; right: 0; height: 4px; background: rgba(2,0,64,.08); z-index: 99; }
+.school-progress-top__bar { height: 100%; width: 0%; transition: width .4s ease; }
+.school-progress-top__bar.blue { background: linear-gradient(90deg, #3B82F6, #1D4ED8); }
+.school-progress-top__bar.emerald { background: linear-gradient(90deg, #34D399, #059669); }
+.school-main { margin-left: 240px; flex: 1; padding-top: 4px; }
+.school-chapter-banner {
+  display: flex; align-items: center; gap: 1rem;
+  color: #fff; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  box-shadow: 0 8px 24px rgba(2,0,64,.15);
+}
+.school-chapter-banner.blue { background: linear-gradient(135deg, #020040 0%, #1e3a8a 100%); }
+.school-chapter-banner.emerald { background: linear-gradient(135deg, #020034 0%, #065F46 100%); }
+.school-chapter-banner__icon { font-size: 2rem; line-height: 1; }
+.school-chapter-banner__label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+.school-chapter-banner__xp { margin: 0.15rem 0 0; font-size: 0.75rem; opacity: 0.9; }
+.school-chapter-banner.blue .school-chapter-banner__xp { color: #93C5FD; }
+.school-chapter-banner.emerald .school-chapter-banner__xp { color: #6EE7B7; }
+@media (max-width: 900px) {
+  .school-nav { display: none; }
+  .school-main { margin-left: 0; }
+  .school-progress-top { left: 0; }
+}
+
+</style>
+</head>
+<body>
+<div class="school-shell">
+<div class="school-progress-top"><div class="school-progress-top__bar blue" id="schoolScrollProgress"></div></div>
+<nav class="school-nav" aria-label="Capítulos Zendesk">
+  <div class="school-nav__brand">
+    <span>Fixfy School</span>
+    <strong class="phase-blue">Fase 1 · Zendesk</strong>
+  </div>
+  <a href="#chapter-welcome" data-nav="welcome"><span class="nav-emoji">🎫</span>Bem-vindo</a>
+  <a href="#chapter-views" data-nav="views"><span class="nav-emoji">👁️</span>9 Views</a>
+  <a href="#chapter-statuses" data-nav="statuses"><span class="nav-emoji">🏷️</span>Statuses</a>
+  <a href="#chapter-forms" data-nav="forms"><span class="nav-emoji">📋</span>Forms</a>
+  <a href="#chapter-macros" data-nav="macros"><span class="nav-emoji">⚡</span>Macros</a>
+  <a href="#chapter-workflows" data-nav="workflows"><span class="nav-emoji">🔀</span>Workflows</a>
+  <a href="#chapter-sync" data-nav="sync"><span class="nav-emoji">🔗</span>Sync OS</a>
+  <a href="#chapter-troubleshoot" data-nav="troubleshoot"><span class="nav-emoji">🛠️</span>Problemas</a>
+  <a href="#chapter-reference" data-nav="reference"><span class="nav-emoji">📚</span>Referência</a>
+</nav>
+<div class="school-main">
+<main>
+
+
+<div class="hero">
+  <h1>Manual do Agente</h1>
+  <div class="brand">Zendesk Fixfy</div>
+  <p>Guia completo de operacao - suporte a clientes e partners. Inclui 6 macros, 7 forms, 16+ statuses, fluxo de complaint, cancelamento, finance, sync com OS.</p>
+  <div class="version">Versao 3.0</div>
+</div>
+
+<!-- PARTE 1 -->
+<div class="school-chapter-banner blue" data-chapter="welcome">
+  <div class="school-chapter-banner__icon">🎫</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Bem-vindo & Sistema</p>
+    <p class="school-chapter-banner__xp">+50 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-welcome"></div>
+<section id="welcome">
+  <h1>Parte 1 - O sistema Fixfy</h1>
+  <h2>Bem-vindo</h2>
+  <p>A Fixfy conecta clientes B2B (Housekeep, Checkatrade, e outros marketplaces) com tradespeople (eletricistas, encanadores, pintores, etc.) pra resolver manutencao predial. Voce, agente, e o intermediario - garante que o pedido chega certinho do cliente ao partner, e que tudo termina bem.</p>
+  <div class="callout">
+    <div class="callout-title">Resumo em 1 frase</div>
+    <p>Cliente pede algo, ticket chega no Zendesk, voce triagem, aplica uma macro, o OS (sistema central em app.getfixfy.com) recebe e cuida do resto.</p>
+  </div>
+
+  <h2 id="team">Voce e seu time</h2>
+  <p>O Zendesk Fixfy tem 3 agentes principais:</p>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" font-family="Arial, sans-serif">
+  <rect width="1200" height="700" fill="#FFFFFF"/>
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">Auto-routing: quem recebe qual ticket</text>
+  <text x="600" y="62" text-anchor="middle" font-size="12" fill="#555555">O Zendesk atribui o assignee automaticamente baseado no status do ticket</text>
+
+  <!-- Carlos box -->
+  <g transform="translate(40,110)">
+    <rect width="340" height="450" rx="14" fill="#FFE8D5" stroke="#F77737" stroke-width="3"/>
+    <circle cx="170" cy="50" r="35" fill="#F77737"/>
+    <text x="170" y="58" text-anchor="middle" font-size="24" font-weight="bold" fill="#FFFFFF">C</text>
+    <text x="170" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#0D1B3D">Carlos Perez</text>
+    <text x="170" y="135" text-anchor="middle" font-size="12" fill="#555555">Pre-sale / Triagem</text>
+    <text x="20" y="180" font-size="13" font-weight="bold" fill="#0D1B3D">Statuses dele:</text>
+    <text x="30" y="210" font-size="12" fill="#0D1B3D">- New (recem chegado)</text>
+    <text x="30" y="232" font-size="12" fill="#0D1B3D">- Open (em triagem)</text>
+    <text x="30" y="254" font-size="12" fill="#0D1B3D">- Ready to Quote</text>
+    <text x="30" y="276" font-size="12" fill="#0D1B3D">- Bidding (partners quotando)</text>
+    <text x="30" y="298" font-size="12" fill="#0D1B3D">- Approval (cliente avaliando)</text>
+    <text x="20" y="340" font-size="13" font-weight="bold" fill="#0D1B3D">O que ele faz:</text>
+    <text x="30" y="365" font-size="11" fill="#555555">- Triagem de tickets novos</text>
+    <text x="30" y="385" font-size="11" fill="#555555">- Define Job ou Quote</text>
+    <text x="30" y="405" font-size="11" fill="#555555">- Acompanha Bidding</text>
+    <text x="30" y="425" font-size="11" fill="#555555">- Passa pra Isabela quando pronto</text>
+  </g>
+
+  <!-- Isabela box -->
+  <g transform="translate(420,110)">
+    <rect width="340" height="450" rx="14" fill="#E8E5F8" stroke="#0D1B3D" stroke-width="3"/>
+    <circle cx="170" cy="50" r="35" fill="#0D1B3D"/>
+    <text x="170" y="58" text-anchor="middle" font-size="24" font-weight="bold" fill="#FFFFFF">I</text>
+    <text x="170" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#0D1B3D">Isabela Gil</text>
+    <text x="170" y="135" text-anchor="middle" font-size="12" fill="#555555">Execucao / Operacao</text>
+    <text x="20" y="180" font-size="13" font-weight="bold" fill="#0D1B3D">Statuses dela:</text>
+    <text x="30" y="210" font-size="12" fill="#0D1B3D">- Unassigned (manual assign)</text>
+    <text x="30" y="232" font-size="12" fill="#0D1B3D">- Auto Assigning (OS resolve)</text>
+    <text x="30" y="254" font-size="12" fill="#0D1B3D">- Schedule (agendado)</text>
+    <text x="30" y="276" font-size="12" fill="#0D1B3D">- In Progress (executando)</text>
+    <text x="30" y="298" font-size="12" fill="#0D1B3D">- Final Checks (finalizando)</text>
+    <text x="30" y="320" font-size="12" fill="#0D1B3D">- On Hold (pausado)</text>
+    <text x="30" y="342" font-size="12" fill="#0D1B3D">- Complaint (reclamacao)</text>
+    <text x="30" y="364" font-size="12" fill="#0D1B3D">- Partner Open (com partner)</text>
+    <text x="20" y="395" font-size="13" font-weight="bold" fill="#0D1B3D">O que ela faz:</text>
+    <text x="30" y="420" font-size="11" fill="#555555">- Acompanha partner do job inicio ao fim</text>
+    <text x="30" y="438" font-size="11" fill="#555555">- Resolve complaints + envia report</text>
+  </g>
+
+  <!-- Victor box -->
+  <g transform="translate(800,110)">
+    <rect width="340" height="450" rx="14" fill="#EDE5F8" stroke="#5A2B91" stroke-width="3"/>
+    <circle cx="170" cy="50" r="35" fill="#5A2B91"/>
+    <text x="170" y="58" text-anchor="middle" font-size="24" font-weight="bold" fill="#FFFFFF">V</text>
+    <text x="170" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#0D1B3D">Victor Braz</text>
+    <text x="170" y="135" text-anchor="middle" font-size="12" fill="#555555">Finance / Admin</text>
+    <text x="20" y="180" font-size="13" font-weight="bold" fill="#0D1B3D">Statuses dele:</text>
+    <text x="30" y="210" font-size="12" fill="#0D1B3D">- Finance (assunto financeiro)</text>
+    <text x="20" y="245" font-size="13" font-weight="bold" fill="#0D1B3D">O que ele faz:</text>
+    <text x="30" y="272" font-size="11" fill="#555555">- Reembolsos</text>
+    <text x="30" y="290" font-size="11" fill="#555555">- Disputas de pagamento</text>
+    <text x="30" y="308" font-size="11" fill="#555555">- Cobrancas duplicadas</text>
+    <text x="30" y="326" font-size="11" fill="#555555">- Questoes contabeis</text>
+    <text x="30" y="344" font-size="11" fill="#555555">- Tudo sobre $$$</text>
+    <text x="20" y="380" font-size="13" font-weight="bold" fill="#0D1B3D">Bonus:</text>
+    <text x="30" y="405" font-size="11" fill="#555555">- View privada Action Required</text>
+    <text x="30" y="423" font-size="11" fill="#555555">  (All) com tudo do time</text>
+  </g>
+
+  <!-- Bottom info -->
+  <g transform="translate(40,610)">
+    <rect width="1120" height="60" rx="10" fill="#0D1B3D"/>
+    <text x="560" y="32" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Como funciona: voce muda o status do ticket, o trigger atribui o assignee automaticamente.</text>
+    <text x="560" y="50" text-anchor="middle" font-size="11" fill="#FFE8D5">Voce nao precisa "passar" o ticket pra ninguem - so muda o status correto e o sistema cuida.</text>
+  </g>
+</svg>
+</div>
+
+  <div class="role-card carlos">
+    <h3>Carlos Perez - Pre-sale / Triagem</h3>
+    <ul>
+      <li>Recebe TODOS os tickets novos (status New, Open)</li>
+      <li>Decide: e um Job, Quote, Complaint, ou Finance?</li>
+      <li>Acompanha Quotes em Bidding ate aprovacao</li>
+      <li>Passa pra Isabela quando o ticket vira execucao</li>
+    </ul>
+  </div>
+  <div class="role-card isabela">
+    <h3>Isabela Gil - Execucao / Operacao</h3>
+    <ul>
+      <li>Recebe tickets em execucao (Unassigned, Schedule, In Progress, Final Checks)</li>
+      <li>Acompanha o partner do inicio ao fim</li>
+      <li>Cuida de Complaints (com investigacao do partner)</li>
+      <li>Resolve quando job concluido + envia report pro cliente</li>
+    </ul>
+  </div>
+  <div class="role-card victor">
+    <h3>Victor Braz - Finance / Admin</h3>
+    <ul>
+      <li>Recebe SO tickets em status Finance</li>
+      <li>Reembolsos, disputas, cobrancas duplicadas</li>
+      <li>Tem view privada Action Required (All) pra supervisao</li>
+    </ul>
+  </div>
+
+  <h2 id="flow">O fluxo completo em 8 passos</h2>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 540" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F77737"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="540" fill="#FFFFFF"/>
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">Fluxo geral: do ticket chegando ao job no OS</text>
+
+  <!-- Step 1 -->
+  <g transform="translate(40,90)">
+    <rect width="180" height="100" rx="12" fill="#0D1B3D"/>
+    <text x="90" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">1. Ticket chega</text>
+    <text x="90" y="62" text-anchor="middle" font-size="10" fill="#FFFFFF">Email, WhatsApp,</text>
+    <text x="90" y="77" text-anchor="middle" font-size="10" fill="#FFFFFF">Housekeep, Checkatrade</text>
+  </g>
+  <line x1="220" y1="140" x2="280" y2="140" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 2 -->
+  <g transform="translate(290,90)">
+    <rect width="180" height="100" rx="12" fill="#F77737"/>
+    <text x="90" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">2. Action Required</text>
+    <text x="90" y="62" text-anchor="middle" font-size="10" fill="#FFFFFF">Aparece na sua View</text>
+    <text x="90" y="77" text-anchor="middle" font-size="10" fill="#FFFFFF">principal</text>
+  </g>
+  <line x1="470" y1="140" x2="530" y2="140" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 3 -->
+  <g transform="translate(540,90)">
+    <rect width="180" height="100" rx="12" fill="#0D1B3D"/>
+    <text x="90" y="33" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">3. Triagem</text>
+    <text x="90" y="55" text-anchor="middle" font-size="10" fill="#FFFFFF">Job? Quote?</text>
+    <text x="90" y="70" text-anchor="middle" font-size="10" fill="#FFFFFF">Complaint?</text>
+    <text x="90" y="85" text-anchor="middle" font-size="10" fill="#FFFFFF">Solved?</text>
+  </g>
+  <line x1="720" y1="140" x2="780" y2="140" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 4 -->
+  <g transform="translate(790,90)">
+    <rect width="180" height="100" rx="12" fill="#0D1B3D"/>
+    <text x="90" y="33" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">4. Preencher</text>
+    <text x="90" y="55" text-anchor="middle" font-size="10" fill="#FFFFFF">campos do form</text>
+    <text x="90" y="70" text-anchor="middle" font-size="10" fill="#FFFFFF">(Client, Address,</text>
+    <text x="90" y="85" text-anchor="middle" font-size="10" fill="#FFFFFF">TOW, Scope...)</text>
+  </g>
+  <line x1="970" y1="140" x2="1030" y2="140" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 5 -->
+  <g transform="translate(1040,90)">
+    <rect width="140" height="100" rx="12" fill="#F77737"/>
+    <text x="70" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">5. Aplicar</text>
+    <text x="70" y="60" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">a Macro</text>
+    <text x="70" y="82" text-anchor="middle" font-size="10" fill="#FFFFFF">+ Submit</text>
+  </g>
+
+  <!-- Arrow down from step 5 -->
+  <line x1="1110" y1="190" x2="1110" y2="280" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 6 -->
+  <g transform="translate(1020,290)">
+    <rect width="160" height="100" rx="12" fill="#0D1B3D"/>
+    <text x="80" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">6. Zendesk</text>
+    <text x="80" y="55" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">dispara webhook</text>
+    <text x="80" y="78" text-anchor="middle" font-size="10" fill="#FFFFFF">automatico para o OS</text>
+  </g>
+
+  <!-- Arrow left -->
+  <line x1="1020" y1="340" x2="950" y2="340" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 7 -->
+  <g transform="translate(770,290)">
+    <rect width="180" height="100" rx="12" fill="#F77737"/>
+    <text x="90" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">7. OS cria</text>
+    <text x="90" y="55" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Job ou Quote</text>
+    <text x="90" y="78" text-anchor="middle" font-size="10" fill="#FFFFFF">e responde</text>
+  </g>
+
+  <line x1="770" y1="340" x2="720" y2="340" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 8 -->
+  <g transform="translate(540,290)">
+    <rect width="180" height="100" rx="12" fill="#0D1B3D"/>
+    <text x="90" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">8. Status muda</text>
+    <text x="90" y="60" text-anchor="middle" font-size="10" fill="#FFFFFF">automaticamente</text>
+    <text x="90" y="78" text-anchor="middle" font-size="10" fill="#FFFFFF">(Job Created, etc.)</text>
+  </g>
+
+  <line x1="540" y1="340" x2="490" y2="340" stroke="#F77737" stroke-width="3" marker-end="url(#ar)"/>
+
+  <!-- Step 9 -->
+  <g transform="translate(290,290)">
+    <rect width="200" height="100" rx="12" fill="#F77737"/>
+    <text x="100" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">9. Ticket sai</text>
+    <text x="100" y="55" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">da Action Required</text>
+    <text x="100" y="80" text-anchor="middle" font-size="10" fill="#FFFFFF">Voce vai pro proximo</text>
+  </g>
+
+  <!-- Decision branch back to triage from problems -->
+  <g transform="translate(40,290)">
+    <rect width="220" height="100" rx="12" fill="#FFFFFF" stroke="#F77737" stroke-width="2" stroke-dasharray="5,5"/>
+    <text x="110" y="35" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Se faltar campo:</text>
+    <text x="110" y="55" text-anchor="middle" font-size="10" fill="#0D1B3D">Validation reverte e ticket</text>
+    <text x="110" y="70" text-anchor="middle" font-size="10" fill="#0D1B3D">volta com tag</text>
+    <text x="110" y="85" text-anchor="middle" font-size="10" fill="#F77737" font-weight="bold">job_missing_data</text>
+  </g>
+
+  <!-- Bottom legend -->
+  <g transform="translate(40,470)">
+    <rect width="20" height="20" fill="#0D1B3D" rx="3"/>
+    <text x="30" y="15" font-size="11" fill="#0D1B3D">Estado / etapa</text>
+    <rect x="170" width="20" height="20" fill="#F77737" rx="3"/>
+    <text x="200" y="15" font-size="11" fill="#0D1B3D">Acao da Fixfy ou do agente</text>
+    <rect x="420" width="20" height="20" fill="#FFFFFF" stroke="#F77737" stroke-width="2" stroke-dasharray="5,5" rx="3"/>
+    <text x="450" y="15" font-size="11" fill="#0D1B3D">Caso de excecao</text>
+  </g>
+</svg>
+</div>
+
+  <h2 id="screen">Sua tela inicial</h2>
+  <p>Quando voce loga em <code>https://fixfy.zendesk.com</code>, ve 3 zonas:</p>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" font-family="Arial, sans-serif">
+  <rect width="1200" height="700" fill="#F2F4F8"/>
+
+  <!-- Top header bar -->
+  <rect width="1200" height="50" fill="#0D1B3D"/>
+  <text x="30" y="32" font-size="14" font-weight="bold" fill="#FFFFFF">Fixfy Support</text>
+  <circle cx="1160" cy="25" r="15" fill="#F77737"/>
+  <text x="1160" y="30" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">V</text>
+
+  <!-- Left sidebar -->
+  <rect x="0" y="50" width="60" height="650" fill="#0D1B3D"/>
+  <circle cx="30" cy="100" r="14" fill="#FFFFFF" opacity="0.4"/>
+  <text x="30" y="105" text-anchor="middle" font-size="10" fill="#0D1B3D" font-weight="bold">H</text>
+  <rect x="20" y="135" width="20" height="20" fill="#F77737" rx="3"/>
+  <text x="30" y="150" text-anchor="middle" font-size="9" fill="#FFFFFF" font-weight="bold">V</text>
+  <text x="30" y="175" text-anchor="middle" font-size="8" fill="#FFFFFF">Views</text>
+  <circle cx="30" cy="220" r="10" fill="#FFFFFF" opacity="0.3"/>
+  <text x="30" y="245" text-anchor="middle" font-size="8" fill="#FFFFFF">Tickets</text>
+  <circle cx="30" cy="290" r="10" fill="#FFFFFF" opacity="0.3"/>
+  <text x="30" y="315" text-anchor="middle" font-size="8" fill="#FFFFFF">Search</text>
+
+  <!-- Views panel -->
+  <rect x="60" y="50" width="340" height="650" fill="#FFFFFF"/>
+  <rect x="60" y="50" width="340" height="50" fill="#FAFBFD"/>
+  <text x="80" y="80" font-size="14" font-weight="bold" fill="#0D1B3D">Views</text>
+
+  <!-- View list items -->
+  <g font-size="12" fill="#0D1B3D">
+    <!-- Highlighted Action Required -->
+    <rect x="60" y="110" width="340" height="44" fill="#FFE8D5"/>
+    <rect x="60" y="110" width="4" height="44" fill="#F77737"/>
+    <text x="80" y="130" font-weight="bold">Customer Support :: Action Required</text>
+    <text x="80" y="146" font-size="10" fill="#F77737">Sua principal - todo ticket pra agir</text>
+
+    <rect x="60" y="164" width="340" height="40" fill="#FFFFFF"/>
+    <text x="80" y="183" font-weight="bold">Customer Support :: Needs Reply</text>
+    <text x="80" y="197" font-size="10" fill="#555555">Esperando resposta do cliente</text>
+
+    <rect x="60" y="208" width="340" height="40" fill="#FAFBFD"/>
+    <text x="80" y="227" font-weight="bold">Customer Support :: Bidding</text>
+    <text x="80" y="241" font-size="10" fill="#555555">Quotes abertos com partners</text>
+
+    <rect x="60" y="252" width="340" height="40" fill="#FFFFFF"/>
+    <text x="80" y="271" font-weight="bold">Job :: Unassigned</text>
+    <text x="80" y="285" font-size="10" fill="#555555">Jobs sem partner ainda</text>
+
+    <rect x="60" y="296" width="340" height="40" fill="#FAFBFD"/>
+    <text x="80" y="315" font-weight="bold">Job :: In Progress</text>
+    <text x="80" y="329" font-size="10" fill="#555555">Partner aceito, em andamento</text>
+
+    <rect x="60" y="340" width="340" height="40" fill="#FFFFFF"/>
+    <text x="80" y="359" font-weight="bold">Complaints</text>
+    <text x="80" y="373" font-size="10" fill="#555555">Reclamacoes em investigacao</text>
+
+    <rect x="60" y="384" width="340" height="40" fill="#FAFBFD"/>
+    <text x="80" y="403" font-weight="bold">Partner :: Support</text>
+    <text x="80" y="417" font-size="10" fill="#555555">Comunicacao com partners</text>
+
+    <rect x="60" y="428" width="340" height="40" fill="#FFFFFF"/>
+    <text x="80" y="447" font-weight="bold">Solved (today)</text>
+    <text x="80" y="461" font-size="10" fill="#555555">O que voce fechou hoje</text>
+
+    <rect x="60" y="472" width="340" height="40" fill="#FAFBFD"/>
+    <text x="80" y="491" font-weight="bold">All Open Tickets</text>
+    <text x="80" y="505" font-size="10" fill="#555555">Visao geral de tudo aberto</text>
+  </g>
+
+  <!-- Ticket list panel -->
+  <rect x="400" y="50" width="800" height="650" fill="#FFFFFF"/>
+  <rect x="400" y="50" width="800" height="60" fill="#F2F4F8"/>
+  <text x="430" y="80" font-size="14" font-weight="bold" fill="#0D1B3D">Customer Support :: Action Required</text>
+  <text x="430" y="98" font-size="11" fill="#555555">12 tickets aguardando sua acao</text>
+  <rect x="1080" y="65" width="100" height="30" rx="4" fill="#F77737"/>
+  <text x="1130" y="84" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">Refresh</text>
+
+  <!-- Ticket rows -->
+  <g font-size="11" fill="#0D1B3D">
+    <rect x="400" y="110" width="800" height="36" fill="#FAFBFD"/>
+    <circle cx="420" cy="128" r="6" fill="#F77737"/>
+    <text x="440" y="132" font-weight="bold">#45876 [Housekeep] Leaking tap kitchen</text>
+    <text x="900" y="132" fill="#555555">Open</text>
+    <text x="1050" y="132" fill="#555555">3 min ago</text>
+
+    <rect x="400" y="146" width="800" height="36" fill="#FFFFFF"/>
+    <circle cx="420" cy="164" r="6" fill="#F77737"/>
+    <text x="440" y="168" font-weight="bold">#45875 [Checkatrade] EICR quote</text>
+    <text x="900" y="168" fill="#555555">Open</text>
+    <text x="1050" y="168" fill="#555555">12 min ago</text>
+
+    <rect x="400" y="182" width="800" height="36" fill="#FAFBFD"/>
+    <circle cx="420" cy="200" r="6" fill="#0D1B3D"/>
+    <text x="440" y="204" font-weight="bold">#45842 WhatsApp - Job Missing Data</text>
+    <text x="900" y="204" fill="#F77737" font-weight="bold">Missing</text>
+    <text x="1050" y="204" fill="#555555">25 min ago</text>
+
+    <rect x="400" y="218" width="800" height="36" fill="#FFFFFF"/>
+    <circle cx="420" cy="236" r="6" fill="#F77737"/>
+    <text x="440" y="240" font-weight="bold">#45870 Boiler service follow-up</text>
+    <text x="900" y="240" fill="#555555">Open</text>
+    <text x="1050" y="240" fill="#555555">1 hour ago</text>
+
+    <rect x="400" y="254" width="800" height="36" fill="#FAFBFD"/>
+    <circle cx="420" cy="272" r="6" fill="#F77737"/>
+    <text x="440" y="276" font-weight="bold">#45868 Painter availability</text>
+    <text x="900" y="276" fill="#555555">Open</text>
+    <text x="1050" y="276" fill="#555555">2 hours ago</text>
+  </g>
+
+  <!-- Annotation -->
+  <g transform="translate(420,420)">
+    <rect width="500" height="200" rx="12" fill="#FFF6EC" stroke="#F77737" stroke-width="2"/>
+    <text x="20" y="30" font-size="14" font-weight="bold" fill="#0D1B3D">Tela inicial: 3 zonas</text>
+    <text x="20" y="60" font-size="11" fill="#555555">1. Barra lateral preta a esquerda: navegacao principal.</text>
+    <text x="20" y="80" font-size="11" fill="#555555">2. Coluna do meio: lista de Views. Action Required ja vem em destaque (laranja).</text>
+    <text x="20" y="100" font-size="11" fill="#555555">3. Painel grande a direita: tickets da View selecionada.</text>
+    <text x="20" y="130" font-size="11" font-weight="bold" fill="#F77737">Recomendado: deixar a Action Required como aba inicial do navegador.</text>
+    <text x="20" y="155" font-size="10" fill="#555555">Clique em qualquer ticket pra abrir e comecar a trabalhar.</text>
+    <text x="20" y="180" font-size="10" fill="#555555">Use Refresh ou aguarde 1-2 min: novos tickets entram automaticamente.</text>
+  </g>
+</svg>
+</div>
+  <ul>
+    <li><strong>Lateral preta:</strong> navegacao (icone Views = sua principal)</li>
+    <li><strong>Coluna do meio:</strong> lista de Views (Action Required destacada)</li>
+    <li><strong>Painel direita:</strong> tickets da View aberta</li>
+  </ul>
+  <div class="callout info">
+    <div class="callout-title">Dica</div>
+    <p>Deixe Action Required como aba inicial do navegador. Voce vai usar 80% do dia nessa view.</p>
+  </div>
+</section>
+
+<!-- PARTE 2 -->
+<div class="school-chapter-banner blue" data-chapter="views">
+  <div class="school-chapter-banner__icon">👁️</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · As 9 Views</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-views"></div>
+<section id="views">
+  <h1>Parte 2 - As 9 Views</h1>
+  <p>Views sao filtros automaticos. Cada View mostra so os tickets que se encaixam nas suas condicoes. Voce nao "move" tickets - eles aparecem em multiplas views ao mesmo tempo.</p>
+
+  <h2>Customer Support :: Action Required</h2>
+  <p><strong>Funcao:</strong> sua fila principal. Tickets que precisam da sua acao agora.</p>
+  <p><strong>Entra:</strong> ticket novo, cliente respondeu, partner respondeu, validation falhou.</p>
+  <p><strong>Sai:</strong> voce aplica macro (vai pra Unassigned/Bidding/etc.), voce manda Public Reply (vai pra Needs Reply), ou aplica Solved.</p>
+  <p><strong>Filtro chave:</strong> inclui On Hold APENAS se reply_status = awaiting. Se voce ja respondeu, ticket sai daqui e vai pra Needs Attention.</p>
+
+  <h2>Customer Support :: Needs Attention</h2>
+  <p><strong>Funcao:</strong> Complaints abertas + tickets On Hold (qualquer estado).</p>
+  <p><strong>Por que:</strong> voce nao precisa AGIR mas precisa MONITORAR. <strong>Check 2x ao dia.</strong></p>
+
+  <h2>Customer Support :: Quoting</h2>
+  <p><strong>Funcao:</strong> Quotes ativos (Ready to Quote, Bidding, Approval). <strong>Check 3x ao dia.</strong></p>
+
+  <h2>Customer Support :: Jobs</h2>
+  <p><strong>Funcao:</strong> Jobs em execucao (Unassigned, Schedule, In Progress, Final Checks).</p>
+
+  <h2>Partner Support :: Inquiries</h2>
+  <p><strong>Funcao:</strong> tickets dos partners (onboarding, disputas, suporte).</p>
+
+  <h2>Finance :: Finance Support</h2>
+  <p><strong>Funcao:</strong> tickets em status Finance. So Victor entra aqui.</p>
+
+  <h2>WhatsApp, Solved</h2>
+  <p>WhatsApp via OApps + tickets fechados.</p>
+
+  <h2 id="views-flow">Como tickets se movem entre Views</h2>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0D1B3D"/>
+    </marker>
+    <marker id="ar6o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F77737"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="720" fill="#FFFFFF"/>
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">Como os tickets se movem entre as Views</text>
+  <text x="600" y="62" text-anchor="middle" font-size="12" fill="#555555">Cada View e um filtro automatico. Mesmos tickets aparecem em Views diferentes conforme estado.</text>
+
+  <!-- Center: Action Required -->
+  <g transform="translate(440,300)">
+    <rect width="320" height="120" rx="14" fill="#F77737"/>
+    <text x="160" y="40" text-anchor="middle" font-size="18" font-weight="bold" fill="#FFFFFF">Action Required</text>
+    <text x="160" y="65" text-anchor="middle" font-size="11" fill="#FFFFFF">View principal</text>
+    <text x="160" y="85" text-anchor="middle" font-size="11" fill="#FFFFFF">tudo que precisa da sua acao</text>
+    <text x="160" y="105" text-anchor="middle" font-size="10" fill="#FFFFFF" font-style="italic">novos, cliente respondeu, missing data</text>
+  </g>
+
+  <!-- Top: Needs Reply -->
+  <g transform="translate(440,100)">
+    <rect width="320" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="160" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Needs Reply</text>
+    <text x="160" y="50" text-anchor="middle" font-size="10" fill="#555555">Voce respondeu, esperando cliente</text>
+    <text x="160" y="65" text-anchor="middle" font-size="10" fill="#555555">Sai daqui quando cliente responde</text>
+  </g>
+  <!-- Action -> Needs Reply -->
+  <line x1="540" y1="300" x2="540" y2="190" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="380" y="240" font-size="10" fill="#0D1B3D" font-style="italic">voce manda</text>
+  <text x="380" y="254" font-size="10" fill="#0D1B3D" font-style="italic">resposta publica</text>
+  <!-- Needs Reply -> Action -->
+  <line x1="660" y1="180" x2="660" y2="300" stroke="#F77737" stroke-width="2" marker-end="url(#ar6o)"/>
+  <text x="680" y="240" font-size="10" fill="#F77737" font-style="italic">cliente</text>
+  <text x="680" y="254" font-size="10" fill="#F77737" font-style="italic">responde</text>
+
+  <!-- Left: Bidding -->
+  <g transform="translate(40,300)">
+    <rect width="280" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="140" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Bidding</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#555555">Quote criado em modo Bid</text>
+    <text x="140" y="65" text-anchor="middle" font-size="10" fill="#555555">Partners enviando propostas</text>
+  </g>
+  <line x1="440" y1="340" x2="320" y2="340" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="340" y="330" font-size="10" fill="#0D1B3D" font-style="italic">macro Move to Quoting (Bid)</text>
+  <line x1="320" y1="360" x2="440" y2="360" stroke="#F77737" stroke-width="2" marker-end="url(#ar6o)"/>
+  <text x="340" y="380" font-size="10" fill="#F77737" font-style="italic">algum partner respondeu</text>
+
+  <!-- Right: Job Unassigned -->
+  <g transform="translate(880,250)">
+    <rect width="280" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="140" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Job :: Unassigned</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#555555">Job criado, sem partner ainda</text>
+    <text x="140" y="65" text-anchor="middle" font-size="10" fill="#555555">Sai quando partner aceita</text>
+  </g>
+  <line x1="760" y1="320" x2="880" y2="290" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="770" y="290" font-size="10" fill="#0D1B3D" font-style="italic">macro Move to Job</text>
+
+  <!-- Right bottom: Job In Progress -->
+  <g transform="translate(880,400)">
+    <rect width="280" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="140" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Job :: In Progress</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#555555">Partner aceitou e ta na rua</text>
+    <text x="140" y="65" text-anchor="middle" font-size="10" fill="#555555">Sai quando concluido</text>
+  </g>
+  <line x1="1020" y1="330" x2="1020" y2="400" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="1030" y="370" font-size="10" fill="#0D1B3D" font-style="italic">aceito</text>
+
+  <!-- Bottom: Complaints -->
+  <g transform="translate(440,490)">
+    <rect width="320" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="160" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Complaints</text>
+    <text x="160" y="50" text-anchor="middle" font-size="10" fill="#555555">Reclamacoes em investigacao</text>
+    <text x="160" y="65" text-anchor="middle" font-size="10" fill="#555555">Sai quando resolvida</text>
+  </g>
+  <line x1="600" y1="420" x2="600" y2="490" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="610" y="460" font-size="10" fill="#0D1B3D" font-style="italic">macro Move to Complaint</text>
+
+  <!-- Bottom right: Solved -->
+  <g transform="translate(880,560)">
+    <rect width="280" height="80" rx="10" fill="#2E7D32"/>
+    <text x="140" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#FFFFFF">Solved (today)</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#FFFFFF">Tickets fechados no dia</text>
+    <text x="140" y="65" text-anchor="middle" font-size="10" fill="#FFFFFF">Voltam se cliente responder</text>
+  </g>
+  <line x1="1020" y1="480" x2="1020" y2="560" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar6)"/>
+  <text x="1030" y="520" font-size="10" fill="#0D1B3D" font-style="italic">Mark as Solved</text>
+
+  <!-- Bottom left: All Open -->
+  <g transform="translate(40,560)">
+    <rect width="320" height="80" rx="10" fill="#F2F4F8" stroke="#888888" stroke-width="2"/>
+    <text x="160" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">All Open Tickets</text>
+    <text x="160" y="50" text-anchor="middle" font-size="10" fill="#555555">Tudo aberto, panorama geral</text>
+    <text x="160" y="65" text-anchor="middle" font-size="10" fill="#555555">Usado pra audit / supervisao</text>
+  </g>
+
+  <!-- Partner Support -->
+  <g transform="translate(40,150)">
+    <rect width="280" height="80" rx="10" fill="#FFFFFF" stroke="#0D1B3D" stroke-width="2"/>
+    <text x="140" y="30" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Partner :: Support</text>
+    <text x="140" y="50" text-anchor="middle" font-size="10" fill="#555555">Tickets de partners</text>
+    <text x="140" y="65" text-anchor="middle" font-size="10" fill="#555555">(suporte, onboarding, dispute)</text>
+  </g>
+
+  <!-- Notes -->
+  <g transform="translate(40,660)">
+    <text x="0" y="0" font-size="10" fill="#0D1B3D" font-weight="bold">Pra lembrar:</text>
+    <text x="0" y="20" font-size="10" fill="#555555">- Action Required e o "centro". O ticket sempre sai dali quando voce age, e volta dali quando precisa de voce de novo.</text>
+    <text x="0" y="36" font-size="10" fill="#555555">- Cada View e so um filtro - o ticket nao "muda de lugar", ele aparece em multiplas Views conforme suas tags e status.</text>
+    <text x="0" y="52" font-size="10" fill="#555555">- Seta laranja = ticket VOLTA pra Action Required. Seta azul = ticket SAI da Action Required.</text>
+  </g>
+</svg>
+</div>
+  <div class="callout">
+    <div class="callout-title">Lembrete chave</div>
+    <p>Action Required eh o "centro". Ticket sai quando voce age, e volta quando precisa de voce de novo. Setas LARANJAS = voltar pra Action Required. Setas AZUIS = sair dela.</p>
+  </div>
+</section>
+
+<!-- PARTE 3 -->
+<div class="school-chapter-banner blue" data-chapter="statuses">
+  <div class="school-chapter-banner__icon">🏷️</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Statuses (16)</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-statuses"></div>
+<section id="statuses">
+  <h1>Parte 3 - Statuses (16 ativos)</h1>
+  <table>
+    <thead><tr><th>Status</th><th>Significado</th><th>Quando aparece</th></tr></thead>
+    <tbody>
+      <tr><td><strong>🆕 New</strong></td><td>Ticket recem chegado, ainda nao triado</td><td>Automatico (chegada)</td></tr>
+      <tr><td><strong>🟡 Open</strong></td><td>Em triagem ou em uso (Carlos abriu mas nao despachou)</td><td>Voce abre o ticket</td></tr>
+      <tr><td><strong>🟠 Ready to Quote</strong></td><td>Quote criado, esperando precificacao</td><td>Macro Move to Quote</td></tr>
+      <tr><td><strong>🟤 Bidding</strong></td><td>Quote em modo Bid, partners enviando propostas</td><td>Apos Move to Quote (Bid)</td></tr>
+      <tr><td><strong>🟠 Approval</strong></td><td>Cliente avaliando quote enviado</td><td>Apos partner mandar bid</td></tr>
+      <tr><td><strong>🤖 Auto Assigning</strong></td><td>Job criado, OS procurando partner automatico</td><td>Auto se auto_assign=true</td></tr>
+      <tr><td><strong>🔴 Unassigned</strong></td><td>Job criado, aguardando atribuicao manual</td><td>Auto se auto_assign=false</td></tr>
+      <tr><td><strong>🟢 Schedule</strong></td><td>Partner aceitou, job agendado</td><td>OS atualiza apos partner aceitar</td></tr>
+      <tr><td><strong>🔵 In Progress</strong></td><td>Partner executando o servico</td><td>Partner check-in no OS</td></tr>
+      <tr><td><strong>🟣 Final Checks</strong></td><td>Partner finalizou, agente envia report</td><td>Partner check-out</td></tr>
+      <tr><td><strong>🟠 On Hold</strong></td><td>Pausado (waiting materials, customer access, etc.)</td><td>Manual ou OS</td></tr>
+      <tr><td><strong>🚨 Complaint</strong></td><td>Reclamacao em investigacao</td><td>Macro Move to Complaint</td></tr>
+      <tr><td><strong>🟢 Partner Open</strong></td><td>Comunicacao com partner</td><td>Form Partner</td></tr>
+      <tr><td><strong>🟣 Finance</strong></td><td>Assunto financeiro</td><td>Macro Move to Finance</td></tr>
+      <tr><td><strong>❌ Cancelled</strong></td><td>Ticket cancelado com razao registrada</td><td>Macro Mark as Cancelled</td></tr>
+      <tr><td><strong>✅ Solved</strong></td><td>Concluido</td><td>Macro Mark as Solved</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="status-flow">Status flow</h2>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0D1B3D"/>
+    </marker>
+    <marker id="ar5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F77737"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="600" fill="#FFFFFF"/>
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">Como o status muda ao longo do fluxo</text>
+
+  <!-- New -->
+  <g transform="translate(40,90)">
+    <rect width="160" height="80" rx="10" fill="#F2F4F8" stroke="#0D1B3D" stroke-width="2"/>
+    <circle cx="20" cy="40" r="8" fill="#888888"/>
+    <text x="80" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D1B3D">New</text>
+    <text x="80" y="60" text-anchor="middle" font-size="10" fill="#555555">Ticket recem-chegado</text>
+  </g>
+  <line x1="200" y1="130" x2="240" y2="130" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+
+  <!-- Open -->
+  <g transform="translate(240,90)">
+    <rect width="160" height="80" rx="10" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <circle cx="20" cy="40" r="8" fill="#F77737"/>
+    <text x="80" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D1B3D">Open</text>
+    <text x="80" y="60" text-anchor="middle" font-size="10" fill="#555555">Em Action Required</text>
+  </g>
+
+  <!-- 3 branches from Open -->
+  <line x1="400" y1="130" x2="440" y2="130" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+  <text x="420" y="110" text-anchor="middle" font-size="10" fill="#0D1B3D" font-style="italic">macro</text>
+
+  <!-- Job Created -->
+  <g transform="translate(440,40)">
+    <rect width="180" height="70" rx="10" fill="#F2F4F8" stroke="#0D1B3D"/>
+    <circle cx="20" cy="35" r="8" fill="#0D1B3D"/>
+    <text x="90" y="32" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Job Created</text>
+    <text x="90" y="50" text-anchor="middle" font-size="9" fill="#555555">Macro Move to Job</text>
+    <text x="90" y="62" text-anchor="middle" font-size="9" fill="#F77737">OS criou</text>
+  </g>
+
+  <!-- Ready to Quote -->
+  <g transform="translate(440,150)">
+    <rect width="180" height="70" rx="10" fill="#FFE8D5" stroke="#F77737"/>
+    <circle cx="20" cy="35" r="8" fill="#F77737"/>
+    <text x="90" y="32" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Ready to Quote</text>
+    <text x="90" y="50" text-anchor="middle" font-size="9" fill="#555555">Macro Move to Quoting</text>
+    <text x="90" y="62" text-anchor="middle" font-size="9" fill="#F77737">OS criou</text>
+  </g>
+
+  <!-- Complaint -->
+  <g transform="translate(440,260)">
+    <rect width="180" height="70" rx="10" fill="#F2F4F8" stroke="#0D1B3D"/>
+    <circle cx="20" cy="35" r="8" fill="#0D1B3D"/>
+    <text x="90" y="32" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">In Complaint</text>
+    <text x="90" y="50" text-anchor="middle" font-size="9" fill="#555555">Macro Move to Complaint</text>
+  </g>
+
+  <!-- Lines from Open splitting -->
+  <path d="M 420 130 L 420 75 L 440 75" stroke="#0D1B3D" stroke-width="2" fill="none" marker-end="url(#ar5)"/>
+  <path d="M 420 130 L 420 185 L 440 185" stroke="#F77737" stroke-width="2" fill="none" marker-end="url(#ar5r)"/>
+  <path d="M 420 130 L 420 295 L 440 295" stroke="#0D1B3D" stroke-width="2" fill="none" marker-end="url(#ar5)"/>
+
+  <!-- Job Missing Data branch -->
+  <g transform="translate(440,360)">
+    <rect width="180" height="70" rx="10" fill="#FFEEEE" stroke="#CC0000" stroke-dasharray="4,4"/>
+    <circle cx="20" cy="35" r="8" fill="#CC0000"/>
+    <text x="90" y="32" text-anchor="middle" font-size="12" font-weight="bold" fill="#CC0000">Job Missing Data</text>
+    <text x="90" y="50" text-anchor="middle" font-size="9" fill="#555555">Validation reverteu</text>
+    <text x="90" y="62" text-anchor="middle" font-size="9" fill="#555555">(campos faltando)</text>
+  </g>
+  <path d="M 420 130 L 420 395 L 440 395" stroke="#CC0000" stroke-width="2" stroke-dasharray="4,4" fill="none" marker-end="url(#ar5)"/>
+  <text x="270" y="395" font-size="10" fill="#CC0000" font-style="italic">se faltar campo, volta</text>
+
+  <!-- Loop back arrow Job Missing Data -> Open -->
+  <path d="M 440 380 Q 280 350 320 170" stroke="#F77737" stroke-width="2" stroke-dasharray="3,3" fill="none" marker-end="url(#ar5r)"/>
+  <text x="170" y="280" font-size="9" fill="#F77737" font-style="italic">preenche tudo,</text>
+  <text x="170" y="294" font-size="9" fill="#F77737" font-style="italic">macro de novo</text>
+
+  <!-- After Job Created -->
+  <line x1="620" y1="75" x2="660" y2="75" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+
+  <!-- Unassigned/In Progress/Done -->
+  <g transform="translate(660,40)">
+    <rect width="160" height="70" rx="10" fill="#F2F4F8" stroke="#0D1B3D"/>
+    <text x="80" y="30" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Unassigned</text>
+    <text x="80" y="48" text-anchor="middle" font-size="9" fill="#555555">Esperando partner</text>
+    <text x="80" y="60" text-anchor="middle" font-size="9" fill="#555555">aceitar</text>
+  </g>
+  <line x1="820" y1="75" x2="860" y2="75" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+
+  <g transform="translate(860,40)">
+    <rect width="160" height="70" rx="10" fill="#F2F4F8" stroke="#0D1B3D"/>
+    <text x="80" y="30" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">In Progress</text>
+    <text x="80" y="48" text-anchor="middle" font-size="9" fill="#555555">Partner aceitou,</text>
+    <text x="80" y="60" text-anchor="middle" font-size="9" fill="#555555">executando</text>
+  </g>
+
+  <!-- After Ready to Quote -->
+  <line x1="620" y1="185" x2="660" y2="185" stroke="#F77737" stroke-width="2" marker-end="url(#ar5r)"/>
+  <g transform="translate(660,150)">
+    <rect width="160" height="70" rx="10" fill="#FFE8D5" stroke="#F77737"/>
+    <text x="80" y="30" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Bidding</text>
+    <text x="80" y="48" text-anchor="middle" font-size="9" fill="#555555">Partners enviando</text>
+    <text x="80" y="60" text-anchor="middle" font-size="9" fill="#555555">propostas</text>
+  </g>
+  <line x1="820" y1="185" x2="860" y2="185" stroke="#F77737" stroke-width="2" marker-end="url(#ar5r)"/>
+  <g transform="translate(860,150)">
+    <rect width="160" height="70" rx="10" fill="#F2F4F8" stroke="#0D1B3D"/>
+    <text x="80" y="30" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Quote Sent</text>
+    <text x="80" y="48" text-anchor="middle" font-size="9" fill="#555555">Cliente avaliando</text>
+  </g>
+
+  <!-- All paths lead to Solved -->
+  <line x1="1020" y1="75" x2="1100" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+  <line x1="1020" y1="185" x2="1100" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar5)"/>
+  <line x1="620" y1="295" x2="1100" y2="220" stroke="#0D1B3D" stroke-width="2" stroke-dasharray="3,3" marker-end="url(#ar5)"/>
+
+  <g transform="translate(1080,200)">
+    <rect width="100" height="60" rx="10" fill="#2E7D32"/>
+    <text x="50" y="30" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Solved</text>
+    <text x="50" y="48" text-anchor="middle" font-size="9" fill="#FFFFFF">Mark as Solved</text>
+  </g>
+
+  <!-- Pending / Needs Reply -->
+  <g transform="translate(40,400)">
+    <rect width="350" height="80" rx="10" fill="#FFF6EC" stroke="#F77737" stroke-width="2"/>
+    <text x="20" y="25" font-size="12" font-weight="bold" fill="#0D1B3D">Pending / Needs Reply</text>
+    <text x="20" y="45" font-size="10" fill="#555555">Em qualquer momento o ticket pode entrar</text>
+    <text x="20" y="60" font-size="10" fill="#555555">em "Pending" se voce mandou pergunta pro</text>
+    <text x="20" y="75" font-size="10" fill="#555555">cliente. Quando ele responde, volta pra Action.</text>
+  </g>
+
+  <!-- Bottom Legend -->
+  <g transform="translate(40,520)">
+    <text x="0" y="0" font-size="11" font-weight="bold" fill="#0D1B3D">Cores das bolinhas representam categoria do status no Zendesk:</text>
+    <circle cx="10" cy="25" r="8" fill="#888888"/>
+    <text x="30" y="29" font-size="10" fill="#555555">cinza: new</text>
+    <circle cx="160" cy="25" r="8" fill="#F77737"/>
+    <text x="180" y="29" font-size="10" fill="#555555">laranja: open / em acao</text>
+    <circle cx="380" cy="25" r="8" fill="#0D1B3D"/>
+    <text x="400" y="29" font-size="10" fill="#555555">azul: pending ou em fluxo automatico</text>
+    <circle cx="700" cy="25" r="8" fill="#2E7D32"/>
+    <text x="720" y="29" font-size="10" fill="#555555">verde: solved</text>
+    <circle cx="830" cy="25" r="8" fill="#CC0000"/>
+    <text x="850" y="29" font-size="10" fill="#555555">vermelho: erro / job missing data</text>
+  </g>
+</svg>
+</div>
+</section>
+
+<!-- PARTE 4 -->
+<div class="school-chapter-banner blue" data-chapter="forms">
+  <div class="school-chapter-banner__icon">📋</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Forms (7)</p>
+    <p class="school-chapter-banner__xp">+60 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-forms"></div>
+<section id="forms">
+  <h1>Parte 4 - Forms (7 ativos)</h1>
+  <p>Cada Form define quais campos voce preenche num ticket. O sistema troca automaticamente quando voce aplica uma macro.</p>
+  <table>
+    <thead><tr><th>Form</th><th>Quando voce ve</th><th>Macro que troca</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Job (default)</strong></td><td>Servicos com data, horario, escopo, preco</td><td>Move to Job</td></tr>
+      <tr><td><strong>Quote</strong></td><td>Cotacao antes de marcar (Bid ou Manual)</td><td>Move to Quote</td></tr>
+      <tr><td><strong>Complaint</strong></td><td>Reclamacao formal (On Hold Reason + Description + Solution)</td><td>Move to Complaint</td></tr>
+      <tr><td><strong>Cancelled</strong></td><td>Cancelamento com Cancellation Reason</td><td>Mark as Cancelled</td></tr>
+      <tr><td><strong>Finance</strong></td><td>Assunto financeiro</td><td>Move to Finance</td></tr>
+      <tr><td><strong>🔧 Partner</strong></td><td>Comunicacao com partner</td><td>Manual</td></tr>
+      <tr><td><strong>Submit a Request</strong></td><td>Form do end-user via portal</td><td>Auto (end user)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <div class="callout-title">Voce NAO troca form manualmente</div>
+    <p>Quando aplica a macro Move to Job, o form ja vira Job. Aplica Move to Cancelled, vira Cancelled. Sistema cuida.</p>
+  </div>
+</section>
+
+<!-- PARTE 5 -->
+<div class="school-chapter-banner blue" data-chapter="macros">
+  <div class="school-chapter-banner__icon">⚡</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · As 6 Macros</p>
+    <p class="school-chapter-banner__xp">+100 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-macros"></div>
+<section id="macros">
+  <h1>Parte 5 - As 6 Macros</h1>
+  <p>Voce tem APENAS 6 macros. Propositalmente simples - menos opcoes, menos erro.</p>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F77737"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="800" fill="#FFFFFF"/>
+  <text x="600" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">As 6 Macros — visao completa</text>
+
+  <!-- Move to Job -->
+  <g transform="translate(40,80)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#F77737" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#F77737"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">1. Move to Job</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: cliente quer marcar servico (data + preco)</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Troca form: Job</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Status: Unassigned (ou Auto Assigning)</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Tag: job-created</text>
+    <text x="20" y="144" font-size="11" fill="#555555">- Webhook → OS cria job</text>
+    <text x="20" y="170" font-size="11" font-weight="bold" fill="#F77737">- Atribui Carlos -> Isabela quando status mudar</text>
+  </g>
+
+  <!-- Move to Quote -->
+  <g transform="translate(420,80)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#F77737" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#F77737"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">2. Move to Quote</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: cliente quer cotacao antes</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Troca form: Quote</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Status: Ready to Quote</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Tag: sent-to-os</text>
+    <text x="20" y="144" font-size="11" fill="#555555">- Webhook → OS cria quote</text>
+    <text x="20" y="170" font-size="11" font-weight="bold" fill="#F77737">- Bid: side conversations auto pros partners</text>
+  </g>
+
+  <!-- Move to Complaint -->
+  <g transform="translate(800,80)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#F77737" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#F77737"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">3. Move to Complaint</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: cliente reclama de servico feito</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Troca form: Complaint</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Status: 🚨 Complaint</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Tag: in_complaint</text>
+    <text x="20" y="144" font-size="11" fill="#555555">- Preencher: On Hold Reason +</text>
+    <text x="35" y="160" font-size="11" fill="#555555">Complaint Description + Solution</text>
+    <text x="20" y="184" font-size="11" font-weight="bold" fill="#F77737">- Atribui Isabela</text>
+  </g>
+
+  <!-- Move to Finance -->
+  <g transform="translate(40,310)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#5A2B91" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#5A2B91"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">4. Move to Finance</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: assunto $$$ - reembolso, disputa, cobranca</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Troca form: Finance</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Status: 🟣 Finance</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Tag: finance_support</text>
+    <text x="20" y="144" font-size="11" fill="#555555">- Internal note: lembrete time finance</text>
+    <text x="20" y="170" font-size="11" font-weight="bold" fill="#5A2B91">- Atribui Victor</text>
+  </g>
+
+  <!-- Mark as Cancelled -->
+  <g transform="translate(420,310)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#CC0000" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#CC0000"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">5. Mark as Cancelled</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: cancelar ticket</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Troca form: Cancelled</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Status: ❌ Cancelled</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Tag: cancelled</text>
+    <text x="20" y="144" font-size="11" fill="#555555">- Webhook → OS cancela</text>
+    <text x="20" y="170" font-size="11" font-weight="bold" fill="#CC0000">- OBRIGATORIO: Cancellation Reason</text>
+  </g>
+
+  <!-- Mark as Solved -->
+  <g transform="translate(800,310)">
+    <rect width="360" height="200" rx="14" fill="#FFFFFF" stroke="#2E7D32" stroke-width="2"/>
+    <rect width="360" height="40" rx="14" fill="#2E7D32"/>
+    <text x="20" y="27" font-size="15" font-weight="bold" fill="#FFFFFF">6. Mark as Solved</text>
+    <text x="20" y="65" font-size="12" font-weight="bold" fill="#0D1B3D">Quando: trabalho concluido, fecha ticket</text>
+    <text x="20" y="90" font-size="11" fill="#555555">- Status: Solved</text>
+    <text x="20" y="108" font-size="11" fill="#555555">- Limpa tags de pendencia</text>
+    <text x="20" y="126" font-size="11" fill="#555555">- Nao troca form (mantem)</text>
+    <text x="20" y="160" font-size="11" font-style="italic" fill="#2E7D32">Ticket sai da Action Required</text>
+    <text x="20" y="180" font-size="11" font-style="italic" fill="#2E7D32">Volta se cliente responder</text>
+  </g>
+
+  <!-- Decision tree -->
+  <g transform="translate(40,560)">
+    <text x="0" y="0" font-size="16" font-weight="bold" fill="#0D1B3D">Em duvida qual usar? Faz essa pergunta:</text>
+    <rect x="0" y="20" width="1120" height="200" rx="10" fill="#FFF6EC" stroke="#F77737" stroke-width="2"/>
+    <text x="20" y="55" font-size="13" font-weight="bold" fill="#0D1B3D">"Esse cliente quer marcar um servico HOJE com preco conhecido?"</text>
+    <text x="20" y="75" font-size="11" fill="#555555">SIM → Move to Job</text>
+    <text x="20" y="105" font-size="13" font-weight="bold" fill="#0D1B3D">"Cliente quer cotacao antes de comprometer?"</text>
+    <text x="20" y="125" font-size="11" fill="#555555">SIM → Move to Quote</text>
+    <text x="20" y="155" font-size="13" font-weight="bold" fill="#0D1B3D">"Cliente esta reclamando de servico ja prestado?"</text>
+    <text x="20" y="175" font-size="11" fill="#555555">SIM → Move to Complaint</text>
+    <text x="20" y="200" font-size="11" font-style="italic" fill="#F77737">Em nenhuma das opcoes? Pergunta no time antes de chutar.</text>
+  </g>
+</svg>
+</div>
+
+  <h2>Como aplicar uma macro</h2>
+  <div class="step"><span class="step-num">1</span> Abre o ticket</div>
+  <div class="step"><span class="step-num">2</span> Embaixo do campo de resposta, ache "Apply macro"</div>
+  <div class="step"><span class="step-num">3</span> Comeca a digitar o nome (ex: "job") - aparece sugestao</div>
+  <div class="step"><span class="step-num">4</span> Seleciona</div>
+  <div class="step"><span class="step-num">5</span> IMPORTANTE: clica Submit pra salvar e disparar</div>
+
+  <div class="callout danger">
+    <div class="callout-title">Macro NAO aplica sozinha</div>
+    <p>Selecionar a macro so PROPOE as mudancas. Voce precisa clicar Submit pra elas acontecerem. Se sair sem Submit, perde tudo. Esse e o erro mais comum de novato.</p>
+  </div>
+
+  <div class="macro-grid">
+    <div class="macro-card m-job">
+      <h4>1. Move to Job</h4>
+      <p><strong>Quando:</strong> cliente quer marcar servico (data + preco)</p>
+      <ul>
+        <li>Form: Job</li>
+        <li>Status: Unassigned (ou Auto Assigning)</li>
+        <li>Tag: <span class="tag">job-created</span></li>
+        <li>Webhook → OS cria job</li>
+      </ul>
+    </div>
+    <div class="macro-card m-quote">
+      <h4>2. Move to Quote</h4>
+      <p><strong>Quando:</strong> cliente quer cotacao antes</p>
+      <ul>
+        <li>Form: Quote</li>
+        <li>Status: Ready to Quote</li>
+        <li>Tag: <span class="tag">sent-to-os</span></li>
+        <li>Bid: side conversations auto</li>
+      </ul>
+    </div>
+    <div class="macro-card m-complaint">
+      <h4>3. Move to Complaint</h4>
+      <p><strong>Quando:</strong> cliente reclama de servico feito</p>
+      <ul>
+        <li>Form: Complaint</li>
+        <li>Status: 🚨 Complaint</li>
+        <li>Tag: <span class="tag">in_complaint</span></li>
+        <li>Atribui Isabela</li>
+      </ul>
+    </div>
+    <div class="macro-card m-finance">
+      <h4>4. Move to Finance</h4>
+      <p><strong>Quando:</strong> refund, dispute, cobranca</p>
+      <ul>
+        <li>Form: Finance</li>
+        <li>Status: 🟣 Finance</li>
+        <li>Tag: <span class="tag">finance_support</span></li>
+        <li>Atribui Victor</li>
+      </ul>
+    </div>
+    <div class="macro-card m-cancel">
+      <h4>5. Mark as Cancelled</h4>
+      <p><strong>Quando:</strong> cancelar ticket</p>
+      <ul>
+        <li>Form: Cancelled</li>
+        <li>Status: ❌ Cancelled</li>
+        <li>Tag: <span class="tag">cancelled</span></li>
+        <li><strong>OBRIGATORIO: Cancellation Reason</strong></li>
+      </ul>
+    </div>
+    <div class="macro-card m-solved">
+      <h4>6. Mark as Solved</h4>
+      <p><strong>Quando:</strong> trabalho concluido, fecha ticket</p>
+      <ul>
+        <li>Status: ✅ Solved</li>
+        <li>Limpa tags de pendencia</li>
+        <li>Nao troca form</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2 id="macros-tree">Arvore de decisao</h2>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0D1B3D"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="700" fill="#FFFFFF"/>
+  <text x="500" y="40" text-anchor="middle" font-size="22" font-weight="bold" fill="#0D1B3D">Qual macro aplicar? Arvore de decisao</text>
+
+  <!-- Root question -->
+  <g transform="translate(370,70)">
+    <rect width="260" height="80" rx="12" fill="#0D1B3D"/>
+    <text x="130" y="35" text-anchor="middle" font-size="14" font-weight="bold" fill="#FFFFFF">O que o cliente quer?</text>
+    <text x="130" y="58" text-anchor="middle" font-size="11" fill="#FFFFFF">Leia a mensagem com atencao</text>
+  </g>
+
+  <!-- 4 branches -->
+  <line x1="500" y1="150" x2="120" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <line x1="500" y1="150" x2="380" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <line x1="500" y1="150" x2="620" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <line x1="500" y1="150" x2="880" y2="200" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+
+  <!-- Branch 1: Marcar servico -->
+  <g transform="translate(20,210)">
+    <rect width="200" height="60" rx="10" fill="#F2F4F8" stroke="#CCCCCC"/>
+    <text x="100" y="25" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Marcar servico</text>
+    <text x="100" y="42" text-anchor="middle" font-size="10" fill="#555555">com data e preco</text>
+    <text x="100" y="54" text-anchor="middle" font-size="10" fill="#555555">conhecidos</text>
+  </g>
+  <line x1="120" y1="270" x2="120" y2="320" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <g transform="translate(20,330)">
+    <rect width="200" height="80" rx="10" fill="#F77737"/>
+    <text x="100" y="32" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Job ::</text>
+    <text x="100" y="50" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Move to Job</text>
+    <text x="100" y="70" text-anchor="middle" font-size="10" fill="#FFFFFF">Form Job + webhook</text>
+  </g>
+
+  <!-- Branch 2: Cotar antes -->
+  <g transform="translate(280,210)">
+    <rect width="200" height="60" rx="10" fill="#F2F4F8" stroke="#CCCCCC"/>
+    <text x="100" y="25" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Cotacao antes</text>
+    <text x="100" y="42" text-anchor="middle" font-size="10" fill="#555555">de marcar (Bid</text>
+    <text x="100" y="54" text-anchor="middle" font-size="10" fill="#555555">ou preco manual)</text>
+  </g>
+  <line x1="380" y1="270" x2="380" y2="320" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <g transform="translate(280,330)">
+    <rect width="200" height="80" rx="10" fill="#F77737"/>
+    <text x="100" y="32" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Quote ::</text>
+    <text x="100" y="50" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Move to Quoting</text>
+    <text x="100" y="70" text-anchor="middle" font-size="10" fill="#FFFFFF">Form Quote + webhook</text>
+  </g>
+
+  <!-- Branch 3: Complaint -->
+  <g transform="translate(520,210)">
+    <rect width="200" height="60" rx="10" fill="#F2F4F8" stroke="#CCCCCC"/>
+    <text x="100" y="25" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Reclamacao de</text>
+    <text x="100" y="42" text-anchor="middle" font-size="10" fill="#555555">servico ja</text>
+    <text x="100" y="54" text-anchor="middle" font-size="10" fill="#555555">prestado</text>
+  </g>
+  <line x1="620" y1="270" x2="620" y2="320" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <g transform="translate(520,330)">
+    <rect width="200" height="80" rx="10" fill="#F77737"/>
+    <text x="100" y="32" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Job ::</text>
+    <text x="100" y="50" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Move to Complaint</text>
+    <text x="100" y="70" text-anchor="middle" font-size="10" fill="#FFFFFF">Fluxo de reclamacao</text>
+  </g>
+
+  <!-- Branch 4: Solved -->
+  <g transform="translate(780,210)">
+    <rect width="200" height="60" rx="10" fill="#F2F4F8" stroke="#CCCCCC"/>
+    <text x="100" y="25" text-anchor="middle" font-size="12" font-weight="bold" fill="#0D1B3D">Trabalho ja</text>
+    <text x="100" y="42" text-anchor="middle" font-size="10" fill="#555555">terminou, ticket</text>
+    <text x="100" y="54" text-anchor="middle" font-size="10" fill="#555555">pode fechar</text>
+  </g>
+  <line x1="880" y1="270" x2="880" y2="320" stroke="#0D1B3D" stroke-width="2" marker-end="url(#ar2)"/>
+  <g transform="translate(780,330)">
+    <rect width="200" height="80" rx="10" fill="#F77737"/>
+    <text x="100" y="40" text-anchor="middle" font-size="13" font-weight="bold" fill="#FFFFFF">Mark as Solved</text>
+    <text x="100" y="62" text-anchor="middle" font-size="10" fill="#FFFFFF">Fecha o ticket</text>
+  </g>
+
+  <!-- Bottom note: confused -->
+  <g transform="translate(200,470)">
+    <rect width="600" height="140" rx="12" fill="#FFF6EC" stroke="#F77737" stroke-width="2"/>
+    <text x="300" y="35" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D1B3D">Em duvida?</text>
+    <text x="300" y="65" text-anchor="middle" font-size="12" fill="#555555">Se voce nao consegue decidir entre Job e Quote, escolha</text>
+    <text x="300" y="83" text-anchor="middle" font-size="13" font-weight="bold" fill="#F77737">QUOTE</text>
+    <text x="300" y="103" text-anchor="middle" font-size="12" fill="#555555">- e mais seguro: cliente confirma o preco antes do servico marcar.</text>
+    <text x="300" y="125" text-anchor="middle" font-size="11" fill="#555555">Se ainda nao tem certeza, NAO aplique macro. Pergunte ao time.</text>
+  </g>
+
+  <!-- Bottom: critical reminder -->
+  <g transform="translate(120,640)">
+    <rect width="760" height="40" rx="8" fill="#0D1B3D"/>
+    <text x="380" y="26" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">Macro errada gera mais trabalho do que ticket parado por 1 hora.</text>
+  </g>
+</svg>
+</div>
+</section>
+
+<!-- PARTE 6 -->
+<div class="school-chapter-banner blue" data-chapter="workflows">
+  <div class="school-chapter-banner__icon">🔀</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Routing & Workflows</p>
+    <p class="school-chapter-banner__xp">+125 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-workflows"></div>
+<section id="routing">
+  <h1>Parte 6 - Auto-routing</h1>
+  <p>Os tickets sao atribuidos automaticamente baseado no status. Voce nao precisa "passar" pra ninguem - sistema cuida.</p>
+  <table>
+    <thead><tr><th>👨 Carlos</th><th>👩 Isabela</th><th>👑 Victor</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>🆕 New<br>🟡 Open<br>🟠 Ready to Quote<br>🟤 Bidding<br>🟠 Approval</td>
+        <td>🔴 Unassigned<br>🤖 Auto Assigning<br>🟢 Schedule<br>🔵 In Progress<br>🟣 Final Checks<br>🟠 On Hold<br>🚨 Complaint</td>
+        <td>🟣 Finance</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- PARTE 7 -->
+<section id="workflows-detail">
+  <h1>Parte 7 - Workflows detalhados</h1>
+
+  <h2 id="wf-triage">Receber novo ticket - triagem</h2>
+  <div class="step"><span class="step-num">1</span> Abre Action Required</div>
+  <div class="step"><span class="step-num">2</span> Pega ticket de cima (mais antigo)</div>
+  <div class="step"><span class="step-num">3</span> Le a mensagem com calma</div>
+  <div class="step"><span class="step-num">4</span> Pergunta: e Job, Quote, Complaint, Finance, Cancelado ou ja Solved?</div>
+  <div class="step"><span class="step-num">5</span> Se nao tiver certeza: NAO aplica macro - pergunta no time</div>
+
+  <h2 id="wf-job">Criar Job (passo a passo)</h2>
+  <div class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F77737"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="800" fill="#F2F4F8"/>
+
+  <!-- Top bar -->
+  <rect width="1200" height="50" fill="#0D1B3D"/>
+  <text x="30" y="32" font-size="14" font-weight="bold" fill="#FFFFFF">Ticket #45876</text>
+
+  <!-- Left ticket conversation -->
+  <rect x="20" y="70" width="700" height="710" rx="6" fill="#FFFFFF"/>
+
+  <!-- Form selector at top -->
+  <rect x="40" y="90" width="200" height="36" rx="4" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+  <text x="55" y="113" font-size="12" font-weight="bold" fill="#0D1B3D">Form: Job</text>
+  <text x="220" y="113" font-size="11" fill="#F77737">v</text>
+  <text x="260" y="113" font-size="10" fill="#555555">(clique pra trocar)</text>
+
+  <!-- Subject -->
+  <text x="40" y="160" font-size="16" font-weight="bold" fill="#0D1B3D">Leaking tap kitchen - 24/05</text>
+  <text x="40" y="180" font-size="11" fill="#555555">From: housekeep-bot@housekeep.co.uk | 12 min ago</text>
+
+  <!-- Conversation -->
+  <rect x="40" y="200" width="660" height="80" rx="4" fill="#FAFBFD" stroke="#E5E5E5"/>
+  <text x="55" y="220" font-size="11" font-weight="bold" fill="#0D1B3D">Customer:</text>
+  <text x="55" y="240" font-size="11" fill="#555555">"Cliente reportou vazamento na pia da cozinha.</text>
+  <text x="55" y="256" font-size="11" fill="#555555">Endereco: 14 Park Lane, London. Cliente: Sarah Wilson,</text>
+  <text x="55" y="272" font-size="11" fill="#555555">07700123456. Preco fixed £120."</text>
+
+  <!-- Public reply box -->
+  <rect x="40" y="310" width="660" height="120" rx="4" fill="#FFFFFF" stroke="#CCCCCC"/>
+  <rect x="40" y="310" width="100" height="30" fill="#F77737"/>
+  <text x="90" y="330" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">Public reply</text>
+  <rect x="140" y="310" width="100" height="30" fill="#F2F4F8"/>
+  <text x="190" y="330" text-anchor="middle" font-size="11" fill="#0D1B3D">Internal note</text>
+  <rect x="240" y="310" width="120" height="30" fill="#F2F4F8"/>
+  <text x="300" y="330" text-anchor="middle" font-size="11" fill="#0D1B3D">Side conversation</text>
+  <text x="55" y="370" font-size="11" fill="#999999">Escreva uma resposta aqui...</text>
+
+  <!-- Apply macro button -->
+  <g transform="translate(40,450)">
+    <rect width="320" height="50" rx="6" fill="#FFE8D5" stroke="#F77737" stroke-width="3"/>
+    <text x="20" y="32" font-size="13" font-weight="bold" fill="#F77737">Apply macro</text>
+    <text x="130" y="32" font-size="11" fill="#0D1B3D">v digite "job"...</text>
+  </g>
+  <text x="380" y="475" font-size="11" fill="#F77737" font-weight="bold">3</text>
+  <text x="395" y="475" font-size="11" fill="#0D1B3D">Comeca a digitar e seleciona</text>
+  <text x="395" y="490" font-size="10" fill="#555555">"Job :: Move to Job"</text>
+
+  <!-- Submit button -->
+  <rect x="40" y="520" width="120" height="40" rx="4" fill="#0D1B3D"/>
+  <text x="100" y="545" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">Submit</text>
+  <text x="180" y="540" font-size="11" fill="#F77737" font-weight="bold">4</text>
+  <text x="200" y="540" font-size="11" fill="#0D1B3D">Macro nao aplica sozinha - clique Submit</text>
+  <text x="200" y="555" font-size="10" fill="#555555">pra salvar e disparar o webhook.</text>
+
+  <!-- RIGHT PANEL: Fields -->
+  <rect x="740" y="70" width="440" height="710" rx="6" fill="#FFFFFF"/>
+  <rect x="740" y="70" width="440" height="40" fill="#0D1B3D"/>
+  <text x="760" y="95" font-size="13" font-weight="bold" fill="#FFFFFF">Fields - Job Form</text>
+
+  <!-- Fields list -->
+  <g font-size="11" fill="#0D1B3D">
+    <text x="760" y="135" font-weight="bold">Assignee</text>
+    <rect x="760" y="145" width="400" height="28" rx="3" fill="#F2F4F8" stroke="#E5E5E5"/>
+    <text x="775" y="163" font-size="10" fill="#555555">Take it / Select agent</text>
+
+    <text x="760" y="195" font-weight="bold">Auto-Assign</text>
+    <rect x="760" y="205" width="400" height="28" rx="3" fill="#F2F4F8" stroke="#E5E5E5"/>
+    <text x="775" y="223" font-size="10" fill="#555555">False</text>
+
+    <text x="760" y="255" font-weight="bold">Rate Type *</text>
+    <rect x="760" y="265" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="283" font-size="10" fill="#0D1B3D" font-weight="bold">Hourly</text>
+
+    <text x="760" y="315" font-weight="bold">Type of Work *</text>
+    <rect x="760" y="325" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="343" font-size="10" fill="#0D1B3D" font-weight="bold">Plumber</text>
+
+    <text x="760" y="375" font-weight="bold">Client Name *</text>
+    <rect x="760" y="385" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="403" font-size="10" fill="#0D1B3D">Sarah Wilson</text>
+
+    <text x="760" y="435" font-weight="bold">Client Email *</text>
+    <rect x="760" y="445" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="463" font-size="10" fill="#0D1B3D">sarah@example.com</text>
+
+    <text x="760" y="495" font-weight="bold">Address *</text>
+    <rect x="760" y="505" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="523" font-size="10" fill="#0D1B3D">14 Park Lane, London</text>
+
+    <text x="760" y="555" font-weight="bold">Job Date</text>
+    <rect x="760" y="565" width="400" height="28" rx="3" fill="#F2F4F8" stroke="#E5E5E5"/>
+    <text x="775" y="583" font-size="10" fill="#555555">27/05/2026</text>
+
+    <text x="760" y="615" font-weight="bold">Arrival Time</text>
+    <rect x="760" y="625" width="400" height="28" rx="3" fill="#F2F4F8" stroke="#E5E5E5"/>
+    <text x="775" y="643" font-size="10" fill="#555555">08:00-12:00</text>
+
+    <text x="760" y="675" font-weight="bold">Scope *</text>
+    <rect x="760" y="685" width="400" height="28" rx="3" fill="#FFE8D5" stroke="#F77737" stroke-width="2"/>
+    <text x="775" y="703" font-size="10" fill="#0D1B3D">Fix leaking tap under kitchen sink</text>
+
+    <text x="760" y="745" font-size="9" fill="#F77737" font-weight="bold">* obrigatorios - sem eles a macro reverte</text>
+  </g>
+
+  <!-- Numbered callouts on left -->
+  <circle cx="60" cy="108" r="14" fill="#F77737"/>
+  <text x="60" y="113" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">1</text>
+  <text x="260" y="142" font-size="10" fill="#F77737" font-weight="bold">1. Confira o Form (Job pra Move to Job, Quote pra Move to Quoting)</text>
+
+  <circle cx="725" cy="265" r="14" fill="#F77737"/>
+  <text x="725" y="270" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">2</text>
+  <text x="385" y="270" font-size="10" fill="#F77737" font-weight="bold">2. Preencha TODOS os campos com asterisco -></text>
+</svg>
+</div>
+  <h3>Checklist antes da macro</h3>
+  <div class="checklist">
+    <ul>
+      <li>Form: Job (ou nao precisa - macro troca)</li>
+      <li>Client Name preenchido</li>
+      <li>Client Email preenchido</li>
+      <li>Client Phone</li>
+      <li>Address (completo)</li>
+      <li>Type of Work</li>
+      <li>Job Date</li>
+      <li>Arrival Time</li>
+      <li>Rate Type: Hourly ou Fixed</li>
+      <li>Se Fixed: Client Price</li>
+      <li>Scope</li>
+      <li>Auto-Assign: True ou False</li>
+    </ul>
+  </div>
+  <h3>O que acontece depois</h3>
+  <ul>
+    <li>Zendesk dispara webhook pro OS com payload</li>
+    <li>OS cria job, responde com job_id (ex: JB-2026-1234)</li>
+    <li>Se Auto-Assign=True: status vira 🤖 Auto Assigning, OS busca partner</li>
+    <li>Se Auto-Assign=False: vira 🔴 Unassigned, voce atribui manual</li>
+    <li>Ticket sai da Action Required - vai pra Isabela</li>
+  </ul>
+
+  <h2 id="wf-quote">Criar Quote (Bid vs Manual)</h2>
+  <h3>Bid</h3>
+  <p>Voce nao sabe o preco. Quer que partners enviem propostas competindo.</p>
+  <h3>Manual</h3>
+  <p>Voce ja sabe o preco padrao (ex: GSC custa £80). Coloca voce mesmo.</p>
+  <h3>Passos</h3>
+  <div class="step"><span class="step-num">1</span> Preencha: Client Name, Email, Address, TOW, Scope (detalhado!)</div>
+  <div class="step"><span class="step-num">2</span> Quote Mode: Bid ou Manual</div>
+  <div class="step"><span class="step-num">3</span> Apply macro: Move to Quote</div>
+  <div class="step"><span class="step-num">4</span> Submit</div>
+
+  <h2 id="wf-complaint">Abrir Complaint</h2>
+  <h3>Quando usar</h3>
+  <ul>
+    <li>Cliente reclama da qualidade do servico</li>
+    <li>Partner nao apareceu / chegou atrasado</li>
+    <li>Cobranca incorreta</li>
+  </ul>
+  <h3>Quando NAO usar</h3>
+  <ul>
+    <li>Cliente so pergunta status (responda no Job form)</li>
+    <li>Cliente quer rebookar (use Job)</li>
+  </ul>
+  <h3>Passos</h3>
+  <div class="step"><span class="step-num">1</span> Abre o ticket</div>
+  <div class="step"><span class="step-num">2</span> Le 2x a reclamacao</div>
+  <div class="step"><span class="step-num">3</span> Escreve Public Reply: "Recebido, vamos investigar e voltamos em ate 24h"</div>
+  <div class="step"><span class="step-num">4</span> Apply macro: Move to Complaint</div>
+  <div class="step"><span class="step-num">5</span> Submit</div>
+  <div class="step"><span class="step-num">6</span> Preenche: On Hold Reason (1 de 14), Complaint Description, Solution (depois)</div>
+
+  <h2 id="wf-cancel">Cancelar</h2>
+  <div class="step"><span class="step-num">1</span> Abre o ticket</div>
+  <div class="step"><span class="step-num">2</span> Apply macro: Mark as Cancelled</div>
+  <div class="step"><span class="step-num">3</span> Submit</div>
+  <div class="step"><span class="step-num">4</span> Form troca pra Cancelled - aparece field Cancellation Reason</div>
+  <div class="step"><span class="step-num">5</span> Escolhe UMA das 7 razoes (OBRIGATORIO)</div>
+  <div class="step"><span class="step-num">6</span> Se Other: preenche Cancellation Notes tambem</div>
+  <div class="step"><span class="step-num">7</span> Salva</div>
+  <h3>Razoes disponiveis</h3>
+  <ul>
+    <li>Client Requested Cancellation</li>
+    <li>Customer No Longer Requires Service</li>
+    <li>Duplicate Booking</li>
+    <li>Budget Issues</li>
+    <li>Customer Found Alternative Contractor</li>
+    <li>Delay No Longer Acceptable</li>
+    <li>Other (add details below)</li>
+  </ul>
+
+  <h2 id="wf-finance">Finance flow</h2>
+  <div class="step"><span class="step-num">1</span> Carlos/Isabela ve ticket com assunto financeiro</div>
+  <div class="step"><span class="step-num">2</span> Apply macro: Move to Finance</div>
+  <div class="step"><span class="step-num">3</span> Submit</div>
+  <div class="step"><span class="step-num">4</span> Auto-atribuido pra Victor</div>
+  <div class="step"><span class="step-num">5</span> Victor resolve no form Finance</div>
+  <div class="step"><span class="step-num">6</span> Mark as Solved quando concluido</div>
+
+  <h2 id="wf-solved">Marcar Solved</h2>
+  <h3>Antes de aplicar</h3>
+  <ul>
+    <li>Confirma que NAO ha pendencias do cliente</li>
+    <li>Partner finalizou</li>
+    <li>Cliente foi comunicado da resolucao</li>
+  </ul>
+  <h3>Passos</h3>
+  <div class="step"><span class="step-num">1</span> Apply macro: Mark as Solved</div>
+  <div class="step"><span class="step-num">2</span> Submit</div>
+</section>
+
+<!-- PARTE 8 -->
+<div class="school-chapter-banner blue" data-chapter="sync">
+  <div class="school-chapter-banner__icon">🔗</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Sync com o OS</p>
+    <p class="school-chapter-banner__xp">+75 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-sync"></div>
+<section id="sync">
+  <h1>Parte 8 - Sync com o OS</h1>
+  <h2>Como webhooks funcionam</h2>
+  <p>Webhook = mensagem automatica que o Zendesk manda pro OS quando algo acontece no ticket. Voce nao precisa fazer nada - quando aplica macro, o webhook dispara sozinho.</p>
+
+  <h2>Direcoes de sync</h2>
+  <table>
+    <thead><tr><th>Acao</th><th>Direcao</th><th>Quando dispara</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Create Job</strong></td><td>Zendesk → OS</td><td>Macro Move to Job aplicada</td></tr>
+      <tr><td><strong>Create Quote</strong></td><td>Zendesk → OS</td><td>Macro Move to Quote</td></tr>
+      <tr><td><strong>Cancel Job</strong></td><td>Zendesk → OS</td><td>Macro Mark as Cancelled</td></tr>
+      <tr><td><strong>Hold Job</strong></td><td>Zendesk → OS</td><td>Tag on_hold aplicada</td></tr>
+      <tr><td><strong>Update Job status</strong></td><td>OS → Zendesk</td><td>OS atualiza status (ex: partner aceitou)</td></tr>
+      <tr><td><strong>Sync Reasons</strong></td><td>OS → Zendesk</td><td>Admin edita lista no OS</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Idempotencia</h2>
+  <div class="callout info">
+    <div class="callout-title">Mesmo ticket = 1 job no OS</div>
+    <p>Se voce aplicar Move to Job 5x no mesmo ticket, OS detecta pelo ticket_id e retorna o mesmo job (acao "existing"). Nao cria duplicado.</p>
+  </div>
+</section>
+
+<!-- PARTE 9 -->
+<div class="school-chapter-banner blue" data-chapter="troubleshoot">
+  <div class="school-chapter-banner__icon">🛠️</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Problemas</p>
+    <p class="school-chapter-banner__xp">+60 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-troubleshoot"></div>
+<section id="errors">
+  <h1>Parte 9 - Resolucao de problemas</h1>
+
+  <h2>Erros comuns</h2>
+
+  <h3>"Job Missing Data" depois da macro</h3>
+  <p><strong>Causa:</strong> campos obrigatorios vazios.</p>
+  <p><strong>Fix:</strong> preenche os campos vazios e aplica a macro de novo.</p>
+
+  <h3>"cancel_missing_reason" depois de Mark as Cancelled</h3>
+  <p><strong>Causa:</strong> voce esqueceu de escolher uma Cancellation Reason.</p>
+  <p><strong>Fix:</strong> abre o ticket, escolhe uma razao, aplica Mark as Cancelled de novo.</p>
+
+  <h3>Ticket fica em loop entre 2 statuses</h3>
+  <p><strong>Causa:</strong> trigger conflitando.</p>
+  <p><strong>Fix:</strong> chama o dev. Voce sozinho nao tem como.</p>
+
+  <h3>client_name no OS sai como "Checkatrade" em vez do nome real</h3>
+  <p><strong>Causa:</strong> voce esqueceu de preencher o field Client Name.</p>
+  <p><strong>Fix:</strong> preenche manualmente; macro nova reaplica e re-envia.</p>
+
+  <h3>"No hourly_client_rate available" do OS</h3>
+  <p><strong>Causa:</strong> Account nao tem pricing configurado pra esse Type of Work.</p>
+  <p><strong>Fix:</strong> avisa o time de operacoes pra configurar pricing no OS.</p>
+
+  <h3>Webhook 401 ou 403</h3>
+  <p><strong>Causa:</strong> autenticacao do webhook expirou.</p>
+  <p><strong>Fix:</strong> admin atualiza credentials no Admin Center → Webhooks.</p>
+
+  <h2>Quando chamar dev</h2>
+  <ul>
+    <li>Webhook continua dando erro mesmo com campos preenchidos</li>
+    <li>Loop infinito de status</li>
+    <li>OS aceita o payload mas nao mostra dados corretos</li>
+    <li>Macro aplicada mas trigger nao disparou</li>
+    <li>Tag estranha aparecendo automaticamente</li>
+    <li>Pricing missing (OS-side fix necessario)</li>
+  </ul>
+</section>
+
+<!-- PARTE 10 -->
+<div class="school-chapter-banner blue" data-chapter="reference">
+  <div class="school-chapter-banner__icon">📚</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Capítulo · Referência & FAQ</p>
+    <p class="school-chapter-banner__xp">+100 XP ao marcar esta lição completa na Fixfy School</p>
+  </div>
+</div><div id="chapter-reference"></div>
+<section id="glossary">
+  <h1>Parte 10 - Referencia</h1>
+
+  <h2>Glossario</h2>
+  <table>
+    <thead><tr><th>Termo</th><th>Significado</th></tr></thead>
+    <tbody>
+      <tr><td><strong>OS</strong></td><td>Operating System Fixfy (app.getfixfy.com). Onde jobs/quotes sao criados, partners atribuidos, faturas geradas.</td></tr>
+      <tr><td><strong>TOW</strong></td><td>Type of Work. Tipo de servico (Plumber, Electrician, etc.)</td></tr>
+      <tr><td><strong>Account</strong></td><td>Cliente B2B (Housekeep, Checkatrade). Organizacao no Zendesk.</td></tr>
+      <tr><td><strong>Partner</strong></td><td>Tradesperson que executa o servico.</td></tr>
+      <tr><td><strong>Job</strong></td><td>Servico marcar com data, horario, preco.</td></tr>
+      <tr><td><strong>Quote</strong></td><td>Cotacao previa antes de virar Job.</td></tr>
+      <tr><td><strong>Bid</strong></td><td>Modo quote em que partners competem com propostas.</td></tr>
+      <tr><td><strong>Manual (quote)</strong></td><td>Modo em que voce coloca o preco direto.</td></tr>
+      <tr><td><strong>Webhook</strong></td><td>Chamada HTTP automatica do Zendesk pro OS.</td></tr>
+      <tr><td><strong>Trigger</strong></td><td>Regra automatica no Zendesk.</td></tr>
+      <tr><td><strong>Macro</strong></td><td>Acao manual que voce dispara. Voce tem 6.</td></tr>
+      <tr><td><strong>Tag</strong></td><td>Etiqueta no ticket pra automacao.</td></tr>
+      <tr><td><strong>Side Conversation</strong></td><td>Email lateral no ticket pra falar com partner sem misturar com cliente.</td></tr>
+      <tr><td><strong>Form</strong></td><td>Tipo do ticket - define campos.</td></tr>
+      <tr><td><strong>View</strong></td><td>Fila filtrada de tickets.</td></tr>
+      <tr><td><strong>Auto-Assign</strong></td><td>True = OS escolhe partner. False = voce escolhe.</td></tr>
+      <tr><td><strong>Reference</strong></td><td>Codigo do job/quote no OS (ex: JB-2026-1234, QT-2026-1104).</td></tr>
+      <tr><td><strong>Idempotente</strong></td><td>Mesma chamada = mesmo resultado. Webhooks nao duplicam jobs.</td></tr>
+      <tr><td><strong>SLA</strong></td><td>Tempo limite de resposta. Complaints: 24h.</td></tr>
+      <tr><td><strong>Public Reply</strong></td><td>Resposta visivel pro cliente.</td></tr>
+      <tr><td><strong>Internal Note</strong></td><td>Comentario interno (cliente nao ve).</td></tr>
+      <tr><td><strong>Reply Status</strong></td><td>🔴 Reply (precisa responder) ou 🟢 Sent (ja respondi).</td></tr>
+      <tr><td><strong>On Hold Reason</strong></td><td>14 razoes pra pausar job.</td></tr>
+      <tr><td><strong>Cancellation Reason</strong></td><td>7 razoes pra cancelar.</td></tr>
+      <tr><td><strong>org_id</strong></td><td>UUID da organizacao no OS.</td></tr>
+      <tr><td><strong>catalog_service_id</strong></td><td>UUID do servico no OS.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="faq">FAQ</h2>
+  <h3>Posso aplicar 2 macros no mesmo ticket?</h3>
+  <p>Sim, mas evite simultaneamente. Aplica uma, ve resultado, se precisar aplica outra depois.</p>
+  <h3>E se o cliente respondeu antes da macro disparar webhook?</h3>
+  <p>Sem problema. Webhook dispara no Submit. Resposta do cliente nao interfere.</p>
+  <h3>O webhook deu erro. Devo aplicar a macro de novo?</h3>
+  <p>Sim se for campo faltando. Aplica de novo dispara o webhook de novo.</p>
+  <h3>Posso criar uma macro nova?</h3>
+  <p>Nao. So admin. Pede pro time.</p>
+  <h3>Onde vejo tickets que ja resolvi?</h3>
+  <p>Views > Solved (today) ou busca filtrando por <code>assignee:me status:solved</code>.</p>
+  <h3>Cliente pergunta status - onde olho?</h3>
+  <p>Abre o ticket. Pra detalhes operacionais (partner ETA), olha no OS.</p>
+  <h3>Como pego um ticket sem assignee?</h3>
+  <p>Abre > Assignee > Take it. OU o auto-routing pega automaticamente.</p>
+  <h3>Por que existem 2 emails do Quote?</h3>
+  <p>Public Reply vai pro cliente. Side Conversations vao pros partners. Cliente so ve Public Reply.</p>
+  <h3>Tenho que responder fora do horario?</h3>
+  <p>Nao. Horario padrao 9-17h dias uteis.</p>
+  <h3>Como sei se o OS recebeu meu webhook?</h3>
+  <p>Resposta do OS chega: voce ve no audit do ticket ou no historico de webhook invocations no Admin Center.</p>
+
+  <h2 id="cheat">Cheat sheet</h2>
+  <div class="callout">
+    <div class="callout-title">Resumao em 1 pagina</div>
+    <p><strong>DIA-A-DIA:</strong> 1) Abre Action Required. 2) Abre ticket de cima. 3) Triagem. 4) Preenche campos. 5) Apply macro. 6) Submit. 7) Proximo.</p>
+    <p><strong>6 MACROS:</strong> Move to Job · Move to Quote · Move to Complaint · Move to Finance · Mark as Cancelled · Mark as Solved</p>
+    <p><strong>AUTO-ROUTING:</strong> Status New/Open/Quote/Bidding/Approval → Carlos · Status Unassigned/Auto Assigning/Schedule/In Progress/Final Checks/On Hold/Complaint → Isabela · Status Finance → Victor</p>
+    <p><strong>OBRIGATORIO:</strong> Job (Client Name + Email + Address + TOW + Rate Type + Scope) · Quote (Address + TOW + Scope + Quote Mode) · Cancelled (Cancellation Reason)</p>
+  </div>
+  <div class="callout danger">
+    <div class="callout-title">REGRA DE OURO</div>
+    <p>Em duvida, NAO aplique macro. Pergunte ao time. Macro errada gera mais trabalho do que ticket parado por 1 hora.</p>
+  </div>
+</section>
+
+<div class="footer">
+  <p><em>Voce esta pronto. Boa sorte!</em></p>
+  <p><strong>— Time Fixfy</strong></p>
+</div>
+
+
+</main>
+</div>
+</div>
+
+<script>
+(function(){
+  const links = document.querySelectorAll('.school-nav a[data-nav]');
+  const bar = document.getElementById('schoolScrollProgress');
+  const chapters = [...document.querySelectorAll('[id^="chapter-"]')];
+  function onScroll(){
+    const doc = document.documentElement;
+    const pct = (doc.scrollHeight - doc.clientHeight) > 0 ? (doc.scrollTop / (doc.scrollHeight - doc.clientHeight)) * 100 : 0;
+    if (bar) bar.style.width = Math.min(100, pct) + '%';
+    let active = chapters[0];
+    for (const ch of chapters) { if (ch.getBoundingClientRect().top <= 120) active = ch; }
+    if (!active) return;
+    const id = active.id.replace('chapter-','');
+    links.forEach(a => a.classList.toggle('active', a.dataset.nav === id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  if (location.hash) {
+    const el = document.querySelector(location.hash);
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+})();
+</script>
+
+<script src="/school/school-embed.js"></script>
+</body>
+</html>

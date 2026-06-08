@@ -568,7 +568,16 @@ export async function POST(req: NextRequest) {
       from: fromEmail,
       to: [emailTo],
       subject: `Quote ${quote.reference} — ${quote.title}`,
-      html: buildQuoteEmailHTML(safePdfData, branding, { acceptUrl, rejectUrl, customMessage }),
+      html: buildQuoteEmailHTML(safePdfData, branding, {
+        acceptUrl,
+        rejectUrl,
+        customMessage,
+        context: {
+          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+          postcode: (quote as { postcode?: string | null }).postcode ?? null,
+          serviceType: (quote as { service_type?: string | null }).service_type ?? null,
+        },
+      }),
       attachments: emailAttachments,
     });
     marks.push(["email_send", nowMs() - tEmail]);

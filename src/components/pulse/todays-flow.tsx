@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { getSupabase } from "@/services/base";
 import { SectionCard, Pill } from "@/components/fx/primitives";
+import { PULSE_FORECAST_PAIR_CARD_CLASS } from "@/lib/pulse-layout";
 import { localYmd } from "@/lib/date-range-filter";
 
 /**
@@ -152,6 +153,8 @@ export function TodaysFlow() {
 
   return (
     <SectionCard
+      className={PULSE_FORECAST_PAIR_CARD_CLASS}
+      bodyClassName="flex-1 min-h-0 px-5 py-4"
       title="Jobs Forecasting"
       subtitle={`Next ${FORECAST_DAYS} days · ${rangeLabel}`}
       actions={

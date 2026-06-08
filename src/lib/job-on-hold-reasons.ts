@@ -1,4 +1,6 @@
-/** Canonical on-hold reason ids — must match Zendesk dropdown option values. */
+import { fromZendeskTag } from "@/lib/zendesk-reason-tags";
+
+/** Canonical on-hold reason ids — Zendesk dropdown values use `hold_{id}`. */
 export const JOB_ON_HOLD_REASONS = [
   { id: "waiting_materials", label: "Waiting for materials" },
   { id: "client_rescheduled", label: "Client rescheduled" },
@@ -33,6 +35,18 @@ export function resolveJobOnHoldReasonIdFromLabel(label: string): string | null 
   return CANONICAL_BY_LABEL.get(key) ?? null;
 }
 
+/** Validate bare OS id or Zendesk `hold_*` tag against canonical + optional Settings presets. */
+export function parseJobOnHoldReasonId(
+  raw: string,
+  presets?: readonly JobOnHoldPresetRow[],
+): string | null {
+  const id = fromZendeskTag(raw, "hold");
+  if (!id) return null;
+  if (presets?.some((p) => p.id === id)) return id;
+  if (CANONICAL_BY_ID.has(id as JobOnHoldReasonId)) return id;
+  return null;
+}
+
 export function slugifyJobOnHoldPresetId(label: string): string {
   const base = label
     .trim()
@@ -61,7 +75,7 @@ export function jobOnHoldComplaintDescriptionRequired(presetId: string): boolean
   return presetId === "complaint";
 }
 
-/** Text shown to the partner in the on-hold email (customer complaint detail). */
+/** Text shown to the partner — Zendesk Complaint Description / OS `on_hold_complaint_description`. */
 export function partnerOnHoldComplaintReasonText(job: {
   on_hold_complaint_description?: string | null;
   on_hold_reason?: string | null;
@@ -72,7 +86,12 @@ export function partnerOnHoldComplaintReasonText(job: {
   const reason = job.on_hold_reason?.trim();
   if (!reason) return null;
   if (/^customer complaint/i.test(reason)) return null;
-  if (job.on_hold_reason_preset_id === "complaint") return reason;
+  const dash = reason.indexOf(" — ");
+  if (dash >= 0) {
+    const detail = reason.slice(dash + 3).trim();
+    if (detail) return detail;
+  }
+  // Preset label only (e.g. "Complaint") — not the customer narrative.
   return null;
 }
 

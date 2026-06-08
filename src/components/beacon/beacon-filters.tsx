@@ -205,6 +205,53 @@ export async function resolveAccountClientIds(accountId: string): Promise<string
   return ((data ?? []) as { id: string }[]).map((r) => r.id);
 }
 
+function localCalendarYmd(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
+/** Inclusive local YYYY-MM-DD window for Jobs schedule overlap (Beacon date chips). */
+export function getBeaconScheduleYmdRange(filters: BeaconFilters): { from: string; to: string } | null {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+  switch (filters.dateMode) {
+    case "today":
+      return { from: localCalendarYmd(startOfToday), to: localCalendarYmd(startOfToday) };
+    case "tomorrow": {
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() + 1);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(s) };
+    }
+    case "week": {
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1));
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
+    case "month": {
+      const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 0, 0, 0, 0);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
+    case "qtd": {
+      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      const s = new Date(now.getFullYear(), qStartMonth, 1, 0, 0, 0, 0);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(startOfToday) };
+    }
+    case "custom":
+      if (!filters.customFrom || !filters.customTo) return null;
+      return { from: filters.customFrom, to: filters.customTo };
+    case "all":
+    default:
+      return null;
+  }
+}
+
 export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; toIso: string } | null {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);

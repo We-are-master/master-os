@@ -115,6 +115,37 @@ function syncItemLabels(nav: NavGroup[]): NavGroup[] {
   });
 }
 
+const LEARN_GROUP_LABEL = "Learn";
+const SCHOOL_NAV_ITEM: NavItem = {
+  label: "Fixfy School",
+  href: "/school",
+  icon: "graduation-cap",
+  badge: "NEW",
+};
+
+/** Ensure Fixfy School lives in a top-level Learn group (not buried in Settings / Overview). */
+function ensureLearnGroup(nav: NavGroup[]): NavGroup[] {
+  const stripped = nav
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => i.href !== "/school"),
+    }))
+    .filter((g) => g.label !== LEARN_GROUP_LABEL || g.items.length > 0);
+
+  const learnIdx = stripped.findIndex((g) => g.label === LEARN_GROUP_LABEL);
+  if (learnIdx >= 0) {
+    const items = stripped[learnIdx].items.some((i) => i.href === "/school")
+      ? stripped[learnIdx].items
+      : [SCHOOL_NAV_ITEM, ...stripped[learnIdx].items];
+    stripped[learnIdx] = { ...stripped[learnIdx], items };
+    if (learnIdx === 0) return stripped;
+    const [learn] = stripped.splice(learnIdx, 1);
+    return [learn, ...stripped];
+  }
+
+  return [{ label: LEARN_GROUP_LABEL, items: [SCHOOL_NAV_ITEM] }, ...stripped];
+}
+
 /** Move /schedule out of Operations and into Overview (below Dashboard) if stored there. */
 function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
   let scheduleItem: NavItem | undefined;
@@ -226,7 +257,9 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     next.splice(financeIdx, 0, peopleGroup);
   }
 
-  const relocated = relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next))));
+  const relocated = ensureLearnGroup(
+    relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)))),
+  );
   return syncItemLabels(relocated);
 }
 
@@ -247,6 +280,10 @@ export async function loadMergedPermissions(supabase: SupabaseClient): Promise<P
 }
 
 const DEFAULT_NAVIGATION: NavGroup[] = [
+  {
+    label: "Learn",
+    items: [{ label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "NEW" }],
+  },
   {
     label: "Overview",
     items: [
@@ -279,9 +316,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { label: "Billing", href: "/finance/billing/invoices", icon: "receipt", permission: "finance" },
+      { label: "Billing", href: "/finance/billing", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Payouts", href: "/payout", icon: "calendar-clock", permission: "finance" },
     ],
   },
   {

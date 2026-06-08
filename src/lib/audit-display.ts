@@ -65,7 +65,7 @@ export function auditLogHref(log: AuditLog): string | null {
     case "request":
       return "/requests";
     case "invoice":
-      return "/finance/billing/invoices";
+      return "/finance/billing";
     case "partner":
       return "/partners";
     case "account":

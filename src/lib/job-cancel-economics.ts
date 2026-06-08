@@ -2,6 +2,69 @@ import type { Job } from "@/types/database";
 
 const EPS = 0.02;
 
+function roundGbp(n: number): number {
+  return Math.round(Math.max(0, n) * 100) / 100;
+}
+
+export type OfficeCancelFeeChoices = {
+  chargeClient: boolean;
+  clientFeeGbp: number | null;
+  partnerFee: boolean;
+  partnerFlow: "owes" | "paid" | null;
+  partnerFeeGbp: number | null;
+};
+
+/** Snapshot fields for office cancel fee rails (client invoice + partner self-bill). */
+export function buildCancellationFeeJobPatch(choices: OfficeCancelFeeChoices): Partial<Job> {
+  const clientGbp =
+    choices.chargeClient && choices.clientFeeGbp != null && choices.clientFeeGbp > EPS
+      ? roundGbp(choices.clientFeeGbp)
+      : null;
+  const partnerOwes =
+    choices.partnerFee && choices.partnerFlow === "owes" && choices.partnerFeeGbp != null && choices.partnerFeeGbp > EPS
+      ? roundGbp(choices.partnerFeeGbp)
+      : null;
+  const partnerPaid =
+    choices.partnerFee && choices.partnerFlow === "paid" && choices.partnerFeeGbp != null && choices.partnerFeeGbp > EPS
+      ? roundGbp(choices.partnerFeeGbp)
+      : null;
+
+  let party: NonNullable<Job["cancellation_fee_party"]> = "none";
+  if (clientGbp && (partnerOwes || partnerPaid)) party = "both";
+  else if (clientGbp) party = "client";
+  else if (partnerOwes || partnerPaid) party = "partner";
+
+  return {
+    cancellation_fee_party: party,
+    cancellation_fee_client_gbp: clientGbp,
+    cancellation_fee_partner_gbp: partnerOwes,
+    partner_cancellation_compensation_gbp: partnerPaid,
+    cancellation_fee_gbp: clientGbp ?? partnerOwes ?? partnerPaid ?? null,
+  };
+}
+
+/** Office cancel: partner owes Fixfy (clawback on weekly self-bill). */
+export function officeCancellationPartnerClawbackGbp(
+  job: Pick<Job, "status" | "partner_cancelled_at"> & Partial<Job>,
+): number {
+  if (job.status !== "cancelled") return 0;
+  if (job.partner_cancelled_at) return 0;
+  const fee = Number(job.cancellation_fee_partner_gbp ?? 0);
+  if (!(fee > EPS)) return 0;
+  return roundGbp(fee);
+}
+
+/** Office cancel: Fixfy pays partner (additive on weekly self-bill). */
+export function officeCancellationPartnerPayoutGbp(
+  job: Pick<Job, "status" | "partner_cancelled_at"> & Partial<Job>,
+): number {
+  if (job.status !== "cancelled") return 0;
+  if (job.partner_cancelled_at) return 0;
+  const comp = Number(job.partner_cancellation_compensation_gbp ?? 0);
+  if (!(comp > EPS)) return 0;
+  return roundGbp(comp);
+}
+
 /**
  * Persisted GBP the partner owes after **partner-app** cancellation (positive in DB).
  * Office-side fees are tracked only via normal client/partner extras, not snapshots here.

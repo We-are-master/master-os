@@ -1,3 +1,5 @@
+import { fromZendeskTag } from "@/lib/zendesk-reason-tags";
+
 /** Preset reasons when the office cancels a job (shown in dashboard + sent to assigned partner). */
 export const OFFICE_JOB_CANCELLATION_REASONS = [
   { id: "client_requested", label: "Client requested cancellation" },
@@ -36,4 +38,14 @@ export function buildOfficeCancellationReasonText(
 
 export function officeCancellationDetailRequired(presetId: string): boolean {
   return presetId === "other";
+}
+
+/** Alias for Zendesk / API validation (notes required when reason is other). */
+export const officeCancellationNotesRequired = officeCancellationDetailRequired;
+
+/** Validate bare OS id or Zendesk `cancel_*` tag → canonical id. */
+export function parseOfficeCancellationReasonId(raw: string): OfficeJobCancellationReasonId | null {
+  const id = fromZendeskTag(raw, "cancel");
+  const row = OFFICE_JOB_CANCELLATION_REASONS.find((r) => r.id === id);
+  return row ? row.id : null;
 }
