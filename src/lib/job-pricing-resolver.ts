@@ -18,12 +18,19 @@
  * catalog standard, so the UI can render Standard / Custom chips.
  */
 
+import { resolveCatalogLinePricing } from "@/lib/catalog-line-pricing";
+import { presetPricingMode, parsePricingPresets, sortPricingPresetsDisplay } from "@/lib/catalog-pricing-presets";
 import type {
   AccountServicePrice,
   CatalogPricingMode,
   CatalogService,
   PartnerServicePrice,
 } from "@/types/database";
+import {
+  catalogPartnerHourlyRate,
+  resolveAccountSell,
+  resolvePartnerPay,
+} from "@/lib/catalog-pricing-floor-ceiling";
 
 export type PriceSource = "standard" | "custom";
 
@@ -56,20 +63,30 @@ function pickClientFixed(
   catalog: Pick<CatalogService, "fixed_price">,
   override: Pick<AccountServicePrice, "use_standard" | "fixed_price"> | null,
 ): { value: number | null; source: PriceSource } {
-  if (override && !override.use_standard && override.fixed_price != null) {
-    return { value: Number(override.fixed_price), source: "custom" };
-  }
-  return { value: catalog.fixed_price ?? null, source: "standard" };
+  const floor = catalog.fixed_price ?? 0;
+  const custom =
+    override && !override.use_standard && override.fixed_price != null
+      ? Number(override.fixed_price)
+      : null;
+  const value = resolveAccountSell(floor, custom);
+  const source: PriceSource =
+    custom != null && value > floor ? "custom" : "standard";
+  return { value: value > 0 ? value : null, source };
 }
 
 function pickClientHourly(
   catalog: Pick<CatalogService, "hourly_rate">,
   override: Pick<AccountServicePrice, "use_standard" | "hourly_rate"> | null,
 ): { value: number | null; source: PriceSource } {
-  if (override && !override.use_standard && override.hourly_rate != null) {
-    return { value: Number(override.hourly_rate), source: "custom" };
-  }
-  return { value: catalog.hourly_rate ?? null, source: "standard" };
+  const floor = catalog.hourly_rate ?? 0;
+  const custom =
+    override && !override.use_standard && override.hourly_rate != null
+      ? Number(override.hourly_rate)
+      : null;
+  const value = resolveAccountSell(floor, custom);
+  const source: PriceSource =
+    custom != null && value > floor ? "custom" : "standard";
+  return { value: value > 0 ? value : null, source };
 }
 
 function pickClientDefaultHours(
@@ -86,27 +103,33 @@ function pickPartnerFixed(
   catalog: Pick<CatalogService, "partner_cost">,
   override: Pick<PartnerServicePrice, "use_standard" | "fixed_partner_cost"> | null,
 ): { value: number | null; source: PriceSource } {
-  if (override && !override.use_standard && override.fixed_partner_cost != null) {
-    return { value: Number(override.fixed_partner_cost), source: "custom" };
-  }
-  return { value: catalog.partner_cost ?? null, source: "standard" };
+  const ceiling = catalog.partner_cost ?? 0;
+  const custom =
+    override && !override.use_standard && override.fixed_partner_cost != null
+      ? Number(override.fixed_partner_cost)
+      : null;
+  const value = resolvePartnerPay(ceiling, custom);
+  const source: PriceSource =
+    custom != null && value < ceiling ? "custom" : "standard";
+  return { value: value > 0 ? value : null, source };
 }
 
 function pickPartnerHourly(
-  /** Partner hourly rate has no dedicated catalog column today — derived from
-   *  partner_cost / default_hours when in hourly mode. */
   catalog: Pick<CatalogService, "partner_cost" | "default_hours" | "pricing_mode">,
   override: Pick<PartnerServicePrice, "use_standard" | "hourly_partner_rate"> | null,
 ): { value: number | null; source: PriceSource } {
-  if (override && !override.use_standard && override.hourly_partner_rate != null) {
-    return { value: Number(override.hourly_partner_rate), source: "custom" };
-  }
-  // Fall back to derived: partner_cost / default_hours when hourly.
-  if (catalog.pricing_mode === "hourly" && catalog.partner_cost != null) {
-    const hours = catalog.default_hours && catalog.default_hours > 0 ? catalog.default_hours : 1;
-    return { value: Number(catalog.partner_cost) / hours, source: "standard" };
-  }
-  return { value: null, source: "standard" };
+  const ceiling =
+    catalog.pricing_mode === "hourly"
+      ? catalogPartnerHourlyRate(catalog.partner_cost, catalog.default_hours)
+      : 0;
+  const custom =
+    override && !override.use_standard && override.hourly_partner_rate != null
+      ? Number(override.hourly_partner_rate)
+      : null;
+  const value = resolvePartnerPay(ceiling, custom);
+  const source: PriceSource =
+    custom != null && value < ceiling ? "custom" : "standard";
+  return { value: value > 0 ? value : null, source };
 }
 
 function pickPartnerDefaultHours(
@@ -117,6 +140,57 @@ function pickPartnerDefaultHours(
     return { value: Number(override.default_hours), source: "custom" };
   }
   return { value: catalog.default_hours ?? null, source: "standard" };
+}
+
+/** Partner £/h for Smart Price jobs (rate card → catalog/band ceiling). */
+export function resolvePartnerHourlyForJob(input: {
+  catalog: Pick<CatalogService, "partner_cost" | "default_hours" | "pricing_mode" | "pricing_presets">;
+  partnerOverride: Pick<
+    PartnerServicePrice,
+    "use_standard" | "hourly_partner_rate" | "fixed_partner_cost" | "preset_overrides"
+  > | null;
+  presetId?: string | null;
+}): { value: number | null; source: PriceSource; fixedPartnerTotal?: number | null } {
+  const presetId = input.presetId?.trim();
+  if (presetId && "pricing_presets" in input.catalog) {
+    const fullCatalog = input.catalog as CatalogService;
+    const resolved = resolveCatalogLinePricing({
+      catalog: fullCatalog,
+      presetId,
+      partnerPrice: (input.partnerOverride as PartnerServicePrice | null) ?? null,
+    });
+    if (resolved && resolved.partnerTotal > 0) {
+      const preset = sortPricingPresetsDisplay(parsePricingPresets(fullCatalog.pricing_presets))
+        .find((p) => p.id === presetId);
+      const hours = Math.max(
+        0.25,
+        Number(preset?.default_hours ?? fullCatalog.default_hours) || 2,
+      );
+      const isFixedBand = preset ? presetPricingMode(preset) === "fixed" : false;
+      return {
+        value: resolved.partnerTotal / hours,
+        source: resolved.lines[0]?.partnerSource ?? "standard",
+        fixedPartnerTotal: isFixedBand ? resolved.partnerTotal : null,
+      };
+    }
+  }
+  const hourly = pickPartnerHourly(input.catalog, input.partnerOverride);
+  return { ...hourly, fixedPartnerTotal: null };
+}
+
+export function formatPartnerJobPriceDisplay(
+  jobType: "hourly" | "fixed" | null | undefined,
+  hourlyPartnerRate: number | null | undefined,
+  partnerCost: number | null | undefined,
+  fixedBandTotal?: number | null,
+): string {
+  if (jobType === "hourly" && fixedBandTotal != null && fixedBandTotal > 0) {
+    return `£${fixedBandTotal.toFixed(2)}`;
+  }
+  if (jobType === "hourly") {
+    return `£${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
+  }
+  return `£${Number(partnerCost ?? 0).toFixed(2)}`;
 }
 
 export function resolveJobPricing(input: {

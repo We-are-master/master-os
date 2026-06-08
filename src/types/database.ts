@@ -59,6 +59,8 @@ export interface CatalogService {
   partner_email_notes_fixed?: string | null;
   /** Type-of-work rules appended after hourly/fixed note (e.g. Gardener). */
   partner_email_notes_default?: string | null;
+  /** When true, service can be booked as Smart Price (hourly). */
+  accepts_smart_price?: boolean;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -466,6 +468,8 @@ export interface Job {
   catalog_service_id?: string | null;
   /** When set with catalog_service_id, preset id inside service_catalog.pricing_presets. */
   catalog_pricing_preset_id?: string | null;
+  /** Denormalized band label at creation (Zendesk / webhook). */
+  catalog_band_label?: string | null;
   /** Ids from service_catalog.pricing_addons selected at creation (stacked). */
   catalog_pricing_addon_ids?: string[] | null;
   /** Access / logistics flags used for automatic surcharge. */

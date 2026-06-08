@@ -13,7 +13,7 @@ export const runtime  = "nodejs";
 /**
  * POST /api/quotes
  *
- * Creates a draft quote from an external caller (n8n, integration scripts).
+ * Creates a draft quote from an external caller (Zendesk webhooks, integration scripts).
  * Auth: header `X-API-Key` must match env `MASTER_OS_QUOTE_WEBHOOK_API_KEY`.
  *
  * Body (JSON):

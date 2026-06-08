@@ -564,7 +564,7 @@ export const ZENDESK_AUTO_ASSIGN_FIELD_ID = Number(
  * Job Type tagger (`ZENDESK_JOB_TYPE_FIELD_ID`). 0 = disabled.
  */
 export const ZENDESK_RATE_TYPE_FIELD_ID = Number(
-  process.env.ZENDESK_RATE_TYPE_FIELD_ID?.trim() || "0",
+  process.env.ZENDESK_RATE_TYPE_FIELD_ID?.trim() || "5807260876063",
 );
 
 export const ZENDESK_CLIENT_EMAIL_FIELD_ID = Number(

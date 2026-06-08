@@ -130,8 +130,15 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
   }
 
   return (
-    <div className={cn("w-full min-w-0 overflow-x-auto border-b border-border [scrollbar-width:thin]", className)}>
-      <div className="inline-flex flex-nowrap items-stretch gap-0">
+    <div
+      className={cn(
+        "w-full min-w-0 overflow-x-auto overscroll-x-contain scroll-smooth snap-x snap-mandatory",
+        "[scrollbar-width:thin] [-webkit-overflow-scrolling:touch]",
+        className?.includes("border-b-0") ? "" : "border-b border-border",
+        className,
+      )}
+    >
+      <div className="inline-flex flex-nowrap items-stretch gap-0 min-w-max">
         {tabs.map((tab) => {
           const accent = tab.accent ? TAB_ACCENT[tab.accent] : TAB_ACCENT.neutral;
           return (
@@ -139,7 +146,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             key={tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(
-              "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors duration-200 text-left",
+              "relative shrink-0 snap-start whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors duration-200 text-left sm:px-4",
               activeTab === tab.id ? accent.activeText : "text-text-secondary hover:text-text-primary"
             )}
           >

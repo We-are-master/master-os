@@ -6448,6 +6448,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px] shrink-0 mt-0.5" /> : <Lock className="h-[11px] w-[11px] shrink-0 mt-0.5" />}
                           {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
                         </span>
+                        {job.catalog_band_label?.trim() ? (
+                          <span className="inline-flex items-center rounded-full border border-border bg-surface-hover px-2.5 py-0.5 text-[10px] font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]">
+                            {job.catalog_band_label.trim()}
+                          </span>
+                        ) : null}
                         <button
                           type="button"
                           className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
