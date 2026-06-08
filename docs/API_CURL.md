@@ -266,6 +266,7 @@ curl -X POST "$BASE/api/cancellations" \
     "ticket_id": "8472",
     "cancellation_reason_id": "client_requested",
     "cancellation_notes": "",
+    "lost_value_gbp": 450,
     "cancelled_by_agent": "agent@getfixfy.com",
     "cancelled_at": "2026-06-04T22:00:00Z"
   }'
@@ -273,7 +274,14 @@ curl -X POST "$BASE/api/cancellations" \
 
 - `cancellation_reason_id` — bare OS id (`client_requested`, …) or Zendesk tag (`cancel_client_requested`).
 - `cancellation_notes` — required when reason is `other`.
+- `lost_value_gbp` — **required** agent-reported lost revenue (GBP). Stored on `jobs.cancelled_client_price` for Pulse lost-revenue KPIs.
 - Idempotent: same ticket already cancelled → `200` with `{ action: "existing" }`.
+
+Zendesk Liquid example for the lost-value custom field:
+
+```liquid
+"lost_value_gbp": {{ticket.ticket_field_<LOST_VALUE_FIELD_ID>}}
+```
 
 Zendesk dropdown values use prefix `cancel_*` (synced from Settings → Cancellation Reasons).
 

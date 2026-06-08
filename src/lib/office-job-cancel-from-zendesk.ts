@@ -33,9 +33,15 @@ export type ZendeskCancelJobInput = {
   ticketId: string;
   cancellationReasonId: string;
   cancellationNotes?: string | null;
+  /** Agent-reported lost revenue (GBP) from Zendesk form — stored on cancelled_client_price. */
+  lostValueGbp: number;
   cancelledByAgent?: string | null;
   cancelledAt?: string | null;
 };
+
+function roundLostGbp(n: number): number {
+  return Math.round(Math.max(0, n) * 100) / 100;
+}
 
 export type ZendeskCancelJobResult =
   | { ok: true; status: 201 | 200; action: "cancelled" | "existing"; id: string; reference: string }
@@ -132,12 +138,16 @@ export async function cancelJobFromZendeskWebhook(
     | "timer_last_started_at"
     | "timer_is_running"
   >;
+  const lostSnapshot = patchOfficeCancelLostSnapshot(jobForPatch);
+  const reportedLost = roundLostGbp(input.lostValueGbp);
   const patch = {
     ...patchOfficeCancelZeroJobEconomics(),
-    ...patchOfficeCancelLostSnapshot(jobForPatch),
+    ...lostSnapshot,
+    cancelled_client_price: reportedLost,
     ...clearAutoAssignQueuePatch(),
     status: "cancelled" as const,
     cancellation_reason: reasonText,
+    cancellation_reason_preset_id: presetId,
     cancelled_at: now,
     cancelled_by: null,
     ...statusChangePartnerTimerPatch(jobForPatch, "cancelled"),
@@ -188,6 +198,7 @@ export async function cancelJobFromZendeskWebhook(
       source: "zendesk_cancellation_webhook",
       ticket_id: ticketId,
       cancellation_reason_id: presetId,
+      lost_value_gbp: reportedLost,
       cancelled_by_agent: input.cancelledByAgent ?? null,
     },
   }).then(() => {}, (e) => console.error("[zendesk-cancel-webhook] audit failed:", e));
