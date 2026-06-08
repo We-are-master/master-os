@@ -1384,7 +1384,7 @@
       <li>Client Name filled in</li>
       <li>Client Email filled in</li>
       <li>Client Phone</li>
-      <li>Address (complete)</li>
+      <li>Address (complete, <strong>must include UK postcode</strong> — e.g. 14 Park Lane, London W1K 1BE)</li>
       <li>Type of Work</li>
       <li>Job Date</li>
       <li>Arrival Time</li>
@@ -1398,8 +1398,10 @@
   <ul>
     <li>Zendesk fires webhook to OS with payload</li>
     <li>OS creates job, responds with job_id (e.g. JB-2026-1234)</li>
-    <li>If Auto-Assign=True: status becomes 🤖 Auto Assigning, OS finds partner</li>
+    <li>If Auto-Assign=True and partners match: status becomes 🤖 Auto Assigning, OS sends invites</li>
+    <li>If Auto-Assign=True but no partner matches (trade, postcode, slot): 🔴 Unassigned — assign manually or fix address/postcode</li>
     <li>If Auto-Assign=False: becomes 🔴 Unassigned, you assign manually</li>
+    <li>Rate Type blank on smart-price services (Gardener, Plumber…): OS infers hourly with min 2h billed — still fill Rate Type on the ticket</li>
     <li>Ticket leaves Action Required — goes to Isabela</li>
   </ul>
 
@@ -1626,7 +1628,7 @@
     <p><strong>DAILY:</strong> 1) Open Action Required. 2) Open top ticket. 3) Triage. 4) Fill fields. 5) Apply macro. 6) Submit. 7) Next.</p>
     <p><strong>6 MACROS:</strong> Move to Job · Move to Quote · Move to Complaint · Move to Finance · Mark as Cancelled · Mark as Solved</p>
     <p><strong>AUTO-ROUTING:</strong> Status New/Open/Quote/Bidding/Approval → Carlos · Status Unassigned/Auto Assigning/Schedule/In Progress/Final Checks/On Hold/Complaint → Isabela · Status Finance → Victor</p>
-    <p><strong>REQUIRED:</strong> Job (Client Name + Email + Address + TOW + Rate Type + Scope) · Quote (Address + TOW + Scope + Quote Mode) · Cancelled (Cancellation Reason)</p>
+    <p><strong>REQUIRED:</strong> Job (Client Name + Email + Address <em>with UK postcode</em> + TOW + Rate Type + Scope) · Quote (Address + TOW + Scope + Quote Mode) · Cancelled (Cancellation Reason)</p>
   </div>
   <div class="callout danger">
     <div class="callout-title">GOLDEN RULE</div>

@@ -92,7 +92,8 @@ export const runtime  = "nodejs";
  *                                    //   already exists with an empty phone,
  *                                    //   this value backfills it; a non-empty
  *                                    //   phone is never overwritten.
- *     property_address: string,      // required (geocoded by app for partner map)
+ *     property_address: string,      // required — must include a UK postcode
+ *                                    //   (geocoded + partner coverage match)
  *     service_type?:    string,      // trade label. Optional when
  *                                    //   catalog_service_id is sent — the
  *                                    //   catalog row's `name` is used instead.
@@ -505,6 +506,17 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const propertyPostcode = extractUkPostcode(propertyAddress);
+  if (!propertyPostcode) {
+    return NextResponse.json(
+      {
+        error:
+          'property_address must include a valid UK postcode (e.g. "14 Park Lane, London W1K 1BE"). ' +
+          "Required for geocoding and partner matching.",
+      },
+      { status: 400 },
+    );
+  }
 
   if (
     catalogServiceIdIn &&
@@ -677,7 +689,7 @@ export async function POST(req: NextRequest) {
     matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
       serviceType,
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
-      postcode: extractUkPostcode(propertyAddress),
+      postcode: propertyPostcode,
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
     });
@@ -689,7 +701,7 @@ export async function POST(req: NextRequest) {
     console.warn("[api/jobs] auto_assign: no matching partners", {
       serviceType,
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
-      postcode: extractUkPostcode(propertyAddress),
+      postcode: propertyPostcode,
       scheduledDate: isoDate,
     });
   }
