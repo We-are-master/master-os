@@ -45,7 +45,7 @@ function PulseInner() {
           <>
             <LiveOperations />
             <Financials />
-            <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 items-stretch">
+            <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
               <TodaysFlow />
               <AlertsFeed />
             </div>

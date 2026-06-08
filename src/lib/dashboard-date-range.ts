@@ -135,3 +135,45 @@ export function formatRangeHint(bounds: DashboardDateBounds | null): string {
     return "";
   }
 }
+
+const COMPACT_PRESET_LABELS: Record<DateRangePreset, string> = {
+  "1d": "Today",
+  tomorrow: "Tomorrow",
+  wtd: "Week to date",
+  mtd: "Current month",
+  qtd: "This quarter",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  ytd: "Year to date",
+  custom: "Custom range",
+  all: "All time",
+};
+
+/** Short period label for tight UI (Pulse cards, subtitles). */
+export function formatCompactPeriodLabel(
+  preset: DateRangePreset,
+  bounds: DashboardDateBounds | null,
+  customFrom?: string,
+  customTo?: string,
+): string {
+  if (preset === "custom") {
+    if (!customFrom?.trim() || !customTo?.trim() || !bounds) {
+      return COMPACT_PRESET_LABELS.custom;
+    }
+    try {
+      const a = new Date(bounds.fromIso);
+      const b = new Date(bounds.toIso);
+      const monthYear = a.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+      if (a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()) {
+        return `${a.getDate()}–${b.getDate()} ${monthYear}`;
+      }
+      const aLabel = a.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      const bLabel = b.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+      return `${aLabel} – ${bLabel}`;
+    } catch {
+      return COMPACT_PRESET_LABELS.custom;
+    }
+  }
+  return COMPACT_PRESET_LABELS[preset];
+}
