@@ -1,0 +1,168 @@
+/**
+ * Zendesk POST /api/jobs pricing — bands, floor/ceiling, Smart Price.
+ */
+
+import { isValidUUID } from "@/lib/auth-api";
+import { resolveCatalogLinePricing } from "@/lib/catalog-line-pricing";
+import {
+  catalogPartnerHourlyRate,
+  resolveAccountSell,
+  resolvePartnerPay,
+} from "@/lib/catalog-pricing-floor-ceiling";
+import {
+  parsePricingPresets,
+  sortPricingPresetsDisplay,
+  type ServicePricingPreset,
+} from "@/lib/catalog-pricing-presets";
+import type { AccountServicePrice, CatalogService } from "@/types/database";
+
+export function normalizeBandId(
+  bandIdRaw: unknown,
+  catalogPricingPresetIdRaw?: unknown,
+): string | null {
+  const candidates = [bandIdRaw, catalogPricingPresetIdRaw];
+  for (const raw of candidates) {
+    const s = typeof raw === "string" ? raw.trim() : "";
+    if (!s) continue;
+    const stripped = s.replace(/^band_/i, "");
+    if (isValidUUID(stripped)) return stripped;
+  }
+  return null;
+}
+
+export type BandValidationResult =
+  | { ok: true; hasBands: false; band: null }
+  | { ok: true; hasBands: true; band: ServicePricingPreset }
+  | { ok: false; status: number; error: string };
+
+export function validateServiceBand(
+  service: Pick<CatalogService, "name" | "pricing_presets">,
+  bandId: string | null,
+): BandValidationResult {
+  const presets = sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets));
+  const hasBands = presets.length > 0;
+
+  if (!hasBands) {
+    if (bandId) {
+      console.warn(
+        `[api/jobs] band_id sent for service "${service.name}" with no bands — ignoring`,
+      );
+    }
+    return { ok: true, hasBands: false, band: null };
+  }
+
+  if (!bandId) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Service ${service.name} requires a band selection. Send band_id in payload.`,
+    };
+  }
+
+  const band = presets.find((p) => p.id === bandId);
+  if (!band) {
+    return {
+      ok: false,
+      status: 400,
+      error: `band_id ${bandId} does not belong to service ${service.name}.`,
+    };
+  }
+
+  return { ok: true, hasBands: true, band };
+}
+
+export type WebhookFixedPricingInput = {
+  clientPriceFromBody: number;
+  clientPriceSent: boolean;
+  partnerCostFromBody: number;
+  partnerCostSent: boolean;
+  catalog: CatalogService | null;
+  band: ServicePricingPreset | null;
+  accountOverride: AccountServicePrice | null;
+};
+
+export type WebhookFixedPricingResult = {
+  clientPrice: number;
+  partnerCost: number;
+  bandId: string | null;
+  bandLabel: string | null;
+};
+
+export function resolveWebhookFixedPricing(input: WebhookFixedPricingInput): WebhookFixedPricingResult {
+  let clientPrice = input.clientPriceFromBody;
+  let partnerCost = input.partnerCostFromBody;
+  const bandId = input.band?.id ?? null;
+  const bandLabel = input.band?.label ?? null;
+
+  if (input.band && input.catalog) {
+    const resolved = resolveCatalogLinePricing({
+      catalog: input.catalog,
+      presetId: input.band.id,
+      addonIds: [],
+      accountPrice: input.accountOverride,
+      partnerPrice: null,
+    });
+    if (resolved) {
+      if (!input.clientPriceSent || clientPrice <= 0) {
+        clientPrice = resolved.clientTotal;
+      }
+      if (!input.partnerCostSent) {
+        partnerCost = resolved.partnerTotal;
+      }
+    }
+  } else if (input.catalog && (!input.clientPriceSent || clientPrice <= 0)) {
+    const floor = Number(input.catalog.fixed_price) || 0;
+    const custom =
+      input.accountOverride && !input.accountOverride.use_standard && input.accountOverride.fixed_price != null
+        ? Number(input.accountOverride.fixed_price)
+        : null;
+    clientPrice = resolveAccountSell(floor, custom);
+    if (!input.partnerCostSent) {
+      const ceiling = Number(input.catalog.partner_cost) || 0;
+      partnerCost = resolvePartnerPay(ceiling, null);
+    }
+  }
+
+  return { clientPrice, partnerCost, bandId, bandLabel };
+}
+
+export function resolveWebhookHourlyRates(input: {
+  hourlyClientRateFromBody: number;
+  hourlyClientRateSent: boolean;
+  hourlyPartnerRateFromBody: number;
+  hourlyPartnerRateSent: boolean;
+  catalog: CatalogService;
+  accountOverride: AccountServicePrice | null;
+  setupMarginPct: number;
+}): { hourlyClientRate: number; hourlyPartnerRate: number } {
+  const floorHourly = Number(input.catalog.hourly_rate) || 0;
+  const customClient =
+    input.accountOverride && !input.accountOverride.use_standard && input.accountOverride.hourly_rate != null
+      ? Number(input.accountOverride.hourly_rate)
+      : null;
+  let hourlyClientRate = input.hourlyClientRateSent
+    ? input.hourlyClientRateFromBody
+    : resolveAccountSell(floorHourly, customClient);
+
+  const ceilingHourly = catalogPartnerHourlyRate(
+    input.catalog.partner_cost,
+    input.catalog.default_hours,
+  );
+
+  let hourlyPartnerRate = input.hourlyPartnerRateSent
+    ? input.hourlyPartnerRateFromBody
+    : resolvePartnerPay(ceilingHourly, null);
+
+  if (!input.hourlyPartnerRateSent && !(hourlyPartnerRate > 0) && hourlyClientRate > 0) {
+    const clamped = Math.max(0, Math.min(100, input.setupMarginPct));
+    hourlyPartnerRate = Math.round(hourlyClientRate * (100 - clamped)) / 100;
+  }
+
+  return { hourlyClientRate, hourlyPartnerRate };
+}
+
+/** Partner side of margin target when catalog has no partner hourly. */
+export function autoMarginFromPct(clientSide: number, targetPct: number): number {
+  const clamped = Math.max(0, Math.min(100, targetPct));
+  return Math.round(clientSide * (100 - clamped)) / 100;
+}

@@ -29,6 +29,12 @@ import {
   sortPricingAddonsDisplay,
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
+import {
+  buildPayDelta,
+  isPartnerPayValid,
+  marginPercent,
+} from "@/lib/catalog-pricing-floor-ceiling";
+import { PricingDeltaChip } from "@/components/pricing/pricing-delta-chip";
 
 /**
  * Per-partner override of what we PAY this partner per catalog service.
@@ -81,6 +87,13 @@ export function PartnerServiceRatesTabSection({
   async function persistRow(service: CatalogService) {
     const draft = drafts[service.id];
     if (!draft) return;
+    if (!draft.use_standard) {
+      const err = validatePartnerDraft(service, draft);
+      if (err) {
+        toast.error(err);
+        return;
+      }
+    }
     const payload = {
       partner_id: partnerId,
       catalog_service_id: service.id,
@@ -252,6 +265,33 @@ function parseNumOrNull(s: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function validatePartnerDraft(service: CatalogService, draft: RowDraft): string | null {
+  const isHourly = service.pricing_mode === "hourly";
+  const ceilingHourly = catalogPartnerHourlyRate(service);
+  if (isHourly) {
+    const rate = parseNumOrNull(draft.hourly_partner_rate);
+    const ceiling = ceilingHourly ?? 0;
+    if (rate != null && !isPartnerPayValid(ceiling, rate)) {
+      return `"${service.name}": hourly pay cannot exceed catalog ceiling (£${ceiling.toFixed(2)}/h).`;
+    }
+  } else {
+    const rate = parseNumOrNull(draft.fixed_partner_cost);
+    const ceiling = Number(service.partner_cost) || 0;
+    if (rate != null && !isPartnerPayValid(ceiling, rate)) {
+      return `"${service.name}": fixed pay cannot exceed catalog ceiling (£${ceiling}).`;
+    }
+  }
+  for (const p of sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets))) {
+    const d = draft.preset_overrides[p.id];
+    const ceiling = Number(p.partner_cost) || Number(mergeCatalogWithPricingPreset(service, p.id).partner_cost) || 0;
+    const rate = d ? parseNumOrNull(d.partner_cost) : null;
+    if (rate != null && !isPartnerPayValid(ceiling, rate)) {
+      return `"${p.label}": partner pay cannot exceed ceiling (£${ceiling}).`;
+    }
+  }
+  return null;
+}
+
 /** Catalog standard for partner side: if hourly mode, derive hourly from partner_cost / default_hours. */
 function catalogPartnerHourlyRate(s: CatalogService): number | null {
   if (s.pricing_mode !== "hourly") return null;
@@ -293,6 +333,18 @@ function PartnerRateRow({
   const isCustom = !draft.use_standard;
   const hasPersistedOverride = !!override && !override.use_standard;
   const standardHourly = catalogPartnerHourlyRate(service);
+  const payCeiling = isHourly ? (standardHourly ?? 0) : Number(service.partner_cost) || 0;
+  const draftPayRate = isHourly
+    ? parseNumOrNull(draft.hourly_partner_rate)
+    : parseNumOrNull(draft.fixed_partner_cost);
+  const payDelta = isCustom && draftPayRate != null ? buildPayDelta(payCeiling, draftPayRate) : null;
+  const draftClientRef = isHourly
+    ? Number(service.hourly_rate) || 0
+    : Number(service.fixed_price) || 0;
+  const marginPreview =
+    isCustom && draftPayRate != null && draftClientRef > 0
+      ? marginPercent(draftClientRef, draftPayRate)
+      : null;
 
   return (
     <div
@@ -335,6 +387,15 @@ function PartnerRateRow({
             ) : (
               <strong>{formatCurrency(service.partner_cost ?? 0)}</strong>
             )}
+            {payDelta ? (
+              <>
+                {" · "}
+                <PricingDeltaChip delta={payDelta} />
+              </>
+            ) : null}
+            {marginPreview != null ? (
+              <span className="ml-1 text-[10px] text-text-tertiary">· margin {marginPreview}%</span>
+            ) : null}
           </p>
         </div>
 

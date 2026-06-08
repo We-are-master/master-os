@@ -7,6 +7,10 @@ import {
   removeCatalogOptionFromZendesk,
   backfillCatalogOptionsToZendesk,
 } from "@/lib/zendesk-service-catalog-sync";
+import {
+  backfillAllBandsToZendesk,
+  syncBandsToZendesk,
+} from "@/lib/zendesk-service-bands-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -25,12 +29,14 @@ const ALLOWED_ROLES = new Set(["admin", "manager", "operator"]);
  *     catalog after migration 202 or whenever Zendesk drifts.
  *
  * Body (all optional):
- *   { catalogServiceId?: uuid, action?: "upsert" | "remove", dryRun?: boolean }
+ *   { catalogServiceId?: uuid, action?: "upsert" | "remove", dryRun?: boolean, syncBands?: boolean }
  *
  *   - catalogServiceId + action: act on a single row.
  *   - no catalogServiceId: backfill the whole active catalog.
  *   - dryRun: only meaningful for the backfill path; returns the planned
  *     inserted/updated/pruned counts without writing to Zendesk.
+ *   - syncBands: when true (default on backfill), also mirror pricing bands
+ *     into per-service Zendesk dropdown fields (EPC, FRA, EICR, PAT, GSC).
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -47,7 +53,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: { catalogServiceId?: string; action?: string; dryRun?: boolean };
+  let body: { catalogServiceId?: string; action?: string; dryRun?: boolean; syncBands?: boolean };
   try {
     body = (await req.json().catch(() => ({}))) as typeof body;
   } catch {
@@ -66,7 +72,19 @@ export async function POST(req: NextRequest) {
     const result = action === "remove"
       ? await removeCatalogOptionFromZendesk(catalogId, { client: db })
       : await upsertCatalogOptionInZendesk(catalogId,    { client: db });
-    return NextResponse.json({ mode: "single", action, ...result });
+    let bands: Awaited<ReturnType<typeof syncBandsToZendesk>> | undefined;
+    if (action === "upsert" && body.syncBands !== false) {
+      const { data: row } = await db
+        .from("service_catalog")
+        .select("pricing_presets")
+        .eq("id", catalogId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      bands = await syncBandsToZendesk(catalogId, (row as { pricing_presets?: unknown } | null)?.pricing_presets ?? [], {
+        client: db,
+      });
+    }
+    return NextResponse.json({ mode: "single", action, ...result, ...(bands ? { bands } : {}) });
   }
 
   // Backfill mode (no catalogServiceId)
@@ -74,5 +92,14 @@ export async function POST(req: NextRequest) {
     client: db,
     dryRun: body.dryRun === true,
   });
-  return NextResponse.json({ mode: "backfill", dryRun: body.dryRun === true, ...result });
+  const bands =
+    body.syncBands !== false
+      ? await backfillAllBandsToZendesk({ client: db, dryRun: body.dryRun === true })
+      : undefined;
+  return NextResponse.json({
+    mode: "backfill",
+    dryRun: body.dryRun === true,
+    ...result,
+    ...(bands ? { bands } : {}),
+  });
 }

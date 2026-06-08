@@ -10,7 +10,6 @@ import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
-import { resolveJobPricing } from "@/lib/job-pricing-resolver";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import type {
   AccountServicePrice,
@@ -24,6 +23,13 @@ import {
   reconcileZendeskJobIngest,
 } from "@/lib/zendesk-job-ingest";
 import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
+import {
+  normalizeBandId,
+  validateServiceBand,
+  resolveWebhookFixedPricing,
+  resolveWebhookHourlyRates,
+} from "@/lib/zendesk-webhook-pricing";
+import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -271,9 +277,15 @@ export async function POST(req: NextRequest) {
   // The two pricing modes use different columns:
   //   fixed  → client_price / partner_cost
   //   hourly → hourly_client_rate / hourly_partner_rate
-  const clientPrice          = num(body.client_price);
+  let clientPrice            = num(body.client_price);
+  const clientPriceSent      = isPresent(body.client_price);
   const partnerCostSent      = isPresent(body.partner_cost);
   const partnerCostIn        = partnerCostSent ? num(body.partner_cost) : 0;
+  let partnerCost            = partnerCostSent ? partnerCostIn : 0;
+  const bandId               = normalizeBandId(body.band_id, body.catalog_pricing_preset_id);
+  let catalogPresetId: string | null = null;
+  let catalogBandLabel: string | null = null;
+  let fixedPricingResolved   = false;
   // For hourly: the body values act as caller overrides; when omitted (or
   // explicitly 0, which a Zendesk macro will send when the rate field on the
   // ticket is left blank), rates are resolved from the Services catalog
@@ -364,15 +376,6 @@ export async function POST(req: NextRequest) {
   const targetMarginPct = parseFrontendSetup(
     (companyRow as { frontend_setup?: unknown } | null)?.frontend_setup ?? null,
   ).target_margin_pct ?? AUTO_PARTNER_MARGIN_PCT_FALLBACK;
-
-  // Now that we know the target margin, finalise the fixed-mode partner cost.
-  // An explicit value from the body still wins; otherwise the auto-margin
-  // default kicks in only when there's a positive client price to apply it to.
-  const partnerCost = partnerCostSent
-    ? partnerCostIn
-    : clientPrice > 0
-      ? autoMargin(clientPrice, targetMarginPct)
-      : 0;
 
   // When the caller pinned a catalog_service_id, treat the catalog row's name
   // as the trade label. The macro's mental model is "catalog id IS the type of
@@ -582,22 +585,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Hourly: resolve rates from Services catalog ────────────────────
-  // For hourly jobs the rate is sourced from the Services catalog instead of
-  // the payload. Resolution order for hourly_client_rate:
-  //   1) explicit body.hourly_client_rate (caller override — still respected)
-  //   2) account_service_prices.hourly_rate when use_standard = false
-  //   3) service_catalog.hourly_rate (standard)
-  // Resolution order for hourly_partner_rate when the caller doesn't send
-  // one (or sends 0):
-  //   1) service_catalog.partner_cost / default_hours (what staff captured)
-  //   2) company margin target × hourly_client_rate (Settings → Setup)
-  // Jobs land allocated either way and stay unassigned (or auto_assigning)
-  // for staff/partners to pick up.
+  // ─── Pricing: catalog bands, floor/ceiling, Smart Price ─────────────
   let resolvedCatalogServiceId: string | null = null;
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
   let hourlyCatalogDefaultHours: number | null = null;
+
   if (rateType === "hourly") {
     const catalog = await resolveCatalogServiceForHourly(
       supabase,
@@ -611,15 +604,19 @@ export async function POST(req: NextRequest) {
     hourlyCatalogDefaultHours =
       catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
-    if (!hourlyClientRateSent) {
-      const override = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
-      const resolved = resolveJobPricing({
-        catalog: catalog.row,
-        accountOverride: override,
-        partnerOverride: null,
-      });
-      hourlyClientRate = Number(resolved.client.hourly_rate ?? 0);
-    }
+    const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
+    const hourlyResolved = resolveWebhookHourlyRates({
+      hourlyClientRateFromBody: hourlyClientRateIn,
+      hourlyClientRateSent,
+      hourlyPartnerRateFromBody: hourlyPartnerRateIn,
+      hourlyPartnerRateSent: hourlyPartnerRateSet,
+      catalog: catalog.row,
+      accountOverride,
+      setupMarginPct: targetMarginPct,
+    });
+    hourlyClientRate = hourlyResolved.hourlyClientRate;
+    hourlyPartnerRate = hourlyResolved.hourlyPartnerRate;
+
     if (!(hourlyClientRate > 0)) {
       return NextResponse.json(
         {
@@ -630,28 +627,47 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (!hourlyPartnerRateSet) {
-      // Partner side: prefer the service_catalog standard (where staff already
-      // captured what we pay) over a generic margin formula. Catalog stores
-      // partner_cost as the total for `default_hours` of work, so divide.
-      // When the catalog has no partner_cost configured for this trade, fall
-      // back to the company margin target — same lever fixed-mode uses.
-      const catRow = catalog.row;
-      const catPartnerCost = catRow.partner_cost != null ? Number(catRow.partner_cost) : 0;
-      const hours = catRow.default_hours && Number(catRow.default_hours) > 0
-        ? Number(catRow.default_hours)
-        : 1;
-      const fromCatalog = catPartnerCost > 0
-        ? Math.round((catPartnerCost / hours) * 100) / 100
-        : 0;
-      hourlyPartnerRate = fromCatalog > 0
-        ? fromCatalog
-        : autoMargin(hourlyClientRate, targetMarginPct);
-    }
   }
 
   if (rateType === "fixed" && catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
-    resolvedCatalogServiceId = catalogServiceIdIn;
+    const { data: catalogRow, error: catFullErr } = await supabase
+      .from("service_catalog")
+      .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets")
+      .eq("id", catalogServiceIdIn)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (catFullErr) {
+      console.error("[api/jobs] catalog pricing lookup failed:", catFullErr.message);
+      return NextResponse.json({ error: "Catalog lookup failed." }, { status: 500 });
+    }
+    if (!catalogRow) {
+      return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
+    }
+    const catalog = catalogRow as CatalogService;
+    const bandResult = validateServiceBand(catalog, bandId);
+    if (!bandResult.ok) {
+      return NextResponse.json({ error: bandResult.error }, { status: bandResult.status });
+    }
+    const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.id);
+    const fixedResolved = resolveWebhookFixedPricing({
+      clientPriceFromBody: clientPrice,
+      clientPriceSent,
+      partnerCostFromBody: partnerCost,
+      partnerCostSent,
+      catalog,
+      band: bandResult.hasBands ? bandResult.band : null,
+      accountOverride,
+    });
+    clientPrice = fixedResolved.clientPrice;
+    if (!partnerCostSent) partnerCost = fixedResolved.partnerCost;
+    catalogPresetId = fixedResolved.bandId;
+    catalogBandLabel = fixedResolved.bandLabel;
+    resolvedCatalogServiceId = catalog.id;
+    fixedPricingResolved = true;
+  }
+
+  if (rateType === "fixed" && !fixedPricingResolved && !partnerCostSent && clientPrice > 0) {
+    partnerCost = autoMargin(clientPrice, targetMarginPct);
   }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
@@ -683,12 +699,8 @@ export async function POST(req: NextRequest) {
   // vs partner_cost; hourly compares the per-hour rates (totals scale linearly
   // so the percentage is the same).
   const margin = rateType === "hourly"
-    ? (hourlyClientRate > 0 && hourlyPartnerRate > 0
-        ? Math.round(((hourlyClientRate - hourlyPartnerRate) / hourlyClientRate) * 10000) / 100
-        : 0)
-    : (clientPrice > 0 && partnerCost > 0
-        ? Math.round(((clientPrice - partnerCost) / clientPrice) * 10000) / 100
-        : 0);
+    ? (marginPercent(hourlyClientRate, hourlyPartnerRate) ?? 0)
+    : (marginPercent(clientPrice, partnerCost) ?? 0);
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
@@ -718,6 +730,12 @@ export async function POST(req: NextRequest) {
   }
   if (resolvedCatalogServiceId) {
     jobRow.catalog_service_id = resolvedCatalogServiceId;
+  }
+  if (catalogPresetId) {
+    jobRow.catalog_pricing_preset_id = catalogPresetId;
+  }
+  if (catalogBandLabel) {
+    jobRow.catalog_band_label = catalogBandLabel;
   }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
@@ -956,7 +974,7 @@ async function fetchAccountServiceOverride(
 ): Promise<AccountServicePrice | null> {
   const { data, error } = await supabase
     .from("account_service_prices")
-    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours")
+    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides")
     .eq("account_id", accountId)
     .eq("catalog_service_id", catalogServiceId)
     .maybeSingle();

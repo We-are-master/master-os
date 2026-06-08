@@ -4,6 +4,7 @@ import {
   upsertCatalogOptionInZendesk,
   removeCatalogOptionFromZendesk,
 } from "@/lib/zendesk-service-catalog-sync";
+import { syncBandsToZendesk } from "@/lib/zendesk-service-bands-sync";
 
 /**
  * Fire-and-forget the Zendesk option sync after a catalog mutation. The
@@ -26,6 +27,18 @@ function dispatchZendeskOptionSync(
     })
     .catch((err) => {
       console.error(`[catalog-services] Zendesk ${kind} threw:`, err);
+    });
+}
+
+function dispatchZendeskBandsSync(catalogId: string, presetsRaw: unknown): void {
+  void syncBandsToZendesk(catalogId, presetsRaw)
+    .then((r) => {
+      if (!r.ok && !r.skipped) {
+        console.error("[catalog-services] Zendesk bands sync failed:", r.error);
+      }
+    })
+    .catch((err) => {
+      console.error("[catalog-services] Zendesk bands sync threw:", err);
     });
 }
 
@@ -92,6 +105,7 @@ export async function createCatalogService(
   if (error) throw new Error(error.message);
   const row = data as CatalogService;
   dispatchZendeskOptionSync("upsert", row.id);
+  dispatchZendeskBandsSync(row.id, row.pricing_presets);
   return row;
 }
 
@@ -107,6 +121,9 @@ export async function updateCatalogService(id: string, input: Partial<CatalogSer
   if (error) throw new Error(error.message);
   const row = data as CatalogService;
   dispatchZendeskOptionSync("upsert", row.id);
+  if ("pricing_presets" in input) {
+    dispatchZendeskBandsSync(row.id, row.pricing_presets);
+  }
   return row;
 }
 
