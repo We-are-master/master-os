@@ -65,15 +65,16 @@ function toInitials(name: string): string {
     .join("");
 }
 
-/** Trade shown in the partner badge — filter wins when scoped, else primary trade. */
+/** Trade shown in the partner badge — filter wins when scoped, else primary trade (+N). */
 function partnerBadgeTradeLabel(
   point: Pick<ScheduleLiveMapPoint, "trade" | "trades">,
   tradeFilter: "all" | string,
 ): string {
   if (tradeFilter !== "all") return tradeFilter;
+  const primary = point.trade?.trim();
+  if (primary) return primary;
   const fromList = point.trades?.[0]?.trim();
-  if (fromList) return fromList;
-  return point.trade?.trim() || "";
+  return fromList || "";
 }
 
 async function ensureMapImage(map: mapboxgl.Map, imageId: string, svg: string): Promise<void> {

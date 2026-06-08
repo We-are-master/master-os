@@ -64,7 +64,7 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { cn, formatCurrency, isUuid, parseIsoDateOnly } from "@/lib/utils";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
-import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
+import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle, resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import {
   defaultPricingPresetId,
   mergeCatalogWithPricingPreset,
@@ -79,6 +79,7 @@ import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
@@ -2740,7 +2741,7 @@ function ConvertToJobModal({
   const { accessFees } = useFrontendSetup();
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
-    catalog_service_id: "", catalog_pricing_preset_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
+    catalog_service_id: "", catalog_pricing_preset_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "2",
     assignment_mode: "manual",
     in_ccz: false, has_free_parking: true,
     scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180",
@@ -2767,7 +2768,7 @@ function ConvertToJobModal({
         catalog_pricing_preset_id: "",
         hourly_client_rate: "",
         hourly_partner_rate: "",
-        billed_hours: "1",
+        billed_hours: "2",
         assignment_mode: "manual",
         in_ccz: Boolean(request.in_ccz) && cczOk,
         has_free_parking: request.has_free_parking ?? true,
@@ -2873,7 +2874,7 @@ function ConvertToJobModal({
       selectedCatalogService,
       form.catalog_pricing_preset_id?.trim() || null,
     );
-    const hrs = Math.max(1, Number(form.billed_hours) || Number(cat.default_hours) || 1);
+    const hrs = resolveInitialBilledHours(cat.default_hours, form.billed_hours);
     const clientRate = Number(form.hourly_client_rate) || Number(cat.hourly_rate) || 0;
     const partnerRate =
       Number(form.hourly_partner_rate) || partnerHourlyRateFromCatalogBundle(cat.partner_cost, cat.default_hours);
@@ -2911,7 +2912,7 @@ function ConvertToJobModal({
         ...p,
         hourly_client_rate: pricing.client.hourly_rate?.toString() ?? p.hourly_client_rate,
         hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? p.hourly_partner_rate,
-        billed_hours: pricing.client.default_hours?.toString() ?? p.billed_hours,
+        billed_hours: String(resolveInitialBilledHours(pricing.client.default_hours)),
         client_price: pricing.client.fixed_price?.toString() ?? p.client_price,
         partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? p.partner_cost,
       })),
@@ -2989,7 +2990,9 @@ function ConvertToJobModal({
       job_type: form.job_type as "fixed" | "hourly",
       hourly_client_rate: form.job_type === "hourly" ? (Number(form.hourly_client_rate) || 0) : null,
       hourly_partner_rate: form.job_type === "hourly" ? (Number(form.hourly_partner_rate) || 0) : null,
-      billed_hours: form.job_type === "hourly" ? (Math.max(1, Number(form.billed_hours) || 1)) : null,
+      billed_hours: form.job_type === "hourly"
+        ? resolveInitialBilledHours(selectedCatalogService?.default_hours, form.billed_hours)
+        : null,
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
@@ -3011,7 +3014,8 @@ function ConvertToJobModal({
     parkingFeeGbp: accessFees.parkingFeeGbp,
   });
   const hourlyPreview = computeHourlyTotals({
-    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
+    elapsedSeconds:
+      resolveInitialBilledHours(selectedCatalogService?.default_hours, form.billed_hours) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
     partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
   });
@@ -3069,7 +3073,7 @@ function ConvertToJobModal({
                   }
                   const presetId = defaultPricingPresetId(service);
                   const eff = mergeCatalogWithPricingPreset(service, presetId || null);
-                  const hrs = Math.max(1, Number(eff.default_hours) || 1);
+                  const hrs = resolveInitialBilledHours(eff.default_hours);
                   const clientRate = Number(eff.hourly_rate) || 0;
                   const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
                   const totals = computeHourlyTotals({
@@ -3303,7 +3307,7 @@ function ConvertToJobModal({
                             className="text-[11px] truncate"
                             style={{ color: match && !selected ? "#993C1D" : "#6B6B70" }}
                           >
-                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : formatPartnerPrimaryTradeLabel(p, catalogServices))} · {p.location ?? "—"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

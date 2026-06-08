@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CatalogService } from "@/types/database";
+import { formatPartnerTradeCoverageLine } from "@/lib/partner-trades-display";
 import { ChevronDown, Megaphone, Sparkles, UserPlus, X } from "lucide-react";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import { Pill } from "@/components/fx/primitives";
@@ -35,6 +37,7 @@ type Props = {
   tradeFilter: "all" | string;
   onTradeFilterChange: (value: string) => void;
   catalogTradeNames: string[];
+  catalogServices: readonly CatalogService[];
   search: LiveMapCoverageSearchState | null;
   onSearchChange: (next: LiveMapCoverageSearchState | null) => void;
   defaultRadiusMiles?: number;
@@ -44,6 +47,7 @@ export function LiveMapCoverageScout({
   tradeFilter,
   onTradeFilterChange,
   catalogTradeNames,
+  catalogServices,
   search,
   onSearchChange,
   defaultRadiusMiles = 5,
@@ -232,8 +236,11 @@ export function LiveMapCoverageScout({
                     {partner.company_name?.trim() || partner.contact_name || "Partner"}
                   </p>
                   <p className="text-[#64748B] truncate">
-                    {partner.trade}
-                    {coverageSummary ? ` · ${coverageSummary}` : ""}
+                    {formatPartnerTradeCoverageLine(
+                      partner,
+                      catalogServices,
+                      coverageSummary ?? "",
+                    )}
                   </p>
                 </div>
                 <Pill tone={isOnlineNow ? "ok" : "neutral"} className="shrink-0 !text-[9px]">

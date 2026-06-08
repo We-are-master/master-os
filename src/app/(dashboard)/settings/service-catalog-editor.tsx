@@ -31,6 +31,12 @@ import {
   SERVICE_ICON_CELL_CLASSES,
   SERVICE_ICON_INNER_CLASSES,
 } from "@/lib/service-display-icons";
+import {
+  catalogPartnerBundleFromHourlyRate,
+  catalogPartnerTotalForDisplay,
+  DEFAULT_HOURLY_BILLED_HOURS,
+  partnerHourlyRateFromCatalogBundle,
+} from "@/lib/job-hourly-billing";
 
 type CatalogPricingStructure = "single" | "variable" | "base_plus_addons";
 
@@ -40,7 +46,7 @@ const emptyForm = {
   pricing_mode: "fixed" as CatalogPricingMode,
   fixed_price: "",
   hourly_rate: "",
-  default_hours: "1",
+  default_hours: "2",
   partner_cost: "",
   default_description: "",
   partner_email_notes_hourly: "",
@@ -158,7 +164,20 @@ function newPresetFormRow(): PresetFormRow {
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `p_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  return { id, label: "", pricing_mode: "fixed", sell_price: "", default_hours: "1", partner_cost: "" };
+  return { id, label: "", pricing_mode: "fixed", sell_price: "", default_hours: "2", partner_cost: "" };
+}
+
+function catalogPartnerCostFormValue(
+  mode: CatalogPricingMode,
+  partnerCost: number | null | undefined,
+  defaultHours: number | null | undefined,
+): string {
+  if (partnerCost == null) return "";
+  if (mode === "hourly") {
+    const rate = partnerHourlyRateFromCatalogBundle(partnerCost, defaultHours);
+    return rate > 0 ? String(rate) : "";
+  }
+  return String(partnerCost);
 }
 
 function presetRowsFromCatalogRow(row: CatalogService): PresetFormRow[] {
@@ -169,8 +188,8 @@ function presetRowsFromCatalogRow(row: CatalogService): PresetFormRow[] {
       label: p.label,
       pricing_mode: mode,
       sell_price: String(mode === "fixed" ? (p.fixed_price ?? "") : (p.hourly_rate ?? "")),
-      default_hours: p.default_hours != null ? String(p.default_hours) : "1",
-      partner_cost: p.partner_cost != null ? String(p.partner_cost) : "",
+      default_hours: p.default_hours != null ? String(p.default_hours) : String(DEFAULT_HOURLY_BILLED_HOURS),
+      partner_cost: catalogPartnerCostFormValue(mode, p.partner_cost, p.default_hours),
     };
   });
 }
@@ -225,7 +244,10 @@ function buildPricingPresetsPayload(
     if (r.partner_cost.trim() !== "") {
       const n = Number(r.partner_cost);
       if (!Number.isFinite(n)) return { ok: false, message: `Invalid partner cost in preset "${label}".` };
-      preset.partner_cost = n;
+      preset.partner_cost =
+        r.pricing_mode === "hourly"
+          ? catalogPartnerBundleFromHourlyRate(n, Number(r.default_hours) || DEFAULT_HOURLY_BILLED_HOURS)
+          : n;
     }
     out.push(preset);
   }
@@ -273,8 +295,8 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       pricing_mode: row.pricing_mode,
       fixed_price: String(row.fixed_price ?? 0),
       hourly_rate: String(row.hourly_rate ?? 0),
-      default_hours: String(row.default_hours ?? 1),
-      partner_cost: String(row.partner_cost ?? 0),
+      default_hours: String(row.default_hours ?? DEFAULT_HOURLY_BILLED_HOURS),
+      partner_cost: catalogPartnerCostFormValue(row.pricing_mode, row.partner_cost, row.default_hours),
       default_description: row.default_description ?? "",
       partner_email_notes_hourly: row.partner_email_notes_hourly ?? "",
       partner_email_notes_fixed: row.partner_email_notes_fixed ?? "",
@@ -303,8 +325,8 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       pricing_mode: row.pricing_mode,
       fixed_price: String(row.fixed_price ?? 0),
       hourly_rate: String(row.hourly_rate ?? 0),
-      default_hours: String(row.default_hours ?? 1),
-      partner_cost: String(row.partner_cost ?? 0),
+      default_hours: String(row.default_hours ?? DEFAULT_HOURLY_BILLED_HOURS),
+      partner_cost: catalogPartnerCostFormValue(row.pricing_mode, row.partner_cost, row.default_hours),
       default_description: row.default_description ?? "",
       partner_email_notes_hourly: row.partner_email_notes_hourly ?? "",
       partner_email_notes_fixed: row.partner_email_notes_fixed ?? "",
@@ -326,7 +348,9 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
         fixed_price: mode === "fixed" ? Number(first.fixed_price) || 0 : 0,
         hourly_rate: mode === "hourly" ? Number(first.hourly_rate) || 0 : 0,
         default_hours:
-          mode === "hourly" ? Math.max(0.25, Number(first.default_hours) || 1) : Math.max(0.25, Number(form.default_hours) || 1),
+          mode === "hourly"
+            ? Math.max(0.25, Number(first.default_hours) || DEFAULT_HOURLY_BILLED_HOURS)
+            : Math.max(0.25, Number(form.default_hours) || DEFAULT_HOURLY_BILLED_HOURS),
         partner_cost: Math.max(0, Number(first.partner_cost) || 0),
         default_description: form.default_description.trim() || null,
         partner_email_notes_hourly: form.partner_email_notes_hourly.trim() || null,
@@ -342,8 +366,14 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       pricing_mode: form.pricing_mode,
       fixed_price: Number(form.fixed_price) || 0,
       hourly_rate: Number(form.hourly_rate) || 0,
-      default_hours: Math.max(0.25, Number(form.default_hours) || 1),
-      partner_cost: Math.max(0, Number(form.partner_cost) || 0),
+      default_hours: Math.max(0.25, Number(form.default_hours) || DEFAULT_HOURLY_BILLED_HOURS),
+      partner_cost:
+        form.pricing_mode === "hourly"
+          ? catalogPartnerBundleFromHourlyRate(
+              Number(form.partner_cost) || 0,
+              Number(form.default_hours) || DEFAULT_HOURLY_BILLED_HOURS,
+            )
+          : Math.max(0, Number(form.partner_cost) || 0),
       default_description: form.default_description.trim() || null,
       partner_email_notes_hourly: form.partner_email_notes_hourly.trim() || null,
       partner_email_notes_fixed: form.partner_email_notes_fixed.trim() || null,
@@ -447,10 +477,14 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
     form.pricing_mode === "fixed"
       ? Number(form.fixed_price) || 0
       : (() => {
-          const h = Math.max(0.25, Number(form.default_hours) || 1);
+          const h = Math.max(0.25, Number(form.default_hours) || DEFAULT_HOURLY_BILLED_HOURS);
           return (Number(form.hourly_rate) || 0) * h;
         })();
-  const partnerCostNum = Math.max(0, Number(form.partner_cost) || 0);
+  const partnerCostNum = catalogPartnerTotalForDisplay({
+    pricingMode: form.pricing_mode,
+    partnerFieldValue: Number(form.partner_cost) || 0,
+    defaultHours: Number(form.default_hours) || DEFAULT_HOURLY_BILLED_HOURS,
+  });
   const marginValue = sellerTotal - partnerCostNum;
   const marginPercent = sellerTotal > 0 ? (marginValue / sellerTotal) * 100 : 0;
   const iconPreviewSlug =
@@ -711,7 +745,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label>
               <Input
                 type="number"
                 step="0.01"
@@ -723,7 +757,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
             </div>
           </div>
           <p className="text-[10px] text-text-tertiary -mt-1">
-            Seller total = rate × hours (used for margin and quote defaults). Partner cost is for the default hours bundle.
+            Seller and partner totals = hourly rate × default hours (used for margin and quote defaults).
           </p>
         </>
           )}
@@ -783,7 +817,11 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
               <div className="space-y-1.5">
                 {presetRows.map((prow, idx) => {
                   const bandSeller = Math.max(0, Number(prow.sell_price) || 0);
-                  const bandPartner = Math.max(0, Number(prow.partner_cost) || 0);
+                  const bandPartner = catalogPartnerTotalForDisplay({
+                    pricingMode: prow.pricing_mode,
+                    partnerFieldValue: Number(prow.partner_cost) || 0,
+                    defaultHours: Number(prow.default_hours) || DEFAULT_HOURLY_BILLED_HOURS,
+                  });
                   const bandMargin = bandSeller - bandPartner;
                   const bandMarginPct = bandSeller > 0 ? (bandMargin / bandSeller) * 100 : 0;
                   return (
@@ -882,7 +920,11 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
             <div className="max-h-[min(52vh,28rem)] overflow-y-auto space-y-1.5 pr-0.5 -mr-0.5">
               {presetRows.map((prow, idx) => {
                 const bandSeller = presetSellerTotal(prow);
-                const bandPartner = Math.max(0, Number(prow.partner_cost) || 0);
+                const bandPartner = catalogPartnerTotalForDisplay({
+                  pricingMode: prow.pricing_mode,
+                  partnerFieldValue: Number(prow.partner_cost) || 0,
+                  defaultHours: Number(prow.default_hours) || DEFAULT_HOURLY_BILLED_HOURS,
+                });
                 const bandMargin = bandSeller - bandPartner;
                 const bandMarginPct = bandSeller > 0 ? (bandMargin / bandSeller) * 100 : 0;
                 const isHourly = prow.pricing_mode === "hourly";

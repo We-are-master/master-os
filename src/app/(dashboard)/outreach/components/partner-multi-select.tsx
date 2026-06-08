@@ -4,7 +4,9 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { Partner } from "@/types/database";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import type { CatalogService, Partner } from "@/types/database";
 
 interface PartnerMultiSelectProps {
   partners: Partner[];
@@ -23,7 +25,14 @@ export function PartnerMultiSelect({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "onboarding" | "needs_attention">("all");
   const [tradeFilter, setTradeFilter] = useState<string>("all");
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then(setCatalogServices)
+      .catch(() => setCatalogServices([]));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -39,22 +48,23 @@ export function PartnerMultiSelect({
   const availableTrades = useMemo(() => {
     const set = new Set<string>();
     for (const p of partners) {
-      if (p.trade) set.add(p.trade);
+      set.add(formatPartnerPrimaryTradeLabel(p, catalogServices));
     }
     return Array.from(set).sort();
-  }, [partners]);
+  }, [partners, catalogServices]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return partners.filter((p) => {
       if (!p.email || !p.email.includes("@")) return false;
       if (statusFilter !== "all" && p.status !== statusFilter) return false;
-      if (tradeFilter !== "all" && p.trade !== tradeFilter) return false;
+      const tradeLabel = formatPartnerPrimaryTradeLabel(p, catalogServices);
+      if (tradeFilter !== "all" && tradeLabel !== tradeFilter) return false;
       if (!term) return true;
-      const haystack = `${p.company_name ?? ""} ${p.contact_name ?? ""} ${p.email ?? ""} ${p.trade ?? ""}`.toLowerCase();
+      const haystack = `${p.company_name ?? ""} ${p.contact_name ?? ""} ${p.email ?? ""} ${tradeLabel}`.toLowerCase();
       return haystack.includes(term);
     });
-  }, [partners, search, statusFilter, tradeFilter]);
+  }, [partners, search, statusFilter, tradeFilter, catalogServices]);
 
   const selected = useMemo(
     () => partners.filter((p) => selectedIds.has(p.id)),
@@ -178,7 +188,7 @@ export function PartnerMultiSelect({
                         {p.company_name || p.contact_name}
                       </div>
                       <div className="text-[11px] text-text-tertiary truncate">
-                        {p.contact_name} · {p.email} · {p.trade}
+                        {p.contact_name} · {p.email} · {formatPartnerPrimaryTradeLabel(p, catalogServices)}
                       </div>
                     </div>
                     <Badge

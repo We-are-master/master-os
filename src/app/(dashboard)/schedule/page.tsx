@@ -35,7 +35,6 @@ import {
 } from "@/lib/live-map-partner-status";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
 import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
-import { MAPBOX_UK_CENTER_LON_LAT } from "@/lib/mapbox-uk-geography";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
@@ -48,7 +47,11 @@ import {
   type PartnerCoverageRow,
 } from "@/lib/live-map-coverage-match";
 import { getLatestLocation } from "@/services/partner-detail";
-import type { Job } from "@/types/database";
+import { resolveJobGeocode } from "@/lib/job-geocode-client";
+import {
+  resolvePartnerHomeMapCoordinates,
+} from "@/lib/partner-home-map-coordinates";
+import type { CatalogService, Job } from "@/types/database";
 import {
   formatJobScheduleLine,
   jobFinishYmd,
@@ -58,13 +61,14 @@ import {
 import { resolveScheduleJobTypeKey } from "@/lib/schedule-job-type-style";
 import { fetchScheduleCalendarJobsForMonth } from "@/lib/fetch-schedule-calendar-jobs";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { formatPartnerPrimaryTradeLabel, partnerTradesForDisplay } from "@/lib/partner-trades-display";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 
 const LIVE_MAP_INACTIVE_MINUTES = 15;
 
 const COVERAGE_PARTNER_SELECT =
-  "id, company_name, contact_name, trade, trades, status, auth_user_id, coverage_mode, service_radius_miles, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, uk_coverage_regions, excluded_postcodes, location";
+  "id, company_name, contact_name, trade, trades, catalog_service_ids, status, auth_user_id, coverage_mode, service_radius_miles, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, uk_coverage_regions, excluded_postcodes, location";
 
 const DATE_MODE_LABEL: Record<string, string> = {
   today: "Today",
@@ -101,6 +105,10 @@ type ActivePartnerMapRow = {
   auth_user_id: string | null;
   trade: string | null;
   trades: string[] | null;
+  catalog_service_ids: string[] | null;
+  partner_address: string | null;
+  partner_address_latitude: number | null;
+  partner_address_longitude: number | null;
   coverage_latitude: number | null;
   coverage_longitude: number | null;
   coverage_base_postcode: string | null;
@@ -110,82 +118,33 @@ type ActivePartnerMapRow = {
 };
 
 const LIVE_MAP_PARTNER_SELECT =
-  "id, company_name, auth_user_id, trade, trades, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, service_radius_miles";
-
-/** Spread markers that share the same fallback hub so they remain clickable. */
-function partnerMapJitter(partnerId: string, spreadDeg: number): { dLat: number; dLng: number } {
-  let hash = 0;
-  for (let i = 0; i < partnerId.length; i++) {
-    hash = (hash * 31 + partnerId.charCodeAt(i)) >>> 0;
-  }
-  const angle = ((hash % 360) * Math.PI) / 180;
-  const radius = spreadDeg * (0.35 + ((hash >> 8) % 65) / 100);
-  return {
-    dLat: Math.sin(angle) * radius,
-    dLng: Math.cos(angle) * radius,
-  };
-}
-
-function fallbackPartnerMapCoordinates(
-  partner: ActivePartnerMapRow,
-): { latitude: number; longitude: number } {
-  const fromCoverage = normalizeLiveMapCoordinate(
-    partner.coverage_latitude,
-    partner.coverage_longitude,
-  );
-  if (fromCoverage) {
-    return { latitude: fromCoverage.latitude, longitude: fromCoverage.longitude };
-  }
-
-  const hasCoverage =
-    (partner.included_postcodes?.length ?? 0) > 0 ||
-    (partner.coverage_cities?.length ?? 0) > 0 ||
-    Number(partner.service_radius_miles ?? 0) > 0 ||
-    Boolean(partner.coverage_base_postcode?.trim());
-
-  const [baseLng, baseLat] = MAPBOX_UK_CENTER_LON_LAT;
-  const jitter = partnerMapJitter(partner.id, hasCoverage ? 0.06 : 0.2);
-  return {
-    latitude: baseLat + jitter.dLat,
-    longitude: baseLng + jitter.dLng,
-  };
-}
+  "id, company_name, auth_user_id, trade, trades, catalog_service_ids, partner_address, partner_address_latitude, partner_address_longitude, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, service_radius_miles";
 
 async function resolveActivePartnerMapPoint(
   partner: ActivePartnerMapRow,
   nowMs: number,
+  catalog: readonly CatalogService[],
 ): Promise<RawLiveMapPoint> {
   const mapId = partner.auth_user_id?.trim() || partner.id;
   const name = partner.company_name?.trim() || "Partner";
-  const trade = (partner.trade ?? "").trim() || "General";
-  const trades = Array.isArray(partner.trades) && partner.trades.length > 0 ? partner.trades : null;
+  const trade = formatPartnerPrimaryTradeLabel(partner, catalog);
+  const trades = partnerTradesForDisplay(partner, catalog);
 
-  let latitude: number | null = null;
-  let longitude: number | null = null;
-  let lastUpdateIso = new Date(0).toISOString();
+  const homeCoords = await resolvePartnerHomeMapCoordinates(partner, resolveJobGeocode);
+  const latitude = homeCoords.latitude;
+  const longitude = homeCoords.longitude;
+
+  let lastUpdateIso = new Date().toISOString();
   let inactive = true;
 
   const authUserId = partner.auth_user_id?.trim();
   if (authUserId) {
     const loc = await getLatestLocation(authUserId);
     if (loc) {
-      const normalized = normalizeLiveMapCoordinate(loc.latitude, loc.longitude);
-      if (normalized) {
-        latitude = normalized.latitude;
-        longitude = normalized.longitude;
-        lastUpdateIso = loc.created_at;
-        const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
-        inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
-      }
+      lastUpdateIso = loc.created_at;
+      const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
+      inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
     }
-  }
-
-  if (latitude == null || longitude == null) {
-    const fallback = fallbackPartnerMapCoordinates(partner);
-    latitude = fallback.latitude;
-    longitude = fallback.longitude;
-    lastUpdateIso = new Date().toISOString();
-    inactive = true;
   }
 
   return {
@@ -196,7 +155,7 @@ async function resolveActivePartnerMapPoint(
     lastUpdateIso,
     inactive,
     trade,
-    trades,
+    trades: trades.length > 0 ? trades : null,
   };
 }
 
@@ -317,6 +276,7 @@ export default function SchedulePage() {
   const [liveMapJobStatusFilter, setLiveMapJobStatusFilter] = useState<LiveMapJobStatusCategory | null>(null);
   /** Matches Live View trade filter + job title parsing to Admin → Services catalog names. */
   const [serviceCatalogTypeNames, setServiceCatalogTypeNames] = useState<string[]>([]);
+  const [serviceCatalogServices, setServiceCatalogServices] = useState<CatalogService[]>([]);
 
   useEffect(() => {
     loadJobs();
@@ -345,12 +305,16 @@ export default function SchedulePage() {
 
   useEffect(() => {
     void listCatalogServicesForPicker()
-      .then((rows) =>
+      .then((rows) => {
+        setServiceCatalogServices(rows);
         setServiceCatalogTypeNames(
           rows.map((r) => (typeof r.name === "string" ? r.name.trim() : "")).filter(Boolean),
-        ),
-      )
-      .catch(() => setServiceCatalogTypeNames([]));
+        );
+      })
+      .catch(() => {
+        setServiceCatalogServices([]);
+        setServiceCatalogTypeNames([]);
+      });
   }, []);
 
   useEffect(() => {
@@ -373,7 +337,7 @@ export default function SchedulePage() {
       const nowMs = Date.now();
       const rows = await Promise.all(
         ((activePartners ?? []) as ActivePartnerMapRow[]).map((p) =>
-          resolveActivePartnerMapPoint(p, nowMs),
+          resolveActivePartnerMapPoint(p, nowMs, serviceCatalogServices),
         ),
       );
 
@@ -384,7 +348,7 @@ export default function SchedulePage() {
     } finally {
       setLoadingLiveMap(false);
     }
-  }, []);
+  }, [serviceCatalogServices]);
 
   useEffect(() => {
     loadLiveMap();
@@ -882,6 +846,7 @@ export default function SchedulePage() {
               tradeFilter={liveMapTradeFilter}
               onTradeFilterChange={setLiveMapTradeFilter}
               catalogTradeNames={serviceCatalogTypeNames}
+              catalogServices={serviceCatalogServices}
               search={coverageSearch}
               onSearchChange={handleCoverageSearchChange}
             />
