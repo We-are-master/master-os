@@ -23,6 +23,7 @@ import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
 } from "@/lib/zendesk-job-ingest";
+import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -149,6 +150,11 @@ export const runtime  = "nodejs";
  *                                    //   configured, falls back to the company
  *                                    //   margin target × hourly_client_rate
  *                                    //   (40% if unset).
+ *     billed_hours?:    number|str,  // [hourly] Minimum billed hours for the
+ *                                    //   job. Optional — when omitted, uses
+ *                                    //   max(2, service_catalog.default_hours).
+ *                                    //   Send an explicit value (e.g. 1) to
+ *                                    //   override the 2h floor.
  *     auto_assign?:     boolean,     // when true → status='auto_assigning'
  *                                    //   + push notify partners matching service_type
  *                                    //   via the existing offer-window mechanism
@@ -279,6 +285,7 @@ export async function POST(req: NextRequest) {
   const hourlyClientRateSent = isPresent(body.hourly_client_rate) && hourlyClientRateIn > 0;
   const hourlyPartnerRateIn  = num(body.hourly_partner_rate);
   const hourlyPartnerRateSet = isPresent(body.hourly_partner_rate) && hourlyPartnerRateIn > 0;
+  const billedHoursIn        = isPresent(body.billed_hours) ? num(body.billed_hours) : undefined;
 
   // ─── Validation ──────────────────────────────────────────────────────
   // client_email / client_phone are optional — Zendesk forms often leave one
@@ -590,6 +597,7 @@ export async function POST(req: NextRequest) {
   let resolvedCatalogServiceId: string | null = null;
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
+  let hourlyCatalogDefaultHours: number | null = null;
   if (rateType === "hourly") {
     const catalog = await resolveCatalogServiceForHourly(
       supabase,
@@ -600,6 +608,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: catalog.error }, { status: catalog.status });
     }
     resolvedCatalogServiceId = catalog.row.id;
+    hourlyCatalogDefaultHours =
+      catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
     if (!hourlyClientRateSent) {
       const override = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
@@ -704,6 +714,7 @@ export async function POST(req: NextRequest) {
   if (rateType === "hourly") {
     jobRow.hourly_client_rate  = hourlyClientRate;
     jobRow.hourly_partner_rate = hourlyPartnerRate;
+    jobRow.billed_hours        = resolveInitialBilledHours(hourlyCatalogDefaultHours, billedHoursIn);
   }
   if (resolvedCatalogServiceId) {
     jobRow.catalog_service_id = resolvedCatalogServiceId;

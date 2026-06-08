@@ -164,7 +164,6 @@ import {
 } from "@/lib/job-phases";
 import {
   jobBillableRevenue,
-  jobDirectCost,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerCashOutDisplaySplit,
@@ -205,6 +204,7 @@ import {
 import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
+  resolveInitialBilledHours,
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import {
@@ -225,6 +225,7 @@ import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-pa
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { getAccountServicePrice } from "@/services/account-service-prices";
 import { resolveCatalogAddonChargeOptions } from "@/lib/catalog-line-pricing";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -1168,7 +1169,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [partnerAssignRateType, setPartnerAssignRateType] = useState<"fixed" | "hourly">("fixed");
   const [partnerAssignServiceId, setPartnerAssignServiceId] = useState("");
   const [partnerAssignFixedCost, setPartnerAssignFixedCost] = useState("");
-  const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("1");
+  const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("2");
   const [partnerAssignClientHourlyRate, setPartnerAssignClientHourlyRate] = useState("");
   const [partnerAssignPartnerHourlyRate, setPartnerAssignPartnerHourlyRate] = useState("");
   const [partnerAssignExtraInputs, setPartnerAssignExtraInputs] = useState<{
@@ -2193,7 +2194,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
     );
     if (job.job_type === "hourly") {
-      setPartnerAssignBilledHours(String(Math.max(0.5, Number(job.billed_hours) || 1)));
+      setPartnerAssignBilledHours(String(resolveInitialBilledHours(job.billed_hours)));
       setPartnerAssignClientHourlyRate(String(Math.max(0, Number(job.hourly_client_rate) || 0)));
       setPartnerAssignPartnerHourlyRate(String(Math.max(0, Number(job.hourly_partner_rate) || 0)));
     } else {
@@ -2715,7 +2716,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         toast.error("Select a Call Out type from Services.");
         return;
       }
-      const hrs = Math.max(1, Number(service.default_hours) || 1);
+      const hrs = resolveInitialBilledHours(service.default_hours);
       const clientRate = Number(service.hourly_rate) || 0;
       const partnerRate = partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours);
       const totals = computeHourlyTotals({
@@ -2799,7 +2800,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const b = titleOut.trim().toLowerCase();
       return a === b || a.includes(b) || b.includes(a);
     });
-    const defaultHours = Math.max(1, Number(matchedService?.default_hours) || 1);
+    const defaultHours = resolveInitialBilledHours(matchedService?.default_hours);
     const clientRate = Number(matchedService?.hourly_rate ?? 0) || 0;
     const partnerRate = matchedService
       ? partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours)
@@ -5234,7 +5235,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return a === b || a.includes(b) || b.includes(a);
     });
     if (matchedService) {
-      const hrs = Math.max(1, Number(matchedService.default_hours) || 1);
+      const hrs = resolveInitialBilledHours(matchedService.default_hours);
       const clientRate = Number(matchedService.hourly_rate) || 0;
       const partnerRate = partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours);
       const totals = computeHourlyTotals({
@@ -5376,7 +5377,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
-      : jobDirectCost(job);
+      : partnerPaymentCap(job) + Number(job.materials_cost ?? 0);
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -6249,7 +6250,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner Cost</p>
-            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
+            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(partnerCapBase)}</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin</p>
@@ -9849,7 +9850,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 </span>
                               ) : null}
                             </div>
-                            {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
+                            <p className="text-[11px] text-text-tertiary truncate">
+                              {formatPartnerPrimaryTradeLabel(p, catalogServicesJobType)}
+                            </p>
                           </div>
                           {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
                         </button>
@@ -9907,7 +9910,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ),
                       ),
                     );
-                    setPartnerAssignBilledHours(String(Math.max(0.5, Number(service.default_hours) || 1)));
+                    setPartnerAssignBilledHours(String(resolveInitialBilledHours(service.default_hours)));
                   }}
                   className="h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                 >
@@ -10325,7 +10328,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <option value="">— No Partner —</option>
               {partners.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
+                  {p.company_name?.trim() || p.contact_name} · {formatPartnerPrimaryTradeLabel(p, catalogServicesJobType)}
                 </option>
               ))}
             </select>

@@ -14,7 +14,7 @@ COMMENT ON COLUMN public.profiles.fixfy_school_last_activity_at IS
 
 CREATE TABLE IF NOT EXISTS public.fixfy_school_progress (
   profile_id uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-  completed_lesson_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  completed_lesson_ids text[] NOT NULL DEFAULT '{}'::text[],
   last_lesson_id text NULL,
   unlocked_at jsonb NOT NULL DEFAULT '{"zendesk": null}'::jsonb,
   quiz_stars jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS public.fixfy_school_progress (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+COMMENT ON COLUMN public.fixfy_school_progress.completed_lesson_ids IS
+  'Lesson ids marked complete. In SQL use ARRAY[''fixfy-os-welcome''] — not {fixfy-os} (hyphens break array literals).';
 
 COMMENT ON TABLE public.fixfy_school_progress IS
   'One row per internal staff profile — Fixfy School lesson + quiz progress.';
@@ -48,23 +51,25 @@ CREATE INDEX IF NOT EXISTS fixfy_school_quiz_attempts_phase_idx
 ALTER TABLE public.fixfy_school_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fixfy_school_quiz_attempts ENABLE ROW LEVEL SECURITY;
 
--- Own row read/write
+DROP POLICY IF EXISTS fixfy_school_progress_own ON public.fixfy_school_progress;
 CREATE POLICY fixfy_school_progress_own ON public.fixfy_school_progress
-  FOR ALL
+  FOR ALL TO authenticated
   USING (profile_id = auth.uid())
   WITH CHECK (profile_id = auth.uid());
 
+DROP POLICY IF EXISTS fixfy_school_quiz_attempts_own_select ON public.fixfy_school_quiz_attempts;
 CREATE POLICY fixfy_school_quiz_attempts_own_select ON public.fixfy_school_quiz_attempts
-  FOR SELECT
+  FOR SELECT TO authenticated
   USING (profile_id = auth.uid());
 
+DROP POLICY IF EXISTS fixfy_school_quiz_attempts_own_insert ON public.fixfy_school_quiz_attempts;
 CREATE POLICY fixfy_school_quiz_attempts_own_insert ON public.fixfy_school_quiz_attempts
-  FOR INSERT
+  FOR INSERT TO authenticated
   WITH CHECK (profile_id = auth.uid());
 
--- Admins/managers can read team school data
+DROP POLICY IF EXISTS fixfy_school_progress_staff_read ON public.fixfy_school_progress;
 CREATE POLICY fixfy_school_progress_staff_read ON public.fixfy_school_progress
-  FOR SELECT
+  FOR SELECT TO authenticated
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
@@ -72,11 +77,15 @@ CREATE POLICY fixfy_school_progress_staff_read ON public.fixfy_school_progress
     )
   );
 
+DROP POLICY IF EXISTS fixfy_school_quiz_attempts_staff_read ON public.fixfy_school_quiz_attempts;
 CREATE POLICY fixfy_school_quiz_attempts_staff_read ON public.fixfy_school_quiz_attempts
-  FOR SELECT
+  FOR SELECT TO authenticated
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
       WHERE p.id = auth.uid() AND p.role IN ('admin', 'manager')
     )
   );
+
+GRANT SELECT, INSERT, UPDATE ON public.fixfy_school_progress TO authenticated;
+GRANT SELECT, INSERT ON public.fixfy_school_quiz_attempts TO authenticated;

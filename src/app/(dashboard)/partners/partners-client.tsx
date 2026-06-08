@@ -100,7 +100,14 @@ import {
   partnerReasonLabel,
   shouldForceActivateAck,
 } from "@/lib/partner-status";
-import { GENERAL_MAINTENANCE_LABEL, typeOfWorkLabelsFromCatalog, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { GENERAL_MAINTENANCE_LABEL, typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
+import {
+  partnerTradesForDisplay,
+  tradeMatchesColumnLabel,
+  normalizePartnerTradeLabels,
+} from "@/lib/partner-trades-display";
+import { partnerHomeAddressGeocodePatch } from "@/lib/partner-home-map-coordinates";
+import { resolveJobGeocode } from "@/lib/job-geocode-client";
 import { catalogServiceIdsForTradeLabels } from "@/lib/catalog-trade-ids";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import {
@@ -608,95 +615,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   on_break: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
 };
 
-let partnersActiveTradeLabels: readonly string[] = [];
-
-function syncPartnersTradePickLabels(labels: readonly string[]): void {
-  partnersActiveTradeLabels = labels;
-}
-
 /** Minimum blended compliance score (0–100) to activate without explicit authorization. */
 const ACTIVATION_COMPLIANCE_MIN_SCORE = 95;
-
-const LEGACY_TRADE_ALIASES: Record<string, string> = {
-  electrical: "Electrician",
-  plumbing: "Plumber",
-  painting: "Painter",
-  carpentry: "Carpenter",
-  hvac: "General Maintenance",
-  handyman: "General Maintenance",
-};
-
-function normalizeTradeName(value?: string | null): string | null {
-  const raw = (value ?? "").trim();
-  if (!raw) return null;
-  for (const p of partnersActiveTradeLabels) {
-    if (p.toLowerCase() === raw.toLowerCase()) return p;
-  }
-  const legacy = LEGACY_TRADE_ALIASES[raw.toLowerCase()];
-  if (legacy) {
-    for (const p of partnersActiveTradeLabels) {
-      if (p.toLowerCase() === legacy.toLowerCase()) return p;
-    }
-  }
-  const fromWork = normalizeTypeOfWork(raw);
-  if (fromWork) {
-    for (const p of partnersActiveTradeLabels) {
-      if (p.toLowerCase() === fromWork.toLowerCase()) return p;
-    }
-  }
-  return null;
-}
-
-function normalizeTrades(values: Array<string | null | undefined>): string[] {
-  const byLower = new Map<string, string>();
-  for (const value of values) {
-    const trimmed = String(value ?? "").trim();
-    if (!trimmed) continue;
-    const normalized = normalizeTradeName(trimmed);
-    const label = normalized ?? trimmed;
-    const key = label.toLowerCase();
-    if (!byLower.has(key)) byLower.set(key, label);
-  }
-  const fallback = partnersActiveTradeLabels[0] ?? GENERAL_MAINTENANCE_LABEL;
-  return byLower.size > 0 ? Array.from(byLower.values()) : [fallback];
-}
-
-function getPartnerTrades(
-  partner: Pick<Partner, "trade" | "trades" | "catalog_service_ids">,
-  catalog?: readonly CatalogService[],
-): string[] {
-  const ids = partner.catalog_service_ids?.filter(Boolean) ?? [];
-  if (ids.length && catalog?.length) {
-    const byId = new Map(catalog.map((c) => [c.id, c]));
-    const names: string[] = [];
-    for (const id of ids) {
-      const n = byId.get(id)?.name?.trim();
-      if (n) names.push(n);
-    }
-    if (names.length) return normalizeTrades(names);
-  }
-  const tradeList = partner.trades?.length ? partner.trades : [partner.trade];
-  return normalizeTrades(tradeList);
-}
-
-/** Legacy `partner.trade` / DB may still say "HVAC"; never show that label in UI. */
-function isHiddenTradeLabel(t: string): boolean {
-  return String(t).trim().toLowerCase() === "hvac";
-}
-
-/** Trades for UI (drops HVAC). Prefer `catalog_service_ids` names when catalogue is loaded. */
-function partnerTradesForDisplay(
-  partner: Pick<Partner, "trade" | "trades" | "catalog_service_ids">,
-  catalog?: readonly CatalogService[],
-): string[] {
-  return getPartnerTrades(partner, catalog).filter((t) => !isHiddenTradeLabel(t));
-}
-
-function tradeMatchesColumnLabel(trade: string, columnLabel: string): boolean {
-  const normalized =
-    normalizeTradeName(trade) ?? normalizeTypeOfWork(trade) ?? trade.trim();
-  return normalized.toLowerCase() === columnLabel.trim().toLowerCase();
-}
 
 function partnerMatchesKanbanColumn(
   partner: Partner,
@@ -704,7 +624,7 @@ function partnerMatchesKanbanColumn(
   catalog: readonly CatalogService[],
 ): boolean {
   return partnerTradesForDisplay(partner, catalog).some((t) =>
-    tradeMatchesColumnLabel(t, columnLabel),
+    tradeMatchesColumnLabel(t, columnLabel, catalog),
   );
 }
 
@@ -725,7 +645,7 @@ function buildPartnersTradeKanbanColumns(
     const trades = partnerTradesForDisplay(p, catalog);
     if (trades.length === 0) return true;
     return !columnLabels.some((col) =>
-      trades.some((t) => tradeMatchesColumnLabel(t, col)),
+      trades.some((t) => tradeMatchesColumnLabel(t, col, catalog)),
     );
   });
   if (otherItems.length === 0) return cols;
@@ -747,7 +667,7 @@ function overviewTradesForDisplay(
   catalog?: readonly CatalogService[],
 ): string[] {
   if (!editing) return partnerTradesForDisplay(partner, catalog);
-  return normalizeTrades(overviewTrades).filter((t) => !isHiddenTradeLabel(t));
+  return normalizePartnerTradeLabels(overviewTrades, catalog ?? []);
 }
 
 /** `https://wa.me/{digits}` — best-effort intl digits (e.g. UK 07… → 44…). */
@@ -982,10 +902,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         setPartnerCatalogServices(c);
         const labels = typeOfWorkLabelsFromCatalog(c);
         setTradePickOptions(labels);
-        syncPartnersTradePickLabels(labels);
       })
       .catch(() => {
-        syncPartnersTradePickLabels([]);
+        setTradePickOptions([]);
       });
   }, []);
 
@@ -1279,6 +1198,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               coverage_cities: [createCoverageCityId],
               location: "London",
             };
+      const homeAddressPatch = await partnerHomeAddressGeocodePatch(
+        form.partner_address,
+        resolveJobGeocode,
+      );
       const created = await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
@@ -1297,7 +1220,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
-        partner_address: form.partner_address.trim() || null,
+        ...homeAddressPatch,
         verified: false,
         catalog_service_ids: catalogServiceIdsForTradeLabels(form.trades, partnerCatalogServices),
         ...coveragePatch,
@@ -3705,6 +3628,10 @@ function PartnerDetailDrawer({
       }
     }
     try {
+      const homeAddressPatch = await partnerHomeAddressGeocodePatch(
+        overviewForm.partner_address,
+        resolveJobGeocode,
+      );
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number:
@@ -3727,7 +3654,7 @@ function PartnerDetailDrawer({
         contact_name: overviewForm.contact_name.trim(),
         email: emailNorm,
         phone: overviewForm.phone.trim() || undefined,
-        partner_address: overviewForm.partner_address.trim() || null,
+        ...homeAddressPatch,
       });
       onPartnerUpdate?.(updated);
       setEditingOverview(false);

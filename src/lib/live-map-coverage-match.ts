@@ -15,7 +15,10 @@ export type CoverageSearchTarget = {
 };
 
 export type PartnerCoverageRow = PartnerCoverageFields &
-  Pick<Partner, "id" | "company_name" | "contact_name" | "trade" | "trades" | "status" | "auth_user_id">;
+  Pick<
+    Partner,
+    "id" | "company_name" | "contact_name" | "trade" | "trades" | "catalog_service_ids" | "status" | "auth_user_id"
+  >;
 
 export type MatchedCoveragePartner = {
   partner: PartnerCoverageRow;

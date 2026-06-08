@@ -123,6 +123,7 @@ import {
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import {
   clampDepositPercent,
   depositAmountFromPercent,
@@ -6490,7 +6491,7 @@ function QuoteDetailDrawer({
                       <div className="min-w-0 flex-1 py-0.5">
                         <p className="text-sm font-semibold leading-tight text-text-primary line-clamp-2 sm:line-clamp-1">{p.company_name}</p>
                         <p className="mt-0.5 line-clamp-2 text-xs text-text-tertiary sm:line-clamp-1">
-                          {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "Trade not set")}
+                          {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : formatPartnerPrimaryTradeLabel(p, routingTypeOfWorkCatalog)}
                           {p.location?.trim() ? <> · {p.location}</> : null}
                         </p>
                       </div>

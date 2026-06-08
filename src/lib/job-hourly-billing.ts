@@ -1,4 +1,50 @@
-import type { Job } from "@/types/database";
+import type { CatalogPricingMode, Job } from "@/types/database";
+
+/** Default minimum billed hours for new hourly jobs (internal UI + API). */
+export const DEFAULT_HOURLY_BILLED_HOURS = 2;
+
+/**
+ * Initial billed hours for a new hourly job.
+ * Explicit override (including values below 2) wins; otherwise max(2, catalog default).
+ */
+export function resolveInitialBilledHours(
+  catalogDefaultHours?: number | null,
+  explicitOverride?: number | null | string,
+): number {
+  const overrideRaw = explicitOverride;
+  const overrideNum =
+    overrideRaw != null && overrideRaw !== "" ? Number(overrideRaw) : NaN;
+  if (Number.isFinite(overrideNum) && overrideNum > 0) {
+    return Math.max(0.25, overrideNum);
+  }
+  const fromCatalog = Number(catalogDefaultHours);
+  const catalogHours =
+    Number.isFinite(fromCatalog) && fromCatalog > 0
+      ? fromCatalog
+      : DEFAULT_HOURLY_BILLED_HOURS;
+  return Math.max(DEFAULT_HOURLY_BILLED_HOURS, catalogHours);
+}
+
+/** Persist catalog partner_cost bundle from UI hourly rate × default hours. */
+export function catalogPartnerBundleFromHourlyRate(
+  partnerHourlyRate: number,
+  defaultHours: number,
+): number {
+  const hours = Math.max(0.25, Number(defaultHours) || DEFAULT_HOURLY_BILLED_HOURS);
+  return Math.round(Math.max(0, partnerHourlyRate) * hours * 100) / 100;
+}
+
+/** Margin preview: fixed = flat partner cost; hourly = partner £/h × default hours. */
+export function catalogPartnerTotalForDisplay(opts: {
+  pricingMode: CatalogPricingMode;
+  partnerFieldValue: number;
+  defaultHours?: number;
+}): number {
+  const val = Math.max(0, Number(opts.partnerFieldValue) || 0);
+  if (opts.pricingMode !== "hourly") return val;
+  const hours = Math.max(0.25, Number(opts.defaultHours) || DEFAULT_HOURLY_BILLED_HOURS);
+  return Math.round(val * hours * 100) / 100;
+}
 
 /** Minimum 1h, then round up in 30-minute blocks. */
 export function billedHoursFromElapsedSeconds(elapsedSeconds: number): number {

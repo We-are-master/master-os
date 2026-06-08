@@ -122,6 +122,7 @@ import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
+  resolveInitialBilledHours,
 } from "@/lib/job-hourly-billing";
 import {
   defaultPricingPresetId,
@@ -140,6 +141,7 @@ import { getAccountServicePrice } from "@/services/account-service-prices";
 import { getPartnerServicePrice } from "@/services/partner-service-prices";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
+import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { partnerCoversJob } from "@/lib/partner-coverage";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
@@ -2972,7 +2974,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
-    billed_hours: "1",
+    billed_hours: "2",
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -3130,7 +3132,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           ...prev,
           hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
           hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
-          billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
+          billed_hours: String(resolveInitialBilledHours(pricing.client.default_hours)),
           client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
         };
         // Smart Pricing (hourly) auto-fills partner from rates; Custom Price leaves partner manual.
@@ -3295,7 +3297,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
     const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
-    const initialBilledHours = Math.max(1, Number(form.billed_hours) || 1);
+    const initialBilledHours = resolveInitialBilledHours(
+      selectedCatalogService?.default_hours,
+      form.billed_hours,
+    );
     const hourlyTotals = computeHourlyTotals({
       elapsedSeconds: initialBilledHours * 3600,
       clientHourlyRate: hourlyClientRate,
@@ -3391,7 +3396,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       report_link: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
-      billed_hours: "1",
+      billed_hours: "2",
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -3411,7 +3416,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
         parkingFeeGbp: accessFees.parkingFeeGbp,
       });
   const hourlyPreview = computeHourlyTotals({
-    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
+    elapsedSeconds:
+      resolveInitialBilledHours(selectedCatalogService?.default_hours, form.billed_hours) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
     partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
   });
@@ -3555,7 +3561,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         }
                         const presetId = defaultPricingPresetId(service);
                         const eff = mergeCatalogWithPricingPreset(service, presetId || null);
-                        const hrs = Math.max(1, Number(eff.default_hours) || 1);
+                        const hrs = resolveInitialBilledHours(eff.default_hours);
                         const clientRate = Number(eff.hourly_rate) || 0;
                         const partnerRate = partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours);
                         const totals = computeHourlyTotals({
@@ -4115,7 +4121,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                               match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
                             )}
                           >
-                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : formatPartnerPrimaryTradeLabel(p, catalogServices))} · {p.location ?? "—"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

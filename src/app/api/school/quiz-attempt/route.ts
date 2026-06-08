@@ -9,6 +9,7 @@ import {
   schoolProgressToRow,
   type SchoolProgressRow,
 } from "@/lib/fixfy-school-db";
+import { recordSchoolQuizAttemptAdmin } from "@/lib/fixfy-school-record-quiz-attempt";
 import { SCHOOL_QUIZ_PASS_STARS } from "@/lib/fixfy-school-quizzes";
 import type { SchoolProgress } from "@/lib/fixfy-school-progress";
 import type { SchoolPhaseId } from "@/lib/fixfy-school-curriculum";
@@ -69,24 +70,6 @@ export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
   const now = new Date().toISOString();
 
-  const { data: attempt, error: attemptErr } = await supabase
-    .from("fixfy_school_quiz_attempts")
-    .insert({
-      profile_id: auth.user.id,
-      phase_id: phaseId,
-      stars,
-      passed,
-      answers,
-      created_at: now,
-    })
-    .select("id, phase_id, stars, passed, answers, created_at")
-    .single();
-
-  if (attemptErr) {
-    console.error("[api/school/quiz-attempt] insert failed:", attemptErr);
-    return NextResponse.json({ error: "Could not save quiz attempt." }, { status: 500 });
-  }
-
   const { data: existing } = await supabase
     .from("fixfy_school_progress")
     .select("*")
@@ -115,25 +98,39 @@ export async function POST(req: NextRequest) {
   const row = schoolProgressToRow(auth.user.id, mergedProgress);
   const certified = certifiedPhaseIds(mergedProgress);
 
-  await supabase.from("fixfy_school_progress").upsert(
-    { ...row, created_at: (existing as SchoolProgressRow | null)?.created_at ?? now },
-    { onConflict: "profile_id" },
-  );
+  try {
+    const { attemptId } = await recordSchoolQuizAttemptAdmin(supabase, {
+      profileId: auth.user.id,
+      phaseId,
+      stars,
+      passed,
+      answers,
+      progress: mergedProgress,
+      totalXpEarned: row.total_xp_earned,
+      certifiedPhases: certified,
+    });
 
-  await supabase
-    .from("profiles")
-    .update({
-      fixfy_school_xp: row.total_xp_earned,
-      fixfy_school_certified_phases: certified,
-      fixfy_school_last_activity_at: now,
-      updated_at: now,
-    })
-    .eq("id", auth.user.id);
+    const { data: attempt } = await supabase
+      .from("fixfy_school_quiz_attempts")
+      .select("id, phase_id, stars, passed, answers, created_at")
+      .eq("id", attemptId)
+      .maybeSingle();
 
-  return NextResponse.json({
-    ok: true,
-    attempt,
-    progress: mergedProgress,
-    profileSummary: { xp: row.total_xp_earned, certifiedPhases: certified },
-  });
+    return NextResponse.json({
+      ok: true,
+      attempt: attempt ?? {
+        id: attemptId,
+        phase_id: phaseId,
+        stars,
+        passed,
+        answers,
+        created_at: now,
+      },
+      progress: mergedProgress,
+      profileSummary: { xp: row.total_xp_earned, certifiedPhases: certified },
+    });
+  } catch (err) {
+    console.error("[api/school/quiz-attempt] save failed:", err);
+    return NextResponse.json({ error: "Could not save quiz attempt." }, { status: 500 });
+  }
 }

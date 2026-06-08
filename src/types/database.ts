@@ -759,6 +759,9 @@ export interface Partner {
   uk_coverage_regions?: string[] | null;
   /** Home or registered business address (distinct from coverage). */
   partner_address?: string | null;
+  /** Geocoded home address — Live map partner pin (not live GPS). */
+  partner_address_latitude?: number | null;
+  partner_address_longitude?: number | null;
   /** `radius` = miles from base pin; `postcodes` = included outward list. */
   coverage_mode?: PartnerCoverageMode | null;
   service_radius_miles?: number | null;
