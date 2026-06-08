@@ -793,7 +793,7 @@ export function SetupTab() {
             <div className="flex items-center gap-2">
               <AlarmClock className="h-4 w-4 text-text-tertiary" />
               <CardTitle>SLA Rules</CardTitle>
-              <FixfyHintIcon text="Hours before a job breaches SLA. Used by Pulse 'SLA At Risk' and by Live View badges." />
+              <FixfyHintIcon text="Hours before a job breaches SLA. Used by Live View badges and operational alerts." />
             </div>
           </CardHeader>
           <div className="space-y-4 px-6 pb-6">

@@ -96,7 +96,7 @@ export function SectionCard({
         <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-fx-line">
           <div className="min-w-0">
             {title && <div className="text-[14px] font-semibold text-text-primary leading-tight">{title}</div>}
-            {subtitle && <div className="fx-kk mt-1.5">{subtitle}</div>}
+            {subtitle && <div className="fx-kk mt-1.5 min-w-0 truncate">{subtitle}</div>}
           </div>
           {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
         </div>

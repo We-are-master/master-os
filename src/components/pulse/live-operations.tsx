@@ -1,36 +1,53 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { startOfDay, endOfDay, formatISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { JOB_LIST_ALL_TAB_STATUSES } from "@/services/jobs";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { KpiCard, LiveIndicator } from "@/components/fx/primitives";
 import { jobStatusLabel } from "@/lib/job-status-ui";
-import { parseFrontendSetup, resolveSlaRules } from "@/lib/frontend-setup";
+
+const SCHEDULED_STATUSES = new Set(["unassigned", "auto_assigning", "scheduled", "late"]);
+const IN_PROGRESS_STATUSES = new Set(["in_progress", "final_check"]);
+const ON_HOLD_STATUSES = new Set(["on_hold"]);
 
 type Stats = {
-  /** Aggregate of currently-live jobs (unassigned + scheduled + in_progress).
-   *  "Late" is treated as a warning label, not a separate live bucket. */
-  live_now: { count: number; unassigned: number; scheduled: number; in_progress: number };
+  live_now: {
+    count: number;
+    unassigned: number;
+    scheduled: number;
+    in_progress: number;
+    on_hold: number;
+  };
   scheduled: { count: number; revenue: number };
   in_progress: { count: number; revenue: number };
   on_hold: { count: number; revenue: number };
-  sla_risk: { count: number; revenue: number; refs: string[] };
+  cancelled: { count: number; lostTotal: number };
 };
 
 const initial: Stats = {
-  live_now: { count: 0, unassigned: 0, scheduled: 0, in_progress: 0 },
+  live_now: { count: 0, unassigned: 0, scheduled: 0, in_progress: 0, on_hold: 0 },
   scheduled: { count: 0, revenue: 0 },
   in_progress: { count: 0, revenue: 0 },
   on_hold: { count: 0, revenue: 0 },
-  sla_risk: { count: 0, revenue: 0, refs: [] },
+  cancelled: { count: 0, lostTotal: 0 },
 };
+
+function jobValue(clientPrice: number | null, extrasAmount: number | null): number {
+  return (Number(clientPrice) || 0) + (Number(extrasAmount) || 0);
+}
+
+function jobLostGbp(
+  clientPrice: number | null,
+  extrasAmount: number | null,
+): number {
+  return (Number(clientPrice) || 0) + (Number(extrasAmount) || 0);
+}
 
 export function LiveOperations() {
   const { bounds } = useDashboardDateRange();
   const [stats, setStats] = useState<Stats>(initial);
-  const [liveTotal, setLiveTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,108 +57,82 @@ export function LiveOperations() {
     });
     void (async () => {
       const supabase = getSupabase();
-      const now = new Date();
-      const fromIso = bounds?.fromIso ?? formatISO(startOfDay(now));
-      const toIso = bounds?.toIso ?? formatISO(endOfDay(now));
 
-      const [jobsRes, liveRes, settingsRes] = await Promise.all([
-        // Period-bound query — feeds Scheduled / On Hold / SLA At Risk cards.
+      let cancelledQuery = supabase
+        .from("jobs")
+        .select("cancelled_client_price, cancelled_extras_amount")
+        .eq("status", "cancelled")
+        .is("deleted_at", null);
+
+      if (bounds) {
+        cancelledQuery = cancelledQuery
+          .gte("cancelled_at", bounds.fromIso)
+          .lte("cancelled_at", bounds.toIso);
+      }
+
+      const [activeRes, cancelledRes] = await Promise.all([
         supabase
           .from("jobs")
-          .select(
-            "id, reference, status, client_price, extras_amount, scheduled_start_at, scheduled_end_at, updated_at",
-          )
-          .gte("scheduled_start_at", fromIso)
-          .lte("scheduled_start_at", toIso)
-          .neq("status", "cancelled")
-          .neq("status", "deleted")
+          .select("status, client_price, extras_amount")
+          .in("status", [...JOB_LIST_ALL_TAB_STATUSES])
           .is("deleted_at", null),
-        // Live Now — same period filter as the rest of Pulse so the count
-        // matches the date segment the user picked (Today / Week / Month / QTD).
-        // "Live" = unassigned + scheduled + in_progress; late is a warning label.
-        supabase
-          .from("jobs")
-          .select("status")
-          .in("status", ["unassigned", "scheduled", "in_progress"])
-          .gte("scheduled_start_at", fromIso)
-          .lte("scheduled_start_at", toIso)
-          .is("deleted_at", null),
-        supabase.from("company_settings").select("frontend_setup").limit(1).maybeSingle(),
+        cancelledQuery,
       ]);
 
       if (cancelled) return;
 
-      type Row = {
-        id: string;
-        reference: string;
+      type ActiveRow = {
         status: string;
         client_price: number | null;
         extras_amount: number | null;
-        scheduled_start_at: string | null;
-        scheduled_end_at: string | null;
-        updated_at: string | null;
       };
-      const rows = (jobsRes.data ?? []) as Row[];
-      const sla = resolveSlaRules(
-        parseFrontendSetup(
-          (settingsRes.data as { frontend_setup?: unknown } | null)?.frontend_setup,
-        ),
-      );
-      const nowMs = Date.now();
-      const ms = (h: number) => h * 60 * 60 * 1000;
-
-      // Live Now totals come from the global query — independent of period.
-      // "Live" = unassigned + scheduled + in_progress. Late is a warning label,
-      // not a separate live bucket.
-      type LiveRow = { status: string };
-      const liveRows = (liveRes.data ?? []) as LiveRow[];
-      const liveBreakdown = {
-        unassigned: liveRows.filter((r) => r.status === "unassigned").length,
-        scheduled: liveRows.filter((r) => r.status === "scheduled").length,
-        in_progress: liveRows.filter((r) => r.status === "in_progress").length,
-      };
-      const live = liveRows.length;
+      const rows = (activeRes.data ?? []) as ActiveRow[];
 
       const next: Stats = {
-        live_now: { count: live, ...liveBreakdown },
+        live_now: { count: rows.length, unassigned: 0, scheduled: 0, in_progress: 0, on_hold: 0 },
         scheduled: { count: 0, revenue: 0 },
         in_progress: { count: 0, revenue: 0 },
         on_hold: { count: 0, revenue: 0 },
-        sla_risk: { count: 0, revenue: 0, refs: [] },
+        cancelled: { count: 0, lostTotal: 0 },
       };
 
       for (const r of rows) {
-        const value = (Number(r.client_price) || 0) + (Number(r.extras_amount) || 0);
-        if (r.status === "scheduled") {
+        const value = jobValue(r.client_price, r.extras_amount);
+
+        if (r.status === "unassigned" || r.status === "auto_assigning") {
+          next.live_now.unassigned += 1;
+        } else if (r.status === "scheduled" || r.status === "late") {
+          next.live_now.scheduled += 1;
+        } else if (r.status === "in_progress" || r.status === "final_check") {
+          next.live_now.in_progress += 1;
+        } else if (r.status === "on_hold") {
+          next.live_now.on_hold += 1;
+        }
+
+        if (SCHEDULED_STATUSES.has(r.status)) {
           next.scheduled.count += 1;
           next.scheduled.revenue += value;
-        } else if (r.status === "in_progress") {
+        } else if (IN_PROGRESS_STATUSES.has(r.status)) {
           next.in_progress.count += 1;
           next.in_progress.revenue += value;
-        } else if (r.status === "on_hold") {
+        } else if (ON_HOLD_STATUSES.has(r.status)) {
           next.on_hold.count += 1;
           next.on_hold.revenue += value;
         }
-
-        const startedAt = r.scheduled_start_at ? new Date(r.scheduled_start_at).getTime() : null;
-        const updatedAt = r.updated_at ? new Date(r.updated_at).getTime() : null;
-        const arrivalBreached =
-          (r.status === "scheduled" || r.status === "in_progress" || r.status === "late") &&
-          startedAt != null &&
-          nowMs - startedAt > ms(sla.arrivalGraceHours);
-        const finalChecksOverdue =
-          r.status === "final_check" &&
-          updatedAt != null &&
-          nowMs - updatedAt > ms(sla.finalChecksHours);
-        if (r.status === "late" || arrivalBreached || finalChecksOverdue) {
-          next.sla_risk.count += 1;
-          next.sla_risk.revenue += value;
-          if (next.sla_risk.refs.length < 2) next.sla_risk.refs.push(r.reference);
-        }
       }
 
+      type CancelledRow = {
+        cancelled_client_price: number | null;
+        cancelled_extras_amount: number | null;
+      };
+      const cancelledRows = (cancelledRes.data ?? []) as CancelledRow[];
+      next.cancelled.count = cancelledRows.length;
+      next.cancelled.lostTotal = cancelledRows.reduce(
+        (sum, j) => sum + jobLostGbp(j.cancelled_client_price, j.cancelled_extras_amount),
+        0,
+      );
+
       setStats(next);
-      setLiveTotal(live);
       setLoading(false);
     })();
     return () => {
@@ -151,9 +142,18 @@ export function LiveOperations() {
 
   const liveBreakdown = (() => {
     const parts: string[] = [];
-    if (stats.live_now.unassigned > 0) parts.push(`${stats.live_now.unassigned} unassigned`);
-    if (stats.live_now.scheduled > 0) parts.push(`${stats.live_now.scheduled} scheduled`);
-    if (stats.live_now.in_progress > 0) parts.push(`${stats.live_now.in_progress} in progress`);
+    if (stats.live_now.unassigned > 0) {
+      parts.push(`${stats.live_now.unassigned} unassigned`);
+    }
+    if (stats.live_now.scheduled > 0) {
+      parts.push(`${stats.live_now.scheduled} scheduled`);
+    }
+    if (stats.live_now.in_progress > 0) {
+      parts.push(`${stats.live_now.in_progress} in progress`);
+    }
+    if (stats.live_now.on_hold > 0) {
+      parts.push(`${stats.live_now.on_hold} on hold`);
+    }
     return parts.join(" · ") || "No active jobs yet";
   })();
 
@@ -161,20 +161,22 @@ export function LiveOperations() {
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
       <KpiCard
         label="Live Now"
-        hint="Jobs that are Unassigned, Scheduled, or In Progress. 'Late' is a warning label on top of these, not a separate state."
+        hint="All active pipeline jobs (same statuses as Live Jobs below). Not filtered by the dashboard date range."
         variant="coral"
-        value={loading ? "—" : liveTotal}
+        value={loading ? "—" : stats.live_now.count}
         sub={loading ? "Loading…" : liveBreakdown}
         topRight={<LiveIndicator label="" />}
       />
       <KpiCard
         label={jobStatusLabel("scheduled")}
+        hint="Unassigned, auto-assigning, scheduled, and late jobs right now."
         value={loading ? "—" : stats.scheduled.count}
         sub={loading ? "Loading…" : `${formatGbp(stats.scheduled.revenue)} · Revenue`}
         topRight={<StatusDot color="bg-fx-green" />}
       />
       <KpiCard
         label={jobStatusLabel("in_progress")}
+        hint="In progress and final-check jobs right now."
         value={loading ? "—" : stats.in_progress.count}
         sub={loading ? "Loading…" : `${formatGbp(stats.in_progress.revenue)} · Revenue`}
         topRight={<StatusDot color="bg-fx-blue" />}
@@ -186,18 +188,16 @@ export function LiveOperations() {
         topRight={<StatusDot color="bg-fx-amber" />}
       />
       <KpiCard
-        label="SLA At Risk"
-        hint="Jobs past arrival grace, with final checks overdue, or marked Late. Thresholds set in Settings → Setup → SLA."
-        variant={stats.sla_risk.count > 0 ? "alert" : "default"}
-        value={loading ? "—" : stats.sla_risk.count}
+        label="Cancelled"
+        hint="Jobs cancelled in the selected dashboard period. Lost revenue uses the snapshot stored at cancel time."
+        variant={stats.cancelled.count > 0 ? "alert" : "default"}
+        value={loading ? "—" : stats.cancelled.count}
         sub={
           loading
             ? "Loading…"
-            : stats.sla_risk.count === 0
-              ? "All on track"
-              : stats.sla_risk.refs.length > 0
-                ? `${formatGbp(stats.sla_risk.revenue)} · ${stats.sla_risk.refs.join(" · ")}`
-                : `${formatGbp(stats.sla_risk.revenue)}`
+            : stats.cancelled.count === 0
+              ? "None in period"
+              : `${formatGbp(stats.cancelled.lostTotal)} lost`
         }
         topRight={<StatusDot color="bg-fx-red" />}
       />
