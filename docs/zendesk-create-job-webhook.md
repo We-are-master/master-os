@@ -94,7 +94,8 @@ Canonical field IDs live in [`src/lib/zendesk-os-catalog-mapping.ts`](../src/lib
 | Client Name | `5693105918623` | `client_name` | Required |
 | Client Email | `5811705681183` | `client_email` | Optional |
 | Client Phone | `5811689527071` | `client_phone` | Optional |
-| Property Address | `5693026186527` | `property_address` | Required; reconcile from ticket if payload is email |
+| Property Address | `5693026186527` | `property_address` | **Required** — street/place (postcode optional here if sent separately). Reconcile from ticket if payload is email |
+| Postcode | *(optional ticket field or macro)* | `postcode` | UK postcode when not in `property_address` (e.g. `EC1V 2NX`). Used for partner match; appended to address for geocoding |
 | Scope / description | `5687121072927` | `description` | → `jobs.scope` |
 | Client Price | `5703050059039` | `client_price` | Fixed only; hidden in form when hourly → sends `0` |
 | Rate Type | `5807260876063` | `rate_type` | `hourly` or `fixed` (strip `job_type_`). **Required for correct pricing** — see [Empty Rate Type](#empty-rate-type) |
@@ -150,6 +151,23 @@ If the agent leaves **Rate Type** blank on the ticket, the Liquid template sends
 The **201** response may include `zendesk_corrections: ["inferred_rate_type_hourly_from_catalog"]` or `["rate_type_defaulted_fixed"]`. **Agents should always select Rate Type** on the ticket so pricing matches intent; inference is a safety net, not a substitute for the form field.
 
 When `auto_assign: true` but **no partners match** (trade, coverage, postcode, or slot), the job is created with `status: "unassigned"` and `warning: "no_matching_partners"` — not stuck in `auto_assigning` without invites.
+
+### Postcode for partner matching
+
+Partner coverage and auto-assign use a UK postcode. Send it either:
+
+1. **Embedded** in `property_address` — `"14 Park Lane, London W1K 1BE"`, or  
+2. **Separate** — `"property_address": "124 City Road"` + `"postcode": "EC1V 2NX"`
+
+When sent separately, OS appends the postcode to the stored address for geocoding.
+
+If neither field contains a valid UK postcode, OS returns **400**:
+
+```json
+{
+  "error": "Provide a valid UK postcode in property_address or in the postcode field ..."
+}
+```
 
 ---
 

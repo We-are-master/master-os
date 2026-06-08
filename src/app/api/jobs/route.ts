@@ -3,7 +3,10 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
-import { extractUkPostcode } from "@/lib/uk-postcode";
+import {
+  propertyAddressWithPostcode,
+  resolvePropertyPostcode,
+} from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -92,7 +95,10 @@ export const runtime  = "nodejs";
  *                                    //   already exists with an empty phone,
  *                                    //   this value backfills it; a non-empty
  *                                    //   phone is never overwritten.
- *     property_address: string,      // required (geocoded by app for partner map)
+ *     property_address: string,      // required street/place (geocoded for map)
+ *     postcode?:        string,      // optional UK postcode when not embedded in
+ *                                    //   property_address — used for partner match
+ *                                    //   and appended for geocoding when separate
  *     service_type?:    string,      // trade label. Optional when
  *                                    //   catalog_service_id is sent — the
  *                                    //   catalog row's `name` is used instead.
@@ -256,6 +262,7 @@ export async function POST(req: NextRequest) {
   let clientEmail       = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
   const clientPhone     = nullish(body.client_phone);
   let propertyAddress   = str(body.property_address);
+  let postcodeIn        = str(body.postcode);
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
@@ -505,6 +512,19 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const propertyPostcode = resolvePropertyPostcode(postcodeIn, propertyAddress);
+  if (!propertyPostcode) {
+    return NextResponse.json(
+      {
+        error:
+          'Provide a valid UK postcode in property_address or in the postcode field ' +
+          '(e.g. "14 Park Lane, London W1K 1BE" or property_address + postcode: "W1K 1BE"). ' +
+          "Required for geocoding and partner matching.",
+      },
+      { status: 400 },
+    );
+  }
+  propertyAddress = propertyAddressWithPostcode(propertyAddress, propertyPostcode);
 
   if (
     catalogServiceIdIn &&
@@ -677,7 +697,7 @@ export async function POST(req: NextRequest) {
     matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
       serviceType,
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
-      postcode: extractUkPostcode(propertyAddress),
+      postcode: propertyPostcode,
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
     });
@@ -689,7 +709,7 @@ export async function POST(req: NextRequest) {
     console.warn("[api/jobs] auto_assign: no matching partners", {
       serviceType,
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
-      postcode: extractUkPostcode(propertyAddress),
+      postcode: propertyPostcode,
       scheduledDate: isoDate,
     });
   }
