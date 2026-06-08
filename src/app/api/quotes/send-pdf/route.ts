@@ -266,6 +266,14 @@ export async function POST(req: NextRequest) {
           : typeof quote.scope === "string" && quote.scope.trim()
             ? quote.scope.trim()
             : undefined,
+      serviceType:
+        typeof quote.service_type === "string" && quote.service_type.trim()
+          ? quote.service_type.trim()
+          : undefined,
+      propertyAddress:
+        typeof quote.property_address === "string" && quote.property_address.trim()
+          ? quote.property_address.trim()
+          : undefined,
       vatPercent,
     };
 
@@ -718,6 +726,10 @@ export async function GET(req: NextRequest) {
       notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
       depositRequired: Number(quote.deposit_required ?? 0) || undefined,
       scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
+      serviceType:
+        typeof quote.service_type === "string" && quote.service_type.trim() ? quote.service_type.trim() : undefined,
+      propertyAddress:
+        typeof quote.property_address === "string" && quote.property_address.trim() ? quote.property_address.trim() : undefined,
       vatPercent: vatPercentPreview,
     };
 

@@ -6,7 +6,6 @@ import {
   View,
   StyleSheet,
   Image,
-  Link,
 } from "@react-pdf/renderer";
 
 export interface QuotePDFData {
@@ -24,6 +23,10 @@ export interface QuotePDFData {
   /** Shown in email for accept/reject so client sees full quote. */
   depositRequired?: number;
   scope?: string;
+  /** Service / trade category — rendered in the Job Details block. */
+  serviceType?: string;
+  /** Site address — rendered in the Job Details block. */
+  propertyAddress?: string;
   /** VAT rate used to back out subtotal/VAT from `totalValue`. Defaults to 20% if not provided. */
   vatPercent?: number;
 }
@@ -48,15 +51,28 @@ export interface CompanyBranding {
 }
 
 const DEFAULT_BRANDING: CompanyBranding = {
-  companyName: "Fixfy",
-  address: "123 Business Street, London, UK",
-  phone: "+44 20 1234 5678",
-  email: "info@mastergroup.com",
-  website: "www.mastergroup.com",
+  companyName: "Getfixfy Ltd",
+  address: "124 City Road, London EC1V 2NX, United Kingdom",
+  phone: "020 4538 4668",
+  email: "support@getfixfy.com",
+  website: "getfixfy.com",
   vatNumber: "GB123456789",
-  primaryColor: "#F97316",
+  primaryColor: "#ED4B00",
   tagline: "Professional Property Services",
 };
+
+// ── Brand palette (from quote_client.html) ───────────────────────────────────
+const NAVY = "#020040";
+const ORANGE = "#ED4B00";
+const INK = "#1A1A1A";
+const SLATE = "#4A4A55";
+const MUTED = "#9A9AA8";
+const CARD_BG = "#F7F7FA";
+const LAVENDER = "#F2F0FA";
+const BORDER = "#E8E8EE";
+const HAIRLINE = "#F2F0FA";
+const ORANGE_TINT = "#FFF1EA";
+const FOOTER_INFO = "#AAAAD0";
 
 function formatCurrency(value: number): string {
   return `£${value.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -66,279 +82,192 @@ function formatPDFDate(date: string): string {
   return new Date(date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 }
 
+function firstNameOf(name: string): string {
+  const t = (name ?? "").trim().split(/\s+/)[0];
+  return t || "there";
+}
+
 const styles = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
-    fontSize: 10,
-    paddingTop: 50,
-    paddingBottom: 70,
-    paddingHorizontal: 50,
+    fontSize: 10.5,
+    lineHeight: 1.45,
+    color: INK,
     backgroundColor: "#FFFFFF",
-    color: "#1C1917",
+    paddingBottom: 86, // reserve room for the fixed navy footer
   },
-  headerBar: {
-    height: 4,
-    backgroundColor: "#F97316",
-    marginBottom: 30,
-    borderRadius: 2,
-    marginHorizontal: -50,
-    marginTop: -50,
-    width: 595,
-  },
+
+  // ── Header (navy, centred logo) ────────────────────────────────────────────
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 30,
-    paddingTop: 20,
+    backgroundColor: NAVY,
+    paddingTop: 24,
+    paddingBottom: 18,
+    paddingHorizontal: 24,
+    alignItems: "center",
   },
-  companySection: {
-    flex: 1,
-  },
-  companyName: {
-    fontSize: 22,
-    fontFamily: "Helvetica-Bold",
-    color: "#F97316",
-    marginBottom: 4,
-  },
-  tagline: {
+  headerLogo: { width: 110, height: 30, objectFit: "contain" as const },
+  headerCompany: { color: "#FFFFFF", fontSize: 16, fontFamily: "Helvetica-Bold", letterSpacing: 0.5 },
+  orangeBar: { height: 5, backgroundColor: ORANGE },
+
+  // ── Body ───────────────────────────────────────────────────────────────────
+  body: { paddingHorizontal: 40, paddingTop: 30 },
+
+  eyebrow: {
     fontSize: 9,
-    color: "#78716C",
-    letterSpacing: 1,
+    fontFamily: "Helvetica-Bold",
+    letterSpacing: 3,
+    color: ORANGE,
     textTransform: "uppercase" as const,
     marginBottom: 8,
   },
-  companyDetail: {
-    fontSize: 8.5,
-    color: "#57534E",
-    marginBottom: 2,
-  },
-  quoteInfo: {
-    alignItems: "flex-end" as const,
-    flex: 1,
-  },
-  quoteLabel: {
-    fontSize: 28,
-    fontFamily: "Helvetica-Bold",
-    color: "#E7E5E4",
-    textTransform: "uppercase" as const,
-    marginBottom: 10,
-  },
-  refRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  refLabel: {
-    fontSize: 8,
-    color: "#A8A29E",
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-    width: 60,
-    textAlign: "right" as const,
-    marginRight: 8,
-  },
-  refValue: {
-    fontSize: 10,
-    fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
-  },
-  divider: {
-    borderBottomWidth: 1,
-    borderBottomColor: "#E7E5E4",
-    marginVertical: 20,
-  },
-  thinDivider: {
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#F5F5F4",
-    marginVertical: 12,
-  },
-  clientSection: {
-    backgroundColor: "#FAFAF9",
-    borderRadius: 8,
-    padding: 20,
-    marginBottom: 24,
-  },
+  headline: { fontSize: 22, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 8 },
+  intro: { fontSize: 11, color: SLATE, lineHeight: 1.6, marginBottom: 26 },
+
+  // ── Section eyebrow (navy) ─────────────────────────────────────────────────
   sectionLabel: {
-    fontSize: 7,
+    fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#A8A29E",
+    letterSpacing: 2,
+    color: NAVY,
     textTransform: "uppercase" as const,
-    letterSpacing: 1.5,
     marginBottom: 10,
   },
-  clientName: {
-    fontSize: 14,
+
+  // ── Quote reference bar ────────────────────────────────────────────────────
+  refBar: { backgroundColor: LAVENDER, borderRadius: 8, paddingVertical: 14, paddingHorizontal: 18, marginBottom: 24 },
+  refRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  refRowGap: { marginTop: 6 },
+  refLabel: {
+    fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
-    marginBottom: 4,
-  },
-  clientDetail: {
-    fontSize: 9,
-    color: "#57534E",
-    marginBottom: 2,
-  },
-  titleSection: {
-    marginBottom: 24,
-  },
-  quoteTitle: {
-    fontSize: 16,
-    fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
-    marginBottom: 6,
-  },
-  quoteSubtitle: {
-    fontSize: 9,
-    color: "#78716C",
-    lineHeight: 1.5,
-  },
-  table: {
-    marginBottom: 24,
-  },
-  tableHeader: {
-    flexDirection: "row",
-    backgroundColor: "#1C1917",
-    borderRadius: 4,
-    padding: 10,
-    marginBottom: 2,
-  },
-  tableHeaderText: {
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: "#FFFFFF",
+    letterSpacing: 1.5,
+    color: MUTED,
     textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
   },
-  tableRow: {
-    flexDirection: "row",
-    padding: 10,
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#F5F5F4",
+  refValueStrong: { fontSize: 12, fontFamily: "Helvetica-Bold", color: NAVY },
+  refValue: { fontSize: 11, color: NAVY },
+
+  // ── Job details box ────────────────────────────────────────────────────────
+  detailBox: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 24 },
+  detailHeader: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
   },
-  tableRowAlt: {
-    flexDirection: "row",
-    padding: 10,
-    backgroundColor: "#FAFAF9",
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#F5F5F4",
-  },
-  colDesc: { flex: 3 },
-  colQty: { flex: 0.7, textAlign: "center" as const },
-  colUnit: { flex: 1, textAlign: "right" as const },
-  colTotal: { flex: 1, textAlign: "right" as const },
-  cellText: {
-    fontSize: 9,
-    color: "#1C1917",
-  },
-  cellTextBold: {
-    fontSize: 9,
+  detailTitle: { fontSize: 15, fontFamily: "Helvetica-Bold", color: NAVY, lineHeight: 1.3 },
+  detailRow: { flexDirection: "row", paddingVertical: 12, paddingHorizontal: 20 },
+  detailRowDivider: { borderTopWidth: 1, borderTopColor: HAIRLINE },
+  detailKey: {
+    width: "35%",
+    fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
+    letterSpacing: 1,
+    color: MUTED,
+    textTransform: "uppercase" as const,
   },
-  totalSection: {
-    alignItems: "flex-end" as const,
-    marginBottom: 30,
-  },
-  totalBox: {
-    width: 220,
-    backgroundColor: "#FAFAF9",
-    borderRadius: 8,
-    padding: 16,
-  },
-  totalRow: {
+  detailVal: { flex: 1, fontSize: 10.5, color: INK, lineHeight: 1.4 },
+
+  // ── Scope card ─────────────────────────────────────────────────────────────
+  scopeCard: { backgroundColor: CARD_BG, borderRadius: 8, paddingVertical: 16, paddingHorizontal: 18, marginBottom: 28 },
+  scopeText: { fontSize: 10.5, color: INK, lineHeight: 1.6 },
+
+  // ── Pricing box ────────────────────────────────────────────────────────────
+  priceBox: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 28 },
+  priceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 6,
+    alignItems: "flex-start",
+    paddingVertical: 13,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: HAIRLINE,
+  },
+  priceName: { fontSize: 10.5, color: INK },
+  priceSub: { fontSize: 8.5, color: MUTED, marginTop: 1 },
+  priceAmount: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: NAVY },
+  subRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 9,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: HAIRLINE,
+  },
+  subLabel: { fontSize: 9.5, color: SLATE },
+  subValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: NAVY },
+  totalRow: {
+    backgroundColor: LAVENDER,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
   },
   totalLabel: {
-    fontSize: 9,
-    color: "#78716C",
-  },
-  totalValue: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
-  },
-  grandTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingTop: 10,
-    borderTopWidth: 1.5,
-    borderTopColor: "#F97316",
-    marginTop: 6,
-  },
-  grandTotalLabel: {
-    fontSize: 12,
-    fontFamily: "Helvetica-Bold",
-    color: "#1C1917",
-  },
-  grandTotalValue: {
-    fontSize: 14,
-    fontFamily: "Helvetica-Bold",
-    color: "#F97316",
-  },
-  notesSection: {
-    backgroundColor: "#FFFBEB",
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 24,
-    borderLeftWidth: 3,
-    borderLeftColor: "#F97316",
-  },
-  notesTitle: {
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: "#92400E",
-    textTransform: "uppercase" as const,
     letterSpacing: 1,
-    marginBottom: 6,
+    color: NAVY,
+    textTransform: "uppercase" as const,
   },
-  notesText: {
-    fontSize: 9,
-    color: "#78716C",
-    lineHeight: 1.6,
+  totalAmount: { fontSize: 19, fontFamily: "Helvetica-Bold", color: NAVY },
+
+  // ── Acceptance note ────────────────────────────────────────────────────────
+  acceptNote: {
+    backgroundColor: ORANGE_TINT,
+    borderLeftWidth: 4,
+    borderLeftColor: ORANGE,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    marginBottom: 28,
   },
-  termsSection: {
-    marginBottom: 24,
-  },
-  termItem: {
-    flexDirection: "row",
-    marginBottom: 4,
-    alignItems: "flex-start",
-  },
-  termBullet: {
-    width: 12,
-    fontSize: 8,
-    color: "#F97316",
+  acceptTitle: {
+    fontSize: 8.5,
     fontFamily: "Helvetica-Bold",
+    letterSpacing: 2,
+    color: ORANGE,
+    textTransform: "uppercase" as const,
+    marginBottom: 5,
   },
-  termText: {
-    flex: 1,
-    fontSize: 8,
-    color: "#78716C",
-    lineHeight: 1.5,
-  },
+  acceptText: { fontSize: 10.5, color: NAVY, lineHeight: 1.5 },
+
+  // ── Terms grid ─────────────────────────────────────────────────────────────
+  termsGrid: { flexDirection: "row", flexWrap: "wrap", marginBottom: 16 },
+  termCell: { width: "50%", padding: 6 },
+  termCard: { backgroundColor: CARD_BG, borderRadius: 6, paddingVertical: 12, paddingHorizontal: 14, height: "100%" },
+  termTitle: { fontSize: 9, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 4 },
+  termText: { fontSize: 9, color: SLATE, lineHeight: 1.5 },
+
+  // ── Help card ──────────────────────────────────────────────────────────────
+  helpCard: { backgroundColor: LAVENDER, borderRadius: 8, paddingVertical: 14, paddingHorizontal: 18, marginBottom: 8 },
+  helpTitle: { fontSize: 9.5, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 4 },
+  helpText: { fontSize: 10, color: SLATE, lineHeight: 1.5 },
+  helpContact: { fontFamily: "Helvetica-Bold", color: NAVY },
+
+  // ── Footer (navy, pinned to bottom) ────────────────────────────────────────
   footer: {
     position: "absolute" as const,
-    bottom: 30,
-    left: 50,
-    right: 50,
-    flexDirection: "row",
-    justifyContent: "space-between",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: NAVY,
+    paddingVertical: 22,
+    paddingHorizontal: 40,
     alignItems: "center",
-    paddingTop: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: "#E7E5E4",
   },
-  footerText: {
-    fontSize: 7,
-    color: "#A8A29E",
-  },
-  footerBrand: {
-    fontSize: 7,
-    fontFamily: "Helvetica-Bold",
-    color: "#F97316",
-  },
+  footerLogo: { width: 76, height: 20, objectFit: "contain" as const, marginBottom: 10 },
+  footerInfo: { fontSize: 8, lineHeight: 1.6, color: FOOTER_INFO, textAlign: "center" as const },
 });
+
+const TERMS: Array<{ title: string; text: string }> = [
+  { title: "Validity", text: "Quote valid for 14 days from issue date." },
+  { title: "Scope changes", text: "Any change to scope may affect price & timeline." },
+  { title: "Site access", text: "Client to ensure safe access on the agreed date." },
+  { title: "Cancellation", text: "Cancellation within 24h of scheduled work may incur a fee." },
+];
 
 export function QuotePDF({
   data,
@@ -347,146 +276,169 @@ export function QuotePDF({
   data: QuotePDFData;
   branding?: CompanyBranding;
 }) {
-  const color = branding.primaryColor ?? "#F97316";
   // The Total Price shown to the customer is VAT-inclusive. Back out the
-  // subtotal/VAT from `totalValue` so the breakdown on the PDF reconciles
-  // with the app drawer and portal. We intentionally do NOT recompute from
-  // line items because line-item unit prices may or may not already include
-  // VAT depending on how the quote was created — trusting `totalValue` as
-  // the canonical VAT-inclusive grand total avoids double counting.
+  // subtotal/VAT from `totalValue` so the breakdown reconciles with the app
+  // drawer and portal. We trust `totalValue` as the canonical VAT-inclusive
+  // grand total rather than recomputing from line items (whose unit prices may
+  // or may not already include VAT depending on how the quote was created).
   const vatPctRaw = Number(data.vatPercent);
   const vatPct = Number.isFinite(vatPctRaw) && vatPctRaw >= 0 ? vatPctRaw : 20;
   const grandTotal = Number(data.totalValue) || 0;
   const subtotal = vatPct > 0 ? grandTotal / (1 + vatPct / 100) : grandTotal;
   const vat = Math.max(0, grandTotal - subtotal);
 
-  const defaultItems: QuoteLineItem[] = data.items ?? [
-    { description: data.title || "Professional Services", quantity: 1, unitPrice: data.totalValue, total: data.totalValue },
-  ];
+  const items: QuoteLineItem[] = data.items?.length
+    ? data.items
+    : [
+        {
+          description: data.title || "Professional Services",
+          quantity: 1,
+          unitPrice: grandTotal,
+          total: grandTotal,
+        },
+      ];
+
+  const detailRows: Array<{ key: string; value: string }> = [];
+  if (data.serviceType?.trim()) detailRows.push({ key: "Service", value: data.serviceType.trim() });
+  if (data.propertyAddress?.trim()) detailRows.push({ key: "Site", value: data.propertyAddress.trim() });
+
+  const footerLine = [branding.companyName, branding.address].filter(Boolean).join(" · ");
+  const footerLink = branding.website || branding.email;
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <View style={[styles.headerBar, { backgroundColor: color }]} />
-
-        {/* Header */}
+        {/* ── Header ── */}
         <View style={styles.header}>
-          <View style={styles.companySection}>
-            {branding.logoUrl && (
-              <Image src={branding.logoUrl} style={{ width: 120, height: 40, marginBottom: 8, objectFit: "contain" as const }} />
-            )}
-            <Text style={[styles.companyName, { color }]}>{branding.companyName}</Text>
-            {branding.tagline && <Text style={styles.tagline}>{branding.tagline}</Text>}
-            <Text style={styles.companyDetail}>{branding.address}</Text>
-            <Text style={styles.companyDetail}>{branding.phone}</Text>
-            <Text style={styles.companyDetail}>{branding.email}</Text>
-            {branding.vatNumber && <Text style={styles.companyDetail}>VAT: {branding.vatNumber}</Text>}
-          </View>
-          <View style={styles.quoteInfo}>
-            <Text style={styles.quoteLabel}>QUOTE</Text>
-            <View style={styles.refRow}>
-              <Text style={styles.refLabel}>Ref</Text>
-              <Text style={styles.refValue}>{data.reference}</Text>
-            </View>
-            <View style={styles.refRow}>
-              <Text style={styles.refLabel}>Date</Text>
-              <Text style={styles.refValue}>{formatPDFDate(data.createdAt)}</Text>
-            </View>
-            {data.expiresAt && (
-              <View style={styles.refRow}>
-                <Text style={styles.refLabel}>Valid Until</Text>
-                <Text style={styles.refValue}>{formatPDFDate(data.expiresAt)}</Text>
-              </View>
-            )}
-            {data.ownerName && (
-              <View style={styles.refRow}>
-                <Text style={styles.refLabel}>Prepared by</Text>
-                <Text style={styles.refValue}>{data.ownerName}</Text>
-              </View>
-            )}
-          </View>
+          {branding.logoUrl ? (
+            <Image src={branding.logoUrl} style={styles.headerLogo} />
+          ) : (
+            <Text style={styles.headerCompany}>{branding.companyName}</Text>
+          )}
         </View>
+        <View style={styles.orangeBar} />
 
-        {/* Client */}
-        <View style={styles.clientSection}>
-          <Text style={styles.sectionLabel}>Quote For</Text>
-          <Text style={styles.clientName}>{data.clientName}</Text>
-          {data.clientEmail && <Text style={styles.clientDetail}>{data.clientEmail}</Text>}
-        </View>
-
-        {/* Title */}
-        <View style={styles.titleSection}>
-          <Text style={styles.sectionLabel}>Service Description</Text>
-          <Text style={styles.quoteTitle}>{data.title}</Text>
-        </View>
-
-        {/* Line Items */}
-        <View style={styles.table}>
-          <View style={styles.tableHeader}>
-            <Text style={[styles.tableHeaderText, styles.colDesc]}>Description</Text>
-            <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
-            <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
-            <Text style={[styles.tableHeaderText, styles.colTotal]}>Total</Text>
-          </View>
-          {defaultItems.map((item, i) => (
-            <View key={i} style={i % 2 === 1 ? styles.tableRowAlt : styles.tableRow}>
-              <Text style={[styles.cellText, styles.colDesc]}>{item.description}</Text>
-              <Text style={[styles.cellText, styles.colQty]}>{item.quantity}</Text>
-              <Text style={[styles.cellText, styles.colUnit]}>{formatCurrency(item.unitPrice)}</Text>
-              <Text style={[styles.cellTextBold, styles.colTotal]}>{formatCurrency(item.total)}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Totals */}
-        <View style={styles.totalSection}>
-          <View style={styles.totalBox}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Subtotal (ex VAT)</Text>
-              <Text style={styles.totalValue}>{formatCurrency(subtotal)}</Text>
-            </View>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>VAT ({vatPct}%)</Text>
-              <Text style={styles.totalValue}>{formatCurrency(vat)}</Text>
-            </View>
-            <View style={[styles.grandTotalRow, { borderTopColor: color }]}>
-              <Text style={styles.grandTotalLabel}>Total (Inc VAT)</Text>
-              <Text style={[styles.grandTotalValue, { color }]}>{formatCurrency(grandTotal)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Notes */}
-        {data.notes && (
-          <View style={[styles.notesSection, { borderLeftColor: color }]}>
-            <Text style={styles.notesTitle}>Notes</Text>
-            <Text style={styles.notesText}>{data.notes}</Text>
-          </View>
-        )}
-
-        {/* Terms */}
-        <View style={styles.termsSection}>
-          <Text style={styles.sectionLabel}>Terms & Conditions</Text>
-          {[
-            "This quote is valid for 30 days from the date of issue unless otherwise stated.",
-            "Payment is due within 14 days of invoice date.",
-            "All prices are in GBP and include VAT where applicable.",
-            "Work will commence upon written acceptance of this quotation.",
-            "Any variations to the scope of work may result in additional charges.",
-          ].map((term, i) => (
-            <View key={i} style={styles.termItem}>
-              <Text style={[styles.termBullet, { color }]}>•</Text>
-              <Text style={styles.termText}>{term}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Footer */}
-        <View style={styles.footer} fixed>
-          <Text style={styles.footerText}>
-            {branding.companyName} — {data.reference} — Generated {new Date().toLocaleDateString("en-GB")}
+        <View style={styles.body}>
+          {/* ── Eyebrow + greeting + intro ── */}
+          <Text style={styles.eyebrow}>Your Quote</Text>
+          <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
+          <Text style={styles.intro}>
+            Thanks for the request. Please find your quote below. To accept, simply reply to the
+            email this quote was sent with and we&apos;ll schedule the work.
           </Text>
-          <Text style={[styles.footerBrand, { color }]}>{branding.website ?? branding.email}</Text>
+
+          {/* ── Quote reference bar ── */}
+          <View style={styles.refBar}>
+            <View style={styles.refRow}>
+              <Text style={styles.refLabel}>Quote Ref</Text>
+              <Text style={styles.refValueStrong}>{data.reference}</Text>
+            </View>
+            <View style={[styles.refRow, styles.refRowGap]}>
+              <Text style={styles.refLabel}>Valid Until</Text>
+              <Text style={styles.refValue}>
+                {data.expiresAt ? formatPDFDate(data.expiresAt) : "—"}
+              </Text>
+            </View>
+          </View>
+
+          {/* ── Job details ── */}
+          <Text style={styles.sectionLabel}>Job Details</Text>
+          <View style={styles.detailBox}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>{data.title || "Quotation"}</Text>
+            </View>
+            {detailRows.map((row, i) => (
+              <View key={row.key} style={[styles.detailRow, ...(i > 0 ? [styles.detailRowDivider] : [])]}>
+                <Text style={styles.detailKey}>{row.key}</Text>
+                <Text style={styles.detailVal}>{row.value}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* ── Scope ── */}
+          {data.scope?.trim() ? (
+            <>
+              <Text style={styles.sectionLabel}>Scope of Work</Text>
+              <View style={styles.scopeCard}>
+                <Text style={styles.scopeText}>{data.scope.trim()}</Text>
+              </View>
+            </>
+          ) : null}
+
+          {/* ── Pricing ── */}
+          <Text style={styles.sectionLabel}>Pricing</Text>
+          <View style={styles.priceBox}>
+            {items.map((item, i) => (
+              <View key={i} style={styles.priceRow}>
+                <View>
+                  <Text style={styles.priceName}>{item.description}</Text>
+                  {item.quantity && item.quantity !== 1 ? (
+                    <Text style={styles.priceSub}>
+                      {item.quantity} × {formatCurrency(item.unitPrice)}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={styles.priceAmount}>{formatCurrency(item.total)}</Text>
+              </View>
+            ))}
+            <View style={styles.subRow}>
+              <Text style={styles.subLabel}>Subtotal (ex VAT)</Text>
+              <Text style={styles.subValue}>{formatCurrency(subtotal)}</Text>
+            </View>
+            <View style={styles.subRow}>
+              <Text style={styles.subLabel}>VAT ({vatPct}%)</Text>
+              <Text style={styles.subValue}>{formatCurrency(vat)}</Text>
+            </View>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total</Text>
+              <Text style={styles.totalAmount}>{formatCurrency(grandTotal)}</Text>
+            </View>
+          </View>
+
+          {/* ── How to accept ── */}
+          <View style={styles.acceptNote}>
+            <Text style={styles.acceptTitle}>How to Accept</Text>
+            <Text style={styles.acceptText}>
+              Reply to the email this quote was sent with confirming you&apos;d like to proceed (ref{" "}
+              {data.reference}). We&apos;ll schedule the work and send a confirmation with the date
+              and arrival window.
+            </Text>
+          </View>
+
+          {/* ── Terms ── */}
+          <Text style={styles.sectionLabel}>Terms</Text>
+          <View style={styles.termsGrid}>
+            {TERMS.map((term) => (
+              <View key={term.title} style={styles.termCell}>
+                <View style={styles.termCard}>
+                  <Text style={styles.termTitle}>{term.title}</Text>
+                  <Text style={styles.termText}>{term.text}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* ── Help ── */}
+          <View style={styles.helpCard}>
+            <Text style={styles.helpTitle}>Questions about this quote?</Text>
+            <Text style={styles.helpText}>
+              Reply to the email or contact us at{" "}
+              <Text style={styles.helpContact}>{branding.email}</Text>
+              {branding.phone ? (
+                <Text>
+                  {"  ·  "}
+                  <Text style={styles.helpContact}>{branding.phone}</Text>
+                </Text>
+              ) : null}
+            </Text>
+          </View>
+        </View>
+
+        {/* ── Footer (navy, pinned) ── */}
+        <View style={styles.footer} fixed>
+          {branding.logoUrl ? <Image src={branding.logoUrl} style={styles.footerLogo} /> : null}
+          <Text style={styles.footerInfo}>{footerLine}</Text>
+          {footerLink ? <Text style={styles.footerInfo}>{footerLink}</Text> : null}
         </View>
       </Page>
     </Document>
