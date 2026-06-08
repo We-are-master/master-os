@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixfy OS — Operations Team Guide</title>
+<style>
+@page {
+  size: A4;
+  margin: 0;
+}
+@page content {
+  margin: 28mm 0 20mm 0;
+  @top-center { content: element(pageheader); }
+  @bottom-center { content: element(pagefooter); }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  color: #1A1A1A;
+  font-size: 10.5pt;
+  line-height: 1.55;
+}
+.navy { color:#020040; }
+.orange { color:#ED4B00; }
+
+/* === COVER === */
+.cover {
+  page: cover;
+  background: #020040;
+  width: 210mm; height: 297mm;
+  position: relative;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  page-break-after: always;
+}
+.cover-logo { width: 260px; margin-bottom: 60px; }
+.cover-eyebrow {
+  color:#ED4B00; font-size:13pt; font-weight:bold;
+  letter-spacing:6px; margin-bottom:18px;
+}
+.cover-title {
+  color:#F5F5F0; font-size:34pt; font-weight:bold;
+  line-height:1.15; margin-bottom:24px;
+}
+.cover-dashes { color:#ED4B00; font-size:20pt; letter-spacing:10px; margin-bottom:24px; }
+.cover-sub { color:#AAAAD0; font-size:12pt; font-style:italic; margin-bottom:70px; }
+.cover-box {
+  background:#fff; border-radius:4px; padding:26px 40px;
+  width:78%; box-shadow:0 8px 30px rgba(0,0,0,.25);
+}
+.cover-box .lbl { color:#ED4B00; font-size:11pt; font-weight:bold; letter-spacing:3px; margin-bottom:6px; }
+.cover-box .company { color:#020040; font-size:15pt; font-weight:bold; }
+.cover-box .meta { color:#4A4A55; font-size:9.5pt; margin-top:3px; }
+.cover-foot {
+  position:absolute; bottom:40px; left:0; right:0;
+  color:#AAAAD0; font-size:10pt; letter-spacing:4px; font-weight:bold;
+}
+
+/* === HEADERS === */
+.page-header { position: running(pageheader); width: 100%; }
+.page-header .bar {
+  background:#020040; padding:8px 16mm;
+  display:flex; align-items:center;
+}
+.page-header .bar img { height: 26px; }
+.page-header .rule { height:3px; background:#ED4B00; }
+
+.page-footer {
+  position: running(pagefooter);
+  width:100%; text-align:center;
+  font-size:8pt; color:#4A4A55;
+  padding: 0 16mm;
+}
+
+/* === CONTENT === */
+.content { page: content; }
+.content-inner { padding: 0 16mm; }
+
+h1.section {
+  color:#020040; font-size:24pt; font-weight:bold;
+  margin: 0 0 4px 0;
+}
+.section-eyebrow {
+  color:#ED4B00; font-size:11pt; font-weight:bold; letter-spacing:4px;
+  margin-bottom: 2px;
+}
+.section-divider { height:3px; background:#ED4B00; width:60px; margin:10px 0 22px 0; }
+
+h2.sub {
+  color:#020040; font-size:15pt; font-weight:bold;
+  margin: 22px 0 10px 0;
+}
+h3.subsub {
+  color:#020040; font-size:12pt; font-weight:bold;
+  margin: 16px 0 6px 0;
+}
+p { margin-bottom: 10px; }
+ul, ol { margin: 8px 0 12px 22px; }
+li { margin-bottom: 6px; }
+
+.lead {
+  font-size: 12pt; color:#020040; font-weight:600;
+  line-height:1.5; margin-bottom:16px;
+}
+
+/* === CALLOUTS === */
+.callout {
+  background:#FFF1EA; border-left:5px solid #ED4B00;
+  padding:14px 18px; margin:16px 0; border-radius:0 4px 4px 0;
+}
+.callout .ctitle {
+  color:#ED4B00; font-size:10pt; font-weight:bold; letter-spacing:2px;
+  margin-bottom:6px;
+}
+.callout p { margin:0; color:#020040; }
+.callout.navy { background:#F2F0FA; border-left-color:#020040; }
+.callout.navy .ctitle { color:#020040; }
+.callout.tip { background:#F2F0FA; border-left-color:#020040; }
+.callout.tip .ctitle { color:#020040; }
+
+/* === TABLES === */
+table.data {
+  width:100%; border-collapse:collapse; margin:14px 0; font-size:9.5pt;
+}
+table.data th {
+  background:#020040; color:#fff; text-align:left;
+  padding:9px 12px; font-weight:bold; font-size:9pt;
+  letter-spacing:0.3px;
+}
+table.data td {
+  border:1px solid #E0E0E8; padding:8px 12px; vertical-align:top;
+}
+table.data tr:nth-child(even) td { background:#F7F7FA; }
+table.data td strong { color:#020040; }
+
+/* === PILLS === */
+.pill {
+  display:inline-block; padding:3px 10px; border-radius:12px;
+  font-size:8.5pt; font-weight:bold; margin:2px;
+}
+.pill.navy { background:#020040; color:#fff; }
+.pill.orange { background:#ED4B00; color:#fff; }
+.pill.light { background:#F2F0FA; color:#020040; border:1px solid #020040; }
+.pill.green { background:#DCFCE7; color:#166534; }
+.pill.amber { background:#FEF3C7; color:#92400E; }
+
+/* === DIAGRAMS === */
+.diagram {
+  margin: 16px 0;
+  padding: 18px;
+  background: #F7F7FA;
+  border-radius: 8px;
+  text-align: center;
+  page-break-inside: avoid;
+}
+.diagram svg { max-width: 100%; height: auto; }
+.diagram .caption {
+  font-size: 9pt; color: #4A4A55; font-style: italic; margin-top: 8px;
+}
+
+/* === MODULE CARDS === */
+.module-icon {
+  display:inline-block; padding:6px 14px;
+  background:#020040; color:#fff;
+  border-radius:4px; font-size:10pt; font-weight:bold;
+  letter-spacing:1px; margin-bottom:8px;
+}
+
+/* === PAGE BREAKS === */
+.section-start { page-break-before: always; }
+table.data { page-break-inside: auto; }
+table.data tr { page-break-inside: avoid; }
+table.data thead { display: table-header-group; }
+.callout, .diagram { page-break-inside: avoid; }
+h1.section, h2.sub, h3.subsub { page-break-after: avoid; }
+.section-eyebrow { page-break-after: avoid; }
+.lead { page-break-after: avoid; }
+
+/* === TOC === */
+.toc-item {
+  display:flex; justify-content:space-between;
+  padding:8px 0; border-bottom:1px solid #E8E8EE;
+}
+.toc-item .t { color:#020040; font-weight:600; }
+.toc-item .n { color:#ED4B00; font-weight:bold; }
+
+.welcome-quote {
+  font-size:13pt; color:#020040; font-style:italic; line-height:1.6;
+  border-left:4px solid #ED4B00; padding-left:18px; margin:18px 0;
+}
+
+/* === GLOSSARY === */
+.glossary-row {
+  padding:8px 0; border-bottom:1px solid #F2F0FA;
+}
+.glossary-row .term {
+  color:#020040; font-weight:bold; font-size:11pt;
+  display:inline-block; min-width:160px;
+}
+.glossary-row .def { color:#4A4A55; }
+
+/* === Fixfy School — interactive layer === */
+@media screen {
+  body { background: #f5f5f0; }
+  .cover { width: 100%; min-height: 70vh; height: auto; page-break-after: auto; padding: 3rem 1.5rem; }
+  .content { page: auto; }
+  .section-start { page-break-before: auto; margin-top: 2.5rem; padding-top: 1rem; scroll-margin-top: 88px; }
+  .page-header, .page-footer { display: none; }
+  .content-inner { padding: 0 0 4rem; max-width: 900px; margin: 0 auto; }
+}
+
+.school-shell { display: flex; gap: 0; min-height: 100vh; }
+.school-nav {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+  background: #020040; color: #fff; padding: 1rem 0; overflow-y: auto;
+  z-index: 100; box-shadow: 4px 0 24px rgba(2,0,64,.15);
+}
+.school-nav__brand {
+  padding: 0 1rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1);
+  margin-bottom: 0.5rem;
+}
+.school-nav__brand strong { display: block; font-size: 0.95rem; color: #FF8A5C; }
+.school-nav__brand span { font-size: 0.7rem; color: rgba(255,255,255,.5); letter-spacing: 0.08em; text-transform: uppercase; }
+.school-nav a {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 1rem; font-size: 0.8rem; color: rgba(255,255,255,.65);
+  text-decoration: none; border-left: 3px solid transparent; transition: all .15s;
+}
+.school-nav a:hover { color: #fff; background: rgba(255,255,255,.06); }
+.school-nav a.active { color: #fff; background: rgba(237,75,0,.2); border-left-color: #ED4B00; }
+.school-nav a.done { color: #86efac; }
+.school-nav a .nav-emoji { font-size: 1rem; width: 1.25rem; text-align: center; }
+.school-progress-top {
+  position: fixed; top: 0; left: 240px; right: 0; height: 4px;
+  background: rgba(2,0,64,.08); z-index: 99;
+}
+.school-progress-top__bar {
+  height: 100%; background: linear-gradient(90deg, #FF6B2B, #ED4B00);
+  width: 0%; transition: width .4s ease;
+}
+.school-main { margin-left: 240px; flex: 1; padding-top: 4px; }
+.school-chapter-banner {
+  display: flex; align-items: center; gap: 1rem;
+  background: linear-gradient(135deg, #020040 0%, #1A0085 100%);
+  color: #fff; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  box-shadow: 0 8px 24px rgba(2,0,64,.2);
+}
+.school-chapter-banner__icon { font-size: 2rem; line-height: 1; }
+.school-chapter-banner__label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+.school-chapter-banner__xp { margin: 0.15rem 0 0; font-size: 0.75rem; color: #FF8A5C; }
+
+.ui-mockup {
+  margin: 1.25rem 0; border-radius: 12px; overflow: hidden;
+  border: 1px solid #e0e0e8; box-shadow: 0 4px 20px rgba(2,0,64,.08);
+  background: #fff;
+}
+.ui-mockup__bar {
+  background: #1c1917; padding: 0.5rem 0.75rem; display: flex; gap: 0.35rem; align-items: center;
+}
+.ui-mockup__dot { width: 8px; height: 8px; border-radius: 50%; }
+.ui-mockup__body { padding: 1rem; }
+.ui-mockup__title { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #78716c; margin-bottom: 0.75rem; }
+.ui-kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
+.ui-kpi { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 8px; padding: 0.6rem; }
+.ui-kpi__val { font-size: 1.1rem; font-weight: 800; color: #020040; }
+.ui-kpi__lbl { font-size: 0.6rem; color: #78716c; margin-top: 2px; }
+.ui-kanban { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+.ui-col { background: #f5f5f4; border-radius: 8px; padding: 0.4rem; min-height: 60px; }
+.ui-col__h { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; margin-bottom: 0.35rem; }
+.ui-card { background: #fff; border-radius: 4px; padding: 0.35rem; font-size: 0.55rem; margin-bottom: 0.25rem; border-left: 3px solid #ED4B00; }
+.ui-sidebar-mock { display: flex; gap: 0; min-height: 120px; }
+.ui-sidebar-mock__nav { width: 28%; background: #1c1917; padding: 0.5rem; }
+.ui-sidebar-mock__item { font-size: 0.5rem; color: rgba(255,255,255,.5); padding: 0.25rem 0.35rem; margin-bottom: 0.15rem; border-radius: 3px; }
+.ui-sidebar-mock__item.hot { background: rgba(237,75,0,.25); color: #FF8A5C; }
+.ui-sidebar-mock__main { flex: 1; background: #fafaf9; padding: 0.5rem; }
+
+@media (max-width: 900px) {
+  .school-nav { display: none; }
+  .school-main { margin-left: 0; }
+  .school-progress-top { left: 0; }
+  .ui-kpi-row, .ui-kanban { grid-template-columns: repeat(2, 1fr); }
+}
+
+</style>
+</head>
+<body><div class="school-shell">
+<div class="school-progress-top"><div class="school-progress-top__bar" id="schoolScrollProgress"></div></div>
+<nav class="school-nav" aria-label="Course chapters">
+  <div class="school-nav__brand">
+    <span>Fixfy School</span>
+    <strong>Phase 2 · Fixfy OS</strong>
+  </div>
+  <a href="#chapter-intro" data-nav="intro"><span class="nav-emoji">🚀</span>Introduction</a>
+<a href="#chapter-sidebar" data-nav="sidebar"><span class="nav-emoji">🧭</span>Sidebar menu</a>
+<a href="#chapter-pulse" data-nav="pulse"><span class="nav-emoji">📊</span>Operations Overview</a>
+<a href="#chapter-live-ops" data-nav="live-ops"><span class="nav-emoji">🗺️</span>Live Operations</a>
+<a href="#chapter-leads" data-nav="leads"><span class="nav-emoji">💡</span>Leads for partners</a>
+<a href="#chapter-quotes" data-nav="quotes"><span class="nav-emoji">📝</span>Quotes workflow</a>
+<a href="#chapter-jobs" data-nav="jobs"><span class="nav-emoji">🔧</span>The real work</a>
+<a href="#chapter-schedule" data-nav="schedule"><span class="nav-emoji">📅</span>Planning ahead</a>
+<a href="#chapter-accounts" data-nav="accounts"><span class="nav-emoji">🏢</span>Corporate clients</a>
+<a href="#chapter-partners" data-nav="partners"><span class="nav-emoji">👷</span>The trade network</a>
+<a href="#chapter-wrap-up" data-nav="wrap-up"><span class="nav-emoji">🏆</span>Day in ops & FAQ</a>
+</nav>
+<div class="school-main">
+
+<!-- COVER -->
+<div class="cover">
+  <img class="cover-logo" src="/logos/fixfy-wordmark.png" alt="Fixfy">
+  <div class="cover-eyebrow">OPERATIONS TEAM GUIDE</div>
+  <div class="cover-title">Fixfy OS<br>Training Manual</div>
+  <div class="cover-dashes">&mdash;&nbsp;&mdash;&nbsp;&mdash;</div>
+  <div class="cover-sub">Your day-to-day guide to the Fixfy control centre</div>
+  <div class="cover-box">
+    <div class="lbl">PREPARED FOR</div>
+    <div class="company">The Fixfy Operations Team</div>
+    <div class="meta">Dispatch &middot; Account managers &middot; Coordinators &middot; Admins</div>
+  </div>
+  <div class="cover-foot">GETFIXFY.COM</div>
+</div>
+
+<!-- RUNNING HEADER & FOOTER -->
+<div class="page-header">
+  <div class="bar"><img src="/logos/fixfy-wordmark.png" alt="Fixfy"></div>
+  <div class="rule"></div>
+</div>
+<div class="page-footer">
+  Fixfy OS Training &middot; Getfixfy Ltd &middot; Co. 15406523 &middot; Confidential &mdash; Internal Use Only
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+<div class="content-inner">
+
+<!-- WELCOME + TOC -->
+<div class="school-chapter-banner" data-chapter="intro">
+  <div class="school-chapter-banner__icon">🚀</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Introduction</p>
+    <p class="school-chapter-banner__xp">+50 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div>
+<div id="chapter-intro"></div><div class="section-eyebrow">WELCOME</div>
+<h1 class="section">Your guide to Fixfy OS</h1>
+<div class="section-divider"></div>
+<div class="welcome-quote">
+Fixfy OS is the control centre of the entire operation. This guide walks you through every section — what it does, when to use it, and how it fits with the rest of the system.
+</div>
+<p>Read it once end-to-end to get the map of how everything connects. Keep it close as a daily reference for when you forget what a status means or which view to use.</p>
+
+<h2 class="sub">What's inside</h2>
+<div class="toc-item"><span class="t">1 &nbsp; Welcome — how Fixfy fits together</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">2 &nbsp; The sidebar menu</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">3 &nbsp; Pulse — Operations Overview</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">4 &nbsp; Live View — Live Operations</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">5 &nbsp; Leads</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">6 &nbsp; Quotes</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">7 &nbsp; Jobs</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">8 &nbsp; Schedule</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">9 &nbsp; Accounts</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">10 &nbsp; Partners</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">11 &nbsp; A day in ops</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">12 &nbsp; Glossary</span><span class="n">&rarr;</span></div>
+<div class="toc-item"><span class="t">13 &nbsp; FAQ</span><span class="n">&rarr;</span></div>
+
+<div style="page-break-after:always;"></div>
+
+
+<!-- ========== SECTION 1 — WELCOME ========== -->
+<div class="section-eyebrow">SECTION 1</div>
+<h1 class="section">Welcome — how Fixfy fits together</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Fixfy OS is your control centre. It is where you track work from first interest through to completion, manage corporate clients, run your trade partner network, and see what is happening right now.</p>
+
+<p><strong>Who this is for:</strong> Anyone on the Fixfy operations team who uses the internal dashboard day to day — dispatch, account managers, coordinators, and admins. No technical background needed.</p>
+
+<p><strong>What this covers:</strong> Pulse, Live View, Leads, Quotes, Jobs, Schedule, Accounts, and Partners.</p>
+
+<h2 class="sub">The commercial path</h2>
+<p>Everything in the system follows a simple commercial path:</p>
+
+
+<div class="diagram">
+<svg viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Lead -->
+  <rect x="20" y="80" width="120" height="44" rx="6" fill="#020040"/>
+  <text x="80" y="107" font-family="Arial" font-size="14" font-weight="bold" fill="#fff" text-anchor="middle">Lead</text>
+  <!-- arrow -->
+  <line x1="145" y1="102" x2="180" y2="102" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="180,97 188,102 180,107" fill="#ED4B00"/>
+  <!-- Quote -->
+  <rect x="190" y="80" width="120" height="44" rx="6" fill="#020040"/>
+  <text x="250" y="107" font-family="Arial" font-size="14" font-weight="bold" fill="#fff" text-anchor="middle">Quote</text>
+  <!-- arrow -->
+  <line x1="315" y1="102" x2="350" y2="102" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="350,97 358,102 350,107" fill="#ED4B00"/>
+  <!-- Job -->
+  <rect x="360" y="80" width="120" height="44" rx="6" fill="#020040"/>
+  <text x="420" y="107" font-family="Arial" font-size="14" font-weight="bold" fill="#fff" text-anchor="middle">Job</text>
+  <!-- branches -->
+  <line x1="485" y1="102" x2="510" y2="60" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="508,62 512,55 516,62" fill="#ED4B00"/>
+  <line x1="485" y1="102" x2="510" y2="144" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="508,142 512,148 516,142" fill="#ED4B00"/>
+  <!-- Invoice -->
+  <rect x="520" y="30" width="160" height="44" rx="6" fill="#fff" stroke="#020040" stroke-width="2"/>
+  <text x="600" y="57" font-family="Arial" font-size="13" font-weight="bold" fill="#020040" text-anchor="middle">Customer Invoice</text>
+  <!-- Payout -->
+  <rect x="520" y="125" width="160" height="44" rx="6" fill="#fff" stroke="#020040" stroke-width="2"/>
+  <text x="600" y="153" font-family="Arial" font-size="13" font-weight="bold" fill="#020040" text-anchor="middle">Partner Payout</text>
+</svg>
+<div class="caption">The commercial flow — from opportunity to revenue</div>
+</div>
+
+
+<table class="data">
+  <tr><th>Stage</th><th>Plain English</th></tr>
+  <tr><td><strong>Lead</strong></td><td>Work you <strong>offer to partners</strong> on the Trade platform — only after you validate interest</td></tr>
+  <tr><td><strong>Quote</strong></td><td>Pricing round — usually sent to partners first, margin checked, then sent to the customer (same Zendesk ticket)</td></tr>
+  <tr><td><strong>Job</strong></td><td>The actual work — scheduled, assigned to a partner, completed, and billed</td></tr>
+  <tr><td><strong>Invoice</strong></td><td>What the customer pays Fixfy</td></tr>
+  <tr><td><strong>Payout</strong></td><td>What Fixfy pays the partner (via self-bills)</td></tr>
+</table>
+
+<!-- ========== SECTION 2 — SIDEBAR ========== -->
+<div class="school-chapter-banner" data-chapter="sidebar">
+  <div class="school-chapter-banner__icon">🧭</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Sidebar menu</p>
+    <p class="school-chapter-banner__xp">+40 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-sidebar"></div>
+<div class="ui-mockup" aria-hidden="true">
+  <div class="ui-mockup__body">
+    <p class="ui-mockup__title">Fixfy OS — Sidebar menu</p>
+    <div class="ui-sidebar-mock">
+      <div class="ui-sidebar-mock__nav">
+        <div class="ui-sidebar-mock__item hot">Pulse</div>
+        <div class="ui-sidebar-mock__item hot">Live View</div>
+        <div class="ui-sidebar-mock__item">Fixfy School</div>
+        <div class="ui-sidebar-mock__item">Leads</div>
+        <div class="ui-sidebar-mock__item">Quotes</div>
+        <div class="ui-sidebar-mock__item">Jobs</div>
+        <div class="ui-sidebar-mock__item">Partners</div>
+      </div>
+      <div class="ui-sidebar-mock__main">
+        <div style="font-size:0.55rem;color:#78716c">Main content area →</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="section-eyebrow">SECTION 2</div>
+<h1 class="section">The sidebar menu</h1>
+<div class="section-divider"></div>
+
+<p>Each section of the OS has a clear purpose. Use this table as your map.</p>
+
+<table class="data">
+  <tr><th>Menu item</th><th>What it is for</th><th>When to open it</th></tr>
+  <tr><td><strong>Pulse</strong></td><td>Your morning dashboard — KPIs, alerts, live activity</td><td>Start of shift; quick health check</td></tr>
+  <tr><td><strong>Live View</strong></td><td>Real-time triage — list, board, or map of active work</td><td>During the day; dispatch and monitoring</td></tr>
+  <tr><td><strong>Leads</strong></td><td>Opportunities you publish <strong>to partners</strong> on Fixfy Trade</td><td>When you have work to offer the network before a full quote</td></tr>
+  <tr><td><strong>Quotes</strong></td><td>Partner bidding → margin check → customer proposal</td><td>Most quotes go to partners first; you send the final price to the customer on the same ticket</td></tr>
+  <tr><td><strong>Jobs</strong></td><td>Live and completed work</td><td>Day-to-day operations; job details and actions</td></tr>
+  <tr><td><strong>Schedule</strong></td><td>Planning calendar (not the live map)</td><td>Capacity planning; seeing the week or month ahead</td></tr>
+  <tr><td><strong>Accounts</strong></td><td>Corporate clients and their billing</td><td>Client management; portal users; payment terms</td></tr>
+  <tr><td><strong>Partners</strong></td><td>Your trade network</td><td>Onboarding, compliance, coverage, assignments</td></tr>
+</table>
+
+<div class="callout tip">
+  <div class="ctitle">QUICK TIP</div>
+  <p><strong>Live View</strong> and <strong>Schedule</strong> sound similar but do different jobs. Live View shows what is happening now. Schedule shows what is planned on the calendar.</p>
+</div>
+
+<!-- ========== SECTION 3 — PULSE ========== -->
+<div class="school-chapter-banner" data-chapter="pulse">
+  <div class="school-chapter-banner__icon">📊</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Operations Overview</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-pulse"></div>
+<div class="ui-mockup" aria-hidden="true">
+  <div class="ui-mockup__bar">
+    <span class="ui-mockup__dot" style="background:#ef4444"></span>
+    <span class="ui-mockup__dot" style="background:#eab308"></span>
+    <span class="ui-mockup__dot" style="background:#22c55e"></span>
+  </div>
+  <div class="ui-mockup__body">
+    <p class="ui-mockup__title">Pulse — Operations Overview</p>
+    <div class="ui-kpi-row">
+      <div class="ui-kpi"><div class="ui-kpi__val">12</div><div class="ui-kpi__lbl">Live now</div></div>
+      <div class="ui-kpi"><div class="ui-kpi__val">£8.4k</div><div class="ui-kpi__lbl">Revenue</div></div>
+      <div class="ui-kpi"><div class="ui-kpi__val">3</div><div class="ui-kpi__lbl">SLA at risk</div></div>
+      <div class="ui-kpi"><div class="ui-kpi__val">68%</div><div class="ui-kpi__lbl">Margin</div></div>
+    </div>
+  </div>
+</div>
+<div class="section-eyebrow">SECTION 3</div>
+<span class="module-icon">PULSE</span>
+<h1 class="section">Operations Overview</h1>
+<div class="section-divider"></div>
+
+<p class="lead">One screen to understand how the business is doing today — or this week, month, or quarter.</p>
+
+<p><strong>Menu:</strong> Pulse (home page)</p>
+
+<h2 class="sub">What you see</h2>
+<table class="data">
+  <tr><th>Section</th><th>What it tells you</th></tr>
+  <tr><td><strong>Live Operations</strong></td><td>How many jobs are live right now (unassigned, scheduled, in progress), plus scheduled, on hold, and SLA at-risk counts</td></tr>
+  <tr><td><strong>Financials</strong></td><td>Revenue, costs, margin, and job-level money detail for the selected period</td></tr>
+  <tr><td><strong>Jobs Forecast</strong></td><td>A 10-day look ahead — how busy each day will be, broken down by job stage</td></tr>
+  <tr><td><strong>Alerts</strong></td><td>Things that need attention — SLA risk, jobs awaiting payment, low margin, jobs needing attention</td></tr>
+  <tr><td><strong>Live Board</strong></td><td>A live feed of Jobs, Quotes, or Leads — switch with the tabs at the top</td></tr>
+  <tr><td><strong>Revenue Trend</strong></td><td>How billed revenue and costs are trending over recent weeks</td></tr>
+  <tr><td><strong>Top Accounts</strong></td><td>Which client accounts are driving the most value in the period</td></tr>
+</table>
+
+<h2 class="sub">How to use it</h2>
+<ol>
+  <li><strong>Pick a date range</strong> at the top right — Today, This week, This month, Quarter to date, or a custom range. Everything on Pulse respects this filter.</li>
+  <li><strong>Scan Live Operations</strong> for the headline numbers — especially "live now" and SLA at risk.</li>
+  <li><strong>Check Alerts</strong> — red or amber items are your action list.</li>
+  <li><strong>Use the Live Board</strong> to jump into a specific job, quote, or lead without leaving the page.</li>
+  <li><strong>Review Financials</strong> when you need to understand margin or revenue for the period.</li>
+</ol>
+
+<h2 class="sub">Key ideas (in plain language)</h2>
+<table class="data">
+  <tr><th>Term</th><th>What it means</th></tr>
+  <tr><td><strong>Revenue goal</strong></td><td>A target Fixfy sets for how much should be billed in the period. You can see progress against it in Financials.</td></tr>
+  <tr><td><strong>Margin</strong></td><td>The difference between what the customer pays and what the partner and materials cost. Low margin triggers an alert.</td></tr>
+  <tr><td><strong>SLA at risk</strong></td><td>A job or quote is taking longer than the agreed service level. For quotes in Bidding, this usually means partners have not returned prices fast enough.</td></tr>
+</table>
+
+<!-- ========== SECTION 4 — LIVE VIEW ========== -->
+<div class="school-chapter-banner" data-chapter="live-ops">
+  <div class="school-chapter-banner__icon">🗺️</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Live Operations</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-live-ops"></div>
+<div class="ui-mockup" aria-hidden="true">
+  <div class="ui-mockup__bar">
+    <span class="ui-mockup__dot" style="background:#ef4444"></span>
+    <span class="ui-mockup__dot" style="background:#eab308"></span>
+    <span class="ui-mockup__dot" style="background:#22c55e"></span>
+  </div>
+  <div class="ui-mockup__body">
+    <p class="ui-mockup__title">Live View — Kanban board</p>
+    <div class="ui-kanban">
+      <div class="ui-col"><div class="ui-col__h" style="color:#dc2626">Unassigned</div><div class="ui-card">JOB-1042</div></div>
+      <div class="ui-col"><div class="ui-col__h" style="color:#16a34a">Scheduled</div><div class="ui-card">JOB-1038</div></div>
+      <div class="ui-col"><div class="ui-col__h" style="color:#2563eb">In Progress</div><div class="ui-card">JOB-1035</div></div>
+      <div class="ui-col"><div class="ui-col__h" style="color:#7c3aed">Final Checks</div><div class="ui-card">JOB-1031</div></div>
+    </div>
+  </div>
+</div>
+<div class="section-eyebrow">SECTION 4</div>
+<span class="module-icon">LIVE VIEW</span>
+<h1 class="section">Live Operations</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Triage active work in real time. This is your dispatch desk.</p>
+
+<p><strong>Menu:</strong> Live View &middot; <strong>Page title:</strong> Live Operations &middot; <strong>Also called:</strong> Beacon (you may see this label at the top of the page)</p>
+
+<h2 class="sub">Three views</h2>
+<p>Switch between them with the buttons at the top right: <strong>List</strong>, <strong>Kanban</strong>, <strong>Map</strong>.</p>
+
+<h3 class="subsub">List view</h3>
+<p>A filterable table of jobs in the selected date range. Good when you want to search, sort, and open job details quickly.</p>
+
+<h3 class="subsub">Kanban view</h3>
+<p>Jobs appear as cards in columns by stage. Drag a card to move it to another column — some moves open a confirmation step (for example completing or cancelling a job).</p>
+
+<table class="data">
+  <tr><th>Column</th><th>Meaning</th></tr>
+  <tr><td><strong>Unassigned</strong></td><td>No partner yet (includes jobs that are auto-assigning)</td></tr>
+  <tr><td><strong>Scheduled</strong></td><td>Partner assigned, visit booked (includes jobs that are late — past arrival time but not started)</td></tr>
+  <tr><td><strong>In Progress</strong></td><td>Partner is on site or actively working</td></tr>
+  <tr><td><strong>Final Checks</strong></td><td>Work done; office is reviewing reports (includes jobs that need attention)</td></tr>
+  <tr><td><strong>Completed</strong></td><td>Job finished and approved</td></tr>
+  <tr><td><strong>Cancelled</strong></td><td>Job was cancelled</td></tr>
+</table>
+
+<h3 class="subsub">Map view</h3>
+<p>A live map of the UK showing partners and jobs. Use filters for date, partner, account, and trade (type of work). Fullscreen keeps the search bar, filters, and side panels — you still have full control.</p>
+
+<h2 class="sub">Partners on the map</h2>
+<p>Only <strong>Active</strong> partners appear. Each partner marker shows:</p>
+<table class="data">
+  <tr><th>Status</th><th>What it means</th></tr>
+  <tr><td><span class="pill green">In job</span></td><td>Currently working on an active job</td></tr>
+  <tr><td><span class="pill light">Available</span></td><td>Online and free — no active job right now</td></tr>
+  <tr><td><span class="pill amber">Offline</span></td><td>No signal from the partner app for 15+ minutes</td></tr>
+</table>
+<p>The small badge on each marker shows the partner's <strong>trade icon</strong> (e.g. plumber, electrician).</p>
+
+<h3 class="subsub">Useful actions on the map</h3>
+<ul>
+  <li>Click a partner in the side panel → the map flies to their location.</li>
+  <li><strong>Back to London</strong> → recentres the map on London.</li>
+  <li><strong>Coverage scout</strong> → enter a postcode, radius, and trade to see which active partners cover that area. Use this before assigning work to a new location.</li>
+</ul>
+
+<h2 class="sub">Jobs on the map</h2>
+<ul>
+  <li>Job pins show where work is happening.</li>
+  <li>Colour and shape reflect job status.</li>
+  <li>Click a pin or a job in the side panel for details.</li>
+</ul>
+
+<h2 class="sub">Filters</h2>
+<p>At the top you can filter by:</p>
+<ul>
+  <li><strong>Date</strong> — Today, Tomorrow, This week, This month, etc.</li>
+  <li><strong>Partner</strong> — one partner or all</li>
+  <li><strong>Account</strong> — one corporate client or all</li>
+  <li><strong>Trade</strong> — type of work</li>
+</ul>
+
+<!-- ========== SECTION 5 — LEADS ========== -->
+<div class="school-chapter-banner" data-chapter="leads">
+  <div class="school-chapter-banner__icon">💡</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Leads for partners</p>
+    <p class="school-chapter-banner__xp">+60 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-leads"></div>
+<div class="section-eyebrow">SECTION 5</div>
+<span class="module-icon">LEADS</span>
+<h1 class="section">Leads — work for partners</h1>
+<div class="section-divider"></div>
+
+<p class="lead">A Lead is <strong>not</strong> a customer enquiry sitting in your inbox. It is work you want to <strong>offer to your partner network</strong> on the Fixfy Trade platform — before you have a full price or a formal quote.</p>
+
+<div class="callout">
+  <div class="ctitle">THINK OF IT THIS WAY</div>
+  <p>You are <strong>selling the opportunity to partners</strong>, not to the end customer. The lead lands in Fixfy OS when ops has something worth putting in front of trades. Only when it is genuinely interesting do you publish it to Fixfy Trade.</p>
+</div>
+
+<h2 class="sub">What happens step by step</h2>
+<ol>
+  <li><strong>Opportunity lands in Leads</strong> — type of work, location, urgency, and any context from the customer side (often linked to the same Zendesk ticket).</li>
+  <li><strong>Ops reviews</strong> — is this real work we want partners to see?</li>
+  <li><strong>Mark Interested</strong> — you confirm it is worth offering to the network.</li>
+  <li><strong>Publish to partners</strong> — the lead goes live on <strong>Fixfy Trade</strong>. Only <strong>Active</strong> partners who match the <strong>trade</strong>, <strong>coverage area</strong>, and have opted in to receive leads will see it.</li>
+  <li><strong>Partners respond</strong> — in the Partner app they tap <strong>Contact</strong>. You see who raised their hand on the lead in Fixfy OS.</li>
+  <li><strong>When ready → create a Quote</strong> — a lead never becomes a quote automatically. You open a quote when you want formal partner pricing or a customer proposal.</li>
+</ol>
+
+<h2 class="sub">Lead statuses</h2>
+<table class="data">
+  <tr><th>Status</th><th>Meaning</th></tr>
+  <tr><td><span class="pill light">New</span></td><td>Just landed — not yet validated for partners</td></tr>
+  <tr><td><span class="pill orange">Interested</span></td><td>Ops confirmed — ready to publish or already live on Trade</td></tr>
+</table>
+
+<h2 class="sub">Urgency</h2>
+<p>Low, Medium, High, Urgent — tells partners and ops how fast this needs attention.</p>
+
+<div class="callout tip">
+  <div class="ctitle">LEADS VS QUOTES</div>
+  <p><strong>Lead</strong> = “Who wants this job?” on Fixfy Trade. <strong>Quote</strong> = formal pricing — usually partner bid back → margin check → proposal to customer.</p>
+</div>
+
+<!-- ========== SECTION 6 — QUOTES ========== -->
+<div class="school-chapter-banner" data-chapter="quotes">
+  <div class="school-chapter-banner__icon">📝</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Quotes workflow</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-quotes"></div>
+<div class="ui-mockup" aria-hidden="true">
+  <div class="ui-mockup__body">
+    <p class="ui-mockup__title">Quotes funnel</p>
+    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;font-size:0.65rem;font-weight:700">
+      <span style="background:#f5f5f4;padding:0.35rem 0.6rem;border-radius:6px;color:#57534e">New</span>
+      <span style="color:#ED4B00">→</span>
+      <span style="background:#FEF3C7;padding:0.35rem 0.6rem;border-radius:6px;color:#92400E">Bidding</span>
+      <span style="color:#ED4B00">→</span>
+      <span style="background:#DBEAFE;padding:0.35rem 0.6rem;border-radius:6px;color:#1D4ED8">Approval</span>
+      <span style="color:#ED4B00">→</span>
+      <span style="background:#DCFCE7;padding:0.35rem 0.6rem;border-radius:6px;color:#166534">Job ✓</span>
+    </div>
+  </div>
+</div>
+<div class="section-eyebrow">SECTION 6</div>
+<span class="module-icon">QUOTES</span>
+<h1 class="section">Quotes — partner first, then customer</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Most quotes follow the same path: <strong>send to partner → partner sends price back → you check margin → send to customer</strong> — all on the <strong>same Zendesk ticket</strong>. You can price manually in the office, but the partner route is what you use most often.</p>
+
+<h2 class="sub">The usual flow (same ticket end-to-end)</h2>
+<ol>
+  <li><strong>Open / create the quote</strong> in Fixfy OS — linked to the Zendesk ticket for this job.</li>
+  <li><strong>Send to partners (Bidding)</strong> — invite Active partners via the Fixfy Partner app. They receive the scope, photos, and address.</li>
+  <li><strong>Partner submits a bid</strong> — labour, materials, notes, and dates come back into the quote in Fixfy OS.</li>
+  <li><strong>Review &amp; margin</strong> — compare partner cost vs customer sell price. Check margin % meets your floor before you proceed.</li>
+  <li><strong>Build the customer proposal</strong> — line items, deposit, and PDF from the winning or selected bid.</li>
+  <li><strong>Send to customer</strong> — move to <strong>Approval</strong> and send the proposal on the <strong>same Zendesk ticket</strong> (customer sees one thread, not scattered emails).</li>
+  <li><strong>Customer accepts → Payment → Job</strong> — deposit collected, quote converts to a job, partner is booked.</li>
+</ol>
+
+<div class="diagram">
+<svg viewBox="0 0 760 200" xmlns="http://www.w3.org/2000/svg">
+  <text x="380" y="22" font-family="Arial" font-size="11" font-weight="bold" fill="#020040" text-anchor="middle">Same Zendesk ticket throughout</text>
+  <!-- Ticket -->
+  <rect x="10" y="40" width="90" height="44" rx="6" fill="#fff" stroke="#020040" stroke-width="2"/>
+  <text x="55" y="67" font-family="Arial" font-size="11" font-weight="bold" fill="#020040" text-anchor="middle">Zendesk</text>
+  <line x1="105" y1="62" x2="130" y2="62" stroke="#ED4B00" stroke-width="2"/>
+  <polygon points="130,57 138,62 130,67" fill="#ED4B00"/>
+  <!-- OS Quote New -->
+  <rect x="140" y="40" width="80" height="44" rx="6" fill="#020040"/>
+  <text x="180" y="62" font-family="Arial" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">Quote</text>
+  <text x="180" y="76" font-family="Arial" font-size="9" fill="#fff" text-anchor="middle">New</text>
+  <line x1="225" y1="62" x2="250" y2="62" stroke="#ED4B00" stroke-width="2"/>
+  <polygon points="250,57 258,62 250,67" fill="#ED4B00"/>
+  <!-- Partner -->
+  <rect x="260" y="32" width="100" height="60" rx="6" fill="#FFF1EA" stroke="#ED4B00" stroke-width="2"/>
+  <text x="310" y="55" font-family="Arial" font-size="10" font-weight="bold" fill="#C73A00" text-anchor="middle">Partner app</text>
+  <text x="310" y="72" font-family="Arial" font-size="9" fill="#C73A00" text-anchor="middle">Bid back</text>
+  <line x1="365" y1="62" x2="390" y2="62" stroke="#ED4B00" stroke-width="2"/>
+  <polygon points="390,57 398,62 390,67" fill="#ED4B00"/>
+  <!-- Margin -->
+  <rect x="400" y="40" width="90" height="44" rx="6" fill="#020040"/>
+  <text x="445" y="62" font-family="Arial" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">Check</text>
+  <text x="445" y="76" font-family="Arial" font-size="9" fill="#fff" text-anchor="middle">margin</text>
+  <line x1="495" y1="62" x2="520" y2="62" stroke="#ED4B00" stroke-width="2"/>
+  <polygon points="520,57 528,62 520,67" fill="#ED4B00"/>
+  <!-- Customer -->
+  <rect x="530" y="40" width="100" height="44" rx="6" fill="#fff" stroke="#020040" stroke-width="2"/>
+  <text x="580" y="62" font-family="Arial" font-size="10" font-weight="bold" fill="#020040" text-anchor="middle">Customer</text>
+  <text x="580" y="76" font-family="Arial" font-size="9" fill="#020040" text-anchor="middle">Approval</text>
+  <line x1="635" y1="62" x2="660" y2="62" stroke="#ED4B00" stroke-width="2"/>
+  <polygon points="660,57 668,62 660,67" fill="#ED4B00"/>
+  <!-- Job -->
+  <rect x="670" y="40" width="80" height="44" rx="6" fill="#22C55E"/>
+  <text x="710" y="67" font-family="Arial" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">Job</text>
+  <!-- Manual path -->
+  <rect x="140" y="120" width="200" height="36" rx="6" fill="#F7F7FA" stroke="#9A9AA8" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="240" y="143" font-family="Arial" font-size="10" fill="#57534E" text-anchor="middle">Less often: manual quote priced in-office (skip partner bid)</text>
+</svg>
+<div class="caption">Most common path — partner bid, margin check, customer send, one ticket</div>
+</div>
+
+<div class="callout">
+  <div class="ctitle">MARGIN CHECK</div>
+  <p>Before you send to the customer, confirm <strong>sell price minus partner cost</strong> (and materials) hits your margin target. Pulse will flag quotes and jobs where margin is below the floor.</p>
+</div>
+
+<h2 class="sub">Quote stages in Fixfy OS</h2>
+
+
+<div class="diagram">
+<svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg">
+  <!-- New -->
+  <rect x="20" y="90" width="100" height="40" rx="6" fill="#020040"/>
+  <text x="70" y="115" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">New</text>
+  <line x1="125" y1="110" x2="155" y2="110" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="155,105 163,110 155,115" fill="#ED4B00"/>
+  <!-- Bidding -->
+  <rect x="165" y="90" width="100" height="40" rx="6" fill="#020040"/>
+  <text x="215" y="115" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Bidding</text>
+  <line x1="270" y1="110" x2="300" y2="110" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="300,105 308,110 300,115" fill="#ED4B00"/>
+  <!-- Approval -->
+  <rect x="310" y="90" width="100" height="40" rx="6" fill="#020040"/>
+  <text x="360" y="115" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Approval</text>
+  <!-- branch to Payment -->
+  <line x1="415" y1="110" x2="445" y2="110" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="445,105 453,110 445,115" fill="#ED4B00"/>
+  <!-- Payment -->
+  <rect x="455" y="90" width="100" height="40" rx="6" fill="#020040"/>
+  <text x="505" y="115" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Payment</text>
+  <line x1="560" y1="110" x2="590" y2="110" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="590,105 598,110 590,115" fill="#ED4B00"/>
+  <!-- Job (won) -->
+  <rect x="600" y="90" width="100" height="40" rx="6" fill="#22C55E"/>
+  <text x="650" y="115" font-family="Arial" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Job (Won)</text>
+
+  <!-- Rejected branch from Approval -->
+  <line x1="360" y1="135" x2="360" y2="170" stroke="#9A9AA8" stroke-width="2" stroke-dasharray="4,3"/>
+  <polygon points="355,168 360,176 365,168" fill="#9A9AA8"/>
+  <rect x="310" y="178" width="100" height="32" rx="6" fill="#fff" stroke="#9A9AA8" stroke-width="2"/>
+  <text x="360" y="199" font-family="Arial" font-size="12" font-weight="bold" fill="#9A9AA8" text-anchor="middle">Rejected</text>
+</svg>
+<div class="caption">Quote stages — from creation to conversion (or loss)</div>
+</div>
+
+
+<table class="data">
+  <tr><th>Stage</th><th>What is happening</th></tr>
+  <tr><td><strong>New</strong></td><td>Quote is being prepared — not yet out to partners</td></tr>
+  <tr><td><strong>Bidding</strong></td><td>Partners are invited to submit their prices</td></tr>
+  <tr><td><strong>Approval</strong></td><td>Waiting for the customer to accept the proposal</td></tr>
+  <tr><td><strong>Payment</strong></td><td>Customer accepted — waiting for deposit or payment</td></tr>
+  <tr><td><strong>Converted to Job</strong></td><td>Quote became a job (closed — won)</td></tr>
+  <tr><td><strong>Rejected</strong></td><td>Customer declined or quote was lost (closed — lost)</td></tr>
+</table>
+
+<h2 class="sub">What you do in each stage</h2>
+<table class="data">
+  <tr><th>Stage</th><th>Your action</th></tr>
+  <tr><td><strong>New</strong></td><td>Set scope, address, trade, photos. Link Zendesk ticket. Decide: send to partners or price manually.</td></tr>
+  <tr><td><strong>Bidding</strong></td><td><strong>Invite partners</strong> — push goes to Fixfy Partner app. Wait for bids; compare totals and notes.</td></tr>
+  <tr><td><strong>Approval</strong></td><td>Customer proposal sent — on the <strong>same Zendesk ticket</strong>. Waiting for yes/no.</td></tr>
+  <tr><td><strong>Payment</strong></td><td>Deposit or full payment collected.</td></tr>
+  <tr><td><strong>Converted to Job</strong></td><td>Book the partner, schedule, and hand off to Jobs.</td></tr>
+</table>
+
+<h2 class="sub">Manual quote (office pricing)</h2>
+<p>Sometimes you already know the partner cost and sell price — you build line items yourself without a bidding round. This is valid but <strong>less common</strong> than send-to-partner → bid back → margin → customer.</p>
+
+<div class="callout">
+  <div class="ctitle">BIDDING SLA</div>
+  <p>If a quote sits in Bidding too long, Pulse and Quotes will flag it as <strong>SLA overdue</strong>. This means you should send the proposal to the customer as soon as you have enough pricing — you do not have to wait for every partner to respond.</p>
+</div>
+
+<!-- ========== SECTION 7 — JOBS ========== -->
+<div class="school-chapter-banner" data-chapter="jobs">
+  <div class="school-chapter-banner__icon">🔧</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · The real work</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-jobs"></div>
+<div class="section-eyebrow">SECTION 7</div>
+<span class="module-icon">JOBS</span>
+<h1 class="section">The real work</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Who is going, when, how much it costs, reports, and invoicing. This is where most operational time is spent.</p>
+
+<p><strong>Menu:</strong> Jobs Management</p>
+
+<h2 class="sub">Job statuses</h2>
+<table class="data">
+  <tr><th>Status</th><th>Meaning</th><th>Who usually moves it</th></tr>
+  <tr><td><strong>Unassigned</strong></td><td>No partner assigned yet</td><td>Ops assigns a partner</td></tr>
+  <tr><td><strong>Assigning</strong></td><td>System is trying to auto-assign</td><td>Automatic</td></tr>
+  <tr><td><strong>Scheduled</strong></td><td>Partner assigned, visit booked</td><td>Ops or partner accepts</td></tr>
+  <tr><td><strong>Late</strong></td><td>Past scheduled arrival, not started</td><td>Flag only — still "scheduled"</td></tr>
+  <tr><td><strong>In Progress</strong></td><td>Work is underway</td><td>Partner starts on site (or ops)</td></tr>
+  <tr><td><strong>Final Checks</strong></td><td>Partner submitted reports; office reviews</td><td>Partner completes; ops approves</td></tr>
+  <tr><td><strong>Awaiting Payment</strong></td><td>Approved; waiting for customer payment</td><td>Ops after approval</td></tr>
+  <tr><td><strong>Needs Attention</strong></td><td>Something is wrong — review required</td><td>Ops</td></tr>
+  <tr><td><strong>On Hold</strong></td><td>Paused (e.g. access issue, complaint)</td><td>Ops</td></tr>
+  <tr><td><strong>Completed</strong></td><td>Done and paid (or closed)</td><td>Ops marks paid</td></tr>
+  <tr><td><strong>Cancelled</strong></td><td>Job will not go ahead</td><td>Ops or partner (with rules)</td></tr>
+</table>
+
+<h2 class="sub">Job lifecycle</h2>
+
+
+<div class="diagram">
+<svg viewBox="0 0 720 320" xmlns="http://www.w3.org/2000/svg">
+  <!-- Unassigned -->
+  <rect x="280" y="20" width="140" height="40" rx="6" fill="#020040"/>
+  <text x="350" y="45" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Unassigned</text>
+  <line x1="350" y1="65" x2="350" y2="85" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="345,83 350,91 355,83" fill="#ED4B00"/>
+  <!-- Scheduled -->
+  <rect x="280" y="95" width="140" height="40" rx="6" fill="#020040"/>
+  <text x="350" y="120" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Scheduled</text>
+  <!-- arrow down -->
+  <line x1="350" y1="140" x2="350" y2="160" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="345,158 350,166 355,158" fill="#ED4B00"/>
+  <!-- In Progress -->
+  <rect x="280" y="170" width="140" height="40" rx="6" fill="#020040"/>
+  <text x="350" y="195" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">In Progress</text>
+  <line x1="350" y1="215" x2="350" y2="235" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="345,233 350,241 355,233" fill="#ED4B00"/>
+  <!-- Final Checks -->
+  <rect x="280" y="245" width="140" height="40" rx="6" fill="#020040"/>
+  <text x="350" y="270" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Final Checks</text>
+
+  <!-- Branch: Awaiting Payment -->
+  <line x1="420" y1="265" x2="490" y2="265" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="490,260 498,265 490,270" fill="#ED4B00"/>
+  <rect x="500" y="245" width="160" height="40" rx="6" fill="#fff" stroke="#020040" stroke-width="2"/>
+  <text x="580" y="270" font-family="Arial" font-size="12" font-weight="bold" fill="#020040" text-anchor="middle">Awaiting Payment</text>
+  <line x1="580" y1="245" x2="580" y2="225" stroke="#ED4B00" stroke-width="3"/>
+  <polygon points="575,225 580,217 585,225" fill="#ED4B00"/>
+  <rect x="500" y="180" width="160" height="40" rx="6" fill="#22C55E"/>
+  <text x="580" y="205" font-family="Arial" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Completed</text>
+
+  <!-- On Hold branch from Scheduled -->
+  <line x1="280" y1="115" x2="180" y2="115" stroke="#9A9AA8" stroke-width="2" stroke-dasharray="4,3"/>
+  <polygon points="182,110 174,115 182,120" fill="#9A9AA8"/>
+  <rect x="60" y="95" width="120" height="40" rx="6" fill="#fff" stroke="#9A9AA8" stroke-width="2"/>
+  <text x="120" y="120" font-family="Arial" font-size="12" font-weight="bold" fill="#9A9AA8" text-anchor="middle">On Hold</text>
+  <!-- On Hold back to In Progress -->
+  <line x1="120" y1="135" x2="120" y2="190" stroke="#9A9AA8" stroke-width="2" stroke-dasharray="4,3"/>
+  <line x1="120" y1="190" x2="280" y2="190" stroke="#9A9AA8" stroke-width="2" stroke-dasharray="4,3"/>
+  <polygon points="278,185 286,190 278,195" fill="#9A9AA8"/>
+</svg>
+<div class="caption">Job lifecycle — from unassigned through completion (with On Hold detour)</div>
+</div>
+
+
+<h2 class="sub">Typical workflow</h2>
+<ol>
+  <li><strong>Job created</strong> — from a quote, request, or manually.</li>
+  <li><strong>Assign a partner</strong> — pick an Active partner who covers the area and trade. Or use auto-assign.</li>
+  <li><strong>Partner accepts and attends</strong> — they use the Fixfy Partner app to navigate, start the job, and track time.</li>
+  <li><strong>Partner submits reports</strong> — start report and final report with photos and notes.</li>
+  <li><strong>Office reviews</strong> — in Final Checks, ops checks reports and approves.</li>
+  <li><strong>Invoice the customer</strong> — send report and invoice.</li>
+  <li><strong>Mark completed</strong> — once payment is received.</li>
+  <li><strong>Partner payout</strong> — a self-bill is created for the partner (handled in Finance).</li>
+</ol>
+
+<h2 class="sub">Common actions on a job</h2>
+<ul>
+  <li><strong>Assign / change partner</strong></li>
+  <li><strong>Start job / Complete job</strong> (if doing it from the office)</li>
+  <li><strong>Put on hold</strong> — pauses the job; you can resume later</li>
+  <li><strong>Review &amp; Approve</strong> — moves from Final Checks to Awaiting Payment</li>
+  <li><strong>Mark as Paid</strong> — closes the job</li>
+  <li><strong>Cancel</strong> — stops the job; may affect partner fees depending on timing</li>
+</ul>
+
+<h2 class="sub">Jobs tabs</h2>
+<p>The Jobs page has tabs to filter by stage — All, Action Required, Unassigned, Scheduled, In Progress, On Hold, Final Checks, Awaiting Payment, Completed, Cancelled. Use these to focus your queue.</p>
+
+<!-- ========== SECTION 8 — SCHEDULE ========== -->
+<div class="school-chapter-banner" data-chapter="schedule">
+  <div class="school-chapter-banner__icon">📅</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Planning ahead</p>
+    <p class="school-chapter-banner__xp">+50 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-schedule"></div>
+<div class="section-eyebrow">SECTION 8</div>
+<span class="module-icon">SCHEDULE</span>
+<h1 class="section">Planning ahead</h1>
+<div class="section-divider"></div>
+
+<p class="lead">A planning calendar — see jobs across days, weeks, or months. This is for capacity and planning, not live dispatch.</p>
+
+<p><strong>Menu:</strong> Schedule (under Operations)</p>
+
+<div class="callout">
+  <div class="ctitle">DON'T CONFUSE WITH LIVE VIEW</div>
+  <p>The calendar shows pipeline jobs (from action required through final checks). For the live partner map, use <strong>Live View</strong>.</p>
+</div>
+
+<h2 class="sub">How to use it</h2>
+<ul>
+  <li>Switch between year, month, week, or day view.</li>
+  <li>See how many jobs fall on each day.</li>
+  <li>Click a job to open its details.</li>
+  <li>Use this when planning team capacity or spotting overloaded days.</li>
+</ul>
+
+<!-- ========== SECTION 9 — ACCOUNTS ========== -->
+<div class="school-chapter-banner" data-chapter="accounts">
+  <div class="school-chapter-banner__icon">🏢</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Corporate clients</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-accounts"></div>
+<div class="section-eyebrow">SECTION 9</div>
+<span class="module-icon">ACCOUNTS</span>
+<h1 class="section">Corporate clients</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Your B2B clients — the companies that hire Fixfy for maintenance and projects.</p>
+
+<p><strong>Menu:</strong> Accounts &middot; <strong>Subtitle:</strong> Manage corporate client accounts and billing.</p>
+
+<h2 class="sub">What you manage here</h2>
+<table class="data">
+  <tr><th>Area</th><th>What it is</th></tr>
+  <tr><td><strong>Account details</strong></td><td>Company name, billing address, payment terms</td></tr>
+  <tr><td><strong>Clients</strong></td><td>Individual sites or contacts under the account</td></tr>
+  <tr><td><strong>Portal users</strong></td><td>People at the client company who log into the customer portal to raise requests, view quotes, track jobs, and see invoices</td></tr>
+  <tr><td><strong>Jobs &amp; invoices</strong></td><td>History linked to this account</td></tr>
+  <tr><td><strong>Payment terms</strong></td><td>When invoices are due (e.g. Net 30, biweekly)</td></tr>
+</table>
+
+<h2 class="sub">Typical workflow</h2>
+<ol>
+  <li><strong>Create account</strong> when you onboard a new corporate client.</li>
+  <li><strong>Add clients</strong> (sites/properties) under the account.</li>
+  <li><strong>Invite portal users</strong> so the client can self-serve.</li>
+  <li><strong>Link jobs and quotes</strong> to the right account.</li>
+  <li><strong>Track outstanding invoices</strong> from the account view.</li>
+</ol>
+
+<div class="callout tip">
+  <div class="ctitle">REMEMBER</div>
+  <p>The customer portal is separate from Fixfy OS and from the partner app. Accounts is where you set up who can access it.</p>
+</div>
+
+<!-- ========== SECTION 10 — PARTNERS ========== -->
+<div class="school-chapter-banner" data-chapter="partners">
+  <div class="school-chapter-banner__icon">👷</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · The trade network</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-partners"></div>
+<div class="ui-mockup" aria-hidden="true">
+  <div class="ui-mockup__body">
+    <p class="ui-mockup__title">Partner statuses</p>
+    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;font-size:0.65rem;font-weight:700">
+      <span style="background:#FEF3C7;padding:0.35rem 0.65rem;border-radius:20px;color:#92400E">Onboarding</span>
+      <span style="background:#DCFCE7;padding:0.35rem 0.65rem;border-radius:20px;color:#166534">Active</span>
+      <span style="background:#FEE2E2;padding:0.35rem 0.65rem;border-radius:20px;color:#991B1B">Needs Attention</span>
+      <span style="background:#f5f5f4;padding:0.35rem 0.65rem;border-radius:20px;color:#57534e">Inactive</span>
+    </div>
+  </div>
+</div>
+<div class="section-eyebrow">SECTION 10</div>
+<span class="module-icon">PARTNERS</span>
+<h1 class="section">The trade network</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Your network of tradespeople — who can receive job invitations, submit bids, and do work.</p>
+
+<h2 class="sub">Partner statuses</h2>
+<table class="data">
+  <tr><th>Status</th><th>Meaning</th></tr>
+  <tr><td><span class="pill amber">Onboarding</span></td><td>Applied or being set up — not yet eligible for work</td></tr>
+  <tr><td><span class="pill green">Active</span></td><td>Fully approved — can receive bids and job assignments</td></tr>
+  <tr><td><span class="pill orange">Needs Attention</span></td><td>Compliance or documents need fixing — may still be visible but should be resolved</td></tr>
+  <tr><td><span class="pill light">Inactive</span></td><td>Not currently working with Fixfy (includes partners on break)</td></tr>
+</table>
+
+<div class="callout">
+  <div class="ctitle">KEY RULE</div>
+  <p>Only <strong>Active</strong> partners can be invited to bid on quotes or assigned to jobs.</p>
+</div>
+
+<h2 class="sub">Partner profile sections</h2>
+<table class="data">
+  <tr><th>Tab / area</th><th>What it is for</th></tr>
+  <tr><td><strong>Overview</strong></td><td>Company name, contact name, email, phone, status. Use <em>Edit name</em> for a quick name change.</td></tr>
+  <tr><td><strong>Coverage</strong></td><td>Where the partner works — radius from a base postcode, or specific postcode districts</td></tr>
+  <tr><td><strong>Documents</strong></td><td>Compliance files — insurance, ID, trade certificates. Drives the compliance score</td></tr>
+  <tr><td><strong>Jobs</strong></td><td>History of work done for Fixfy</td></tr>
+  <tr><td><strong>Service rates</strong></td><td>Standard pricing for their trades</td></tr>
+  <tr><td><strong>Payouts</strong></td><td>Self-bills and payment history</td></tr>
+</table>
+
+<h2 class="sub">Compliance score</h2>
+<p>A number from 0 to 100 that reflects:</p>
+<ul>
+  <li><strong>Profile completeness</strong> — contact details, address, tax info, coverage area</li>
+  <li><strong>Documents</strong> — required files uploaded and not expired</li>
+  <li><strong>Expired documents</strong> — lower the score</li>
+</ul>
+<p>Partners generally need a score of <strong>95 or above</strong> to be activated without special approval.</p>
+
+<h2 class="sub">Typical partner lifecycle</h2>
+<ol>
+  <li>Partner applies via the <strong>Become a Partner</strong> page.</li>
+  <li>Ops reviews application → status <strong>Onboarding</strong>.</li>
+  <li>Partner uploads missing documents (via app or a document upload link you send).</li>
+  <li>Ops checks coverage, trades, and compliance.</li>
+  <li>Activate → status <strong>Active</strong>.</li>
+  <li>Partner receives job invitations and can bid.</li>
+  <li>If documents expire → <strong>Needs Attention</strong> until renewed.</li>
+  <li>If partner stops working → <strong>Inactive</strong>.</li>
+</ol>
+
+<h2 class="sub">Sending document requests</h2>
+<p>From a partner's profile you can request specific documents. The partner receives a link to upload files without needing to log into the full app.</p>
+
+<!-- ========== SECTION 11 — A DAY IN OPS ========== -->
+<div class="school-chapter-banner" data-chapter="wrap-up">
+  <div class="school-chapter-banner__icon">🏆</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Day in ops & FAQ</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div class="section-start" id="chapter-wrap-up"></div>
+<div class="section-eyebrow">SECTION 11</div>
+<h1 class="section">How the pieces connect — a day in ops</h1>
+<div class="section-divider"></div>
+
+<p class="lead">A typical operational day, from morning standup to active dispatch.</p>
+
+
+<div class="diagram">
+<svg viewBox="0 0 720 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- Open Pulse -->
+  <rect x="280" y="20" width="160" height="40" rx="6" fill="#ED4B00"/>
+  <text x="360" y="45" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Open Pulse</text>
+  <line x1="360" y1="65" x2="360" y2="85" stroke="#020040" stroke-width="3"/>
+  <polygon points="355,83 360,91 365,83" fill="#020040"/>
+  <!-- Check alerts -->
+  <rect x="240" y="95" width="240" height="40" rx="6" fill="#020040"/>
+  <text x="360" y="120" font-family="Arial" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Check alerts &amp; live count</text>
+  <line x1="360" y1="140" x2="360" y2="160" stroke="#020040" stroke-width="3"/>
+  <polygon points="355,158 360,166 365,158" fill="#020040"/>
+  <!-- Open Live View -->
+  <rect x="280" y="170" width="160" height="40" rx="6" fill="#020040"/>
+  <text x="360" y="195" font-family="Arial" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">Open Live View</text>
+  <line x1="360" y1="215" x2="360" y2="235" stroke="#020040" stroke-width="3"/>
+  <polygon points="355,233 360,241 365,233" fill="#020040"/>
+  <!-- Triage -->
+  <rect x="220" y="245" width="280" height="40" rx="6" fill="#020040"/>
+  <text x="360" y="270" font-family="Arial" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Triage unassigned &amp; late jobs</text>
+  <line x1="360" y1="290" x2="360" y2="310" stroke="#020040" stroke-width="3"/>
+  <polygon points="355,308 360,316 365,308" fill="#020040"/>
+  <!-- Assign / Monitor -->
+  <rect x="240" y="320" width="240" height="40" rx="6" fill="#020040"/>
+  <text x="360" y="345" font-family="Arial" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">Assign partners &amp; monitor</text>
+</svg>
+<div class="caption">A typical day in ops — start with Pulse, end with monitoring</div>
+</div>
+
+
+<p>Use this flow as your daily checklist when starting a shift. Pulse gives you the morning picture. Live View shows the action. Jobs and Quotes are where you spend most of your time. Partners is your supply pool.</p>
+
+<!-- ========== SECTION 12 — GLOSSARY ========== -->
+<div class="section-start" ></div>
+<div class="section-eyebrow">SECTION 12</div>
+<h1 class="section">Glossary</h1>
+<div class="section-divider"></div>
+
+<p>Key terms used throughout the OS and this guide.</p>
+
+<div class="glossary-row"><span class="term">Pulse</span><span class="def">The home dashboard — operations overview</span></div>
+<div class="glossary-row"><span class="term">Live View / Beacon</span><span class="def">Real-time triage page (list, kanban, map)</span></div>
+<div class="glossary-row"><span class="term">Lead</span><span class="def">Work offered to partners on Fixfy Trade — not a customer CRM lead</span></div>
+<div class="glossary-row"><span class="term">Quote</span><span class="def">Pricing workflow — usually partner bid → margin check → customer proposal (same ticket)</span></div>
+<div class="glossary-row"><span class="term">Job</span><span class="def">Scheduled and completed work</span></div>
+<div class="glossary-row"><span class="term">Account</span><span class="def">A corporate client</span></div>
+<div class="glossary-row"><span class="term">Partner</span><span class="def">A trade subcontractor in the Fixfy network</span></div>
+<div class="glossary-row"><span class="term">Trade</span><span class="def">Type of work (Plumber, Electrician, etc.)</span></div>
+<div class="glossary-row"><span class="term">Bidding</span><span class="def">Partners submitting prices for a quote</span></div>
+<div class="glossary-row"><span class="term">SLA</span><span class="def">Agreed time limit — overdue means action needed</span></div>
+<div class="glossary-row"><span class="term">Self-bill</span><span class="def">Partner's weekly payment summary</span></div>
+<div class="glossary-row"><span class="term">Compliance score</span><span class="def">Partner readiness score (profile + documents)</span></div>
+<div class="glossary-row"><span class="term">Coverage</span><span class="def">Geographic area a partner will travel to</span></div>
+<div class="glossary-row"><span class="term">Coverage scout</span><span class="def">Map tool to find partners near a postcode</span></div>
+<div class="glossary-row"><span class="term">Portal</span><span class="def">Customer-facing site for B2B clients (not the partner app)</span></div>
+
+<!-- ========== SECTION 13 — FAQ ========== -->
+<div class="section-start" ></div>
+<div class="section-eyebrow">SECTION 13</div>
+<h1 class="section">Frequently asked questions</h1>
+<div class="section-divider"></div>
+
+<h3 class="subsub">What is the difference between Live View and Schedule?</h3>
+<p>Live View shows what is happening now (with a live map). Schedule is a calendar for planning ahead.</p>
+
+<h3 class="subsub">Why is a partner on the map but showing Offline?</h3>
+<p>They have not sent a location update from the app in 15+ minutes. They may have closed the app or have poor signal. Their last known position is still shown.</p>
+
+<h3 class="subsub">Why can I not assign a partner to a job?</h3>
+<p>Check their status is <strong>Active</strong>, their coverage includes the job postcode, and their documents are in order.</p>
+
+<h3 class="subsub">What is a Lead — is it a customer enquiry?</h3>
+<p>No. A lead is work you <strong>offer to partners</strong> on Fixfy Trade. The customer thread usually lives on Zendesk; the lead is for the partner network.</p>
+
+<h3 class="subsub">Does a lead automatically become a quote?</h3>
+<p>No. When partners have shown interest (or you are ready to price), you <strong>create a quote manually</strong>.</p>
+
+<h3 class="subsub">What happens when I publish a lead?</h3>
+<p>Matching partners see it on Fixfy Trade. When they tap <strong>Contact</strong>, you see their name on the lead in Fixfy OS.</p>
+
+<h3 class="subsub">How do quotes usually work?</h3>
+<p><strong>Send to partner → bid back → check margin → send to customer</strong> on the <strong>same Zendesk ticket</strong>. Manual office pricing is possible but less common.</p>
+
+<h3 class="subsub">A quote has been in Bidding for days — what should I do?</h3>
+<p>If you have enough partner prices, check margin and send the proposal to the customer on the ticket. The SLA alert is a reminder, not a blocker.</p>
+
+<h3 class="subsub">What does On Hold mean on a job?</h3>
+<p>The job is paused — for example waiting for access, parts, or a complaint resolution. Resume when ready.</p>
+
+<h3 class="subsub">What is Final Checks?</h3>
+<p>The partner has finished on site and submitted reports. Your team reviews and approves before invoicing.</p>
+
+<div class="callout tip" style="margin-top:32px;">
+  <div class="ctitle">FOR PARTNER-FACING DOCS</div>
+  <p>This guide describes Fixfy OS as used by the operations team. For partner-facing instructions, see the Fixfy Trade Partner Guide.</p>
+</div>
+
+
+</div>
+</div>
+
+</div></div>
+<script>
+(function(){
+  const links = document.querySelectorAll('.school-nav a[data-nav]');
+  const bar = document.getElementById('schoolScrollProgress');
+  const chapters = [...document.querySelectorAll('[id^="chapter-"]')];
+  function onScroll(){
+    const doc = document.documentElement;
+    const pct = (doc.scrollTop / (doc.scrollHeight - doc.clientHeight)) * 100;
+    if (bar) bar.style.width = Math.min(100, pct) + '%';
+    let active = chapters[0];
+    for (const ch of chapters) {
+      if (ch.getBoundingClientRect().top <= 120) active = ch;
+    }
+    if (!active) return;
+    const id = active.id.replace('chapter-','');
+    links.forEach(a => {
+      a.classList.toggle('active', a.dataset.nav === id);
+    });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  if (location.hash) {
+    const el = document.querySelector(location.hash);
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+})();
+</script>
+<script src="/school/school-embed.js"></script>
+</body>
+</html>

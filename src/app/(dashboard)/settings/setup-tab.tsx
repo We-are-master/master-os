@@ -1747,7 +1747,8 @@ export function SetupTab() {
           </div>
           <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
             Webhook (Zendesk → OS): <code className="text-[11px]">POST /api/cancellations</code> with header{" "}
-            <code className="text-[11px]">x-api-key</code>. See docs/API_CURL.md.
+            <code className="text-[11px]">x-api-key</code> — body must include{" "}
+            <code className="text-[11px]">lost_value_gbp</code>. See docs/API_CURL.md.
           </p>
         </div>
       </Card>

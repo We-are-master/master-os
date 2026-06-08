@@ -27,6 +27,7 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
+  X,
   Layers,
   UserCircle,
   CircleDollarSign,
@@ -38,6 +39,7 @@ import {
   MessageSquare,
   MailPlus,
   MapPin,
+  GraduationCap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -65,6 +67,7 @@ const iconMap: Record<string, LucideIcon> = {
   "message-square": MessageSquare,
   "mail-plus": MailPlus,
   "map-pin": MapPin,
+  "graduation-cap": GraduationCap,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Partners, Accounts */
@@ -100,7 +103,17 @@ function pathMatchesHref(pathname: string, href: string): boolean {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
 }
 
-function NavLink({ item, collapsed, nested = false }: { item: NavItem; collapsed: boolean; nested?: boolean }) {
+function NavLink({
+  item,
+  collapsed,
+  nested = false,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  nested?: boolean;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const childActive = item.children?.some((c) => pathMatchesHref(pathname, c.href)) ?? false;
   const selfActive = pathMatchesHref(pathname, item.href);
@@ -116,7 +129,7 @@ function NavLink({ item, collapsed, nested = false }: { item: NavItem; collapsed
   );
 
   return (
-    <Link href={item.href}>
+    <Link href={item.href} onClick={onNavigate}>
       <motion.div
         whileHover={{ x: nested ? 0 : 2 }}
         whileTap={{ scale: 0.98 }}
@@ -274,11 +287,84 @@ function mergeNewNavItems(
       }
     }
   }
+
+  const order = new Map(canonical.map((g, i) => [g.label, i]));
+  result.sort((a, b) => (order.get(a.label) ?? 999) - (order.get(b.label) ?? 999));
   return result;
 }
 
+function SidebarNavGroups({
+  navGroups,
+  collapsed,
+  collapsedSections,
+  setCollapsedSections,
+  onNavigate,
+}: {
+  navGroups: typeof NAVIGATION;
+  collapsed: boolean;
+  collapsedSections: Record<string, boolean>;
+  setCollapsedSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  onNavigate?: () => void;
+}) {
+  return (
+    <>
+      {navGroups.map((group) => (
+        <div key={group.label}>
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.button
+                type="button"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() =>
+                  setCollapsedSections((prev) => ({
+                    ...prev,
+                    [group.label]: !prev[group.label],
+                  }))
+                }
+                className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/60"
+              >
+                <span>{group.label}</span>
+                {collapsedSections[group.label] ? (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
+                )}
+              </motion.button>
+            )}
+          </AnimatePresence>
+          {(collapsed || !collapsedSections[group.label]) && (
+            <div className="space-y-0.5">
+              {group.items
+                .filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href))
+                .map((item) => (
+                  <div key={item.href} className="space-y-0.5">
+                    <NavLink item={item} collapsed={collapsed} onNavigate={onNavigate} />
+                    {!collapsed &&
+                      item.children
+                        ?.filter((ch) => !SIDEBAR_HIDDEN_HREFS.has(ch.href))
+                        .map((ch) => (
+                          <NavLink
+                            key={ch.href}
+                            item={ch}
+                            collapsed={collapsed}
+                            nested
+                            onNavigate={onNavigate}
+                          />
+                        ))}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function Sidebar() {
-  const { collapsed, toggle } = useSidebar();
+  const { collapsed, toggle, mobileOpen, closeMobile } = useSidebar();
   const adminConfig = useAdminConfigOptional();
   const navGroups = useMemo(
     () =>
@@ -307,76 +393,83 @@ export function Sidebar() {
     });
   }, [sectionLabelsSig, navGroups]);
 
-  return (
-    <motion.aside
-      initial={false}
-      animate={{ width: collapsed ? 72 : 256 }}
-      transition={{ type: "spring", damping: 25, stiffness: 300 }}
-      className="fixed left-0 top-0 bottom-0 z-30 bg-fx-navy-2 flex flex-col border-r border-white/[0.04]"
-    >
-      <div className={cn("flex items-center h-14 px-5 pt-1", collapsed && "justify-center px-2")}>
-        <SidebarBrand collapsed={collapsed} />
+  const sidebarShell = (opts: { collapsed: boolean; showCollapse: boolean; onNavigate?: () => void }) => (
+    <>
+      <div className={cn("flex items-center h-14 px-5 pt-1", opts.collapsed && "justify-center px-2")}>
+        <SidebarBrand collapsed={opts.collapsed} />
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-        {navGroups.map((group) => (
-          <div key={group.label}>
-            <AnimatePresence>
-              {!collapsed && (
-                <motion.button
-                  type="button"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() =>
-                    setCollapsedSections((prev) => ({
-                      ...prev,
-                      [group.label]: !prev[group.label],
-                    }))
-                  }
-                  className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/60"
-                >
-                  <span>{group.label}</span>
-                  {collapsedSections[group.label] ? (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                  )}
-                </motion.button>
-              )}
-            </AnimatePresence>
-            {(collapsed || !collapsedSections[group.label]) && (
-              <div className="space-y-0.5">
-                {group.items
-                  .filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href))
-                  .map((item) => (
-                    <div key={item.href} className="space-y-0.5">
-                      <NavLink item={item} collapsed={collapsed} />
-                      {!collapsed &&
-                        item.children
-                          ?.filter((ch) => !SIDEBAR_HIDDEN_HREFS.has(ch.href))
-                          .map((ch) => <NavLink key={ch.href} item={ch} collapsed={collapsed} nested />)}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        ))}
+        <SidebarNavGroups
+          navGroups={navGroups}
+          collapsed={opts.collapsed}
+          collapsedSections={collapsedSections}
+          setCollapsedSections={setCollapsedSections}
+          onNavigate={opts.onNavigate}
+        />
       </nav>
 
-      <div className="p-3 border-t border-white/5">
-        <button
-          onClick={toggle}
-          className="w-full flex items-center justify-center h-9 rounded-lg text-sidebar-text-muted hover:text-white hover:bg-white/5 transition-colors"
-        >
-          <motion.div
-            animate={{ rotate: collapsed ? 180 : 0 }}
-            transition={{ duration: 0.3 }}
+      {opts.showCollapse && (
+        <div className="p-3 border-t border-white/5">
+          <button
+            onClick={toggle}
+            className="w-full flex items-center justify-center h-9 rounded-lg text-sidebar-text-muted hover:text-white hover:bg-white/5 transition-colors"
           >
-            <ChevronLeft className="h-4 w-4" />
-          </motion.div>
-        </button>
-      </div>
-    </motion.aside>
+            <motion.div
+              animate={{ rotate: opts.collapsed ? 180 : 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </motion.div>
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <motion.aside
+        initial={false}
+        animate={{ width: collapsed ? 72 : 256 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="fixed left-0 top-0 bottom-0 z-50 bg-fx-navy-2 hidden lg:flex flex-col border-r border-white/[0.04]"
+      >
+        {sidebarShell({ collapsed, showCollapse: true })}
+      </motion.aside>
+
+      <AnimatePresence>
+        {mobileOpen && (
+          <div className="lg:hidden fixed inset-0 z-[60]">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/50"
+              onClick={closeMobile}
+            />
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 320 }}
+              className="absolute left-0 top-0 bottom-0 w-[min(18rem,85vw)] bg-fx-navy-2 flex flex-col border-r border-white/[0.04] shadow-2xl"
+            >
+              <div className="flex items-center justify-end px-3 pt-3 lg:hidden">
+                <button
+                  type="button"
+                  onClick={closeMobile}
+                  className="h-9 w-9 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Close menu"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              {sidebarShell({ collapsed: false, showCollapse: false, onNavigate: closeMobile })}
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

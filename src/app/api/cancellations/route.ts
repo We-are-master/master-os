@@ -18,6 +18,7 @@ export const runtime = "nodejs";
  *   ticket_id: string (required)
  *   cancellation_reason_id: string (bare OS id or cancel_* tag)
  *   cancellation_notes?: string (required when reason is other)
+ *   lost_value_gbp: number (required — agent-reported lost revenue in GBP)
  *   cancelled_by_agent?: string
  *   cancelled_at?: ISO8601 string
  */
@@ -52,10 +53,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "cancellation_reason_id is required." }, { status: 400 });
   }
 
+  const lostValueGbp = parseLostValueGbp(body.lost_value_gbp);
+  if (lostValueGbp == null) {
+    return NextResponse.json({ error: "lost_value_gbp is required (number >= 0)." }, { status: 400 });
+  }
+
   const result = await cancelJobFromZendeskWebhook({
     ticketId,
     cancellationReasonId,
     cancellationNotes: str(body.cancellation_notes) || null,
+    lostValueGbp,
     cancelledByAgent: str(body.cancelled_by_agent) || null,
     cancelledAt: str(body.cancelled_at) || null,
   });
@@ -74,6 +81,12 @@ export async function POST(req: NextRequest) {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : v != null ? String(v).trim() : "";
+}
+
+function parseLostValueGbp(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
 }
 
 function secretsMatch(provided: string | null, expected: string): boolean {

@@ -17,6 +17,12 @@ export type NavGroup = {
 
 export const NAVIGATION: NavGroup[] = [
   {
+    label: "Learn",
+    items: [
+      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "NEW" },
+    ],
+  },
+  {
     label: "Overview",
     items: [
       { label: "Pulse", href: "/", icon: "grid-2x2" },
@@ -51,7 +57,7 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Billing", href: "/finance/billing", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Payouts", href: "/payout", icon: "calendar-clock", permission: "finance" },
+      // Payouts (/payout) hidden for now — billing + expenses cover partner payments.
     ],
   },
   {

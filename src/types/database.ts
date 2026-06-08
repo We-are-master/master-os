@@ -168,6 +168,10 @@ export interface Profile {
   custom_permissions?: UserPermissionOverride | null;
   /** True when admin created this user with a temporary password — forces change on first login. */
   must_change_password?: boolean | null;
+  /** Fixfy School — denormalized from fixfy_school_progress. */
+  fixfy_school_xp?: number | null;
+  fixfy_school_certified_phases?: string[] | null;
+  fixfy_school_last_activity_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -565,6 +569,8 @@ export interface Job {
   partner_cancellation_compensation_gbp?: number | null;
   /** Office-initiated cancellation (dashboard); visible internally and to partner notifications. */
   cancellation_reason?: string | null;
+  /** Preset id when cancelled from office or Zendesk (client_requested, other, …). */
+  cancellation_reason_preset_id?: string | null;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
   /** Snapshot of `client_price` at the moment the job was cancelled (pre-zeroing). Drives "lost revenue" KPIs in Pulse / Live View. */

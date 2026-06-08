@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trade Portal — Fixfy School</title>
+<style>
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1A1A1A; font-size: 10.5pt; line-height: 1.55; background:#f5f5f0; }
+.content-inner { padding: 0 1.5rem 4rem; max-width: 900px; margin: 0 auto; }
+h1.section { color:#020040; font-size:24pt; font-weight:bold; margin: 0 0 4px 0; }
+.section-eyebrow { color:#059669; font-size:11pt; font-weight:bold; letter-spacing:4px; margin-bottom: 2px; }
+.section-divider { height:3px; background:#10B981; width:60px; margin:10px 0 22px 0; }
+h2.sub { color:#020040; font-size:15pt; font-weight:bold; margin: 22px 0 10px 0; }
+h3.subsub { color:#020040; font-size:12pt; font-weight:bold; margin: 16px 0 6px 0; }
+p { margin-bottom: 10px; } ul, ol { margin: 8px 0 12px 22px; } li { margin-bottom: 6px; }
+.lead { font-size: 12pt; color:#020040; font-weight:600; line-height:1.5; margin-bottom:16px; }
+.callout { background:#ECFDF5; border-left:5px solid #10B981; padding:14px 18px; margin:16px 0; border-radius:0 4px 4px 0; }
+.callout .ctitle { color:#059669; font-size:10pt; font-weight:bold; letter-spacing:2px; margin-bottom:6px; }
+.callout p { margin:0; color:#020040; }
+.callout.tip { background:#F2F0FA; border-left-color:#020040; } .callout.tip .ctitle { color:#020040; }
+table.data { width:100%; border-collapse:collapse; margin:14px 0; font-size:9.5pt; }
+table.data th { background:#020040; color:#fff; text-align:left; padding:9px 12px; font-weight:bold; }
+table.data td { border:1px solid #E0E0E8; padding:8px 12px; vertical-align:top; }
+table.data tr:nth-child(even) td { background:#F7F7FA; }
+.pill { display:inline-block; padding:3px 10px; border-radius:12px; font-size:8.5pt; font-weight:bold; }
+.pill.green { background:#DCFCE7; color:#166534; } .pill.amber { background:#FEF3C7; color:#92400E; }
+.pill.light { background:#F2F0FA; color:#020040; border:1px solid #020040; }
+.diagram { margin:16px 0; padding:18px; background:#F7F7FA; border-radius:8px; text-align:center; }
+.diagram svg { max-width:100%; height:auto; } .diagram .caption { font-size:9pt; color:#4A4A55; font-style:italic; margin-top:8px; }
+.section-start { margin-top:2.5rem; padding-top:1rem; scroll-margin-top:88px; }
+
+@media screen {
+  body { background: #f5f5f0; }
+  .layout { display: block !important; }
+  nav.sidebar { display: none !important; }
+  main { padding: 1.5rem 2rem 4rem !important; max-width: 920px; margin: 0 auto; }
+  section { scroll-margin-top: 88px; margin-top: 2rem; }
+  .hero { margin-top: 0; }
+}
+.school-shell { display: flex; gap: 0; min-height: 100vh; }
+.school-nav {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+  background: #020040; color: #fff; padding: 1rem 0; overflow-y: auto;
+  z-index: 100; box-shadow: 4px 0 24px rgba(2,0,64,.15);
+}
+.school-nav__brand { padding: 0 1rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); margin-bottom: 0.5rem; }
+.school-nav__brand strong { display: block; font-size: 0.95rem; }
+.school-nav__brand strong.phase-blue { color: #60A5FA; }
+.school-nav__brand strong.phase-emerald { color: #34D399; }
+.school-nav__brand span { font-size: 0.7rem; color: rgba(255,255,255,.5); letter-spacing: 0.08em; text-transform: uppercase; }
+.school-nav a {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 1rem; font-size: 0.8rem; color: rgba(255,255,255,.65);
+  text-decoration: none; border-left: 3px solid transparent; transition: all .15s;
+}
+.school-nav a:hover { color: #fff; background: rgba(255,255,255,.06); }
+.school-nav a.active { color: #fff; background: rgba(96,165,250,.25); border-left-color: #3B82F6; }
+.school-nav.trade a.active { background: rgba(52,211,153,.2); border-left-color: #10B981; }
+.school-progress-top { position: fixed; top: 0; left: 240px; right: 0; height: 4px; background: rgba(2,0,64,.08); z-index: 99; }
+.school-progress-top__bar { height: 100%; width: 0%; transition: width .4s ease; }
+.school-progress-top__bar.blue { background: linear-gradient(90deg, #3B82F6, #1D4ED8); }
+.school-progress-top__bar.emerald { background: linear-gradient(90deg, #34D399, #059669); }
+.school-main { margin-left: 240px; flex: 1; padding-top: 4px; }
+.school-chapter-banner {
+  display: flex; align-items: center; gap: 1rem;
+  color: #fff; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  box-shadow: 0 8px 24px rgba(2,0,64,.15);
+}
+.school-chapter-banner.blue { background: linear-gradient(135deg, #020040 0%, #1e3a8a 100%); }
+.school-chapter-banner.emerald { background: linear-gradient(135deg, #020034 0%, #065F46 100%); }
+.school-chapter-banner__icon { font-size: 2rem; line-height: 1; }
+.school-chapter-banner__label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+.school-chapter-banner__xp { margin: 0.15rem 0 0; font-size: 0.75rem; opacity: 0.9; }
+.school-chapter-banner.blue .school-chapter-banner__xp { color: #93C5FD; }
+.school-chapter-banner.emerald .school-chapter-banner__xp { color: #6EE7B7; }
+@media (max-width: 900px) {
+  .school-nav { display: none; }
+  .school-main { margin-left: 0; }
+  .school-progress-top { left: 0; }
+}
+
+.ui-mockup { margin:1.25rem 0; border-radius:12px; overflow:hidden; border:1px solid #e0e0e8; background:#fff; }
+.ui-mockup__bar { background:#1c1917; padding:0.5rem 0.75rem; display:flex; gap:0.35rem; }
+.ui-mockup__dot { width:8px; height:8px; border-radius:50%; }
+.ui-mockup__body { padding:1rem; }
+.ui-mockup__title { font-size:0.65rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#78716c; margin-bottom:0.75rem; }
+.module-icon { display:inline-block; padding:6px 14px; color:#fff; border-radius:4px; font-size:10pt; font-weight:bold; margin-bottom:8px; }
+.cover { background:linear-gradient(135deg,#020034 0%,#065F46 100%); color:#fff; padding:4rem 2rem; text-align:center; border-radius:0 0 16px 16px; margin-bottom:2rem; }
+.cover h1 { font-size:2rem; margin:0.5rem 0; } .cover p { color:rgba(255,255,255,.7); max-width:520px; margin:0 auto; }
+</style>
+</head>
+<body>
+<div class="school-shell">
+<div class="school-progress-top"><div class="school-progress-top__bar emerald" id="schoolScrollProgress"></div></div>
+<nav class="school-nav trade" aria-label="Trade Portal chapters">
+  <div class="school-nav__brand">
+    <span>Fixfy School</span>
+    <strong class="phase-emerald">Phase 3 · Trade Portal</strong>
+  </div>
+  <a href="#chapter-intro" data-nav="intro"><span class="nav-emoji">🤝</span>Fixfy Trade</a>
+  <a href="#chapter-onboarding" data-nav="onboarding"><span class="nav-emoji">📝</span>Apply & Sign in</a>
+  <a href="#chapter-app" data-nav="app"><span class="nav-emoji">📱</span>Partner App</a>
+  <a href="#chapter-leads-bids" data-nav="leads-bids"><span class="nav-emoji">💰</span>Leads & Bidding</a>
+  <a href="#chapter-on-site" data-nav="on-site"><span class="nav-emoji">🔧</span>On-site</a>
+  <a href="#chapter-documents" data-nav="documents"><span class="nav-emoji">📄</span>Documents</a>
+  <a href="#chapter-payouts" data-nav="payouts"><span class="nav-emoji">💳</span>Payments</a>
+  <a href="#chapter-rules" data-nav="rules"><span class="nav-emoji">⚡</span>Rules</a>
+  <a href="#chapter-faq" data-nav="faq"><span class="nav-emoji">❓</span>FAQ & Help</a>
+</nav>
+<div class="school-main">
+<div class="cover">
+  <img src="/logos/fixfy-wordmark.png" alt="Fixfy" style="height:48px;margin-bottom:1.5rem">
+  <div class="section-eyebrow" style="color:#6EE7B7">FIXFY TRADE · PARTNER GUIDE</div>
+  <h1>Trade Portal Training</h1>
+  <p>Everything a partner needs — application, app, leads, bids, jobs, documents and payments.</p>
+</div>
+<div class="content-inner">
+
+<div class="school-chapter-banner emerald" data-chapter="intro">
+  <div class="school-chapter-banner__icon">🤝</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Fixfy Trade</p>
+    <p class="school-chapter-banner__xp">+50 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-intro"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 1</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">What the partner network is</h1>
+<div class="section-divider"></div>
+
+<p class="lead">Fixfy Trade is Fixfy's partner network. As a partner you receive job invitations, submit prices, execute jobs, deliver reports and get paid — without chasing the customer yourself.</p>
+<div class="callout"><div class="ctitle">TWO PLACES</div><p><strong>Fixfy Trade website</strong> — browser login and application. <strong>Fixfy Partner app</strong> — day-to-day on your phone (jobs, schedule, earnings).</p></div>
+<div class="diagram"><svg viewBox="0 0 680 100" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="70" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Invite / Lead</text>
+  <line x1="135" y1="50" x2="165" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="165,45 173,50 165,55" fill="#ED4B00"/>
+  <rect x="175" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="235" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Bid / Accept</text>
+  <line x1="300" y1="50" x2="330" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="330,45 338,50 330,55" fill="#ED4B00"/>
+  <rect x="340" y="30" width="120" height="40" rx="6" fill="#020040"/><text x="400" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Job</text>
+  <line x1="465" y1="50" x2="495" y2="50" stroke="#ED4B00" stroke-width="2"/><polygon points="495,45 503,50 495,55" fill="#ED4B00"/>
+  <rect x="505" y="30" width="160" height="40" rx="6" fill="#059669"/><text x="585" y="55" font-size="12" fill="#fff" text-anchor="middle" font-weight="bold">Self-bill & Payout</text>
+</svg><div class="caption">The partner cycle — from opportunity to payment</div></div>
+<table class="data"><tr><th>Benefit</th><th>What it means</th></tr>
+<tr><td><strong>Jobs sent to you</strong></td><td>Qualified local work matched to your trade and postcode</td></tr>
+<tr><td><strong>Faster payment</strong></td><td>Fixfy invoices the customer; you get paid on a clear schedule</td></tr>
+<tr><td><strong>Less admin</strong></td><td>Schedule, jobs and earnings in one app</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="onboarding">
+  <div class="school-chapter-banner__icon">📝</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Apply & Sign in</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-onboarding"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 2</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Apply, sign-in and app</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Step 1 — Apply</h2>
+<p>On the <strong>Become a Partner</strong> page — three steps:</p>
+<table class="data"><tr><th>Step</th><th>What to submit</th></tr>
+<tr><td><strong>Account</strong></td><td>Name, email, phone, password</td></tr>
+<tr><td><strong>Business</strong></td><td>Company, address, trades, UTR (if self-employed)</td></tr>
+<tr><td><strong>Documents</strong></td><td>ID, insurance, proof of address, right to work</td></tr></table>
+<p>After submit: status <span class="pill amber">Onboarding</span> until the Fixfy team activates you.</p>
+<h2 class="sub">Step 2 — Sign in</h2>
+<ol><li>Work email at <strong>/trade/login</strong></li><li>6-digit code by email</li><li>Opens the <strong>Fixfy Partner app</strong></li></ol>
+<p>Help: <strong>support@getfixfy.com</strong></p>
+<h2 class="sub">Step 3 — App on your phone</h2>
+<p>Install <strong>Fixfy Partner</strong> (App Store). Keep notifications on so you don't miss invitations.</p>
+
+
+<div class="school-chapter-banner emerald" data-chapter="app">
+  <div class="school-chapter-banner__icon">📱</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Partner App</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-app"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 3</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Invitations, schedule and jobs</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">App areas</h2>
+<table class="data"><tr><th>Area</th><th>What it's for</th></tr>
+<tr><td><strong>Job invitations</strong></td><td>Quote in Bidding or an assigned job — respond quickly</td></tr>
+<tr><td><strong>My jobs / schedule</strong></td><td>Assigned jobs, dates, address, navigation</td></tr>
+<tr><td><strong>Leads</strong></td><td>Ops opportunities before a full quote — tap <strong>Contact</strong></td></tr>
+<tr><td><strong>Profile & coverage</strong></td><td>Trades, radius/postcodes, company details</td></tr>
+<tr><td><strong>Documents</strong></td><td>Upload and renew compliance files</td></tr>
+<tr><td><strong>Earnings</strong></td><td>Self-bills and payment history</td></tr></table>
+<div class="ui-mockup"><div class="ui-mockup__bar"><span class="ui-mockup__dot" style="background:#ef4444"></span><span class="ui-mockup__dot" style="background:#eab308"></span><span class="ui-mockup__dot" style="background:#22c55e"></span></div>
+<div class="ui-mockup__body"><p class="ui-mockup__title">Fixfy Partner — Home</p>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.7rem">
+<div style="background:#ecfdf5;border:1px solid #10b981;border-radius:8px;padding:0.6rem"><strong style="color:#065f46">2</strong><br>New invitations</div>
+<div style="background:#fff7ed;border:1px solid #ED4B00;border-radius:8px;padding:0.6rem"><strong style="color:#C73A00">1</strong><br>Lead available</div>
+<div style="background:#eff6ff;border:1px solid #3b82f6;border-radius:8px;padding:0.6rem"><strong style="color:#1d4ed8">3</strong><br>Jobs this week</div>
+<div style="background:#f5f5f4;border:1px solid #d6d3d1;border-radius:8px;padding:0.6rem"><strong>£2.4k</strong><br>Period earnings</div>
+</div></div></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="leads-bids">
+  <div class="school-chapter-banner__icon">💰</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Leads & Bidding</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-leads-bids"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 4</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Contact and pricing</h1>
+<div class="section-divider"></div>
+
+<div class="callout"><div class="ctitle">LEADS</div><p>Ops publishes opportunities on Trade. You only see them if trade and area match. <strong>Contact</strong> = I want to be involved. Not a confirmed job.</p></div>
+<h2 class="sub">Bidding (quoting)</h2>
+<p>Quote in <strong>Bidding</strong> — invitation to submit a price:</p>
+<ul><li>Labour price</li><li>Materials if applicable</li><li>Notes (access, assumptions)</li></ul>
+<p>Fixfy compares bids and sends a proposal to the customer. <strong>You do not speak to the customer directly.</strong></p>
+<div class="ui-mockup"><div class="ui-mockup__body"><p class="ui-mockup__title">Bidding flow</p>
+<div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;font-size:0.65rem;font-weight:700">
+<span style="background:#FEF3C7;padding:0.35rem 0.6rem;border-radius:6px">App invite</span><span style="color:#ED4B00">→</span>
+<span style="background:#DBEAFE;padding:0.35rem 0.6rem;border-radius:6px">Your price</span><span style="color:#ED4B00">→</span>
+<span style="background:#EDE9FE;padding:0.35rem 0.6rem;border-radius:6px">Fixfy reviews</span><span style="color:#ED4B00">→</span>
+<span style="background:#DCFCE7;padding:0.35rem 0.6rem;border-radius:6px">Job assigned</span></div></div></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="on-site">
+  <div class="school-chapter-banner__icon">🔧</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · On-site</p>
+    <p class="school-chapter-banner__xp">+125 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-on-site"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 5</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Executing the job</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">On-site workflow</h2>
+<table class="data"><tr><th>#</th><th>Action</th></tr>
+<tr><td>1</td><td><strong>Accept</strong> — confirm date/time</td></tr>
+<tr><td>2</td><td><strong>Travel</strong> — navigation in the app</td></tr>
+<tr><td>3</td><td><strong>Start</strong> — start timer on arrival</td></tr>
+<tr><td>4</td><td><strong>Work</strong> — photos during the job</td></tr>
+<tr><td>5</td><td><strong>Reports</strong> — start + final report</td></tr>
+<tr><td>6</td><td><strong>Complete</strong> — mark as done</td></tr></table>
+<p>Ops approves reports before invoicing and payment.</p>
+<h2 class="sub">Job status (partner)</h2>
+<table class="data"><tr><th>Status</th><th>Meaning</th></tr>
+<tr><td>Invitation / Bidding</td><td>Fixfy wants your price</td></tr>
+<tr><td>Scheduled</td><td>Assigned — attend on site</td></tr>
+<tr><td>In Progress</td><td>Working on site</td></tr>
+<tr><td>Final Checks</td><td>Reports under review</td></tr>
+<tr><td>Completed</td><td>Closed — payment follows schedule</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="documents">
+  <div class="school-chapter-banner__icon">📄</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Documents</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-documents"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 6</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Compliance and certificates</h1>
+<div class="section-divider"></div>
+
+<h2 class="sub">Required for everyone</h2>
+<table class="data"><tr><th>Document</th><th>Why</th></tr>
+<tr><td>Photo ID</td><td>Identity</td></tr>
+<tr><td>Proof of Address</td><td>Address verification</td></tr>
+<tr><td>Right to Work</td><td>Legal UK work permission</td></tr>
+<tr><td>Public Liability</td><td>Insurance</td></tr></table>
+<p>Self-employed: <strong>UTR</strong>. Limited company: <strong>CRN</strong> + VAT if applicable.</p>
+<p>Trade certificates (Gas Safe, NICEIC, etc.) — the app shows what's missing.</p>
+<div class="callout tip"><div class="ctitle">SCORE</div><p>Expired documents lower compliance and may pause new invitations. Renew before expiry.</p></div>
+
+
+<div class="school-chapter-banner emerald" data-chapter="payouts">
+  <div class="school-chapter-banner__icon">💳</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Payments</p>
+    <p class="school-chapter-banner__xp">+100 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-payouts"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 7</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Self-bills and schedule</h1>
+<div class="section-divider"></div>
+
+<ol><li>Job complete + reports approved</li><li>Work enters the <strong>weekly self-bill</strong></li><li>Payment on a regular cycle (typically <strong>biweekly on Fridays</strong>)</li><li>History in the <strong>Earnings</strong> section</li></ol>
+<p>You don't invoice the customer — Fixfy does. You get paid by Fixfy.</p>
+<h2 class="sub">Account status</h2>
+<table class="data"><tr><th>Status</th><th>Meaning</th></tr>
+<tr><td><span class="pill amber">Onboarding</span></td><td>Under review</td></tr>
+<tr><td><span class="pill green">Active</span></td><td>Receives invitations</td></tr>
+<tr><td><span class="pill light">Needs Attention</span></td><td>Missing/expired docs</td></tr>
+<tr><td><span class="pill light">Inactive</span></td><td>No invitations</td></tr></table>
+
+
+<div class="school-chapter-banner emerald" data-chapter="rules">
+  <div class="school-chapter-banner__icon">⚡</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Rules</p>
+    <p class="school-chapter-banner__xp">+60 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-rules"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 8</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Expectations and best practices</h1>
+<div class="section-divider"></div>
+
+<ul><li><strong>Respond quickly</strong> to bids, leads and invitations</li><li><strong>Keep the app active</strong> — improves visibility on the ops map (Available vs Offline)</li><li><strong>Cancel early</strong> — less than 24h may incur a fee</li><li><strong>Complete reports</strong> — delays payment</li><li><strong>Realistic coverage</strong> — only trades you master</li></ul>
+
+
+<div class="school-chapter-banner emerald" data-chapter="faq">
+  <div class="school-chapter-banner__icon">❓</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · FAQ & Help</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-faq"></div>
+<div class="section-start"></div>
+<div class="section-eyebrow">MODULE 9</div>
+<span class="module-icon" style="background:#059669">TRADE</span>
+<h1 class="section">Frequently asked questions</h1>
+<div class="section-divider"></div>
+
+<h3 class="subsub">Is Fixfy my employer?</h3><p>No. You are an independent partner.</p>
+<h3 class="subsub">Do I speak to the customer?</h3><p>Not on quotes — submit your bid to Fixfy.</p>
+<h3 class="subsub">Not getting work?</h3>
+<ol><li>Status Active?</li><li>Valid documents?</li><li>Correct coverage?</li><li>Right trades?</li><li>Notifications on?</li></ol>
+<p><strong>support@getfixfy.com</strong></p>
+
+
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+  const links = document.querySelectorAll('.school-nav a[data-nav]');
+  const bar = document.getElementById('schoolScrollProgress');
+  const chapters = [...document.querySelectorAll('[id^="chapter-"]')];
+  function onScroll(){
+    const doc = document.documentElement;
+    const pct = (doc.scrollHeight - doc.clientHeight) > 0 ? (doc.scrollTop / (doc.scrollHeight - doc.clientHeight)) * 100 : 0;
+    if (bar) bar.style.width = Math.min(100, pct) + '%';
+    let active = chapters[0];
+    for (const ch of chapters) { if (ch.getBoundingClientRect().top <= 120) active = ch; }
+    if (!active) return;
+    const id = active.id.replace('chapter-','');
+    links.forEach(a => a.classList.toggle('active', a.dataset.nav === id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  if (location.hash) {
+    const el = document.querySelector(location.hash);
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+})();
+</script>
+
+<script src="/school/school-embed.js"></script>
+</body>
+</html>
