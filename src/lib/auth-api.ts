@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { User } from "@supabase/supabase-js";
+import { isValidUUID } from "@/lib/uuid";
+
+export { isValidUUID };
 
 export type AuthResult = { user: User };
 
@@ -23,10 +26,3 @@ export async function requireAuth(): Promise<AuthResult | NextResponse> {
   return { user };
 }
 
-/**
- * Validates that a string is a valid UUID v4 format (for IDs from URL/body).
- */
-export function isValidUUID(str: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return typeof str === "string" && uuidRegex.test(str.trim());
-}

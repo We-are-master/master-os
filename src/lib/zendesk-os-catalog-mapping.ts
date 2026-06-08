@@ -5,7 +5,7 @@
  * OS stores and processes bare UUIDs everywhere.
  */
 
-import { isValidUUID } from "@/lib/auth-api";
+import { isValidUUID } from "@/lib/uuid";
 
 /** Operational Zendesk ticket field ids (master.zendesk.com). */
 export const ZENDESK_FIELD_IDS = {
