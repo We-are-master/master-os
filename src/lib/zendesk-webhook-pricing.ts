@@ -2,7 +2,7 @@
  * Zendesk POST /api/jobs pricing — bands, floor/ceiling, Smart Price.
  */
 
-import { isValidUUID } from "@/lib/auth-api";
+import { isValidUUID } from "@/lib/uuid";
 import { resolveCatalogLinePricing } from "@/lib/catalog-line-pricing";
 import {
   catalogPartnerHourlyRate,

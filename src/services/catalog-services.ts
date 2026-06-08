@@ -1,27 +1,24 @@
 import { getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
 import type { CatalogService } from "@/types/database";
-import {
-  upsertCatalogOptionInZendesk,
-  removeCatalogOptionFromZendesk,
-} from "@/lib/zendesk-service-catalog-sync";
-import { syncBandsToZendesk } from "@/lib/zendesk-service-bands-sync";
 
 /**
- * Fire-and-forget the Zendesk option sync after a catalog mutation. The
- * upsert/remove helpers no-op when Zendesk isn't configured and swallow
- * their own errors via a logged result, so a Zendesk outage never blocks
- * the mutation that just succeeded against Supabase.
+ * Fire-and-forget Zendesk sync after a catalog mutation (server / dashboard only).
+ * Dynamic import keeps zendesk sync modules out of client bundles that only
+ * import listCatalogServicesForPicker from this file.
  */
 function dispatchZendeskOptionSync(
   kind: "upsert" | "remove",
   catalogId: string,
 ): void {
-  const op = kind === "upsert"
-    ? upsertCatalogOptionInZendesk(catalogId)
-    : removeCatalogOptionFromZendesk(catalogId);
-  void op
+  if (typeof window !== "undefined") return;
+  void import("@/lib/zendesk-service-catalog-sync")
+    .then((mod) =>
+      kind === "upsert"
+        ? mod.upsertCatalogOptionInZendesk(catalogId)
+        : mod.removeCatalogOptionFromZendesk(catalogId),
+    )
     .then((r) => {
-      if (!r.ok && !r.skipped) {
+      if (r && !r.ok && !r.skipped) {
         console.error(`[catalog-services] Zendesk ${kind} failed:`, r.error);
       }
     })
@@ -31,9 +28,11 @@ function dispatchZendeskOptionSync(
 }
 
 function dispatchZendeskBandsSync(catalogId: string, presetsRaw: unknown): void {
-  void syncBandsToZendesk(catalogId, presetsRaw)
+  if (typeof window !== "undefined") return;
+  void import("@/lib/zendesk-service-bands-sync")
+    .then((mod) => mod.syncBandsToZendesk(catalogId, presetsRaw))
     .then((r) => {
-      if (!r.ok && !r.skipped) {
+      if (r && !r.ok && !r.skipped) {
         console.error("[catalog-services] Zendesk bands sync failed:", r.error);
       }
     })

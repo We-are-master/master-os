@@ -10,7 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { extractUkPostcode } from "@/lib/uk-postcode";
-import { isValidUUID } from "@/lib/auth-api";
+import { isValidUUID } from "@/lib/uuid";
 import {
   fromZendeskBandTag,
   getBandFieldForService,

@@ -147,16 +147,10 @@ describe("resolvePartnerHourlyForJob", () => {
     const r = resolvePartnerHourlyForJob({
       catalog,
       partnerOverride: {
-        id: "x",
-        partner_id: "p",
-        catalog_service_id: "c",
         use_standard: false,
         hourly_partner_rate: 42,
         fixed_partner_cost: null,
-        default_hours: null,
-        created_at: "",
-        updated_at: "",
-        deleted_at: null,
+        preset_overrides: {},
       },
     });
     assert.equal(r.value, 42);
@@ -167,16 +161,10 @@ describe("resolvePartnerHourlyForJob", () => {
     const r = resolvePartnerHourlyForJob({
       catalog,
       partnerOverride: {
-        id: "x",
-        partner_id: "p",
-        catalog_service_id: "c",
         use_standard: true,
         hourly_partner_rate: 30,
         fixed_partner_cost: null,
-        default_hours: null,
-        created_at: "",
-        updated_at: "",
-        deleted_at: null,
+        preset_overrides: {},
       },
     });
     assert.equal(r.value, 50);
