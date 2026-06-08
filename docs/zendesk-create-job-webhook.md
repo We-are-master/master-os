@@ -97,7 +97,7 @@ Canonical field IDs live in [`src/lib/zendesk-os-catalog-mapping.ts`](../src/lib
 | Property Address | `5693026186527` | `property_address` | Required; reconcile from ticket if payload is email |
 | Scope / description | `5687121072927` | `description` | → `jobs.scope` |
 | Client Price | `5703050059039` | `client_price` | Fixed only; hidden in form when hourly → sends `0` |
-| Rate Type | `5807260876063` | `rate_type` | `hourly` or `fixed` (strip `job_type_`) |
+| Rate Type | `5807260876063` | `rate_type` | `hourly` or `fixed` (strip `job_type_`). **Required for correct pricing** — see [Empty Rate Type](#empty-rate-type) |
 | Auto-Assign | `5811578972703` | `auto_assign` | Boolean |
 | Report link | `5754991026207` | `report_link` | Optional URL |
 | Ticket id | `{{ticket.id}}` | `ticket_id` | **Always send** — idempotency + reconcile |
@@ -137,6 +137,19 @@ Hourly trades without bands (Plumber, Electrician, etc.): the `{% case %}` does 
 - Uses manual `client_price` from the ticket field.
 - Bands and rate cards are ignored.
 - Client Price field is hidden in the Zendesk form when Rate Type = hourly (agent_conditions).
+
+### Empty Rate Type
+
+If the agent leaves **Rate Type** blank on the ticket, the Liquid template sends `rate_type: ""`. OS behaviour:
+
+| Catalog row | OS `job_type` | `billed_hours` |
+|-------------|---------------|----------------|
+| `pricing_mode: hourly` or `accepts_smart_price: true` (e.g. Gardener, Plumber) | **`hourly`** (inferred) | min **2h** via `resolveInitialBilledHours` |
+| Fixed-only service | **`fixed`** (default) | not set — no Smart Price rates |
+
+The **201** response may include `zendesk_corrections: ["inferred_rate_type_hourly_from_catalog"]` or `["rate_type_defaulted_fixed"]`. **Agents should always select Rate Type** on the ticket so pricing matches intent; inference is a safety net, not a substitute for the form field.
+
+When `auto_assign: true` but **no partners match** (trade, coverage, postcode, or slot), the job is created with `status: "unassigned"` and `warning: "no_matching_partners"` — not stuck in `auto_assigning` without invites.
 
 ---
 
