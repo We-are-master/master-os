@@ -94,51 +94,56 @@ async function enrichBillingRows(
   let clientNameToAccountId: Record<string, string> = {};
   let partnerTerms: Record<string, string | null> = {};
   let partnerAvatars: Record<string, string | null> = {};
+  let paidMap: Record<string, number> = {};
+  let accountMeta = EMPTY_ACCOUNT_META;
   let mapsFailed = false;
+  let accountMetaFailed = false;
 
-  try {
+  // Two independent enrichment chains run in parallel:
+  //   Chain A: jobs/linked-jobs/partner-meta (stage 1) → customer-paid sums (stage 3).
+  //   Chain B: invoice account maps (stage 2) → account metadata (stage 4).
+  // Previously each stage awaited the prior, so wall-clock was the sum. With
+  // Promise.allSettled the wall-clock drops to max(chainA, chainB).
+  const chainA = (async () => {
     const [jobs, linked, partnerMeta] = await Promise.all([
       fetchJobsByReferences(refs),
       computeLinkedJobsMapsForSelfBillIds(sbIds),
       fetchPartnerBillingMeta(partnerIds),
     ]);
-    jobMap = jobs;
-    linkedJobs = linked;
-    partnerTerms = partnerMeta.termsById;
-    partnerAvatars = partnerMeta.avatarById;
-  } catch (e) {
-    console.error("billing jobs/self-bill enrich failed", e);
-    mapsFailed = true;
-  }
+    const jobIds = [...new Set(Object.values(jobs).map((j) => j.id))];
+    const paid = await fetchCustomerPaidSumByJobIds(jobIds);
+    return { jobs, linked, partnerMeta, paid };
+  })();
 
-  try {
+  const chainB = (async () => {
     const accountMaps = await buildInvoiceAccountMaps(invRows);
-    jobRefToAccountId = accountMaps.jobRefToAccountId;
-    clientNameToAccountId = accountMaps.clientNameToAccountId;
-  } catch (e) {
-    console.error("billing invoice account maps failed", e);
-    mapsFailed = true;
-  }
-
-  const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
-  let paidMap: Record<string, number> = {};
-  try {
-    paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
-  } catch (e) {
-    console.error("billing customer paid sums failed", e);
-    mapsFailed = true;
-  }
-
-  let accountMeta = EMPTY_ACCOUNT_META;
-  let accountMetaFailed = false;
-  try {
-    accountMeta = await fetchAccountMetadataForInvoices(
+    const meta = await fetchAccountMetadataForInvoices(
       invRows,
-      jobRefToAccountId,
-      clientNameToAccountId,
+      accountMaps.jobRefToAccountId,
+      accountMaps.clientNameToAccountId,
     );
-  } catch (e) {
-    console.error("billing account metadata failed", e);
+    return { accountMaps, meta };
+  })();
+
+  const [aResult, bResult] = await Promise.allSettled([chainA, chainB]);
+
+  if (aResult.status === "fulfilled") {
+    jobMap = aResult.value.jobs;
+    linkedJobs = aResult.value.linked;
+    partnerTerms = aResult.value.partnerMeta.termsById;
+    partnerAvatars = aResult.value.partnerMeta.avatarById;
+    paidMap = aResult.value.paid;
+  } else {
+    console.error("billing chain A enrich failed", aResult.reason);
+    mapsFailed = true;
+  }
+
+  if (bResult.status === "fulfilled") {
+    jobRefToAccountId = bResult.value.accountMaps.jobRefToAccountId;
+    clientNameToAccountId = bResult.value.accountMaps.clientNameToAccountId;
+    accountMeta = bResult.value.meta;
+  } else {
+    console.error("billing chain B enrich failed", bResult.reason);
     accountMetaFailed = true;
   }
 

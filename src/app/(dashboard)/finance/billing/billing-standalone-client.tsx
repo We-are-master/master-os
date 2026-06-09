@@ -50,8 +50,10 @@ import {
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { bulkMarkInvoicesPaid, syncInvoicesForJobIds, updateInvoiceStatusOne } from "@/lib/billing-invoice-actions";
 import {
+  bulkApproveSelfBills,
   bulkCancelSelfBills,
   bulkSendSelfBillEmails,
+  bulkUnapproveSelfBills,
   computeSelfBillAmountDue,
   getBulkCancellableSelfBillIds,
   getBulkEligibleSelfBillIds,
@@ -120,10 +122,106 @@ function BillingStandaloneInner() {
   const [emailSending, setEmailSending] = useState(false);
   const [sendingSelfBillIds, setSendingSelfBillIds] = useState<Set<string>>(new Set());
   const [payingSelfBillIds, setPayingSelfBillIds] = useState<Set<string>>(new Set());
+  const [approvingSelfBillIds, setApprovingSelfBillIds] = useState<Set<string>>(new Set());
+  const [goingOutTab, setGoingOutTab] = useState<"pending" | "approved">("pending");
 
   // Inline Send / Resend handler used by the Going Out · Money Out widget:
   // `week` → standard cycle (master ticket), single-row sends pass `auto` so the
   // server reuses an existing standard run for the same week if there is one.
+  const handleApproveSelfBills = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      setApprovingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const r = await bulkApproveSelfBills(ids);
+        if (r.approved > 0) {
+          toast.success(r.approved === 1 ? "Self-bill approved" : `${r.approved} approved`);
+        }
+        if (r.skipped.length > 0) {
+          toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
+        }
+        setSelectedSbIds(new Set());
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Approve failed");
+      } finally {
+        setApprovingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  const handleUnapproveSelfBills = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      setApprovingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const r = await bulkUnapproveSelfBills(ids);
+        if (r.unapproved > 0) {
+          toast.success(r.unapproved === 1 ? "Approval revoked" : `${r.unapproved} unapproved`);
+        }
+        if (r.skipped.length > 0) {
+          toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
+        }
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Unapprove failed");
+      } finally {
+        setApprovingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  /** Sequential Wise payouts — used by the Approved tab's Pay all / Pay selected button. */
+  const handleBulkPayWithWise = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      let success = 0;
+      let failed = 0;
+      for (const id of ids) {
+        setPayingSelfBillIds((prev) => new Set(prev).add(id));
+        try {
+          const r = await payWithWise(id, { scope: "full" });
+          if (r.ok) success += 1;
+          else {
+            failed += 1;
+            toast.error(`${id.slice(0, 8)} — ${r.error ?? "Wise pay failed"}`);
+          }
+        } catch (e) {
+          failed += 1;
+          toast.error(e instanceof Error ? e.message : "Wise pay failed");
+        } finally {
+          setPayingSelfBillIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
+      }
+      if (success > 0) toast.success(`${success} payment${success === 1 ? "" : "s"} sent`);
+      if (failed === 0) setSelectedSbIds(new Set());
+      await data.loadData();
+    },
+    [data],
+  );
+
   const handlePayWithWise = useCallback(
     async (selfBillId: string) => {
       setPayingSelfBillIds((prev) => {
@@ -472,20 +570,38 @@ function BillingStandaloneInner() {
     [periodSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId],
   );
 
-  const goingOutGroups = useMemo(
-    () => buildSelfBillWeekPartnerGroups(goingOutSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [goingOutSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  // Pending vs Approved buckets for the widget toggle. Pending = needs office
+  // signoff before Wise can pay; Approved = signed off, awaiting Wise transfer.
+  // Wise-paid rows leave both buckets (they appear in Payment History).
+  const goingOutPendingSelfBills = useMemo(
+    () => goingOutSelfBills.filter((sb) => !sb.approved_at && !sb.wise_paid_at),
+    [goingOutSelfBills],
+  );
+  const goingOutApprovedSelfBills = useMemo(
+    () => goingOutSelfBills.filter((sb) => !!sb.approved_at && !sb.wise_paid_at),
+    [goingOutSelfBills],
   );
 
-  const goingOutTotal = useMemo(
-    () =>
-      goingOutSelfBills.reduce(
-        (sum, sb) =>
-          sum + computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId),
+  const goingOutPendingGroups = useMemo(
+    () => buildSelfBillWeekPartnerGroups(goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
+    [goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  );
+  const goingOutApprovedGroups = useMemo(
+    () => buildSelfBillWeekPartnerGroups(goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
+    [goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  );
+
+  const sumDue = useCallback(
+    (rows: SelfBill[]) =>
+      rows.reduce(
+        (sum, sb) => sum + computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId),
         0,
       ),
-    [goingOutSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId],
+    [data.jobsBySelfBillId, data.partnerPaidByJobId],
   );
+  const goingOutPendingTotal = useMemo(() => sumDue(goingOutPendingSelfBills), [sumDue, goingOutPendingSelfBills]);
+  const goingOutApprovedTotal = useMemo(() => sumDue(goingOutApprovedSelfBills), [sumDue, goingOutApprovedSelfBills]);
+  const goingOutTotal = goingOutPendingTotal + goingOutApprovedTotal;
 
   useEffect(() => {
     setSelectedInvoiceIds(new Set());
@@ -983,45 +1099,143 @@ function BillingStandaloneInner() {
                   <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                     Going Out · Money Out
                     <FixfyHintIcon
-                      text={`Work week · ${periodWorkWeekLabel} · ready to pay only (no drafts).`}
+                      text={`Work week · ${periodWorkWeekLabel} · Approve in Pending, then Pay in Approved.`}
                       placement="bottom-start"
                     />
                   </h2>
                 </div>
-                <div className="border-b border-border-light px-4 py-4 sm:px-5">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Next self-bill run</p>
-                      <p className="text-sm font-semibold text-[#020040]">{kpiRow.nextRunLabel}</p>
-                    </div>
-                    <p className="text-xl font-bold tabular-nums text-[#020040]">{formatCurrency(goingOutTotal)}</p>
-                  </div>
-                </div>
-                <div className="max-h-[420px] overflow-y-auto">
-                  <SelfBillGroupedLedger
-                    variant="compact"
-                    groups={goingOutGroups}
-                    todayYmd={todayYmd}
-                    selectedIds={selectedSbIds}
-                    onSelectionChange={setSelectedSbIds}
-                    partnerDueCtx={data.partnerDueCtx}
-                    partnerAvatarById={data.partnerAvatarById}
-                    onOpen={(sb) => void openSelfBill(sb)}
-                    onMarkPaid={async (id) => {
-                      await markSelfBillsPaid([id]);
-                      toast.success("Marked paid");
-                      await data.loadData();
-                    }}
-                    collapsiblePartners={{
-                      expandedKeys: expandedGoingOutPartners,
-                      onToggle: toggleGoingOutPartner,
-                    }}
-                    onSendBills={handleSendSelfBills}
-                    sendingIds={sendingSelfBillIds}
-                    onPayWithWise={handlePayWithWise}
-                    payingIds={payingSelfBillIds}
-                  />
-                </div>
+                {(() => {
+                  const activeSelfBills =
+                    goingOutTab === "pending" ? goingOutPendingSelfBills : goingOutApprovedSelfBills;
+                  const activeGroups = goingOutTab === "pending" ? goingOutPendingGroups : goingOutApprovedGroups;
+                  const activeTotal = goingOutTab === "pending" ? goingOutPendingTotal : goingOutApprovedTotal;
+
+                  // Selection-aware eligible IDs scoped to the active tab.
+                  const eligibleSendableIds = activeSelfBills
+                    .filter((sb) => sb.bill_origin !== "internal" && !!sb.partner_id?.trim())
+                    .map((sb) => sb.id);
+                  const allTabIds = activeSelfBills.map((sb) => sb.id);
+                  const selectedInTab = allTabIds.filter((id) => selectedSbIds.has(id));
+                  const selectedSendableInTab = eligibleSendableIds.filter((id) => selectedSbIds.has(id));
+                  const hasSelection = selectedInTab.length > 0;
+
+                  const eligiblePayIds = activeSelfBills
+                    .filter((sb) => !!sb.approved_at && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb))
+                    .map((sb) => sb.id);
+                  const selectedPayInTab = eligiblePayIds.filter((id) => selectedSbIds.has(id));
+                  const payTargetIds = hasSelection ? selectedPayInTab : eligiblePayIds;
+                  const payTargetTotal = sumDue(activeSelfBills.filter((sb) => payTargetIds.includes(sb.id)));
+
+                  const sendTargetIds = hasSelection ? selectedSendableInTab : eligibleSendableIds;
+                  const approveTargetIds = hasSelection ? selectedInTab : allTabIds;
+
+                  return (
+                    <>
+                      <div className="border-b border-border-light px-4 py-3 sm:px-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-1">
+                            <TabPill
+                              active={goingOutTab === "pending"}
+                              onClick={() => setGoingOutTab("pending")}
+                              label="Pending"
+                              count={goingOutPendingSelfBills.length}
+                              total={goingOutPendingTotal}
+                            />
+                            <TabPill
+                              active={goingOutTab === "approved"}
+                              onClick={() => setGoingOutTab("approved")}
+                              label="Approved"
+                              count={goingOutApprovedSelfBills.length}
+                              total={goingOutApprovedTotal}
+                            />
+                          </div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                            {kpiRow.nextRunLabel}
+                          </p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xl font-bold tabular-nums text-[#020040]">
+                            {formatCurrency(activeTotal)}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {goingOutTab === "pending" ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  loading={sendTargetIds.some((id) => sendingSelfBillIds.has(id))}
+                                  disabled={sendTargetIds.length === 0}
+                                  onClick={() => void handleSendSelfBills(sendTargetIds, "week")}
+                                >
+                                  {hasSelection
+                                    ? `Send selected (${sendTargetIds.length})`
+                                    : `Send all${eligibleSendableIds.length ? ` (${eligibleSendableIds.length})` : ""}`}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  loading={approveTargetIds.some((id) => approvingSelfBillIds.has(id))}
+                                  disabled={approveTargetIds.length === 0}
+                                  onClick={() => void handleApproveSelfBills(approveTargetIds)}
+                                >
+                                  {hasSelection
+                                    ? `Approve selected (${approveTargetIds.length})`
+                                    : `Approve all${allTabIds.length ? ` (${allTabIds.length})` : ""}`}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                loading={payTargetIds.some((id) => payingSelfBillIds.has(id))}
+                                disabled={payTargetIds.length === 0}
+                                onClick={() => void handleBulkPayWithWise(payTargetIds)}
+                              >
+                                {hasSelection
+                                  ? `Pay selected ${formatCurrency(payTargetTotal)} (${payTargetIds.length})`
+                                  : `Pay all ${formatCurrency(payTargetTotal)}`}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="max-h-[420px] overflow-y-auto">
+                        <SelfBillGroupedLedger
+                          variant="compact"
+                          groups={activeGroups}
+                          todayYmd={todayYmd}
+                          selectedIds={selectedSbIds}
+                          onSelectionChange={setSelectedSbIds}
+                          partnerDueCtx={data.partnerDueCtx}
+                          partnerAvatarById={data.partnerAvatarById}
+                          onOpen={(sb) => void openSelfBill(sb)}
+                          onMarkPaid={async (id) => {
+                            await markSelfBillsPaid([id]);
+                            toast.success("Marked paid");
+                            await data.loadData();
+                          }}
+                          collapsiblePartners={{
+                            expandedKeys: expandedGoingOutPartners,
+                            onToggle: toggleGoingOutPartner,
+                          }}
+                          onSendBills={handleSendSelfBills}
+                          sendingIds={sendingSelfBillIds}
+                          onPayWithWise={goingOutTab === "approved" ? handlePayWithWise : undefined}
+                          payingIds={payingSelfBillIds}
+                          onApprove={handleApproveSelfBills}
+                          onUnapprove={handleUnapproveSelfBills}
+                          approvingIds={approvingSelfBillIds}
+                          showApproveAction={goingOutTab === "pending" ? "approve" : "unapprove"}
+                          emptyLabel={
+                            goingOutTab === "pending"
+                              ? "Nothing pending approval."
+                              : "Nothing approved yet. Approve self-bills in Pending."
+                          }
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1761,6 +1975,10 @@ function SelfBillGroupedLedger({
   sendingIds,
   onPayWithWise,
   payingIds,
+  onApprove,
+  onUnapprove,
+  approvingIds,
+  showApproveAction,
   variant = "full",
   emptyLabel = "No self-bills in this period.",
   collapsiblePartners,
@@ -1781,6 +1999,14 @@ function SelfBillGroupedLedger({
   onPayWithWise?: (selfBillId: string) => Promise<void>;
   /** Self-bill ids currently being paid via Wise. */
   payingIds?: Set<string>;
+  /** Approve (Pending tab) — marks the self-bill as ready for Wise payout. */
+  onApprove?: (ids: string[]) => Promise<void>;
+  /** Unapprove (Approved tab) — reverts the signoff. */
+  onUnapprove?: (ids: string[]) => Promise<void>;
+  /** Self-bill ids currently being approved / unapproved. */
+  approvingIds?: Set<string>;
+  /** "approve" → render Approve; "unapprove" → render Unapprove; undefined → hide. */
+  showApproveAction?: "approve" | "unapprove";
   variant?: "full" | "compact";
   emptyLabel?: string;
   collapsiblePartners?: {
@@ -1921,13 +2147,34 @@ function SelfBillGroupedLedger({
                                   {sb.email_sent_at ? "Resend" : "Send"}
                                 </Button>
                               ) : null}
-                              {onPayWithWise && canSelect && !sb.wise_paid_at ? (
+                              {showApproveAction === "approve" && onApprove && canSelect && !sb.approved_at ? (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  loading={approvingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onApprove([sb.id])}
+                                  title="Mark approved — unlocks Wise payment"
+                                >
+                                  Approve
+                                </Button>
+                              ) : null}
+                              {showApproveAction === "unapprove" && onUnapprove && canSelect && !!sb.approved_at && !sb.wise_paid_at ? (
                                 <Button
                                   variant="ghost"
                                   size="sm"
+                                  loading={approvingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onUnapprove([sb.id])}
+                                  title="Revoke approval"
+                                >
+                                  Unapprove
+                                </Button>
+                              ) : null}
+                              {onPayWithWise && canSelect && !sb.wise_paid_at && !!sb.approved_at ? (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
                                   loading={payingIds?.has(sb.id) ?? false}
-                                  disabled={!sb.email_sent_at}
-                                  title={sb.email_sent_at ? "Pay partner via Wise" : "Send self-bill first"}
+                                  title="Pay partner via Wise"
                                   onClick={() => void onPayWithWise(sb.id)}
                                 >
                                   Make payment
@@ -1973,6 +2220,43 @@ function KpiCard({ label, value, sub, alert, coral, green }: { label: string; va
       <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-[#020040]")}>{value}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-text-secondary sm:text-xs">{sub}</p>
     </div>
+  );
+}
+
+function TabPill({
+  active,
+  onClick,
+  label,
+  count,
+  total,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  total: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
+        active
+          ? "bg-[#020040] text-white"
+          : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
+      )}
+    >
+      {label}
+      <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] tabular-nums", active ? "bg-white/20 text-white" : "bg-white text-text-secondary")}>
+        {count}
+      </span>
+      {count > 0 ? (
+        <span className={cn("text-[10px] tabular-nums", active ? "text-white/80" : "text-text-tertiary")}>
+          {formatCurrency(total)}
+        </span>
+      ) : null}
+    </button>
   );
 }
 
