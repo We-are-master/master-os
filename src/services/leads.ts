@@ -222,3 +222,24 @@ export async function updateLead(id: string, patch: UpdateLeadInput): Promise<Le
   }
   return data as Lead;
 }
+
+/** Soft-delete lead — hidden from OS lists, Pulse, and partner offers (unpublished). */
+export async function deleteLead(id: string, deletedBy?: string): Promise<void> {
+  const existing = await getLead(id);
+  if (!existing) throw new Error("Lead not found");
+
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("leads")
+    .update({
+      deleted_at: now,
+      deleted_by: deletedBy ?? null,
+      published_at: null,
+      updated_at: now,
+    })
+    .eq("id", id)
+    .is("deleted_at", null);
+
+  if (error) throw new Error(postgrestErrorMessage(error));
+}

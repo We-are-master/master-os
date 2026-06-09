@@ -13,11 +13,12 @@ import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import Link from "next/link";
-import { Plus, Loader2, ExternalLink } from "lucide-react";
+import { Plus, Loader2, ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { CatalogService, Lead, LeadStatus, LeadUrgency } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listLeads, createLead, updateLead, countJobsForClient } from "@/services/leads";
+import { useProfile } from "@/hooks/use-profile";
+import { listLeads, createLead, updateLead, deleteLead, countJobsForClient } from "@/services/leads";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { getStatusCounts, type ListResult } from "@/services/base";
 import { cn, formatYmdUkDisplay } from "@/lib/utils";
@@ -121,6 +122,7 @@ interface LeadsClientProps {
 }
 
 export function LeadsClient({ initialData }: LeadsClientProps = {}) {
+  const { profile } = useProfile();
   const {
     data,
     loading,
@@ -145,6 +147,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [createForm, setCreateForm] = useState(() => emptyLeadForm());
   const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
@@ -452,6 +455,30 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error(err instanceof Error ? err.message : "Could not update publish state");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedLead) return;
+    const label = selectedLead.reference?.trim() || selectedLead.name?.trim() || "this lead";
+    if (
+      !confirm(
+        `Delete ${label}? It will be removed from Leads, Pulse, and the Trade Portal. The linked Fixfy client contact is kept.`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteLead(selectedLead.id, profile?.id);
+      toast.success("Lead deleted");
+      setSelectedLead(null);
+      await refresh();
+      await loadCounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete lead");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -775,6 +802,26 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               Lead saved under the Fixfy account (matched by email). Interested leads can be offered to partners as
               labour-only when no job is available yet.
             </p>
+
+            <div className="pt-4 mt-2 border-t border-dashed border-border-light">
+              <p className="text-[11px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide mb-2">
+                Danger zone
+              </p>
+              <p className="text-xs text-text-tertiary mb-3">
+                Permanently removes this lead from the OS and partner portal. Partner interest records stay in the audit
+                trail but the lead no longer appears anywhere.
+              </p>
+              <Button
+                type="button"
+                variant="danger"
+                className="w-full sm:w-auto"
+                disabled={deleting || saving}
+                icon={deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                onClick={() => void handleDelete()}
+              >
+                Delete lead
+              </Button>
+            </div>
           </div>
         ) : null}
       </Drawer>

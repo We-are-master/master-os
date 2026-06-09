@@ -18,9 +18,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   let customMessage = "";
+  let sendEmail = true;
   try {
     const body = await req.json();
     if (typeof body?.customMessage === "string") customMessage = body.customMessage;
+    if (body?.sendEmail === false) sendEmail = false;
   } catch {
     /* optional body */
   }
@@ -90,12 +92,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   });
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!resendKey) {
+  if (!sendEmail || !resendKey) {
     return NextResponse.json({
       ok: true,
       onboardingUrl,
       requestId: requestRow.id,
-      warning: "RESEND_API_KEY not set — email not sent",
+      sentTo: sendEmail ? undefined : email,
+      warning: sendEmail && !resendKey ? "RESEND_API_KEY not set — email not sent" : undefined,
     });
   }
 

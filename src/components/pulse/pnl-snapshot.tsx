@@ -15,8 +15,13 @@ import {
 } from "@/lib/frontend-setup";
 import { MicroLabel, SectionCard } from "@/components/fx/primitives";
 import {
+  computeBillsFixedCostForPeriod,
+  computeMonthlyBillsBurn,
+  computeWorkforceMonthlyBurn,
+  type PulseBillRow,
+} from "@/lib/pulse-fixed-costs";
+import {
   WORKFORCE_COST_ACTIVE_OR_FILTER,
-  sumWorkforcePayrollAmount,
 } from "@/lib/workforce-lifecycle";
 
 type Pnl = {
@@ -42,15 +47,6 @@ const initial: Pnl = {
 };
 
 /** Run-rate factor by recurrence cadence — duplicated from finance/bills/page.tsx pattern. */
-const MONTHLY_FACTOR: Record<string, number> = {
-  weekly: 4.345,
-  weekly_friday: 4.345,
-  biweekly_friday: 2.1725,
-  monthly: 1,
-  quarterly: 1 / 3,
-  yearly: 1 / 12,
-};
-
 const SELF_BILL_EXCLUDED = ["rejected", "payout_cancelled", "payout_archived", "payout_lost"];
 
 export function PnlSnapshot() {
@@ -86,7 +82,7 @@ export function PnlSnapshot() {
         // and one-off in-window manually below.
         supabase
           .from("bills")
-          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date")
+          .select("id, description, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date, category")
           .is("archived_at", null)
           .neq("status", "rejected"),
         // Activated workforce only — onboarding excluded until Activate.
@@ -136,41 +132,18 @@ export function PnlSnapshot() {
       const partnerCost = jobsData.reduce((a, r) => a + (Number(r.partner_cost) || 0), 0);
 
       // ── Bills: monthly burn of recurring (1 row/series) + one-off in window ──
-      type BillRow = {
-        id: string;
-        amount: number | null;
-        is_recurring: boolean | null;
-        recurrence_interval: string | null;
-        recurring_series_id: string | null;
-        status: string | null;
-        due_date: string | null;
-      };
-      const billRows = (billsRes.data ?? []) as BillRow[];
-      const recurringActive = billRows.filter((b) => !!b.is_recurring && b.status !== "needs_attention");
-      const seriesSeen = new Set<string>();
-      let monthlyBurnBills = 0;
-      for (const b of recurringActive) {
-        const key = b.recurring_series_id?.trim() || b.id;
-        if (seriesSeen.has(key)) continue;
-        seriesSeen.add(key);
-        const factor = MONTHLY_FACTOR[String(b.recurrence_interval ?? "monthly")] ?? 1;
-        monthlyBurnBills += (Number(b.amount) || 0) * factor;
-      }
-      const oneOffBills = billRows
-        .filter(
-          (b) =>
-            !b.is_recurring &&
-            b.due_date &&
-            b.due_date >= fromDay &&
-            b.due_date <= toDay,
-        )
-        .reduce((a, b) => a + (Number(b.amount) || 0), 0);
-      const bills = monthlyBurnBills * allocationFactor + oneOffBills;
+      const billRows = (billsRes.data ?? []) as PulseBillRow[];
+      const { total: bills } = computeBillsFixedCostForPeriod(
+        billRows,
+        fromDay,
+        toDay,
+        allocationFactor,
+      );
 
       // ── Workforce: monthly payroll burn + ad-hoc self-bills (deduped) ────
       type PayrollRow = { id: string | null; amount: number | null; lifecycle_stage: string | null };
       const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
-      const monthlyBurnPayroll = sumWorkforcePayrollAmount(payrollRows);
+      const monthlyBurnPayroll = computeWorkforceMonthlyBurn(payrollRows);
       const payrollIds = new Set(
         payrollRows.map((p) => p.id?.trim()).filter((id): id is string => !!id),
       );

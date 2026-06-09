@@ -63,7 +63,8 @@ export async function listBillsInSameSeries(bill: Bill): Promise<Bill[]> {
   return match as Bill[];
 }
 
-export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at"> & {
+export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at" | "status"> & {
+  status?: BillStatus;
   /** Override default horizon (e.g. debit with 23 months left). Clamped 1–120. */
   recurringOccurrenceCount?: number | null;
   /** Last inclusive due date; caps generated occurrences and enables auto-archive after this date. */
@@ -103,7 +104,7 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
       recurring_series_end_date: seriesEnd,
       submitted_by_id: payload.submitted_by_id ?? null,
       submitted_by_name: payload.submitted_by_name ?? null,
-      status: (payload.status ?? "submitted") as BillStatus,
+      status: (payload.status ?? "approved") as BillStatus,
       receipt_url: payload.receipt_url ?? null,
     }));
     const { data, error } = await supabase.from("bills").insert(rows).select();
@@ -124,7 +125,7 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
       recurrence_interval: payload.recurrence_interval ?? null,
       submitted_by_id: payload.submitted_by_id ?? null,
       submitted_by_name: payload.submitted_by_name ?? null,
-      status: payload.status ?? "submitted",
+      status: payload.status ?? "approved",
       receipt_url: payload.receipt_url ?? null,
     })
     .select()

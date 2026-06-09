@@ -14,6 +14,8 @@ interface DrawerProps {
   titleAddon?: React.ReactNode;
   /** Renders inside the header area below the title row (e.g. owner row). */
   headerExtra?: React.ReactNode;
+  /** Renders before title (e.g. avatar in workforce drawer). */
+  headerLeading?: React.ReactNode;
   children: React.ReactNode;
   /** Renders below the scroll area (e.g. sticky chat input). */
   footer?: React.ReactNode;
@@ -29,6 +31,7 @@ export function Drawer({
   title,
   subtitle,
   titleAddon,
+  headerLeading,
   headerExtra,
   children,
   footer,
@@ -62,16 +65,19 @@ export function Drawer({
             {title && (
               <div className="shrink-0 border-b border-fx-line sticky top-0 bg-surface z-[2]">
                 <div className="flex items-start justify-between gap-3 px-5 py-3.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em] min-w-0">
-                        {title}
-                      </h3>
-                      {titleAddon ? <span className="shrink-0">{titleAddon}</span> : null}
+                  <div className="min-w-0 flex-1 flex items-start gap-3">
+                    {headerLeading ? <div className="shrink-0">{headerLeading}</div> : null}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em] min-w-0">
+                          {title}
+                        </h3>
+                        {titleAddon ? <span className="shrink-0">{titleAddon}</span> : null}
+                      </div>
+                      {subtitle && (
+                        <p className="text-xs text-fx-mute mt-0.5 line-clamp-2 break-words">{subtitle}</p>
+                      )}
                     </div>
-                    {subtitle && (
-                      <p className="text-xs text-fx-mute mt-0.5 line-clamp-2 break-words">{subtitle}</p>
-                    )}
                   </div>
                   <button
                     type="button"

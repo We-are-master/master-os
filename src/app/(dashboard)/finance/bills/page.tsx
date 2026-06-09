@@ -2,21 +2,17 @@
 
 import { useState, useEffect, useCallback, useMemo, type MouseEvent } from "react";
 import { PageHeader } from "@/components/layout/page-header";
-import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
-import { KpiCard } from "@/components/ui/kpi-card";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { motion } from "framer-motion";
-import { fadeInUp } from "@/lib/motion";
 import {
   Plus,
   FileCheck,
   DollarSign,
   Loader2,
-  Banknote,
   Pencil,
   Layers,
   ChevronDown,
@@ -37,8 +33,6 @@ import {
   createBill,
   updateBill,
   markBillPaid,
-  approveBillOrSeries,
-  approveAllSubmittedInScope,
   archiveBillsByIds,
   listBillsInSameSeries,
 } from "@/services/bills";
@@ -60,34 +54,30 @@ import {
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
-type BillsPreset = "all" | "one_off" | "recurring" | "needs_attention" | "approved" | "archived";
-
-const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
-
-/** Filter chips (no Paid tab). Order: All → Submitted → Approved → Needs attention → Rejected → Archived */
-const BILL_FILTER_ORDER = [
-  "all",
-  "submitted",
-  "approved",
-  "needs_attention",
-  "rejected",
-  "archived",
-] as const;
+type BillsPreset = "all" | "one_off" | "recurring" | "unpaid" | "paid" | "archived";
 
 function kpiEligible(b: Bill): boolean {
-  return !b.archived_at && b.status !== "rejected" && b.status !== "needs_attention";
+  return !b.archived_at && b.status !== "rejected";
 }
 
-const statusConfig: Record<
-  BillStatus,
-  { label: string; variant: "default" | "primary" | "warning" | "success" | "danger" | "info" }
-> = {
-  submitted: { label: "Submitted", variant: "warning" },
-  approved: { label: "Approved", variant: "success" },
-  paid: { label: "Paid", variant: "success" },
-  rejected: { label: "Rejected", variant: "danger" },
-  needs_attention: { label: "Needs Attention", variant: "danger" },
-};
+function isDebitBill(b: Bill): boolean {
+  return b.category === "debit";
+}
+
+function billRowDisplayStatus(b: Bill): { label: string; variant: "default" | "success" } {
+  if (b.status === "paid") return { label: "Paid", variant: "success" };
+  return { label: "Scheduled", variant: "default" };
+}
+
+function seriesDisplayStatus(visible: Bill[]): { label: string; variant: "default" | "success" } {
+  if (visible.length > 0 && visible.every((row) => row.status === "paid")) {
+    return { label: "Paid", variant: "success" };
+  }
+  if (visible.some((row) => row.status === "paid")) {
+    return { label: "Mixed", variant: "default" };
+  }
+  return { label: "Scheduled", variant: "default" };
+}
 
 export default function BillsPage() {
   const { profile } = useProfile();
@@ -110,8 +100,6 @@ export default function BillsPage() {
     null
   );
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
-  /** `item.key` for recurring series while Approve all is running for that card */
-  const [approveSeriesBusyKey, setApproveSeriesBusyKey] = useState<string | null>(null);
   /** Per-row archive busy keys (for the X button) */
   const [archiveRowBusyKey, setArchiveRowBusyKey] = useState<string | null>(null);
 
@@ -192,40 +180,6 @@ export default function BillsPage() {
   const billKindKpiLabel =
     billKindTab === "all" ? "All types" : billKindTab === "recurring" ? "Recurring" : "One-off";
 
-  const kpis = useMemo(() => {
-    const inPeriodEligible = !periodBounds
-      ? bills.filter((b) => kpiEligible(b))
-      : bills.filter(
-          (b) =>
-            kpiEligible(b) &&
-            b.due_date &&
-            b.due_date >= periodBounds.from &&
-            b.due_date <= periodBounds.to
-        );
-    const base = inPeriodEligible.filter((b) => {
-      if (billKindTab === "all") return true;
-      if (billKindTab === "recurring") return !!b.is_recurring;
-      return !b.is_recurring;
-    });
-    const pending = base.filter((b) => b.status === "submitted");
-    const approved = base.filter((b) => b.status === "approved");
-    const paid = base.filter((b) => b.status === "paid");
-    const pendingAmt = pending.reduce((s, b) => s + Number(b.amount), 0);
-    const approvedAmt = approved.reduce((s, b) => s + Number(b.amount), 0);
-    const paidAmt = paid.reduce((s, b) => s + Number(b.amount), 0);
-    const totalAmt = base.reduce((s, b) => s + Number(b.amount), 0);
-    return {
-      pendingCount: pending.length,
-      pendingAmount: pendingAmt,
-      approvedCount: approved.length,
-      approvedAmount: approvedAmt,
-      paidCount: paid.length,
-      paidAmount: paidAmt,
-      totalCount: base.length,
-      totalAmount: totalAmt,
-    };
-  }, [bills, periodBounds, billKindTab]);
-
   const headlineKpis = useMemo(() => {
     const active = bills.filter((b) => !b.archived_at && b.status !== "rejected");
     const now = new Date();
@@ -233,14 +187,11 @@ export default function BillsPage() {
     const monthKey = today.slice(0, 7);
     const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
 
-    const overdueRows = active.filter(
-      (b) => b.due_date && b.due_date < today && b.status !== "paid" && b.status !== "needs_attention",
-    );
     const monthRows = active.filter(
-      (b) => b.due_date?.slice(0, 7) === monthKey && b.status !== "paid" && b.status !== "needs_attention",
+      (b) => b.due_date?.slice(0, 7) === monthKey && b.status !== "paid",
     );
     const next30Rows = active.filter(
-      (b) => b.due_date && b.due_date >= today && b.due_date <= next30 && b.status !== "needs_attention",
+      (b) => b.due_date && b.due_date >= today && b.due_date <= next30 && b.status !== "paid",
     );
 
     /** Burn rate: one row per recurring series, each intervaled to its monthly equivalent. */
@@ -252,7 +203,7 @@ export default function BillsPage() {
       quarterly: 1 / 3,
       yearly: 1 / 12,
     };
-    const recurringActive = active.filter((b) => !!b.is_recurring && b.status !== "needs_attention");
+    const recurringActive = active.filter((b) => !!b.is_recurring);
     const oneRowPerSeries = recurringActive
       .slice()
       .sort((a, b) => String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")))
@@ -267,8 +218,6 @@ export default function BillsPage() {
 
     const sum = (rows: Bill[]) => rows.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
     return {
-      overdueAmount: sum(overdueRows),
-      overdueCount: overdueRows.length,
       dueMonthAmount: sum(monthRows),
       dueMonthCount: monthRows.length,
       next30Amount: sum(next30Rows),
@@ -305,11 +254,7 @@ export default function BillsPage() {
         const head = item.all[0];
         const due = getNextDueDate(item.all);
         const visibleCount = item.visible.length;
-        const status = item.visible.every((r) => r.status === "approved")
-          ? "Approved"
-          : item.visible.every((r) => r.status === "needs_attention")
-            ? "Needs Attention"
-            : "Mixed";
+        const status = seriesDisplayStatus(item.visible).label;
         const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
         return {
           key: item.key,
@@ -329,7 +274,7 @@ export default function BillsPage() {
         };
       }
       const row = item.bill;
-      const status = statusConfig[row.status]?.label ?? row.status;
+      const status = billRowDisplayStatus(row).label;
       return {
         key: row.id,
         amount: Number(row.amount ?? 0),
@@ -348,57 +293,6 @@ export default function BillsPage() {
     });
     return rows.sort((a, b) => a.title.localeCompare(b.title));
   }, [displayList, expandedSeries]);
-
-  const handleApproveAllInSeries = async (seriesKey: string) => {
-    const submittedInSeries = scopedBills.filter(
-      (b) => !b.archived_at && recurringGroupKey(b) === seriesKey && b.status === "submitted"
-    );
-    if (submittedInSeries.length === 0) {
-      toast.error("No submitted lines for this recurring bill.");
-      return;
-    }
-    if (
-      !confirm(
-        `Approve all ${submittedInSeries.length} submitted line(s) for this recurring bill?`
-      )
-    ) {
-      return;
-    }
-    setApproveSeriesBusyKey(seriesKey);
-    try {
-      const { totalApproved } = await approveAllSubmittedInScope(submittedInSeries);
-      toast.success(totalApproved > 0 ? `Approved ${totalApproved} line(s).` : "Nothing to approve.");
-      load();
-    } catch {
-      toast.error("Failed to approve");
-    } finally {
-      setApproveSeriesBusyKey(null);
-    }
-  };
-
-  const handleApprove = async (bill: Bill) => {
-    try {
-      const { approvedCount } = await approveBillOrSeries(bill.id);
-      if (bill.is_recurring && approvedCount > 1) {
-        toast.success(`Approved ${approvedCount} occurrences in this recurring series.`);
-      } else {
-        toast.success("Bill approved");
-      }
-      load();
-    } catch {
-      toast.error("Failed to approve");
-    }
-  };
-
-  const handleReject = async (bill: Bill) => {
-    try {
-      await updateBill(bill.id, { status: "rejected" });
-      toast.success("Bill rejected");
-      load();
-    } catch {
-      toast.error("Failed to reject");
-    }
-  };
 
   const handleMarkPaid = async (bill: Bill) => {
     try {
@@ -430,26 +324,6 @@ export default function BillsPage() {
       load();
     } catch {
       toast.error("Failed to void bill");
-    }
-  };
-
-  const handleNeedsAttention = async (bill: Bill) => {
-    try {
-      await updateBill(bill.id, { status: "needs_attention" });
-      toast.success("Flagged for attention");
-      load();
-    } catch {
-      toast.error("Failed to update");
-    }
-  };
-
-  const handleClearAttention = async (bill: Bill) => {
-    try {
-      await updateBill(bill.id, { status: "submitted" });
-      toast.success("Moved back to Submitted");
-      load();
-    } catch {
-      toast.error("Failed to update");
     }
   };
 
@@ -569,18 +443,24 @@ export default function BillsPage() {
     }
   };
 
-  const formatStatusSummary = (bills: Bill[]) => {
-    const order: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
-    const counts = new Map<BillStatus, number>();
-    for (const b of bills) {
-      counts.set(b.status, (counts.get(b.status) ?? 0) + 1);
-    }
-    return order
-      .filter((s) => (counts.get(s) ?? 0) > 0)
-      .map((s) => `${counts.get(s)} ${statusConfig[s].label.toLowerCase()}`)
-      .join(" · ");
+  /** One badge for the series row: single status or “Mixed”. */
+  const renderSeriesHeadlineStatusBadge = (visible: Bill[]) => {
+    const display = seriesDisplayStatus(visible);
+    return (
+      <Badge variant={display.variant} size="sm" dot>
+        {display.label}
+      </Badge>
+    );
   };
 
+  const renderStatusBadge = (r: Bill) => {
+    const display = billRowDisplayStatus(r);
+    return (
+      <Badge variant={display.variant} dot>
+        {display.label}
+      </Badge>
+    );
+  };
   /** Next due line in this group (skips paid/rejected); used in card header visibility. */
   function getNextDueDate(rows: Bill[]): string | null {
     const candidate = rows
@@ -593,38 +473,7 @@ export default function BillsPage() {
     return fallback?.due_date ?? null;
   }
 
-  /** One badge for the series row: single status or “Mixed”. */
-  const renderSeriesHeadlineStatusBadge = (visible: Bill[]) => {
-    const statuses = [...new Set(visible.map((b) => b.status))];
-    if (statuses.length === 1) {
-      const s = statuses[0];
-      const c = statusConfig[s];
-      return (
-        <Badge variant={c?.variant ?? "default"} size="sm" dot>
-          {c?.label ?? s}
-        </Badge>
-      );
-    }
-    return (
-      <span className="inline-flex" title="Multiple workflow statuses in this series">
-        <Badge variant="default" size="sm" dot>
-          Mixed
-        </Badge>
-      </span>
-    );
-  };
-
-  const renderStatusBadge = (r: Bill) => {
-    const c = statusConfig[r.status];
-    return (
-      <Badge variant={c?.variant ?? "default"} dot>
-        {c?.label ?? r.status}
-      </Badge>
-    );
-  };
-
-  const canVoidBill = (r: Bill) =>
-    !r.archived_at && r.status !== "paid";
+  const canVoidBill = (r: Bill) => !r.archived_at && r.status !== "paid";
 
   const renderBillActions = (r: Bill) => (
     <div className="flex flex-wrap gap-1 justify-end items-center">
@@ -636,17 +485,7 @@ export default function BillsPage() {
           Restore
         </Button>
       ) : null}
-      {!r.archived_at && (r.status === "submitted" || r.status === "needs_attention") && (
-        <>
-          <Button variant="ghost" size="sm" onClick={() => handleApprove(r)}>
-            Approve
-          </Button>
-          <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleReject(r)}>
-            Reject
-          </Button>
-        </>
-      )}
-      {!r.archived_at && (r.status === "approved" || r.status === "needs_attention") && (
+      {!r.archived_at && isDebitBill(r) && r.status !== "paid" && (
         <Button
           variant="secondary"
           size="sm"
@@ -654,16 +493,6 @@ export default function BillsPage() {
           onClick={() => void handleMarkPaid(r)}
         >
           Mark paid
-        </Button>
-      )}
-      {!r.archived_at && (r.status === "submitted" || r.status === "approved") && (
-        <Button variant="ghost" size="sm" className="text-amber-700" onClick={() => handleNeedsAttention(r)}>
-          Needs attention
-        </Button>
-      )}
-      {!r.archived_at && r.status === "needs_attention" && (
-        <Button variant="ghost" size="sm" onClick={() => handleClearAttention(r)}>
-          Back to submitted
         </Button>
       )}
       {canVoidBill(r) ? (
@@ -686,7 +515,7 @@ export default function BillsPage() {
       <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
           title="Bills & expenses"
-          infoTooltip="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
+          infoTooltip="Track recurring and one-off costs. Bills are scheduled automatically — mark paid only for debit/financing lines. Filter by type or payment status."
         >
           <Button
             size="sm"
@@ -700,26 +529,7 @@ export default function BillsPage() {
           </Button>
         </PageHeader>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div
-            className={cn(
-              "flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5",
-              headlineKpis.overdueCount > 0 ? "border-red-200/90 dark:border-red-900/50" : "border-border-light",
-            )}
-          >
-            <div className="min-w-0">
-              <p className={cn("text-[10px] font-semibold uppercase tracking-wide", headlineKpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-tertiary")}>Overdue</p>
-              <p className={cn("text-[20px] font-bold tabular-nums leading-tight", headlineKpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-[#020040]")}>
-                {formatCurrency(headlineKpis.overdueAmount)}
-              </p>
-              <p className={cn("text-[11px] font-medium", headlineKpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-secondary")}>
-                {headlineKpis.overdueCount} bill{headlineKpis.overdueCount === 1 ? "" : "s"}
-              </p>
-            </div>
-            <div className={cn("flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg", headlineKpis.overdueAmount > 0.02 ? "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400" : "bg-surface-tertiary text-text-tertiary")}>
-              <Banknote className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Due this month</p>
@@ -812,8 +622,8 @@ export default function BillsPage() {
             { id: "all", label: "All" },
             { id: "one_off", label: "One-Off" },
             { id: "recurring", label: "Recurring" },
-            { id: "needs_attention", label: "Needs Attention" },
-            { id: "approved", label: "Approved" },
+            { id: "unpaid", label: "Unpaid" },
+            { id: "paid", label: "Paid" },
             { id: "archived", label: "Archived" },
           ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
             <button
@@ -872,12 +682,7 @@ export default function BillsPage() {
                       ) : null}
                     </p>
                     <Badge
-                      variant={
-                        row.status === "Approved" || row.status === "Paid" ? "success"
-                        : row.status === "Needs Attention" || row.status === "Rejected" ? "danger"
-                        : row.status === "Submitted" ? "warning"
-                        : "default"
-                      }
+                      variant={row.status === "Paid" ? "success" : "default"}
                       size="sm"
                       dot
                     >
@@ -1055,12 +860,11 @@ export default function BillsPage() {
                   recurring_series_end_date: form.recurring_series_end_date ?? null,
                   submitted_by_id: profile?.id,
                   submitted_by_name: profile?.full_name,
-                  status: "submitted",
                 });
                 if (form.is_recurring && interval) {
-                  toast.success(`Bill submitted — ${nScheduled} occurrence${nScheduled === 1 ? "" : "s"} scheduled ahead.`);
+                  toast.success(`Bill added — ${nScheduled} occurrence${nScheduled === 1 ? "" : "s"} scheduled ahead.`);
                 } else {
-                  toast.success("Bill submitted");
+                  toast.success("Bill added");
                 }
               }
               setModalOpen(false);

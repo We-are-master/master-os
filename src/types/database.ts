@@ -1016,6 +1016,8 @@ export type PayrollInternalProfile = {
   address?: string;
   vat_number?: string;
   vat_registered?: boolean;
+  /** First day on payroll — used to pro-rate fixed pay when joining mid-month. */
+  start_date?: string;
 };
 
 export interface PayrollInternalDocumentFile {

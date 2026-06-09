@@ -235,7 +235,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   const rBill1 = await supabase
     .from("bills")
     .select("id, description, amount, due_date, archived_at")
-    .eq("status", "approved")
+    .in("status", ["approved", "submitted"])
     .is("archived_at", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd)
@@ -247,7 +247,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     const rBill2 = await supabase
       .from("bills")
       .select("id, description, amount, due_date")
-      .eq("status", "approved")
+      .in("status", ["approved", "submitted"])
       .gte("due_date", weekStart)
       .lte("due_date", weekEnd)
       .gt("amount", 0);
@@ -258,7 +258,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     const rBill3 = await supabase
       .from("bills")
       .select("id, description, amount, due_date")
-      .eq("status", "approved")
+      .in("status", ["approved", "submitted"])
       .gte("due_date", weekStart)
       .lte("due_date", weekEnd);
     billsErr = rBill3.error;

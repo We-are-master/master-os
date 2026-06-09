@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import {
@@ -248,38 +247,54 @@ export function useBillingStandaloneData() {
 
       let invRows: Invoice[] = [];
       let sbRows: SelfBill[] = [];
+      let fetchHadErrors = false;
 
-      try {
-        [invRows, sbRows] = await Promise.all([
-          fetchInvoicesForBilling(bounds),
-          fetchSelfBillsForBilling(bounds),
-        ]);
+      const [invResult, sbResult] = await Promise.allSettled([
+        fetchInvoicesForBilling(bounds),
+        fetchSelfBillsForBilling(bounds),
+      ]);
+
+      if (invResult.status === "fulfilled") {
+        invRows = invResult.value;
         setInvoices(invRows);
+      } else {
+        fetchHadErrors = true;
+        console.error("billing invoices fetch failed", invResult.reason);
+        if (!background && !hasLoadedOnceRef.current) setInvoices([]);
+      }
+
+      if (sbResult.status === "fulfilled") {
+        sbRows = sbResult.value;
         setSelfBills(sbRows);
-        if (bounds === null) fullHistoryLoadedRef.current = true;
-      } catch (e) {
-        console.error("billing standalone fetch failed", e);
-        toast.error("Could not load billing data. Try Sync.");
-        if (!background && !hasLoadedOnceRef.current) {
-          setInvoices([]);
-          setSelfBills([]);
-        }
+      } else {
+        fetchHadErrors = true;
+        console.error("billing self-bills fetch failed", sbResult.reason);
+        if (!background && !hasLoadedOnceRef.current) setSelfBills([]);
+      }
+
+      if (bounds === null) fullHistoryLoadedRef.current = true;
+
+      if (fetchHadErrors && invRows.length === 0 && sbRows.length === 0) {
         setLoading(false);
         setRefreshing(false);
         return;
       }
 
-      const enriched = await enrichBillingRows(invRows, sbRows);
-      applyEnrichment(enriched);
-      hasLoadedOnceRef.current = true;
-      setHasLoadedOnce(true);
+      try {
+        const enriched = await enrichBillingRows(invRows, sbRows);
+        applyEnrichment(enriched);
+        hasLoadedOnceRef.current = true;
+        setHasLoadedOnce(true);
 
-      if (enriched.mapsFailed || enriched.accountMetaFailed) {
-        toast.error("Billing loaded partially — some account or job details may be missing.");
+        if (enriched.mapsFailed || enriched.accountMetaFailed) {
+          console.warn("Billing loaded partially — some account or job details may be missing.");
+        }
+      } catch (e) {
+        console.error("billing enrichment failed", e);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      setLoading(false);
-      setRefreshing(false);
     },
     [applyEnrichment],
   );

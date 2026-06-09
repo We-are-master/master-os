@@ -1,4 +1,5 @@
 import { getSupabase } from "./base";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   InternalCost,
   WorkforceCommissionBasis,
@@ -42,15 +43,18 @@ function jobGrossProfit(row: {
   return clampMoney(Math.max(0, revenue - costs));
 }
 
-export async function calculateOwnerJobCommission(input: {
-  profileId: string;
-  periodStart: string;
-  periodEnd: string;
-  commissionRatePercent: number;
-  commissionBasis: WorkforceCommissionBasis;
-}): Promise<CommissionCalcResult> {
+export async function calculateOwnerJobCommission(
+  input: {
+    profileId: string;
+    periodStart: string;
+    periodEnd: string;
+    commissionRatePercent: number;
+    commissionBasis: WorkforceCommissionBasis;
+  },
+  supabase: SupabaseClient = getSupabase(),
+): Promise<CommissionCalcResult> {
   const rate = Math.max(0, Math.min(100, Number(input.commissionRatePercent) || 0)) / 100;
-  const { data, error } = await getSupabase()
+  const { data, error } = await supabase
     .from("jobs")
     .select(
       "id, reference, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, completed_date",

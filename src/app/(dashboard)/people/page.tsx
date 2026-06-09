@@ -1,37 +1,55 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { endOfMonth, format, startOfMonth } from "date-fns";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
-import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Avatar } from "@/components/ui/avatar";
 import { SearchInput } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
-import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat, CheckCircle2 } from "lucide-react";
+import { Plus, Loader2, Users, HardHat } from "lucide-react";
 import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
-import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit } from "@/types/database";
+import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit, WorkforceCommissionBasis, WorkforcePaymentMethod } from "@/types/database";
 import { getSupabase } from "@/services/base";
 import { listBusinessUnits, createBusinessUnit, updateBusinessUnit, deleteBusinessUnit } from "@/services/teams";
 import { BuModal } from "@/components/teams/bu-modal";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
-  PAYROLL_COST_CATEGORIES,
   PROFILE_PHOTO_DOC_KEY,
   payrollDocsRowCompletion,
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
 import { getPayrollDocumentSignedUrls } from "@/services/payroll-documents-storage";
 import { WorkforcePersonDrawer } from "@/components/people/workforce-person-drawer";
+import {
+  WorkforceAddCard,
+  WorkforceAddListRow,
+  WorkforceBuStrip,
+  WorkforceKpiGrid,
+  WorkforcePersonCard,
+  WorkforcePersonListRow,
+  WorkforceStagePills,
+  WorkforceTypeSegment,
+  WorkforceViewToggle,
+  type WorkforceDrawerTab,
+  type WorkforcePeopleTab,
+} from "@/components/people/workforce-ui";
 import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
 import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
+import {
+  requestWorkforceOnboardingLink,
+  WORKFORCE_COMMISSION_BASIS_OPTIONS,
+  WORKFORCE_PAYMENT_METHOD_OPTIONS,
+} from "@/lib/workforce-payment-options";
+import {
+  computeWorkforceNextDueDate,
+  WORKFORCE_MONTHLY_PAY_DAY,
+} from "@/lib/workforce-pay-schedule";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
   if (!raw || typeof raw !== "object") return {};
@@ -49,13 +67,9 @@ function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocument
   return out;
 }
 
-function payrollProfileEmail(raw: unknown): string | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const e = (raw as Record<string, unknown>).email;
-  return typeof e === "string" && e.trim() ? e.trim() : undefined;
-}
+const WORKFORCE_VIEW_STORAGE_KEY = "workforce-view-mode";
 
-type PeopleTab = "internal" | "contractors";
+type WorkforceDisplayMode = "grid" | "list";
 
 /** Payroll row + joined BU name for cards */
 export type PeopleRow = InternalCost & { bu_name?: string | null };
@@ -71,7 +85,8 @@ function mapCostRows(
 }
 
 export default function PeoplePage() {
-  const [section, setSection] = useState<PeopleTab>("internal");
+  const [section, setSection] = useState<WorkforcePeopleTab>("all");
+  const [displayMode, setDisplayMode] = useState<WorkforceDisplayMode>("grid");
   const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("all");
   const [rows, setRows] = useState<PeopleRow[]>([]);
   const [bus, setBus] = useState<BusinessUnit[]>([]);
@@ -80,19 +95,25 @@ export default function PeoplePage() {
   const [buFilter, setBuFilter] = useState<string>("all");
   const [selected, setSelected] = useState<PeopleRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInitialTab, setDrawerInitialTab] = useState<WorkforceDrawerTab>("overview");
 
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formPayee, setFormPayee] = useState("");
+  const [formEmail, setFormEmail] = useState("");
   const [formDept, setFormDept] = useState("");
   const [formRoleTitle, setFormRoleTitle] = useState("");
   const [formOtherDesc, setFormOtherDesc] = useState("");
   const [formAmount, setFormAmount] = useState("");
   const [formCategory, setFormCategory] = useState("Salary");
-  const [formDue, setFormDue] = useState("");
   const [formFreq, setFormFreq] = useState<"" | "weekly" | "biweekly" | "monthly">("monthly");
   const [formEmployment, setFormEmployment] = useState<PayrollInternalEmploymentType>("employee");
   const [formBuId, setFormBuId] = useState("");
+  const [formPaymentMethod, setFormPaymentMethod] = useState<WorkforcePaymentMethod | "">("bank_transfer");
+  const [formCommissionEnabled, setFormCommissionEnabled] = useState(false);
+  const [formCommissionRate, setFormCommissionRate] = useState("");
+  const [formCommissionBasis, setFormCommissionBasis] = useState<WorkforceCommissionBasis>("gross_profit");
+  const [formStartDate, setFormStartDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [formCreateAccess, setFormCreateAccess] = useState(false);
   const [formAccessEmail, setFormAccessEmail] = useState("");
   const [formAccessRole, setFormAccessRole] = useState<"admin" | "manager" | "operator">("operator");
@@ -102,6 +123,42 @@ export default function PeoplePage() {
   const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
   const [buSaving, setBuSaving] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [onboardingLinkBusyId, setOnboardingLinkBusyId] = useState<string | null>(null);
+
+  const resetInviteForm = () => {
+    setFormPayee("");
+    setFormEmail("");
+    setFormDept("");
+    setFormRoleTitle("");
+    setFormOtherDesc("");
+    setFormAmount("");
+    setFormCategory("Salary");
+    setFormFreq("monthly");
+    setFormBuId("");
+    setFormPaymentMethod("bank_transfer");
+    setFormCommissionEnabled(false);
+    setFormCommissionRate("");
+    setFormCommissionBasis("gross_profit");
+    setFormStartDate(format(new Date(), "yyyy-MM-dd"));
+    setFormCreateAccess(false);
+    setFormAccessEmail("");
+    setFormAccessPassword("");
+    setFormAccessRole("operator");
+  };
+
+  const handleCopyOnboardingLink = async (row: PeopleRow) => {
+    setOnboardingLinkBusyId(row.id);
+    try {
+      const { onboardingUrl, warning } = await requestWorkforceOnboardingLink(row.id, { sendEmail: false });
+      await navigator.clipboard.writeText(onboardingUrl);
+      toast.success("Onboarding link copied to clipboard");
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not generate onboarding link");
+    } finally {
+      setOnboardingLinkBusyId(null);
+    }
+  };
 
   const handleActivatePerson = async (row: PeopleRow) => {
     setActivatingId(row.id);
@@ -160,10 +217,31 @@ export default function PeoplePage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(WORKFORCE_VIEW_STORAGE_KEY);
+      if (v === "grid" || v === "list") setDisplayMode(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WORKFORCE_VIEW_STORAGE_KEY, displayMode);
+    } catch {
+      /* ignore */
+    }
+  }, [displayMode]);
+
   const filtered = useMemo(() => {
-    const want: PayrollInternalEmploymentType =
-      section === "internal" ? "employee" : "self_employed";
-    let list = rows.filter((r) => r.employment_type === want);
+    let list =
+      section === "all"
+        ? rows
+        : rows.filter(
+            (r) =>
+              r.employment_type === (section === "internal" ? "employee" : "self_employed"),
+          );
     if (buFilter === "unassigned") {
       list = list.filter((r) => !r.bu_id);
     } else if (buFilter !== "all") {
@@ -189,10 +267,74 @@ export default function PeoplePage() {
   const rosterCounts = useMemo(() => {
     const base = rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
     return {
+      all: base.length,
       internal: base.filter((r) => r.employment_type === "employee").length,
       contractors: base.filter((r) => r.employment_type === "self_employed").length,
     };
   }, [rows]);
+
+  const inviteEmploymentType = (tab: WorkforcePeopleTab): PayrollInternalEmploymentType =>
+    tab === "contractors" ? "self_employed" : "employee";
+
+  const inviteLabel =
+    section === "internal"
+      ? "Invite employee"
+      : section === "contractors"
+        ? "Invite contractor"
+        : "Invite team";
+
+  const rosterRows = useMemo(
+    () => rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard"),
+    [rows],
+  );
+
+  const workforceKpis = useMemo(() => {
+    const active = rosterRows.filter((r) => {
+      const stage = r.lifecycle_stage ?? "active";
+      return stage === "active" || stage === "needs_attention";
+    }).length;
+    const onboarding = rosterRows.filter((r) => (r.lifecycle_stage ?? "active") === "onboarding").length;
+    const payrollPeople = rosterRows.filter((r) => Number(r.amount ?? 0) > 0);
+    const monthlyPayroll = payrollPeople.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+
+    let docsOutstanding = 0;
+    for (const r of rosterRows) {
+      const files = parsePayrollDocumentFiles(r.payroll_document_files);
+      const { done, total } = payrollDocsRowCompletion(
+        r.employment_type ?? null,
+        files,
+        r.documents_on_file ?? null,
+        r.has_equity ?? false,
+      );
+      docsOutstanding += Math.max(0, total - done);
+    }
+
+    const monthStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
+    const monthEnd = format(endOfMonth(new Date()), "yyyy-MM-dd");
+    const dueThisMonth = rosterRows.filter((r) => {
+      const due = r.due_date?.slice(0, 10);
+      return !!due && due >= monthStart && due <= monthEnd;
+    });
+    const dueThisMonthTotal = dueThisMonth.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+
+    return {
+      headcount: rosterRows.length,
+      active,
+      onboarding,
+      monthlyPayroll,
+      payrollPeople: payrollPeople.length,
+      docsOutstanding,
+      dueThisMonthCount: dueThisMonth.length,
+      dueThisMonthTotal,
+    };
+  }, [rosterRows]);
+
+  const selfBillSyncRef = useRef(false);
+  useEffect(() => {
+    if (selfBillSyncRef.current) return;
+    selfBillSyncRef.current = true;
+    void fetch("/api/workforce/sync-self-bills", { method: "POST" }).catch(() => {});
+  }, []);
 
   const photoPathsKey = useMemo(
     () =>
@@ -250,8 +392,9 @@ export default function PeoplePage() {
     };
   }, [photoPathsKey, filtered]);
 
-  const openPerson = (r: PeopleRow) => {
+  const openPerson = (r: PeopleRow, tab: WorkforceDrawerTab = "overview") => {
     setSelected(r);
+    setDrawerInitialTab(tab);
     setDrawerOpen(true);
   };
 
@@ -274,34 +417,55 @@ export default function PeoplePage() {
     if (data) setSelected(mapCostRows([data])[0] ?? null);
   }, [load, selected?.id]);
 
-  const handleCreatePerson = async () => {
+  const handleInviteTeam = async () => {
     const desc = buildPayLineDescription(formDept, formRoleTitle, formOtherDesc);
+    const email = formEmail.trim().toLowerCase();
     if (!formPayee.trim() || !desc.trim()) {
       toast.error("Name and department are required");
+      return;
+    }
+    if (!email.includes("@")) {
+      toast.error("Enter a valid email for the onboarding invite");
       return;
     }
     if (formDept === "Other" && !formOtherDesc.trim()) {
       toast.error("Enter a description when department is Other");
       return;
     }
-    const amt = Number(formAmount);
-    if (Number.isNaN(amt) || amt < 0) {
-      toast.error("Enter a valid amount");
+    if (!formPaymentMethod) {
+      toast.error("Select a payment method");
       return;
+    }
+    const amt = formAmount.trim() === "" ? 0 : Number(formAmount);
+    if (Number.isNaN(amt) || amt < 0) {
+      toast.error("Enter a valid fixed payment amount (0 if commission-only)");
+      return;
+    }
+    if (!formCommissionEnabled && amt <= 0) {
+      toast.error("Enter fixed payment or enable commission");
+      return;
+    }
+    if (formCommissionEnabled) {
+      const rate = Number(formCommissionRate);
+      if (!formCommissionRate.trim() || Number.isNaN(rate) || rate <= 0 || rate > 100) {
+        toast.error("Commission rate must be between 0 and 100");
+        return;
+      }
     }
     setSaving(true);
     const supabase = getSupabase();
     const now = new Date().toISOString();
     try {
+      const startDate = formStartDate.trim().slice(0, 10) || format(new Date(), "yyyy-MM-dd");
       const row = {
         description: desc.trim(),
         amount: amt,
-        category: formCategory.trim() || null,
-        due_date: formDue.trim() || null,
+        category: formCategory.trim() || (formEmployment === "employee" ? "Salary" : "Contractor fee"),
+        due_date: computeWorkforceNextDueDate(WORKFORCE_MONTHLY_PAY_DAY, new Date(startDate)),
         payee_name: formPayee.trim(),
         employment_type: formEmployment,
-        pay_frequency: formFreq || null,
-        payment_day_of_month: null as number | null,
+        pay_frequency: formFreq || "monthly",
+        payment_day_of_month: WORKFORCE_MONTHLY_PAY_DAY,
         payroll_document_files: {} as Record<string, PayrollDocumentFileMeta>,
         status: "pending" as InternalCostStatus,
         paid_at: null as string | null,
@@ -310,7 +474,11 @@ export default function PeoplePage() {
         equity_percent: null as number | null,
         equity_vesting_notes: null as string | null,
         equity_start_date: null as string | null,
-        payroll_profile: {},
+        payroll_profile: { email, start_date: startDate },
+        payment_method: formPaymentMethod,
+        commission_enabled: formCommissionEnabled,
+        commission_rate_percent: formCommissionEnabled && formCommissionRate.trim() ? Number(formCommissionRate) : null,
+        commission_basis: formCommissionEnabled ? formCommissionBasis : null,
         bu_id: formBuId.trim() || null,
         created_at: now,
         updated_at: now,
@@ -331,20 +499,31 @@ export default function PeoplePage() {
       } else if (compatLevel >= 6) {
         toast.warning("Person created with minimal payroll row — apply migrations 092–096 to match the full Workforce model.");
       }
-      toast.success("Person added — complete profile in the drawer");
-      setAddOpen(false);
-      setFormPayee("");
-      setFormDept("");
-      setFormRoleTitle("");
-      setFormOtherDesc("");
-      setFormAmount("");
-      setFormDue("");
-      setFormBuId("");
+      if (!inserted) {
+        throw new Error("Insert failed");
+      }
+      toast.success("Team member created — sending onboarding invite…");
+      const insertedId = (inserted as InternalCost).id;
 
-      // Optional: create dashboard access alongside the workforce row
+      try {
+        const { sentTo, warning } = await requestWorkforceOnboardingLink(insertedId, {
+          sendEmail: true,
+        });
+        toast.success(`Onboarding invite sent to ${sentTo ?? email}`);
+        if (warning) toast.warning(warning);
+      } catch (err) {
+        toast.warning(
+          err instanceof Error
+            ? `Person saved, but invite failed: ${err.message}`
+            : "Person saved, but invite email failed",
+        );
+      }
+
+      setAddOpen(false);
+      resetInviteForm();
       if (formCreateAccess && inserted) {
         const insertedId = (inserted as InternalCost).id;
-        const accessEmail = formAccessEmail.trim().toLowerCase();
+        const accessEmail = formAccessEmail.trim().toLowerCase() || email;
         const accessPassword = formAccessPassword;
         try {
           if (!accessEmail.includes("@")) {
@@ -388,10 +567,11 @@ export default function PeoplePage() {
         const ic = inserted as InternalCost;
         const sn = ic.bu_id ? bus.find((s) => s.id === ic.bu_id)?.name ?? null : null;
         setSelected({ ...ic, bu_name: sn });
+        setDrawerInitialTab("overview");
         setDrawerOpen(true);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to add");
+      toast.error(e instanceof Error ? e.message : "Failed to invite");
     } finally {
       setSaving(false);
     }
@@ -459,233 +639,196 @@ export default function PeoplePage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
+          eyebrow="People · Internal team & contractors"
           title="Workforce"
           infoTooltip={"Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay.\n\nWorking lists everyone except offboard. Use Employees for PAYE staff and Contractors for self-billed. Finance → Payroll keeps commission runs and recurring bills."}
         >
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<Building2 className="h-4 w-4" />}
-              onClick={openAddBu}
-            >
-              Add BU
-            </Button>
-            <Button
-              icon={<Plus className="h-4 w-4" />}
-              onClick={() => {
-                setFormEmployment(section === "internal" ? "employee" : "self_employed");
-                setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
-                setAddOpen(true);
-              }}
-            >
-              Add person
-            </Button>
-          </div>
+          <Button
+            icon={<Plus className="h-4 w-4" />}
+            onClick={() => {
+              setFormEmployment(inviteEmploymentType(section));
+              setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+              setAddOpen(true);
+            }}
+          >
+            Invite team
+          </Button>
         </PageHeader>
 
+        <WorkforceKpiGrid
+          headcount={workforceKpis.headcount}
+          active={workforceKpis.active}
+          onboarding={workforceKpis.onboarding}
+          monthlyPayroll={workforceKpis.monthlyPayroll}
+          payrollPeople={workforceKpis.payrollPeople}
+          docsOutstanding={workforceKpis.docsOutstanding}
+          dueThisMonthCount={workforceKpis.dueThisMonthCount}
+          dueThisMonthTotal={workforceKpis.dueThisMonthTotal}
+        />
+
         {bus.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 px-1">
-            <span className="text-xs font-medium text-text-tertiary">Business Units:</span>
-            {bus.map((s) => (
-              <div key={s.id} className="inline-flex items-center gap-0.5 rounded-full border border-border-light bg-surface-hover/50 pl-2.5 pr-1 py-0.5">
-                <span className="text-xs font-medium text-text-primary">{s.name}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0"
-                  aria-label={`Edit ${s.name}`}
-                  onClick={() => openEditBu(s)}
-                  icon={<Pencil className="h-3 w-3" />}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 text-red-600"
-                  aria-label={`Delete ${s.name}`}
-                  onClick={() => void handleDeleteBu(s)}
-                  icon={<Trash2 className="h-3 w-3" />}
-                />
-              </div>
-            ))}
-          </div>
+          <WorkforceBuStrip
+            bus={bus}
+            buFilter={buFilter}
+            onFilter={setBuFilter}
+            onAdd={openAddBu}
+            onEdit={openEditBu}
+            onDelete={(s) => void handleDeleteBu(s)}
+          />
         )}
 
-        <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
-          <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3">
+        <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden">
+          <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-border-light flex flex-col gap-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <Tabs
-                variant="pills"
-                tabs={[
-                  { id: "internal", label: "Employees", count: rosterCounts.internal },
-                  { id: "contractors", label: "Contractors", count: rosterCounts.contractors },
-                ]}
-                activeTab={section}
-                onChange={(id) => { setSection(id as PeopleTab); setStageFilter("all"); }}
+              <WorkforceTypeSegment
+                value={section}
+                counts={rosterCounts}
+                onChange={(id) => {
+                  setSection(id);
+                  setStageFilter("all");
+                }}
               />
               <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
-              <Select
-                value={buFilter}
-                onChange={(e) => setBuFilter(e.target.value)}
-                options={buFilterOptions}
-                className="min-w-[160px] shrink-0"
-              />
-              <SearchInput
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, role, BU…"
-                className="flex-1 w-full min-w-0"
-              />
+                <WorkforceViewToggle mode={displayMode} onChange={setDisplayMode} />
+                <Select
+                  value={buFilter}
+                  onChange={(e) => setBuFilter(e.target.value)}
+                  options={buFilterOptions}
+                  className="min-w-[160px] shrink-0 rounded-xl"
+                />
+                <SearchInput
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name, role…"
+                  className="flex-1 w-full min-w-0 rounded-xl"
+                />
+              </div>
             </div>
-            </div>
-            {/* Stage filter pills */}
-            <div className="flex flex-wrap gap-1.5">
-              {(["all", "onboarding", "active", "offboard"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStageFilter(s)}
-                  className={cn(
-                    "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
-                    stageFilter === s
-                      ? "bg-primary text-white"
-                      : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                  )}
-                >
-                  {s === "all" ? "All" : s === "onboarding" ? "Onboarding" : s === "active" ? "Active" : "Offboarded"}
-                </button>
-              ))}
-            </div>
+            <WorkforceStagePills value={stageFilter} onChange={setStageFilter} />
           </div>
 
-          <div className="p-4 sm:p-6">
+          <div className="p-4 sm:p-5">
             {loading ? (
               <div className="flex justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
               </div>
-            ) : filtered.length === 0 ? (
-              <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="text-center py-16">
-                <div className="inline-flex items-center justify-center rounded-full bg-surface-hover p-3 mb-3">
-                  {section === "internal" ? (
-                    <Users className="h-8 w-8 text-text-tertiary" />
-                  ) : (
-                    <HardHat className="h-8 w-8 text-text-tertiary" />
-                  )}
-                </div>
-                <p className="text-text-secondary font-medium">
-                  {section === "internal" ? "No internal team members yet" : "No contractors yet"}
-                </p>
-                <p className="text-sm text-text-tertiary mt-2 max-w-md mx-auto">
-                  {section === "internal"
-                    ? "Add PAYE employees with salary lines. You can upload passport, contract, and payroll setup from each person’s drawer."
-                    : "Add self-employed people for internal contractor fees and self-bill workflow. Documents differ from employees (e.g. self-bill agreement)."}
-                </p>
-                <Button
-                  className="mt-4"
-                  onClick={() => {
-                    setFormEmployment(section === "internal" ? "employee" : "self_employed");
-                    setAddOpen(true);
-                  }}
-                >
-                  Add {section === "internal" ? "employee" : "contractor"}
-                </Button>
-              </motion.div>
             ) : (
-              <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                {filtered.map((r) => {
-                  const emailLine = payrollProfileEmail(r.payroll_profile);
-                  const files = parsePayrollDocumentFiles(r.payroll_document_files);
-                  const { done, total } = payrollDocsRowCompletion(
-                    r.employment_type ?? null,
-                    files,
-                    r.documents_on_file ?? null,
-                    r.has_equity ?? false,
-                  );
-                  const stage = r.lifecycle_stage ?? "active";
-                  return (
-                    <motion.button
-                      type="button"
-                      key={r.id}
-                      variants={staggerItem}
-                      onClick={() => openPerson(r)}
-                      className="text-left rounded-2xl border border-border-light bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-primary/20 transition-all p-4 flex flex-col gap-3 shadow-sm"
-                    >
-                      <div className="flex items-start gap-3">
-                        <Avatar name={r.payee_name ?? "?"} size="lg" src={photoUrlsById[r.id]} />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-text-primary truncate">{r.payee_name ?? "Unnamed"}</p>
-                          {emailLine ? <p className="text-xs text-text-secondary truncate">{emailLine}</p> : null}
-                          <p className="text-xs text-text-tertiary line-clamp-2">{r.description}</p>
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {r.bu_name ? (
-                              <Badge variant="default" size="sm" className="max-w-[140px] truncate">
-                                {r.bu_name}
-                              </Badge>
-                            ) : null}
-                            <Badge variant={stage === "active" ? "success" : "info"} size="sm">
-                              {stage === "onboarding" ? "Onboarding" : stage === "active" ? "Active" : stage}
-                            </Badge>
-                            {total > 0 && (
-                              <Badge variant={done >= total ? "success" : "warning"} size="sm">
-                                Docs {done}/{total}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs border-t border-border-light pt-3">
-                        <div>
-                          <p className="text-text-tertiary uppercase tracking-wide">Amount</p>
-                          <p className="font-semibold text-text-primary">{formatCurrency(Number(r.amount))}</p>
-                        </div>
-                        <div>
-                          <p className="text-text-tertiary uppercase tracking-wide">Next due</p>
-                          <p className="font-medium text-text-primary">{r.due_date ? formatDate(r.due_date) : "—"}</p>
-                        </div>
-                        <div className="col-span-2 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-3 text-text-tertiary">
-                            <span className="inline-flex items-center gap-1">
-                              <FileText className="h-3.5 w-3.5" />
-                              Documents
-                            </span>
-                            <span className="inline-flex items-center gap-1">
-                              <Wallet className="h-3.5 w-3.5" />
-                              Finance
-                            </span>
-                          </div>
-                          {stage === "onboarding" && (
-                            <span
-                              role="presentation"
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-[11px] shrink-0"
-                                disabled={activatingId === r.id}
-                                icon={
-                                  activatingId === r.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <CheckCircle2 className="h-3 w-3" />
-                                  )
-                                }
-                                onClick={() => void handleActivatePerson(r)}
-                              >
-                                Activate
-                              </Button>
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </motion.button>
-                  );
-                })}
-              </StaggerContainer>
+              <>
+                {filtered.length === 0 && (
+                  <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="text-center py-10 mb-4">
+                    <div className="inline-flex items-center justify-center rounded-full bg-surface-hover p-3 mb-3">
+                      {section === "contractors" ? (
+                        <HardHat className="h-8 w-8 text-text-tertiary" />
+                      ) : (
+                        <Users className="h-8 w-8 text-text-tertiary" />
+                      )}
+                    </div>
+                    <p className="text-text-secondary font-medium">
+                      {search.trim() || buFilter !== "all" || stageFilter !== "all"
+                        ? "No matches for your filters"
+                        : section === "internal"
+                          ? "No internal team members yet"
+                          : section === "contractors"
+                            ? "No contractors yet"
+                            : "No people yet"}
+                    </p>
+                    {!search.trim() && buFilter === "all" && stageFilter === "all" && (
+                      <p className="text-sm text-text-tertiary mt-2 max-w-md mx-auto">
+                        {section === "internal"
+                          ? "Add PAYE employees with salary lines. Upload passport, contract, and payroll setup from each person’s drawer."
+                          : section === "contractors"
+                            ? "Add self-employed people for internal contractor fees and self-bill workflow."
+                            : "Invite employees and contractors — use the type filter or Employment type when inviting."}
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+                {displayMode === "list" ? (
+                  <div className="rounded-xl border border-border-light overflow-hidden -mx-1 sm:mx-0">
+                    <div className="hidden sm:grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto_auto] gap-3 border-b border-border-light bg-surface-hover/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                      <span>Person</span>
+                      <span>Status</span>
+                      <span className="text-right">Amount</span>
+                      <span className="text-right">Next due</span>
+                      <span className="text-right">Actions</span>
+                    </div>
+                    {filtered.map((r) => {
+                      const files = parsePayrollDocumentFiles(r.payroll_document_files);
+                      const { done, total } = payrollDocsRowCompletion(
+                        r.employment_type ?? null,
+                        files,
+                        r.documents_on_file ?? null,
+                        r.has_equity ?? false,
+                      );
+                      return (
+                        <WorkforcePersonListRow
+                          key={r.id}
+                          row={r}
+                          photoUrl={photoUrlsById[r.id]}
+                          employmentType={r.employment_type ?? "employee"}
+                          docsDone={done}
+                          docsTotal={total}
+                          activating={activatingId === r.id}
+                          onboardingLinkBusy={onboardingLinkBusyId === r.id}
+                          onOpen={() => openPerson(r)}
+                          onOpenDocuments={() => openPerson(r, "documents")}
+                          onOpenFinance={() => openPerson(r, "finance")}
+                          onActivate={() => void handleActivatePerson(r)}
+                          onCopyOnboardingLink={() => void handleCopyOnboardingLink(r)}
+                        />
+                      );
+                    })}
+                    <WorkforceAddListRow
+                      label={inviteLabel}
+                      onClick={() => {
+                        setFormEmployment(inviteEmploymentType(section));
+                        setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+                        setAddOpen(true);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {filtered.map((r) => {
+                      const files = parsePayrollDocumentFiles(r.payroll_document_files);
+                      const { done, total } = payrollDocsRowCompletion(
+                        r.employment_type ?? null,
+                        files,
+                        r.documents_on_file ?? null,
+                        r.has_equity ?? false,
+                      );
+                      return (
+                        <motion.div key={r.id} variants={staggerItem} className="min-w-0">
+                          <WorkforcePersonCard
+                            row={r}
+                            photoUrl={photoUrlsById[r.id]}
+                            employmentType={r.employment_type ?? "employee"}
+                            docsDone={done}
+                            docsTotal={total}
+                            activating={activatingId === r.id}
+                            onboardingLinkBusy={onboardingLinkBusyId === r.id}
+                            onOpen={() => openPerson(r)}
+                            onOpenDocuments={() => openPerson(r, "documents")}
+                            onOpenFinance={() => openPerson(r, "finance")}
+                            onActivate={() => void handleActivatePerson(r)}
+                            onCopyOnboardingLink={() => void handleCopyOnboardingLink(r)}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                    <motion.div variants={staggerItem} className="min-w-0">
+                      <WorkforceAddCard
+                        label={inviteLabel}
+                        onClick={() => {
+                          setFormEmployment(inviteEmploymentType(section));
+                          setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+                          setAddOpen(true);
+                        }}
+                      />
+                    </motion.div>
+                  </StaggerContainer>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -695,6 +838,7 @@ export default function PeoplePage() {
         person={selected}
         bus={bus}
         open={drawerOpen && !!selected}
+        initialTab={drawerInitialTab}
         onClose={closeDrawer}
         onSaved={handleDrawerSaved}
       />
@@ -712,13 +856,36 @@ export default function PeoplePage() {
 
       <Modal
         open={addOpen}
-        onClose={() => setAddOpen(false)}
-        title="Add person"
-        subtitle={section === "internal" ? "Creates an employee payroll row (PAYE)." : "Creates an internal contractor (self-employed) row."}
+        onClose={() => {
+          setAddOpen(false);
+          resetInviteForm();
+        }}
+        title="Invite team"
+        subtitle={
+          section === "contractors"
+            ? "Send a contractor onboarding invite — profile, documents, contract and payment setup."
+            : section === "internal"
+              ? "Send an onboarding invite — profile, documents, contract and payment terms."
+              : "Send an onboarding invite — pick employment type below."
+        }
         size="md"
         className="w-[min(100%,calc(100vw-1.5rem))] sm:max-w-lg"
       >
         <div className="space-y-3 px-4 py-4 sm:px-6 sm:py-5 min-w-0">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">Email</label>
+            <Input
+              type="email"
+              value={formEmail}
+              onChange={(e) => {
+                setFormEmail(e.target.value);
+                if (formCreateAccess && !formAccessEmail.trim()) setFormAccessEmail(e.target.value);
+              }}
+              placeholder="person@example.com"
+              className="w-full min-w-0"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1">Onboarding link and contract invite go to this address.</p>
+          </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">Display name</label>
             <Input value={formPayee} onChange={(e) => setFormPayee(e.target.value)} placeholder="Full name" className="w-full min-w-0" />
@@ -756,32 +923,95 @@ export default function PeoplePage() {
               />
             </div>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-2 min-w-0">
-            <div className="min-w-0">
-              <label className="block text-xs font-medium text-text-secondary mb-1">Amount (GBP)</label>
-              <Input type="number" min={0} step="0.01" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} className="w-full min-w-0" />
+          <div className="rounded-xl border border-border-light p-3 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Payment</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-2 min-w-0">
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1">Fixed payment (£)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
+                  placeholder="0 if commission-only"
+                  className="w-full min-w-0"
+                />
+              </div>
+              <div className="min-w-0">
+                <Select
+                  label="Pay frequency"
+                  value={formFreq}
+                  onChange={(e) => setFormFreq(e.target.value as typeof formFreq)}
+                  options={[{ value: "", label: "—" }, ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
+                  className="min-w-0"
+                />
+              </div>
             </div>
-            <div className="min-w-0">
-              <Select
-                label="Category"
-                value={formCategory}
-                onChange={(e) => setFormCategory(e.target.value)}
-                options={PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
-                className="min-w-0"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-2 min-w-0">
+              <div className="min-w-0">
+                <Select
+                  label="Commission"
+                  value={formCommissionEnabled ? "yes" : "no"}
+                  onChange={(e) => setFormCommissionEnabled(e.target.value === "yes")}
+                  options={[
+                    { value: "no", label: "Fixed pay only" },
+                    { value: "yes", label: "Fixed + commission" },
+                  ]}
+                  className="min-w-0"
+                />
+              </div>
+              {formCommissionEnabled ? (
+                <>
+                  <div className="min-w-0">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Commission rate (%)</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.1"
+                      value={formCommissionRate}
+                      onChange={(e) => setFormCommissionRate(e.target.value)}
+                      placeholder="e.g. 10"
+                      className="w-full min-w-0"
+                    />
+                  </div>
+                  <div className="min-w-0 sm:col-span-2">
+                    <Select
+                      label="Commission on"
+                      value={formCommissionBasis}
+                      onChange={(e) => setFormCommissionBasis(e.target.value as WorkforceCommissionBasis)}
+                      options={WORKFORCE_COMMISSION_BASIS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                      className="min-w-0"
+                    />
+                  </div>
+                </>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-2 min-w-0">
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1">Start date</label>
+                <Input
+                  type="date"
+                  value={formStartDate}
+                  onChange={(e) => setFormStartDate(e.target.value)}
+                  className="w-full min-w-0"
+                />
+                <p className="text-[10px] text-text-tertiary mt-1">
+                  Pay day {WORKFORCE_MONTHLY_PAY_DAY} · cutoff last day of month · pro-rate if mid-month.
+                </p>
+              </div>
+              <div className="min-w-0">
+                <Select
+                  label="Payment method"
+                  value={formPaymentMethod}
+                  onChange={(e) => setFormPaymentMethod(e.target.value as WorkforcePaymentMethod)}
+                  options={WORKFORCE_PAYMENT_METHOD_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  className="min-w-0"
+                />
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Next due date</label>
-            <Input type="date" value={formDue} onChange={(e) => setFormDue(e.target.value)} className="w-full min-w-0" />
-          </div>
-          <Select
-            label="Pay frequency"
-            value={formFreq}
-            onChange={(e) => setFormFreq(e.target.value as typeof formFreq)}
-            options={[{ value: "", label: "—" }, ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
-            className="min-w-0"
-          />
           <Select
             label="Employment type"
             value={formEmployment}
@@ -818,12 +1048,12 @@ export default function PeoplePage() {
             {formCreateAccess && (
               <div className="space-y-2.5 pt-1 pl-6">
                 <div>
-                  <label className="block text-[11px] font-medium text-text-secondary mb-1">Email</label>
+                  <label className="block text-[11px] font-medium text-text-secondary mb-1">Login email</label>
                   <Input
                     type="email"
                     value={formAccessEmail}
                     onChange={(e) => setFormAccessEmail(e.target.value)}
-                    placeholder="person@example.com"
+                    placeholder={formEmail.trim() || "person@example.com"}
                     className="w-full min-w-0"
                   />
                 </div>
@@ -858,8 +1088,8 @@ export default function PeoplePage() {
             <Button variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={saving} className="w-full sm:w-auto shrink-0" onClick={() => void handleCreatePerson()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+            <Button disabled={saving} className="w-full sm:w-auto shrink-0" onClick={() => void handleInviteTeam()}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send invite"}
             </Button>
           </div>
         </div>

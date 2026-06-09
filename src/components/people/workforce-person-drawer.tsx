@@ -42,7 +42,14 @@ import {
   type InternalSelfBillLine,
 } from "@/services/internal-self-bills";
 import { WorkforceAccessTab } from "./workforce-access-tab";
+import {
+  WorkforceDrawerStatusBadge,
+  workforceFieldClass,
+  workforceSectionClass,
+  type WorkforceDrawerTab,
+} from "./workforce-ui";
 import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
+import { WORKFORCE_MONTHLY_PAY_DAY } from "@/lib/workforce-pay-schedule";
 import {
   FileText,
   Wallet,
@@ -86,19 +93,13 @@ function parsePayrollProfile(raw: unknown): PayrollInternalProfile {
     address: str("address"),
     vat_number: str("vat_number"),
     vat_registered: vatReg === true || vatReg === "true",
+    start_date: str("start_date")?.slice(0, 10),
   };
 }
 
 const INTERNAL_STATUSES: InternalCostStatus[] = ["pending", "paid"];
 
-const lifecycleLabel: Record<string, string> = {
-  onboarding: "Onboarding",
-  active: "Active",
-  needs_attention: "Needs attention",
-  offboard: "Offboard",
-};
-
-type TabId = "overview" | "documents" | "finance" | "access";
+type TabId = WorkforceDrawerTab;
 
 export function WorkforcePersonDrawer({
   person,
@@ -106,12 +107,14 @@ export function WorkforcePersonDrawer({
   open,
   onClose,
   onSaved,
+  initialTab = "overview",
 }: {
   person: InternalCost | null;
   bus: BusinessUnit[];
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  initialTab?: WorkforceDrawerTab;
 }) {
   const [tab, setTab] = useState<TabId>("overview");
   const [saving, setSaving] = useState(false);
@@ -143,6 +146,7 @@ export function WorkforcePersonDrawer({
   const [commissionEnabled, setCommissionEnabled] = useState(false);
   const [commissionRate, setCommissionRate] = useState("");
   const [commissionBasis, setCommissionBasis] = useState<WorkforceCommissionBasis>("gross_profit");
+  const [employmentTypeEdit, setEmploymentTypeEdit] = useState<PayrollInternalEmploymentType>("employee");
   const [commissionPreview, setCommissionPreview] = useState<{
     estimatedNet: number;
     jobCount: number;
@@ -160,7 +164,7 @@ export function WorkforcePersonDrawer({
   const payslipFileRef = useRef<HTMLInputElement>(null);
   const payslipKeyRef = useRef<string | null>(null);
 
-  const employmentType = person?.employment_type as PayrollInternalEmploymentType | null | undefined;
+  const employmentType = employmentTypeEdit;
   const isEmployee = employmentType === "employee";
   const isContractor = employmentType === "self_employed";
 
@@ -171,7 +175,6 @@ export function WorkforcePersonDrawer({
 
   const syncFromPerson = useCallback(async () => {
     if (!person) return;
-    setTab("overview");
     setPendingFiles({});
     setRemovePhotoPending(false);
     setPayeeName(person.payee_name ?? "");
@@ -185,7 +188,11 @@ export function WorkforcePersonDrawer({
     setCategory(person.category ?? "");
     setDueDate(person.due_date ?? "");
     setPayFrequency(person.pay_frequency ?? "");
-    setPaymentDay(person.payment_day_of_month != null ? String(person.payment_day_of_month) : "");
+    setPaymentDay(
+      person.payment_day_of_month != null && person.payment_day_of_month >= 1
+        ? String(person.payment_day_of_month)
+        : String(WORKFORCE_MONTHLY_PAY_DAY),
+    );
     setStatus(person.status === "paid" ? "paid" : "pending");
     setProfile(parsePayrollProfile(person.payroll_profile));
     setBuId(person.bu_id ?? "");
@@ -196,6 +203,9 @@ export function WorkforcePersonDrawer({
     setCommissionEnabled(!!person.commission_enabled);
     setCommissionRate(person.commission_rate_percent != null ? String(person.commission_rate_percent) : "");
     setCommissionBasis(person.commission_basis ?? "gross_profit");
+    setEmploymentTypeEdit(
+      person.employment_type === "self_employed" ? "self_employed" : "employee",
+    );
     const files = parsePayrollDocumentFiles(person.payroll_document_files);
     const photoMeta = files[PROFILE_PHOTO_DOC_KEY];
     if (photoMeta?.path) {
@@ -218,6 +228,10 @@ export function WorkforcePersonDrawer({
   useEffect(() => {
     void syncFromPerson();
   }, [syncFromPerson]);
+
+  useEffect(() => {
+    if (open) setTab(initialTab);
+  }, [open, initialTab, person?.id]);
 
   useEffect(() => {
     if (!person?.id || !open || tab !== "finance") return;
@@ -264,6 +278,23 @@ export function WorkforcePersonDrawer({
     if (open && person && isContractor && tab === "finance") void loadBills();
   }, [open, person, isContractor, tab, loadBills]);
 
+  useEffect(() => {
+    if (!open || !person?.id || !isContractor || tab !== "finance") return;
+    let cancelled = false;
+    void fetch("/api/workforce/sync-self-bills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personId: person.id }),
+    })
+      .then(() => {
+        if (!cancelled) void loadBills();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, person?.id, isContractor, tab, loadBills]);
+
   const mergeUploads = async (
     costId: string,
     base: Record<string, PayrollDocumentFileMeta>,
@@ -275,6 +306,55 @@ export function WorkforcePersonDrawer({
       out[docKey] = { path: up.path, file_name: up.file_name };
     }
     return out;
+  };
+
+  const handleSaveProfile = async () => {
+    if (!person) return;
+    if (!payeeName.trim()) {
+      toast.error("Display name is required");
+      return;
+    }
+    setSaving(true);
+    const supabase = getSupabase();
+    const now = new Date().toISOString();
+    try {
+      const baseFiles = parsePayrollDocumentFiles(person.payroll_document_files);
+      const mergedFiles = await mergeUploads(person.id, baseFiles);
+      if (removePhotoPending) {
+        delete mergedFiles[PROFILE_PHOTO_DOC_KEY];
+      }
+      const payroll_profile: PayrollInternalProfile = {
+        ...profile,
+        email: profile.email?.trim() || undefined,
+        phone: profile.phone?.trim() || undefined,
+        position: profile.position?.trim() || undefined,
+        address: profile.address?.trim() || undefined,
+        ni_number: profile.ni_number?.trim() || undefined,
+        tax_code: profile.tax_code?.trim() || undefined,
+        utr: profile.utr?.trim() || undefined,
+        vat_number: profile.vat_number?.trim() || undefined,
+        start_date: profile.start_date?.trim().slice(0, 10) || undefined,
+      };
+      const { error } = await supabase
+        .from("payroll_internal_costs")
+        .update({
+          payee_name: payeeName.trim(),
+          payroll_profile,
+          payroll_document_files: mergedFiles,
+          employment_type: employmentTypeEdit,
+          updated_at: now,
+        })
+        .eq("id", person.id);
+      if (error) throw error;
+      setPendingFiles({});
+      setRemovePhotoPending(false);
+      toast.success("Profile saved");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save profile");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveOverview = async () => {
@@ -323,6 +403,7 @@ export function WorkforcePersonDrawer({
         tax_code: profile.tax_code?.trim() || undefined,
         utr: profile.utr?.trim() || undefined,
         vat_number: profile.vat_number?.trim() || undefined,
+        start_date: profile.start_date?.trim().slice(0, 10) || undefined,
       };
       const updates: Record<string, unknown> = {
         description: desc,
@@ -331,7 +412,7 @@ export function WorkforcePersonDrawer({
         due_date: dueDate.trim() || null,
         payee_name: payeeName.trim() || null,
         pay_frequency: payFrequency.trim() || null,
-        payment_day_of_month: paymentDay.trim() ? Number(paymentDay) : null,
+        payment_day_of_month: paymentDay.trim() ? Number(paymentDay) : WORKFORCE_MONTHLY_PAY_DAY,
         bu_id: buId.trim() || null,
         payroll_profile,
         payroll_document_files: mergedFiles,
@@ -344,6 +425,7 @@ export function WorkforcePersonDrawer({
         commission_enabled: commissionEnabled,
         commission_rate_percent: commissionEnabled && commissionRate.trim() ? Number(commissionRate) : null,
         commission_basis: commissionEnabled ? commissionBasis : null,
+        employment_type: employmentTypeEdit,
       };
       if (status === "paid") updates.paid_at = now.split("T")[0];
       const { error } = await supabase.from("payroll_internal_costs").update(updates).eq("id", person.id);
@@ -390,7 +472,13 @@ export function WorkforcePersonDrawer({
         }
       }
 
-      toast.success("Saved");
+      const typeChanged =
+        (person.employment_type === "self_employed" ? "self_employed" : "employee") !== employmentTypeEdit;
+      toast.success(
+        typeChanged
+          ? `Saved — now listed under ${employmentTypeEdit === "employee" ? "Employees" : "Contractors"}`
+          : "Saved",
+      );
       setPendingFiles({});
       setRemovePhotoPending(false);
       onSaved();
@@ -701,19 +789,92 @@ export function WorkforcePersonDrawer({
 
   const commissionBasisLabel = commissionBasis === "revenue" ? "revenue" : "gross margin";
 
+  const financePayrollMeta = (
+    <div className={workforceSectionClass}>
+      <p className="text-sm font-semibold text-text-primary">Role & payroll</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2">
+          <Select
+            label="Department"
+            value={payLineDept}
+            onChange={(e) => {
+              setPayLineDept(e.target.value);
+              if (e.target.value !== "Other") setPayLineOther("");
+              if (!e.target.value) setPayLineRoleTitle("");
+            }}
+            options={WORKFORCE_DEPARTMENT_SELECT_OPTIONS}
+            className="min-w-0"
+          />
+        </div>
+        {payLineDept === "Other" && (
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-text-secondary mb-1">Role / pay line description</label>
+            <Input
+              value={payLineOther}
+              onChange={(e) => setPayLineOther(e.target.value)}
+              placeholder="Describe the pay line"
+              className="w-full min-w-0"
+            />
+          </div>
+        )}
+        {!!payLineDept && payLineDept !== "Other" && (
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-text-secondary mb-1">Role title (optional)</label>
+            <Input
+              value={payLineRoleTitle}
+              onChange={(e) => setPayLineRoleTitle(e.target.value)}
+              placeholder="e.g. Coordinator"
+              className="w-full min-w-0"
+            />
+          </div>
+        )}
+        <div>
+          <Select
+            label="Category"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            options={[{ value: "", label: "—" }, ...PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))]}
+          />
+        </div>
+        <div>
+          <Select
+            label="Payment status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value as InternalCostStatus)}
+            options={INTERNAL_STATUSES.map((s) => ({
+              value: s,
+              label: s === "paid" ? "Paid" : "Pending",
+            }))}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <Select
+            label="Business Unit"
+            value={buId}
+            onChange={(e) => setBuId(e.target.value)}
+            options={[
+              { value: "", label: "— No BU" },
+              ...bus.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   const financePaymentSetup = (
-    <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+    <div className={workforceSectionClass}>
       <div>
         <p className="text-sm font-semibold text-text-primary">Payment setup</p>
         <p className="text-xs text-text-tertiary mt-0.5">
-          Fixed salary plus optional commission as a <strong className="font-medium">percentage</strong> of owner-job billing in the pay period.
+          Monthly cadence: cutoff last day of month → <strong className="font-medium">Ready to pay</strong> in Billing (due day {WORKFORCE_MONTHLY_PAY_DAY}). Mid-month joiners get pro-rated fixed pay.
         </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Fixed payment (£)</label>
-          <Input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <Input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className={workforceFieldClass} />
         </div>
         <div>
           <Select
@@ -725,7 +886,7 @@ export function WorkforcePersonDrawer({
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Next due date</label>
-          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={workforceFieldClass} />
         </div>
         <div>
           <Select
@@ -761,6 +922,7 @@ export function WorkforcePersonDrawer({
                 value={commissionRate}
                 onChange={(e) => setCommissionRate(e.target.value)}
                 placeholder="e.g. 10"
+                className={workforceFieldClass}
               />
             </div>
           </>
@@ -773,7 +935,9 @@ export function WorkforcePersonDrawer({
             max={28}
             value={paymentDay}
             onChange={(e) => setPaymentDay(e.target.value)}
+            placeholder={String(WORKFORCE_MONTHLY_PAY_DAY)}
           />
+          <p className="text-[10px] text-text-tertiary mt-1">Standard: day {WORKFORCE_MONTHLY_PAY_DAY} — self-bill due in Billing that week.</p>
         </div>
         <div>
           <Select
@@ -837,18 +1001,22 @@ export function WorkforcePersonDrawer({
           onClick={async () => {
             setSendingWelcome(true);
             try {
-              const res = await fetch(`/api/admin/workforce/${person.id}/send-welcome`, { method: "POST" });
+              const res = await fetch(`/api/admin/workforce/${person.id}/send-welcome`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sendEmail: true }),
+              });
               const data = await res.json();
               if (!res.ok) throw new Error(data.error ?? "Send failed");
-              toast.success(`Welcome email sent to ${data.sentTo ?? "recipient"}`);
+              toast.success(`Onboarding invite sent to ${data.sentTo ?? "recipient"}`);
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Could not send welcome email");
+              toast.error(e instanceof Error ? e.message : "Could not send onboarding invite");
             } finally {
               setSendingWelcome(false);
             }
           }}
         >
-          {sendingWelcome ? "Sending…" : "Send onboarding link"}
+          {sendingWelcome ? "Sending…" : "Resend invite"}
         </Button>
         <Button
           type="button"
@@ -889,35 +1057,43 @@ export function WorkforcePersonDrawer({
       title={payeeName || person.payee_name || "Person"}
       subtitle={isEmployee ? "Internal team (employee)" : isContractor ? "Internal contractor" : "Workforce"}
       width="w-[min(100vw-1rem,560px)]"
-    >
-      <div className="px-6 pt-2 pb-4 border-b border-border-light flex flex-wrap items-center gap-2">
-        <Badge variant={stage === "active" ? "success" : stage === "onboarding" ? "info" : "default"} size="sm">
-          {lifecycleLabel[stage] ?? stage}
-        </Badge>
-        {person.pay_frequency && (
+      className="bg-surface-hover/40"
+      headerLeading={
+        <Avatar name={payeeName || person.payee_name || "?"} size="lg" src={photoUrl ?? undefined} className="ring-2 ring-card" />
+      }
+      titleAddon={<WorkforceDrawerStatusBadge stage={stage} />}
+      headerExtra={
+        stage === "onboarding" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {person.pay_frequency ? (
+              <span className="text-xs text-text-tertiary">
+                Pay {PAYROLL_FREQUENCY_OPTIONS.find((o) => o.value === person.pay_frequency)?.label ?? person.pay_frequency}
+                {person.due_date ? ` · next due ${formatDate(person.due_date)}` : ""}
+              </span>
+            ) : null}
+            <Button
+              size="sm"
+              className="ml-auto rounded-xl"
+              disabled={saving}
+              icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+              onClick={() => void handleActivate()}
+            >
+              Activate
+            </Button>
+          </div>
+        ) : person.pay_frequency ? (
           <span className="text-xs text-text-tertiary">
             Pay {PAYROLL_FREQUENCY_OPTIONS.find((o) => o.value === person.pay_frequency)?.label ?? person.pay_frequency}
             {person.due_date ? ` · next due ${formatDate(person.due_date)}` : ""}
           </span>
-        )}
-        {stage === "onboarding" && (
-          <Button
-            size="sm"
-            className="ml-auto"
-            disabled={saving}
-            icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-            onClick={() => void handleActivate()}
-          >
-            Activate
-          </Button>
-        )}
+        ) : undefined
+      }
+    >
+      <div className="px-4 sm:px-6 pt-1 pb-0 border-b border-border-light bg-surface sticky top-0 z-[1]">
+        <Tabs tabs={drawerTabs} activeTab={tab} onChange={(id) => setTab(id as TabId)} className="border-b-0" />
       </div>
 
-      <div className="px-6 pt-3 pb-0 border-b border-border-light">
-        <Tabs tabs={drawerTabs} activeTab={tab} onChange={(id) => setTab(id as TabId)} />
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
         {tab === "overview" && (
           <div className="space-y-5">
             {stage === "onboarding" && (
@@ -936,43 +1112,60 @@ export function WorkforcePersonDrawer({
                 </Button>
               </div>
             )}
-            <div className="flex flex-col sm:flex-row gap-4 items-start">
-              <div className="flex flex-col items-center gap-2">
-                <Avatar name={payeeName || "?"} size="xl" src={photoUrl ?? undefined} />
-                <div className="flex flex-col items-center gap-1 text-center max-w-[140px]">
-                  <label className="text-xs text-text-secondary cursor-pointer">
-                    <span className="text-primary font-medium">Change photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleDocPick(PROFILE_PHOTO_DOC_KEY, f);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
-                  {hasPhoto ? (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400"
-                      onClick={handleRemovePhoto}
-                    >
-                      Remove photo
-                    </button>
-                  ) : removePhotoPending ? (
-                    <span className="text-[10px] text-text-tertiary leading-snug">Photo removed — save profile to apply</span>
-                  ) : null}
-                  <span className="block text-[10px] text-text-tertiary leading-snug">
-                    Saved with <strong className="font-medium text-text-secondary">Save profile</strong> below
-                  </span>
-                </div>
+            <div className="flex flex-col items-center gap-3 pb-1">
+              <Avatar name={payeeName || "?"} size="xl" src={photoUrl ?? undefined} />
+              <div className="flex flex-col items-center gap-1 text-center">
+                <label className="text-xs text-text-secondary cursor-pointer">
+                  <span className="text-primary font-medium">Change photo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleDocPick(PROFILE_PHOTO_DOC_KEY, f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {hasPhoto ? (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400"
+                    onClick={handleRemovePhoto}
+                  >
+                    Remove photo
+                  </button>
+                ) : removePhotoPending ? (
+                  <span className="text-[10px] text-text-tertiary leading-snug">Photo removed — save profile to apply</span>
+                ) : null}
               </div>
-              <div className="flex-1 space-y-3 w-full min-w-0">
+            </div>
+
+            <div className={workforceSectionClass}>
+              <p className="text-sm font-semibold text-text-primary">Personal details</p>
+              <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1">Display name</label>
-                  <Input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} placeholder="Full name" />
+                  <Input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} placeholder="Full name" className={workforceFieldClass} />
+                </div>
+                <div>
+                  <Select
+                    label="Team type"
+                    value={employmentTypeEdit}
+                    onChange={(e) => {
+                      const next = e.target.value as PayrollInternalEmploymentType;
+                      setEmploymentTypeEdit(next);
+                      if (!category.trim()) {
+                        setCategory(next === "employee" ? "Salary" : "Contractor fee");
+                      }
+                    }}
+                    options={[
+                      { value: "employee", label: "Employee (internal team / PAYE)" },
+                      { value: "self_employed", label: "Contractor (self-employed)" },
+                    ]}
+                    className="min-w-0"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1">Work email</label>
@@ -981,6 +1174,7 @@ export function WorkforcePersonDrawer({
                     value={profile.email ?? ""}
                     onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
                     placeholder="name@company.com"
+                    className={workforceFieldClass}
                   />
                 </div>
                 <div>
@@ -988,6 +1182,7 @@ export function WorkforcePersonDrawer({
                   <Input
                     value={profile.phone ?? ""}
                     onChange={(e) => setProfile((p) => ({ ...p, phone: e.target.value }))}
+                    className={workforceFieldClass}
                   />
                 </div>
                 <div>
@@ -995,6 +1190,7 @@ export function WorkforcePersonDrawer({
                   <Input
                     value={profile.position ?? ""}
                     onChange={(e) => setProfile((p) => ({ ...p, position: e.target.value }))}
+                    className={workforceFieldClass}
                   />
                 </div>
                 <div>
@@ -1002,89 +1198,24 @@ export function WorkforcePersonDrawer({
                   <Input
                     value={profile.address ?? ""}
                     onChange={(e) => setProfile((p) => ({ ...p, address: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-sm font-semibold text-text-primary">Payroll & payment</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="sm:col-span-2">
-                  <Select
-                    label="Department"
-                    value={payLineDept}
-                    onChange={(e) => {
-                      setPayLineDept(e.target.value);
-                      if (e.target.value !== "Other") setPayLineOther("");
-                      if (!e.target.value) setPayLineRoleTitle("");
-                    }}
-                    options={WORKFORCE_DEPARTMENT_SELECT_OPTIONS}
-                    className="min-w-0"
-                  />
-                </div>
-                {payLineDept === "Other" && (
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Role / pay line description</label>
-                    <Input
-                      value={payLineOther}
-                      onChange={(e) => setPayLineOther(e.target.value)}
-                      placeholder="Describe the pay line"
-                      className="w-full min-w-0"
-                    />
-                  </div>
-                )}
-                {!!payLineDept && payLineDept !== "Other" && (
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Role title (optional)</label>
-                    <Input
-                      value={payLineRoleTitle}
-                      onChange={(e) => setPayLineRoleTitle(e.target.value)}
-                      placeholder="e.g. Coordinator"
-                      className="w-full min-w-0"
-                    />
-                  </div>
-                )}
-                <div className="sm:col-span-2 rounded-lg border border-dashed border-border-light bg-surface-hover/40 px-3 py-2">
-                  <p className="text-xs text-text-secondary">
-                    Fixed payment and commission are configured in the <strong className="font-medium">Finance</strong> tab.
-                  </p>
-                </div>
-                <div>
-                  <Select
-                    label="Category"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    options={[{ value: "", label: "—" }, ...PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))]}
+                    className={workforceFieldClass}
                   />
                 </div>
                 <div>
-                  <Select
-                    label="Payment status"
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as InternalCostStatus)}
-                    options={INTERNAL_STATUSES.map((s) => ({
-                      value: s,
-                      label: s === "paid" ? "Paid" : "Pending",
-                    }))}
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Start date</label>
+                  <Input
+                    type="date"
+                    value={profile.start_date ?? ""}
+                    onChange={(e) => setProfile((p) => ({ ...p, start_date: e.target.value }))}
+                    className={workforceFieldClass}
                   />
-                </div>
-                <div className="sm:col-span-2">
-                  <Select
-                    label="Business Unit"
-                    value={buId}
-                    onChange={(e) => setBuId(e.target.value)}
-                    options={[
-                      { value: "", label: "— No BU" },
-                      ...bus.map((s) => ({ value: s.id, label: s.name })),
-                    ]}
-                  />
+                  <p className="text-[10px] text-text-tertiary mt-1">Mid-month start pro-rates the first month&apos;s fixed pay (cutoff last day of month).</p>
                 </div>
               </div>
             </div>
 
             {(isEmployee || isContractor) && (
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <div className={workforceSectionClass}>
                 <p className="text-sm font-semibold text-text-primary">Tax & identifiers</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -1124,7 +1255,7 @@ export function WorkforcePersonDrawer({
             )}
 
             <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-              <Button className="w-full sm:w-auto" disabled={saving} onClick={() => void handleSaveOverview()}>
+              <Button className="w-full sm:w-auto" disabled={saving} onClick={() => void handleSaveProfile()}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save profile"}
               </Button>
             </div>
@@ -1235,6 +1366,7 @@ export function WorkforcePersonDrawer({
 
         {tab === "finance" && isEmployee && (
           <div className="space-y-6">
+            {financePayrollMeta}
             {financePaymentSetup}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <p className="text-sm font-semibold text-text-primary">P60 & P45</p>
@@ -1322,6 +1454,7 @@ export function WorkforcePersonDrawer({
 
         {tab === "finance" && isContractor && (
           <div className="space-y-6">
+            {financePayrollMeta}
             {financePaymentSetup}
             <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-3">
               <p className="text-sm font-semibold text-text-primary flex items-center gap-2">

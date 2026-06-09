@@ -24,6 +24,13 @@ import { BreakdownTable, type BreakdownColumn } from "./financials-detail-modal"
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
+import {
+  computeBillsFixedCostForPeriod,
+  computeMonthlyBillsBurn,
+  computeWorkforceMonthlyBurn,
+  type PulseOneOffExpenseLine,
+  type PulseRecurringExpenseLine,
+} from "@/lib/pulse-fixed-costs";
 import { useProfile } from "@/hooks/use-profile";
 
 const ACTIVE_OPS_STATUSES = [
@@ -57,14 +64,9 @@ type JobDetail = {
   accountName: string | null;
 };
 
-type BillDetail = {
-  id: string;
-  description: string;
-  amount: number;
-  due_date: string | null;
-  status: string | null;
-  category: string | null;
-};
+type BillDetail = PulseOneOffExpenseLine;
+
+type RecurringExpenseDetail = PulseRecurringExpenseLine;
 
 type PayrollDetail = {
   id: string;
@@ -83,9 +85,11 @@ export function Financials() {
   const isAdmin = profile?.role === "admin";
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [bills, setBills] = useState<BillDetail[]>([]);
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseDetail[]>([]);
   const [payroll, setPayroll] = useState<PayrollDetail[]>([]);
   const [setup, setSetup] = useState<FrontendSetup>(() => parseFrontendSetup(null));
   const [monthlyFixedCosts, setMonthlyFixedCosts] = useState(0);
+  const [billsPeriodTotal, setBillsPeriodTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [openModal, setOpenModal] = useState<DetailModal>(null);
 
@@ -106,10 +110,8 @@ export function Financials() {
       const { fromDay, toDay } = bounds
         ? dashboardBoundsToInclusiveLocalYmd(bounds)
         : { fromDay: ymd(startOfMonth(now)), toDay: ymd(endOfMonth(now)) };
-      const goalMonthFrom = ymd(startOfMonth(now));
-      const goalMonthTo = ymd(endOfMonth(now));
 
-      const [jobsRes, billsRes, goalBillsRes, payrollRes, settingsRes] = await Promise.all([
+      const [jobsRes, billsRes, payrollRes, settingsRes] = await Promise.all([
         supabase
           .from("jobs")
           .select(
@@ -123,19 +125,12 @@ export function Financials() {
           .limit(5000),
         supabase
           .from("bills")
-          .select("id, description, amount, status, due_date, category")
+          .select(
+            "id, description, amount, status, due_date, category, is_recurring, recurrence_interval, recurring_series_id",
+          )
           .is("archived_at", null)
           .neq("status", "rejected")
-          .gte("due_date", fromDay)
-          .lte("due_date", toDay)
           .order("due_date", { ascending: true }),
-        supabase
-          .from("bills")
-          .select("amount")
-          .is("archived_at", null)
-          .neq("status", "rejected")
-          .gte("due_date", goalMonthFrom)
-          .lte("due_date", goalMonthTo),
         supabase
           .from("payroll_internal_costs")
           .select("id, amount, lifecycle_stage, payee_name, description")
@@ -203,15 +198,10 @@ export function Financials() {
         status: string | null;
         due_date: string | null;
         category: string | null;
+        is_recurring: boolean | null;
+        recurrence_interval: string | null;
+        recurring_series_id: string | null;
       }>;
-      const billsDetail: BillDetail[] = billRows.map((b) => ({
-        id: b.id,
-        description: (b.description ?? "").trim() || "Bill",
-        amount: Number(b.amount) || 0,
-        due_date: b.due_date,
-        status: b.status,
-        category: b.category,
-      }));
 
       const parsedSetup: FrontendSetup = parseFrontendSetup(
         (settingsRes.data as { frontend_setup?: unknown } | null)?.frontend_setup,
@@ -221,7 +211,15 @@ export function Financials() {
       const workingDaysInWindow = countWorkingDaysInRange(fromDate, toDate, parsedSetup);
       const monthlyDivisor = monthlyWorkingDays(parsedSetup);
       const workforceFactor =
-        bounds && monthlyDivisor > 0 ? workingDaysInWindow / monthlyDivisor : 1;
+        monthlyDivisor > 0 ? (bounds ? workingDaysInWindow / monthlyDivisor : 1) : 0;
+
+      const { total: billsTotal, recurringLines, oneOffLines } = computeBillsFixedCostForPeriod(
+        billRows,
+        fromDay,
+        toDay,
+        workforceFactor,
+      );
+      const billsDetail: BillDetail[] = oneOffLines;
 
       const payrollRows = (payrollRes.data ?? []) as Array<{
         id: string | null;
@@ -239,17 +237,16 @@ export function Financials() {
         lifecycle_stage: r.lifecycle_stage,
       }));
 
-      const goalBillsTotal = ((goalBillsRes.data ?? []) as Array<{ amount: number | null }>).reduce(
-        (sum, row) => sum + (Number(row.amount) || 0),
-        0,
-      );
-      const workforceMonthly = payrollRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+      const workforceMonthly = computeWorkforceMonthlyBurn(payrollRows);
+      const monthlyBillsBurn = computeMonthlyBillsBurn(billRows);
 
       setJobs(jobsDetail);
       setBills(billsDetail);
+      setRecurringExpenses(recurringLines);
       setPayroll(payrollDetail);
       setSetup(parsedSetup);
-      setMonthlyFixedCosts(workforceMonthly + goalBillsTotal);
+      setMonthlyFixedCosts(workforceMonthly + monthlyBillsBurn);
+      setBillsPeriodTotal(billsTotal);
       setLoading(false);
     })();
     return () => {
@@ -268,11 +265,12 @@ export function Financials() {
       materialsCost += j.materials_cost;
       expenses += j.expenses;
     }
-    const billsTotal = bills.reduce((a, b) => a + b.amount, 0);
+    const billsTotal = billsPeriodTotal;
     const workforce = payroll.reduce((a, p) => a + p.proratedAmount, 0);
     const operatingCost = partnerCost + materialsCost + expenses;
     const fixedCost = workforce + billsTotal;
     const netMargin = revenue - operatingCost - fixedCost;
+    const recurringBills = recurringExpenses.reduce((a, line) => a + line.periodAmount, 0);
     return {
       revenue,
       partnerCost,
@@ -281,6 +279,8 @@ export function Financials() {
       operatingCost,
       workforce,
       bills: billsTotal,
+      recurringBills,
+      oneOffBills: billsTotal - recurringBills,
       fixedCost,
       netMargin,
       opsPct: revenue > 0 ? (operatingCost / revenue) * 100 : 0,
@@ -288,7 +288,7 @@ export function Financials() {
       netPct: revenue > 0 ? (netMargin / revenue) * 100 : 0,
       jobsCount: jobs.length,
     };
-  }, [jobs, bills, payroll]);
+  }, [jobs, billsPeriodTotal, payroll, recurringExpenses]);
 
   const revenueGoal = useMemo(() => {
     const now = new Date();
@@ -420,7 +420,7 @@ export function Financials() {
         />
         <KpiCard
           label="Fixed Costs"
-          hint="Workforce + bills allocated to this period. Workforce is each active person's monthly commitment pro-rated by working days in the window. Bills only count when their due_date falls inside the window."
+          hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Bills & expenses (monthly burn, pro-rated) and one-off bills due in the period."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
           topRight={<StatusDot color="bg-fx-blue" />}
           onShowDetails={isAdmin ? () => setOpenModal("fixed") : undefined}
@@ -495,7 +495,7 @@ export function Financials() {
         open={isAdmin && openModal === "fixed"}
         onClose={() => setOpenModal(null)}
         title="Fixed costs breakdown"
-        subtitle={`Workforce ${formatGbp(totals.workforce)} + Bills ${formatGbp(totals.bills)} · ${periodLabel}`}
+        subtitle={`Workforce ${formatGbp(totals.workforce)} + Expenses ${formatGbp(totals.bills)} · ${periodLabel}`}
         size="lg"
       >
         <div className="space-y-5 py-4">
@@ -514,16 +514,31 @@ export function Financials() {
           </section>
           <section>
             <div className="px-5 pb-2 flex items-center justify-between">
-              <MicroLabel>Bills due in period</MicroLabel>
+              <MicroLabel>Recurring expenses</MicroLabel>
               <span className="text-[12px] font-medium text-text-primary tabular-nums">
-                {formatGbp(totals.bills)}
+                {formatGbp(totals.recurringBills)}
+              </span>
+            </div>
+            <BreakdownTable
+              rows={recurringExpenses}
+              rowHref={() => "/finance/bills"}
+              onRowNavigate={() => setOpenModal(null)}
+              emptyLabel="No recurring expenses."
+              columns={recurringExpenseColumns}
+            />
+          </section>
+          <section>
+            <div className="px-5 pb-2 flex items-center justify-between">
+              <MicroLabel>One-off bills due in period</MicroLabel>
+              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                {formatGbp(totals.oneOffBills)}
               </span>
             </div>
             <BreakdownTable
               rows={bills}
               rowHref={() => "/finance/bills"}
               onRowNavigate={() => setOpenModal(null)}
-              emptyLabel="No bills due in this period."
+              emptyLabel="No one-off bills due in this period."
               columns={billsColumns}
             />
           </section>
@@ -557,7 +572,8 @@ export function Financials() {
             </p>
             <p>
               Workforce <strong className="text-text-primary tabular-nums">{formatGbp(totals.workforce)}</strong>
-              {" · "}Bills <strong className="text-text-primary tabular-nums">{formatGbp(totals.bills)}</strong>
+              {" · "}Recurring <strong className="text-text-primary tabular-nums">{formatGbp(totals.recurringBills)}</strong>
+              {" · "}One-off <strong className="text-text-primary tabular-nums">{formatGbp(totals.oneOffBills)}</strong>
             </p>
             <p>
               Margin {totals.netPct.toFixed(1)}% of revenue · {totals.jobsCount} job
@@ -747,6 +763,36 @@ const workforceColumns: BreakdownColumn<PayrollDetail>[] = [
     label: "Period share",
     align: "right",
     render: (p) => <span className="font-medium text-text-primary">{formatGbp(p.proratedAmount)}</span>,
+  },
+];
+
+const recurringExpenseColumns: BreakdownColumn<RecurringExpenseDetail>[] = [
+  {
+    key: "description",
+    label: "Expense",
+    render: (line) => (
+      <div className="min-w-0">
+        <div className="font-medium text-text-primary truncate">{line.description}</div>
+        {line.category ? (
+          <div className="font-mono text-[10.5px] text-fx-mute mt-0.5 uppercase tracking-[0.08em]">
+            {line.category}
+          </div>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "monthly",
+    label: "Monthly",
+    align: "right",
+    className: "hidden sm:table-cell",
+    render: (line) => <span className="text-text-primary">{formatGbp(line.monthlyAmount)}</span>,
+  },
+  {
+    key: "period",
+    label: "Period share",
+    align: "right",
+    render: (line) => <span className="font-medium text-text-primary">{formatGbp(line.periodAmount)}</span>,
   },
 ];
 

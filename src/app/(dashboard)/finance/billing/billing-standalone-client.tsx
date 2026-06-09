@@ -285,6 +285,78 @@ function BillingStandaloneInner() {
     },
     [data],
   );
+
+  const handleApproveAndSendSelfBills = useCallback(
+    async (approveIds: string[], scope: "week" | "partner" | "row") => {
+      if (!approveIds.length) return;
+      const sendIds = approveIds.filter((id) => {
+        const sb = data.selfBills.find((s) => s.id === id);
+        return (
+          sb &&
+          !isSelfBillPayoutVoided(sb) &&
+          sb.bill_origin !== "internal" &&
+          !!sb.partner_id?.trim()
+        );
+      });
+      setApprovingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        approveIds.forEach((id) => next.add(id));
+        return next;
+      });
+      setSendingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        sendIds.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const approveResult = await bulkApproveSelfBills(approveIds);
+        if (approveResult.approved > 0) {
+          toast.success(
+            approveResult.approved === 1
+              ? "Self-bill approved"
+              : `${approveResult.approved} approved`,
+          );
+        }
+        if (approveResult.skipped.length > 0) {
+          toast.error(
+            `${approveResult.skipped.length} skipped — ${approveResult.skipped[0]?.reason ?? "see logs"}`,
+          );
+        }
+
+        if (sendIds.length > 0) {
+          const cycleKind = scope === "week" ? "standard" : "auto";
+          const sendResult = await bulkSendSelfBillEmails(sendIds, { cycleKind });
+          if (sendResult.sent > 0) {
+            toast.success(
+              sendResult.sent === 1 ? "Self-bill sent" : `${sendResult.sent} self-bills sent`,
+            );
+          }
+          if (sendResult.skipped.length > 0) {
+            toast.error(
+              `${sendResult.skipped.length} skipped — ${sendResult.skipped[0]?.reason ?? "see logs"}`,
+            );
+          }
+        }
+
+        setSelectedSbIds(new Set());
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Approve & send failed");
+      } finally {
+        setApprovingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          approveIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        setSendingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          sendIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [drawerSb, setDrawerSb] = useState<SelfBill | null>(null);
   const [drawerSbJobs, setDrawerSbJobs] = useState<Awaited<ReturnType<typeof listJobsForSelfBill>>>([]);
@@ -1099,7 +1171,7 @@ function BillingStandaloneInner() {
                   <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                     Going Out · Money Out
                     <FixfyHintIcon
-                      text={`Work week · ${periodWorkWeekLabel} · Approve in Pending, then Pay in Approved.`}
+                      text={`Work week · ${periodWorkWeekLabel} · Approve & Send in Pending, then Pay in Approved.`}
                       placement="bottom-start"
                     />
                   </h2>
@@ -1159,30 +1231,20 @@ function BillingStandaloneInner() {
                           </p>
                           <div className="flex flex-wrap items-center gap-2">
                             {goingOutTab === "pending" ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  loading={sendTargetIds.some((id) => sendingSelfBillIds.has(id))}
-                                  disabled={sendTargetIds.length === 0}
-                                  onClick={() => void handleSendSelfBills(sendTargetIds, "week")}
-                                >
-                                  {hasSelection
-                                    ? `Send selected (${sendTargetIds.length})`
-                                    : `Send all${eligibleSendableIds.length ? ` (${eligibleSendableIds.length})` : ""}`}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="primary"
-                                  loading={approveTargetIds.some((id) => approvingSelfBillIds.has(id))}
-                                  disabled={approveTargetIds.length === 0}
-                                  onClick={() => void handleApproveSelfBills(approveTargetIds)}
-                                >
-                                  {hasSelection
-                                    ? `Approve selected (${approveTargetIds.length})`
-                                    : `Approve all${allTabIds.length ? ` (${allTabIds.length})` : ""}`}
-                                </Button>
-                              </>
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                loading={
+                                  approveTargetIds.some((id) => approvingSelfBillIds.has(id)) ||
+                                  sendTargetIds.some((id) => sendingSelfBillIds.has(id))
+                                }
+                                disabled={approveTargetIds.length === 0}
+                                onClick={() => void handleApproveAndSendSelfBills(approveTargetIds, "week")}
+                              >
+                                {hasSelection
+                                  ? `Approve & Send (${approveTargetIds.length})`
+                                  : `Approve & Send${allTabIds.length ? ` (${allTabIds.length})` : ""}`}
+                              </Button>
                             ) : (
                               <Button
                                 size="sm"
@@ -1218,8 +1280,11 @@ function BillingStandaloneInner() {
                             expandedKeys: expandedGoingOutPartners,
                             onToggle: toggleGoingOutPartner,
                           }}
-                          onSendBills={handleSendSelfBills}
+                          onSendBills={goingOutTab === "approved" ? handleSendSelfBills : undefined}
                           sendingIds={sendingSelfBillIds}
+                          onApproveAndSend={
+                            goingOutTab === "pending" ? handleApproveAndSendSelfBills : undefined
+                          }
                           onPayWithWise={goingOutTab === "approved" ? handlePayWithWise : undefined}
                           payingIds={payingSelfBillIds}
                           onApprove={handleApproveSelfBills}
@@ -1973,6 +2038,7 @@ function SelfBillGroupedLedger({
   onMarkPaid,
   onSendBills,
   sendingIds,
+  onApproveAndSend,
   onPayWithWise,
   payingIds,
   onApprove,
@@ -1995,6 +2061,8 @@ function SelfBillGroupedLedger({
   onSendBills?: (ids: string[], scope: "week" | "partner" | "row") => Promise<void>;
   /** Self-bill ids currently sending — drives the per-row spinner state. */
   sendingIds?: Set<string>;
+  /** Approve all ids, then email sendable partners (Pending tab). */
+  onApproveAndSend?: (ids: string[], scope: "week" | "partner" | "row") => Promise<void>;
   /** Trigger a Wise Business payout for one self-bill (full payout for the row). */
   onPayWithWise?: (selfBillId: string) => Promise<void>;
   /** Self-bill ids currently being paid via Wise. */
@@ -2033,7 +2101,28 @@ function SelfBillGroupedLedger({
             </div>
             <div className="flex items-center gap-3">
               <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
-              {onSendBills ? (() => {
+              {onApproveAndSend ? (() => {
+                const weekApproveIds = week.partners.flatMap((p) =>
+                  p.rows
+                    .filter((sb) => !isSelfBillPayoutVoided(sb) && sb.status !== "paid")
+                    .map((sb) => sb.id),
+                );
+                if (!weekApproveIds.length) return null;
+                const busyHere = weekApproveIds.some(
+                  (id) => approvingIds?.has(id) || sendingIds?.has(id),
+                );
+                return (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    loading={busyHere}
+                    onClick={() => void onApproveAndSend(weekApproveIds, "week")}
+                  >
+                    Approve & Send
+                  </Button>
+                );
+              })() : onSendBills ? (() => {
                 const weekIds = week.partners.flatMap((p) =>
                   p.rows
                     .filter((sb) => !isSelfBillPayoutVoided(sb) && sb.bill_origin !== "internal" && !!sb.partner_id?.trim())
@@ -2058,30 +2147,51 @@ function SelfBillGroupedLedger({
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
             const partnerOpen = !collapsiblePartners || collapsiblePartners.expandedKeys.has(partnerGroupKey);
+            const partnerPendingApproveIds = partner.rows
+              .filter(
+                (sb) =>
+                  !isSelfBillPayoutVoided(sb) &&
+                  sb.status !== "paid" &&
+                  !sb.approved_at,
+              )
+              .map((sb) => sb.id);
             return (
             <div key={partnerGroupKey}>
               {collapsiblePartners ? (
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5 text-left hover:bg-surface-hover/50"
-                  onClick={() => collapsiblePartners.onToggle(partnerGroupKey)}
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <PartnerGroupAvatar
-                      partnerKey={partner.partnerKey}
-                      partnerName={partner.partnerName}
-                      partnerAvatarById={partnerAvatarById}
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
-                      <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                <div className="flex items-center gap-2 bg-surface-hover/30 px-4 py-2.5">
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left hover:opacity-80"
+                    onClick={() => collapsiblePartners.onToggle(partnerGroupKey)}
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <PartnerGroupAvatar
+                        partnerKey={partner.partnerKey}
+                        partnerName={partner.partnerName}
+                        partnerAvatarById={partnerAvatarById}
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
+                        <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(partner.partnerTotal)}</p>
-                    <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", partnerOpen && "rotate-180")} />
-                  </div>
-                </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(partner.partnerTotal)}</p>
+                      <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", partnerOpen && "rotate-180")} />
+                    </div>
+                  </button>
+                  {showApproveAction === "approve" && onApprove && partnerPendingApproveIds.length > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      loading={partnerPendingApproveIds.some((id) => approvingIds?.has(id))}
+                      onClick={() => void onApprove(partnerPendingApproveIds)}
+                    >
+                      Approve
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
                 <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5">
                   <div className="flex min-w-0 items-center gap-2.5">

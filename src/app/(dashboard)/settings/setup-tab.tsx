@@ -67,6 +67,10 @@ import {
 } from "@/lib/pulse-revenue-goal";
 import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
 import {
+  computeMonthlyBillsBurn,
+  computeWorkforceMonthlyBurn,
+} from "@/lib/pulse-fixed-costs";
+import {
   getCalculatedPartnerPayoutReference,
   getNextPartnerPayoutReference,
   listUpcomingPartnerPayoutSchedule,
@@ -350,30 +354,33 @@ export function SetupTab() {
     void (async () => {
       setFixedCostsLoading(true);
       const supabase = getSupabase();
-      const now = new Date();
-      const monthFrom = format(startOfMonth(now), "yyyy-MM-dd");
-      const monthTo = format(endOfMonth(now), "yyyy-MM-dd");
       const [payrollRes, billsRes] = await Promise.all([
         supabase
           .from("payroll_internal_costs")
-          .select("amount")
+          .select("amount, lifecycle_stage")
           .or(WORKFORCE_COST_ACTIVE_OR_FILTER),
         supabase
           .from("bills")
-          .select("amount")
+          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date, description, category")
           .is("archived_at", null)
-          .neq("status", "rejected")
-          .gte("due_date", monthFrom)
-          .lte("due_date", monthTo),
+          .neq("status", "rejected"),
       ]);
       if (!alive) return;
-      const workforce = ((payrollRes.data ?? []) as Array<{ amount: number | null }>).reduce(
-        (sum, row) => sum + (Number(row.amount) || 0),
-        0,
+      const workforce = computeWorkforceMonthlyBurn(
+        (payrollRes.data ?? []) as Array<{ amount: number | null; lifecycle_stage: string | null }>,
       );
-      const bills = ((billsRes.data ?? []) as Array<{ amount: number | null }>).reduce(
-        (sum, row) => sum + (Number(row.amount) || 0),
-        0,
+      const bills = computeMonthlyBillsBurn(
+        (billsRes.data ?? []) as Array<{
+          id: string;
+          amount: number | null;
+          is_recurring: boolean | null;
+          recurrence_interval: string | null;
+          recurring_series_id: string | null;
+          status: string | null;
+          due_date: string | null;
+          description: string | null;
+          category: string | null;
+        }>,
       );
       setFixedCostsSnapshot({ workforce, bills, total: workforce + bills });
       setFixedCostsLoading(false);

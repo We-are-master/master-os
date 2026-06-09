@@ -256,21 +256,19 @@ export function LiveOperations() {
       />
       <KpiCard
         label="Daily Sales"
-        hint={kpiHint(
-          "Jobs added to the OS today (UK calendar day).",
-          loading ? null : kpiMoneyLine(stats.daily_sales.revenue, "booked today"),
-        )}
-        value={loading ? "—" : stats.daily_sales.count}
+        hint={kpiHint("Jobs added to the OS today (UK calendar day).")}
+        countBesideHint={loading ? null : stats.daily_sales.count}
+        value={loading ? "—" : formatGbp(stats.daily_sales.revenue)}
         topRight={<StatusDot color="bg-fx-green" />}
       />
       <KpiCard
         label="Cancelled"
         hint={kpiHint(
           "Jobs cancelled in the selected dashboard period. Lost revenue uses the snapshot stored at cancel time.",
-          loading ? null : kpiMoneyLine(stats.cancelled.lostTotal, "lost revenue"),
         )}
         variant={stats.cancelled.count > 0 ? "alert" : "default"}
-        value={loading ? "—" : stats.cancelled.count}
+        countBesideHint={loading ? null : stats.cancelled.count}
+        value={loading ? "—" : formatGbp(stats.cancelled.lostTotal)}
         topRight={<StatusDot color="bg-fx-red" />}
       />
     </div>
