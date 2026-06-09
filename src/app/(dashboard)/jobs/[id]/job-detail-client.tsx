@@ -18,6 +18,7 @@ import { JobZendeskStatus } from "@/components/jobs/job-zendesk-status";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { RequestPaymentPercentModal } from "@/components/invoices/request-payment-percent-modal";
 import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalReviewModal";
 import type {
   CompletionDelivery,
@@ -33,6 +34,7 @@ import {
 import {
   canSendJobInvoiceEmail,
   canSendJobSelfBillEmail,
+  formatBillingContactLoadError,
 } from "@/lib/invoice-send-eligibility";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
@@ -92,6 +94,7 @@ import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
 import {
   createSelfBillFromJob,
+  ensureWeeklySelfBillForJob,
   getSelfBill,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
@@ -1075,6 +1078,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Map card: linked account (label + optional `accounts.logo_url`) + client phone/email. */
   const [jobHeaderAccount, setJobHeaderAccount] = useState<{ label: string; logoUrl: string | null } | null>(null);
   const [jobHeaderContact, setJobHeaderContact] = useState<{ phone?: string; email?: string } | null>(null);
+  const [jobHeaderLinkedClient, setJobHeaderLinkedClient] = useState<{ id: string; full_name: string } | null>(() => {
+    const c = initialBundle?.client as { id?: string; full_name?: string } | null | undefined;
+    if (c?.id?.trim() && c.full_name?.trim()) {
+      return { id: c.id.trim(), full_name: c.full_name.trim() };
+    }
+    return null;
+  });
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
   const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
@@ -1226,8 +1236,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [financeBillingContact, setFinanceBillingContact] = useState<{
     documentEmail: string | null;
     canIncludeInvoice: boolean;
+    mode: "end_client" | "account";
+    displayName: string;
   } | null>(null);
+  const [financeBillingLoading, setFinanceBillingLoading] = useState(false);
+  const [financeBillingLoadError, setFinanceBillingLoadError] = useState<string | null>(null);
   const [sendingInvoiceEmail, setSendingInvoiceEmail] = useState(false);
+  const [requestPaymentModalOpen, setRequestPaymentModalOpen] = useState(false);
   const [sendingSelfBillEmail, setSendingSelfBillEmail] = useState(false);
   const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -1285,6 +1300,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** User chose "Unassigned" for job owner — do not auto-fill with current profile. */
   const ownerKeepUnassignedRef = useRef<Set<string>>(new Set());
   const autoInvoiceEnsureRef = useRef<Set<string>>(new Set());
+  const autoSelfBillEnsureRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
@@ -1409,34 +1425,106 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     };
   }, [validateCompleteOpen, job?.client_id, job?.client_name]);
 
+  type FinanceBillingContactData = {
+    documentEmail: string | null;
+    canIncludeInvoice: boolean;
+    mode: "end_client" | "account";
+    displayName: string;
+  };
+
+  const loadFinanceBillingContact = useCallback(
+    async (
+      jobId: string,
+    ): Promise<{ ok: true; contact: FinanceBillingContactData } | { ok: false; error: string }> => {
+      try {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/billing-contact`);
+        const data = (await res.json().catch(() => ({}))) as Partial<FinanceBillingContactData> & {
+          error?: string;
+        };
+        if (!res.ok) {
+          return { ok: false, error: formatBillingContactLoadError(res.status, data.error) };
+        }
+        return {
+          ok: true,
+          contact: {
+            documentEmail: data.documentEmail ?? null,
+            canIncludeInvoice: data.canIncludeInvoice ?? true,
+            mode: data.mode === "account" ? "account" : "end_client",
+            displayName: data.displayName?.trim() || "Client",
+          },
+        };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Network error";
+        return {
+          ok: false,
+          error: formatBillingContactLoadError(0, message),
+        };
+      }
+    },
+    [],
+  );
+
+  const bundleClientEmail = useMemo(() => {
+    const raw = initialBundle?.client as { email?: string | null; updated_at?: string | null } | null | undefined;
+    const email = raw?.email?.trim() || "";
+    const stamp = raw?.updated_at?.trim() || "";
+    return email || stamp ? `${email}|${stamp}` : "";
+  }, [initialBundle?.client]);
+
+  const refreshFinanceBillingContact = useCallback(
+    (jobId: string, opts?: { showLoading?: boolean }) => {
+      let cancelled = false;
+      if (opts?.showLoading !== false) setFinanceBillingLoading(true);
+      void loadFinanceBillingContact(jobId)
+        .then((result) => {
+          if (cancelled) return;
+          if (result.ok) {
+            setFinanceBillingContact(result.contact);
+            setFinanceBillingLoadError(null);
+          } else {
+            setFinanceBillingContact(null);
+            setFinanceBillingLoadError(result.error);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setFinanceBillingLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    },
+    [loadFinanceBillingContact],
+  );
+
   useEffect(() => {
-    if (!job?.client_id?.trim()) {
+    if (!job?.id?.trim()) {
       setFinanceBillingContact(null);
+      setFinanceBillingLoadError(null);
+      setFinanceBillingLoading(false);
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const c = await getClient(job.client_id!.trim());
-        const acc = c?.source_account_id?.trim() ? await getAccount(c.source_account_id.trim()) : null;
-        const policy = accountFinalEmailPolicyFromRow(acc);
-        const billing = await resolveNominalBillingParty(getSupabase(), {
-          clientId: job.client_id!.trim(),
-          fallbackName: job.client_name ?? undefined,
-        });
-        if (cancelled) return;
-        setFinanceBillingContact({
-          documentEmail: billing.documentEmail,
-          canIncludeInvoice: policy.canIncludeInvoice,
-        });
-      } catch {
-        if (!cancelled) setFinanceBillingContact(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
+    setFinanceBillingContact(null);
+    setFinanceBillingLoadError(null);
+    return refreshFinanceBillingContact(job.id.trim());
+  }, [
+    job?.id,
+    job?.client_id,
+    job?.client_name,
+    job?.quote_id,
+    job?.updated_at,
+    bundleClientEmail,
+    refreshFinanceBillingContact,
+  ]);
+
+  useEffect(() => {
+    if (!job?.id?.trim() || !job.client_id?.trim()) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshFinanceBillingContact(job.id!.trim(), { showLoading: false });
     };
-  }, [job?.client_id, job?.client_name]);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [job?.id, job?.client_id, refreshFinanceBillingContact]);
 
   useEffect(() => {
     if (!validateCompleteOpen || !job) return;
@@ -1741,13 +1829,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, []);
 
   const loadJobSelfBill = useCallback(async (j: Job) => {
-    if (!j.self_bill_id?.trim()) {
+    if (!j.partner_id?.trim()) {
       setJobSelfBill(null);
       return;
     }
     setLoadingSelfBill(true);
     try {
-      const sb = await getSelfBill(j.self_bill_id);
+      let working = j;
+      if (!working.self_bill_id?.trim() && !autoSelfBillEnsureRef.current.has(working.id)) {
+        autoSelfBillEnsureRef.current.add(working.id);
+        const gross = partnerSelfBillGrossAmount(working);
+        if (gross > 0.01) {
+          try {
+            await ensureWeeklySelfBillForJob(working);
+            const refreshed = await getJob(working.id);
+            if (refreshed) {
+              setJob(refreshed);
+              working = refreshed;
+            }
+          } catch {
+            // Non-blocking: use Link weekly self bill if auto-ensure fails.
+          }
+        }
+      }
+      if (!working.self_bill_id?.trim()) {
+        setJobSelfBill(null);
+        return;
+      }
+      const sb = await getSelfBill(working.self_bill_id);
       setJobSelfBill(sb);
     } catch {
       toast.error("Failed to load self-bill");
@@ -1849,7 +1958,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
-  const handleSendJobInvoiceEmail = useCallback(async () => {
+  const handleOpenRequestPaymentModal = useCallback(async () => {
+    if (!job?.id?.trim()) return;
+    const inv =
+      (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
+      jobInvoices[0];
+    if (!inv?.id) {
+      toast.error("No invoice linked to this job yet.");
+      return;
+    }
+    const result = await loadFinanceBillingContact(job.id.trim());
+    if (result.ok) {
+      setFinanceBillingContact(result.contact);
+      setFinanceBillingLoadError(null);
+    } else {
+      setFinanceBillingContact(null);
+      setFinanceBillingLoadError(result.error);
+      toast.error(result.error);
+      return;
+    }
+    const gate = canSendJobInvoiceEmail({
+      invoice: inv,
+      canIncludeInvoice: result.contact.canIncludeInvoice,
+      documentEmail: result.contact.documentEmail,
+      mode: result.contact.mode,
+      loadError: null,
+    });
+    if (!gate.ok) {
+      toast.error(gate.reason);
+      return;
+    }
+    setRequestPaymentModalOpen(true);
+  }, [job, jobInvoices, loadFinanceBillingContact]);
+
+  const handleSendJobInvoiceEmail = useCallback(async (requestPercent: number) => {
     if (!job) return;
     const inv =
       (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
@@ -1858,11 +2000,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("No invoice linked to this job yet.");
       return;
     }
+    const billingContact = financeBillingContact;
+    const billingLoadError = financeBillingLoadError;
     const gate = canSendJobInvoiceEmail({
       invoice: inv,
-      jobInternalInvoiceApproved: Boolean(job.internal_invoice_approved),
-      canIncludeInvoice: financeBillingContact?.canIncludeInvoice ?? true,
-      documentEmail: financeBillingContact?.documentEmail,
+      canIncludeInvoice: billingContact?.canIncludeInvoice ?? true,
+      documentEmail: billingContact?.documentEmail,
+      mode: billingContact?.mode,
+      loadError: billingLoadError,
     });
     if (!gate.ok) {
       toast.error(gate.reason);
@@ -1873,17 +2018,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const res = await fetch("/api/invoices/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceId: inv.id }),
+        body: JSON.stringify({
+          invoiceId: inv.id,
+          requestPercent,
+          jobId: job.id?.trim() || undefined,
+        }),
       });
       const data = (await res.json()) as { error?: string; to?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to send invoice");
-      toast.success(data.to ? `Invoice sent to ${data.to}` : "Invoice sent");
+      toast.success(data.to ? `Payment request sent to ${data.to}` : "Payment request sent");
+      setRequestPaymentModalOpen(false);
+      await loadJobInvoices(job);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to send invoice");
     } finally {
       setSendingInvoiceEmail(false);
     }
-  }, [job, jobInvoices, financeBillingContact]);
+  }, [job, jobInvoices, financeBillingContact, financeBillingLoadError, loadFinanceBillingContact, loadJobInvoices]);
 
   const handleSendJobSelfBillEmail = useCallback(async () => {
     if (!job || !jobSelfBill?.id) return;
@@ -2101,7 +2252,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return;
     }
     void loadJobSelfBill(job);
-  }, [job?.id, job?.self_bill_id, job?.updated_at, loadJobSelfBill]);
+  }, [job?.id, job?.self_bill_id, job?.partner_id, job?.updated_at, loadJobSelfBill]);
 
   useEffect(() => {
     if (job?.scheduled_start_at) {
@@ -2187,6 +2338,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!cid) {
       setJobHeaderAccount(null);
       setJobHeaderContact(null);
+      setJobHeaderLinkedClient(null);
       return;
     }
     void (async () => {
@@ -2196,11 +2348,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         if (!c) {
           setJobHeaderAccount(null);
           setJobHeaderContact(null);
+          setJobHeaderLinkedClient(null);
           return;
         }
         const phone = c.phone?.trim() || "";
         const email = c.email?.trim() || "";
         setJobHeaderContact(phone || email ? { phone: phone || undefined, email: email || undefined } : null);
+        setJobHeaderLinkedClient({ id: c.id, full_name: c.full_name?.trim() || "" });
         const sid = c.source_account_id?.trim();
         if (!sid) {
           setJobHeaderAccount(null);
@@ -2220,6 +2374,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         if (!cancelled) {
           setJobHeaderAccount(null);
           setJobHeaderContact(null);
+          setJobHeaderLinkedClient(null);
         }
       }
     })();
@@ -3289,9 +3444,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     );
     setSavingProperty(true);
     try {
+      const linkedClient = await getClient(propertyEdit.client_id);
+      const canonicalClientName =
+        linkedClient?.full_name?.trim() ||
+        propertyEdit.client_name?.trim() ||
+        job.client_name;
       const updated = await handleJobUpdate(job.id, {
         client_id: propertyEdit.client_id,
-        client_name: propertyEdit.client_name?.trim() || job.client_name,
+        client_name: canonicalClientName,
         property_address: trimmed,
         client_address_id: propertyEdit.client_address_id,
         in_ccz: mergedInCcz,
@@ -3299,6 +3459,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_final_payment: accessFin.customer_final_payment,
       });
       if (updated) {
+        if (linkedClient?.id) {
+          setJobHeaderLinkedClient({
+            id: linkedClient.id,
+            full_name: linkedClient.full_name?.trim() || canonicalClientName || "",
+          });
+        }
         await bumpLinkedInvoiceAmountsToJobSchedule(updated);
         try {
           await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
@@ -5739,10 +5905,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     : jobInvoices[0];
   const invoiceSendGate = canSendJobInvoiceEmail({
     invoice: primaryInvoiceForBadge ?? null,
-    jobInternalInvoiceApproved: Boolean(job.internal_invoice_approved),
     canIncludeInvoice: financeBillingContact?.canIncludeInvoice ?? true,
     documentEmail: financeBillingContact?.documentEmail,
+    mode: financeBillingContact?.mode,
+    loading: financeBillingLoading,
+    loadError: financeBillingLoadError,
   });
+  const headerBillingEmail = jobHeaderContact?.email?.trim() || "";
+  const resolvedBillingEmail = financeBillingContact?.documentEmail?.trim() || "";
+  const showHeaderBillingMismatch =
+    !financeBillingLoading &&
+    !financeBillingLoadError &&
+    !!headerBillingEmail &&
+    !resolvedBillingEmail;
+  const showEndCustomerBillingHint =
+    !financeBillingLoading &&
+    !financeBillingLoadError &&
+    financeBillingContact?.mode === "end_client" &&
+    !resolvedBillingEmail;
   const selfBillSendGate = canSendJobSelfBillEmail({
     selfBill: jobSelfBill,
     partnerEmail: partners.find((p) => p.id === job.partner_id)?.email ?? null,
@@ -5766,7 +5946,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     primaryInvoiceForBadge
       ? primaryInvoiceForBadge.status === "cancelled"
         ? financeDocCancelledBadge
-        : financeDocsAwaitingJobApproval || primaryInvoiceForBadge.status === "draft"
+        : primaryInvoiceForBadge.status === "draft"
           ? financeDocDraftBadge
           : financeDocSentBadge
       : null;
@@ -6407,32 +6587,67 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   />
                 </div>
                 <div className="flex min-w-0 flex-col gap-3 p-4">
-                  {(() => {
-                    const JobTypeIcon = getJobTypeIcon(job.title ?? "");
-                    const typePillClass = getJobTypePillClass(job.title ?? "");
-                    return job.title?.trim() ? (
-                      <div className="mb-3 inline-flex self-start items-center gap-1.5">
-                        <p className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}>
-                          <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
-                          {job.title.trim()}
-                        </p>
-                        <button
-                          type="button"
-                          className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                          disabled={job.status === "cancelled"}
-                          onClick={openJobBillingTypeEdit}
-                          title="Edit type of work, pricing & assignment"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm font-medium text-text-tertiary">No service title</p>
-                    );
-                  })()}
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    {(() => {
+                      const JobTypeIcon = getJobTypeIcon(job.title ?? "");
+                      const typePillClass = getJobTypePillClass(job.title ?? "");
+                      return job.title?.trim() ? (
+                        <div className="inline-flex min-w-0 items-center gap-1.5">
+                          <p className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}>
+                            <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
+                            {job.title.trim()}
+                          </p>
+                          <button
+                            type="button"
+                            className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
+                            disabled={job.status === "cancelled"}
+                            onClick={openJobBillingTypeEdit}
+                            title="Edit type of work, pricing & assignment"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-medium text-text-tertiary">No service title</p>
+                      );
+                    })()}
+                    <button
+                      type="button"
+                      onClick={() => setClientEditAccordionOpen((o) => !o)}
+                      className={cn(
+                        "inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-hover px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary",
+                        clientEditAccordionOpen && "border-primary/35 bg-primary-light/60 text-primary dark:bg-primary/15",
+                      )}
+                      disabled={job.status === "cancelled"}
+                      title="Edit client & address"
+                      aria-expanded={clientEditAccordionOpen}
+                    >
+                      <Pencil className="h-3 w-3 shrink-0" aria-hidden />
+                      Edit
+                    </button>
+                  </div>
                   <div>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <p className="text-sm font-semibold leading-tight text-text-primary">{job.client_name}</p>
+                      {(() => {
+                        const linkedName = jobHeaderLinkedClient?.full_name?.trim() || "";
+                        const displayName =
+                          linkedName || job.client_name?.trim() || "—";
+                        const clientId = job.client_id?.trim() || "";
+                        if (clientId) {
+                          return (
+                            <Link
+                              href={`/clients?clientId=${encodeURIComponent(clientId)}`}
+                              className="text-sm font-semibold leading-tight text-text-primary hover:text-primary hover:underline"
+                              title="Open client card"
+                            >
+                              {displayName}
+                            </Link>
+                          );
+                        }
+                        return (
+                          <p className="text-sm font-semibold leading-tight text-text-primary">{displayName}</p>
+                        );
+                      })()}
                       {jobHeaderAccount ? (
                         <span
                           title={`Account: ${jobHeaderAccount.label}`}
@@ -6693,27 +6908,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
               </div>
-              <div style={{ borderTop: "0.5px solid #E4E4E8" }}>
-                <button
-                  type="button"
-                  onClick={() => setClientEditAccordionOpen((o) => !o)}
-                  className="flex w-full items-center justify-between gap-2 px-[18px] py-[14px] text-left"
-                  style={{ background: "#FAFAFB" }}
-                >
-                  <span
-                    className="inline-flex items-center gap-[6px] text-[13px] font-medium"
-                    style={{ color: "#020040" }}
-                  >
-                    <Pencil className="h-[12px] w-[12px] shrink-0" aria-hidden />
-                    Edit client &amp; address
-                  </span>
-                  <ChevronDown
-                    className={cn("h-4 w-4 shrink-0 transition-transform", clientEditAccordionOpen && "rotate-180")}
-                    style={{ color: "#9A9AA0" }}
-                  />
-                </button>
-                {clientEditAccordionOpen ? (
-                  <div className={cn("space-y-2 border-t border-border-light px-3 py-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
+              {clientEditAccordionOpen ? (
+                <div style={{ borderTop: "0.5px solid #E4E4E8", background: "#FAFAFB" }}>
+                  <div className={cn("space-y-2 px-3 py-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
                     {job.client_id && propertyEdit ? (
                       <>
                         <ClientAddressPicker
@@ -6760,8 +6957,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       </div>
                     )}
                   </div>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
               <div
                 className="p-[18px] space-y-[14px]"
                 style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
@@ -8635,36 +8832,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             {/* Financial documents: client invoices (us→client) */}
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    icon={<Mail className="h-3 w-3" />}
-                    loading={sendingInvoiceEmail}
-                    disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices}
-                    title={invoiceSendGate.ok ? "Request payment — email invoice PDF to billing contact" : invoiceSendGate.reason}
-                    onClick={() => void handleSendJobInvoiceEmail()}
-                  >
-                    Request payment
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    icon={<Mail className="h-3 w-3" />}
-                    loading={sendingSelfBillEmail}
-                    disabled={!selfBillSendGate.ok || sendingSelfBillEmail || loadingSelfBill}
-                    title={selfBillSendGate.ok ? "Email self-bill PDF to partner (Resend)" : selfBillSendGate.reason}
-                    onClick={() => void handleSendJobSelfBillEmail()}
-                  >
-                    Send self bill
-                  </Button>
-                </div>
-              </div>
-
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
@@ -8828,6 +8995,55 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     })
                 )}
               </div>
+
+              <div className="border-t border-border-light pt-3 mt-2 space-y-2">
+                {financeBillingLoading ? (
+                  <p className="text-[11px] leading-snug text-text-tertiary">Loading billing contact…</p>
+                ) : financeBillingLoadError ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{financeBillingLoadError}</p>
+                ) : financeBillingContact?.documentEmail?.trim() ? (
+                  <p className="text-[11px] leading-snug text-text-secondary">
+                    Sends to{" "}
+                    <span className="font-medium text-text-primary">{financeBillingContact.documentEmail.trim()}</span>
+                    <span className="text-text-tertiary">
+                      {" "}
+                      ({financeBillingContact.mode === "account" ? "This account" : "End customer"})
+                    </span>
+                  </p>
+                ) : financeBillingContact ? (
+                  <p className="text-[11px] leading-snug text-text-tertiary">
+                    Billing: {financeBillingContact.mode === "account" ? "This account" : "End customer"}
+                  </p>
+                ) : null}
+                {showEndCustomerBillingHint ? (
+                  <p className="text-[11px] leading-snug text-text-tertiary">
+                    End customer billing uses the client email — not Finance → Billing Email. Edit{" "}
+                    {job.client_name?.trim() || "this client"} under Accounts → Clients or /clients.
+                  </p>
+                ) : null}
+                {showHeaderBillingMismatch ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">
+                    Client card shows {headerBillingEmail}, but billing could not resolve a send address. Confirm the
+                    email is on the client linked to this job, or retry after saving in /clients.
+                  </p>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  className="w-full sm:w-auto"
+                  icon={<Mail className="h-3 w-3" />}
+                  loading={sendingInvoiceEmail}
+                  disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
+                  title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
+                  onClick={() => void handleOpenRequestPaymentModal()}
+                >
+                  Request payment
+                </Button>
+                {!invoiceSendGate.ok && !financeBillingLoading ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
+                ) : null}
+              </div>
             </div>
 
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
@@ -8881,6 +9097,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </Button>
                 </div>
               )}
+
+              <div className="border-t border-border-light pt-3 mt-2 space-y-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  className="w-full sm:w-auto"
+                  icon={<Mail className="h-3 w-3" />}
+                  loading={sendingSelfBillEmail}
+                  disabled={!selfBillSendGate.ok || sendingSelfBillEmail || loadingSelfBill}
+                  title={selfBillSendGate.ok ? "Email self-bill PDF to partner (Resend)" : selfBillSendGate.reason}
+                  onClick={() => void handleSendJobSelfBillEmail()}
+                >
+                  Send self bill
+                </Button>
+                {!selfBillSendGate.ok ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{selfBillSendGate.reason}</p>
+                ) : null}
+              </div>
             </div>
 
           </div>
@@ -10561,6 +10796,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             toast.error(e instanceof Error ? e.message : "Failed to apply change");
           }
         }}
+      />
+
+      <RequestPaymentPercentModal
+        open={requestPaymentModalOpen}
+        onClose={() => setRequestPaymentModalOpen(false)}
+        invoice={primaryInvoiceForBadge ?? null}
+        recipientEmail={financeBillingContact?.documentEmail ?? null}
+        billingModeLabel={
+          financeBillingContact?.mode === "account"
+            ? "This account"
+            : financeBillingContact?.mode === "end_client"
+              ? "End customer"
+              : undefined
+        }
+        loading={sendingInvoiceEmail}
+        onConfirm={(pct) => void handleSendJobInvoiceEmail(pct)}
       />
     </PageTransition>
   );

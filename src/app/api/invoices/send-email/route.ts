@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
-  let body: { invoiceId?: unknown };
+  let body: { invoiceId?: unknown; requestPercent?: unknown; jobId?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -16,8 +16,18 @@ export async function POST(req: NextRequest) {
   }
 
   const invoiceId = typeof body.invoiceId === "string" ? body.invoiceId.trim() : "";
+  const jobId = typeof body.jobId === "string" && isValidUUID(body.jobId.trim()) ? body.jobId.trim() : undefined;
   if (!invoiceId || !isValidUUID(invoiceId)) {
     return NextResponse.json({ error: "Valid invoiceId is required" }, { status: 400 });
+  }
+
+  let requestPercent: number | undefined;
+  if (body.requestPercent !== undefined && body.requestPercent !== null) {
+    const n = Number(body.requestPercent);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return NextResponse.json({ error: "requestPercent must be between 0 and 100" }, { status: 400 });
+    }
+    requestPercent = n;
   }
 
   const profileClient = await createClient();
@@ -32,6 +42,8 @@ export async function POST(req: NextRequest) {
   const result = await sendInvoiceEmail(admin, invoiceId, {
     userId: auth.user.id,
     userName,
+    requestPercent,
+    jobId,
   });
 
   if ("error" in result) {

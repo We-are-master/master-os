@@ -1,134 +1,172 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import {
+  fetchAccountMetadataForInvoices,
+  type BillingAccountMetadata,
+} from "@/lib/billing-account-metadata";
 import {
   fetchCustomerPaidSumByJobIds,
   fetchJobsByReferences,
   effectiveInvoiceSourceAccountId,
 } from "@/lib/billing-invoice-list-data";
 import { computeLinkedJobsMapsForSelfBillIds } from "@/lib/billing-selfbill-actions";
+import { buildInvoiceAccountMaps } from "@/lib/billing-invoice-account-resolve";
 import {
   fetchInvoicesForBilling,
   fetchSelfBillsForBilling,
+  mergeInvoicesById,
+  mergeSelfBillsById,
 } from "@/lib/billing-standalone-fetch";
 import {
+  getBillingInitialFetchBounds,
   resolveBillingStandaloneFilterBounds,
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
+import type { YmdBounds } from "@/lib/billing-standalone-period";
 import type { Invoice, SelfBill } from "@/types/database";
 
 const PARTNER_TERMS_CHUNK = 80;
-const JOB_CLIENT_CHUNK = 100;
 
-async function fetchPartnerPaymentTerms(partnerIds: string[]): Promise<Record<string, string | null>> {
-  if (partnerIds.length === 0) return {};
+async function fetchPartnerBillingMeta(partnerIds: string[]): Promise<{
+  termsById: Record<string, string | null>;
+  avatarById: Record<string, string | null>;
+}> {
+  if (partnerIds.length === 0) return { termsById: {}, avatarById: {} };
   const supabase = getSupabase();
-  const termsPatch: Record<string, string | null> = {};
+  const termsById: Record<string, string | null> = {};
+  const avatarById: Record<string, string | null> = {};
   const chunks: string[][] = [];
   for (let i = 0; i < partnerIds.length; i += PARTNER_TERMS_CHUNK) {
     chunks.push(partnerIds.slice(i, i + PARTNER_TERMS_CHUNK));
   }
   const results = await Promise.all(
-    chunks.map((chunk) => supabase.from("partners").select("id, payment_terms").in("id", chunk)),
+    chunks.map((chunk) => supabase.from("partners").select("id, payment_terms, avatar_url").in("id", chunk)),
   );
   for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {
-      const pr = row as { id: string; payment_terms?: string | null };
-      termsPatch[pr.id] = pr.payment_terms?.trim() || null;
+      const pr = row as { id: string; payment_terms?: string | null; avatar_url?: string | null };
+      termsById[pr.id] = pr.payment_terms?.trim() || null;
+      avatarById[pr.id] = pr.avatar_url?.trim() || null;
     }
   }
-  return termsPatch;
+  return { termsById, avatarById };
 }
 
-async function fetchJobRefAccountMaps(refs: string[]): Promise<{
+const EMPTY_ACCOUNT_META: BillingAccountMetadata = {
+  accountNameById: {},
+  accountTermsById: {},
+  accountLogoById: {},
+};
+
+async function enrichBillingRows(
+  invRows: Invoice[],
+  sbRows: SelfBill[],
+): Promise<{
+  jobsByRef: Awaited<ReturnType<typeof fetchJobsByReferences>>;
+  customerPaidByJobId: Record<string, number>;
+  jobsBySelfBillId: Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["map"];
+  partnerPaidByJobId: Record<string, number>;
   jobRefToAccountId: Record<string, string>;
   clientNameToAccountId: Record<string, string>;
-}> {
-  const j2a: Record<string, string> = {};
-  const c2a: Record<string, string> = {};
-  if (refs.length === 0) return { jobRefToAccountId: j2a, clientNameToAccountId: c2a };
-
-  const supabase = getSupabase();
-  const chunks: string[][] = [];
-  for (let i = 0; i < refs.length; i += JOB_CLIENT_CHUNK) {
-    chunks.push(refs.slice(i, i + JOB_CLIENT_CHUNK));
-  }
-  const results = await Promise.all(
-    chunks.map((chunk) =>
-      supabase
-        .from("jobs")
-        .select("reference, client_id, clients(source_account_id, full_name)")
-        .in("reference", chunk),
-    ),
-  );
-  for (const { data, error } of results) {
-    if (error) throw error;
-    for (const row of data ?? []) {
-      const r = row as {
-        reference?: string;
-        clients?: { source_account_id?: string | null; full_name?: string | null } | {
-          source_account_id?: string | null;
-          full_name?: string | null;
-        }[];
-      };
-      const clients = Array.isArray(r.clients) ? r.clients[0] : r.clients;
-      const aid = clients?.source_account_id?.trim();
-      const ref = r.reference?.trim();
-      if (ref && aid) j2a[ref] = aid;
-      const fn = clients?.full_name?.trim();
-      if (fn && aid) c2a[fn] = aid;
-    }
-  }
-  return { jobRefToAccountId: j2a, clientNameToAccountId: c2a };
-}
-
-async function fetchAccountMaps(
-  invRows: Invoice[],
-  jobRefToAccountId: Record<string, string>,
-  clientNameToAccountId: Record<string, string>,
-): Promise<{
   accountNameById: Record<string, string>;
   accountTermsById: Record<string, string>;
   accountLogoById: Record<string, string | null>;
+  partnerTermsById: Record<string, string | null>;
+  partnerAvatarById: Record<string, string | null>;
+  mapsFailed: boolean;
+  accountMetaFailed: boolean;
 }> {
-  const accountIds = [
-    ...new Set([
-      ...invRows.map((i) => i.source_account_id?.trim()).filter(Boolean),
-      ...Object.values(jobRefToAccountId),
-      ...Object.values(clientNameToAccountId),
-    ]),
-  ] as string[];
+  const refs = [...new Set(invRows.map((i) => i.job_reference?.trim()).filter(Boolean))] as string[];
+  const sbIds = sbRows.map((s) => s.id);
+  const partnerIds = [...new Set(sbRows.map((s) => s.partner_id?.trim()).filter(Boolean))] as string[];
 
-  const names: Record<string, string> = {};
-  const terms: Record<string, string> = {};
-  const logos: Record<string, string | null> = {};
-  if (accountIds.length === 0) return { accountNameById: names, accountTermsById: terms, accountLogoById: logos };
+  let jobMap: Awaited<ReturnType<typeof fetchJobsByReferences>> = {};
+  let linkedJobs: Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>> = {
+    map: {},
+    partnerPaidByJobId: {},
+  };
+  let jobRefToAccountId: Record<string, string> = {};
+  let clientNameToAccountId: Record<string, string> = {};
+  let partnerTerms: Record<string, string | null> = {};
+  let partnerAvatars: Record<string, string | null> = {};
+  let mapsFailed = false;
 
-  const supabase = getSupabase();
-  const { data: accRows, error } = await supabase
-    .from("accounts")
-    .select("id, company_name, contact_name, payment_terms, logo_url")
-    .in("id", accountIds);
-  if (error) throw error;
-  for (const a of accRows ?? []) {
-    const row = a as {
-      id: string;
-      company_name?: string | null;
-      contact_name?: string | null;
-      payment_terms?: string | null;
-      logo_url?: string | null;
-    };
-    names[row.id] = row.company_name?.trim() || row.contact_name?.trim() || row.id;
-    terms[row.id] = row.payment_terms?.trim() || "—";
-    logos[row.id] = row.logo_url ?? null;
+  try {
+    const [jobs, linked, partnerMeta] = await Promise.all([
+      fetchJobsByReferences(refs),
+      computeLinkedJobsMapsForSelfBillIds(sbIds),
+      fetchPartnerBillingMeta(partnerIds),
+    ]);
+    jobMap = jobs;
+    linkedJobs = linked;
+    partnerTerms = partnerMeta.termsById;
+    partnerAvatars = partnerMeta.avatarById;
+  } catch (e) {
+    console.error("billing jobs/self-bill enrich failed", e);
+    mapsFailed = true;
   }
-  return { accountNameById: names, accountTermsById: terms, accountLogoById: logos };
+
+  try {
+    const accountMaps = await buildInvoiceAccountMaps(invRows);
+    jobRefToAccountId = accountMaps.jobRefToAccountId;
+    clientNameToAccountId = accountMaps.clientNameToAccountId;
+  } catch (e) {
+    console.error("billing invoice account maps failed", e);
+    mapsFailed = true;
+  }
+
+  const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
+  let paidMap: Record<string, number> = {};
+  try {
+    paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
+  } catch (e) {
+    console.error("billing customer paid sums failed", e);
+    mapsFailed = true;
+  }
+
+  let accountMeta = EMPTY_ACCOUNT_META;
+  let accountMetaFailed = false;
+  try {
+    accountMeta = await fetchAccountMetadataForInvoices(
+      invRows,
+      jobRefToAccountId,
+      clientNameToAccountId,
+    );
+  } catch (e) {
+    console.error("billing account metadata failed", e);
+    accountMetaFailed = true;
+  }
+
+  return {
+    jobsByRef: jobMap,
+    customerPaidByJobId: paidMap,
+    jobsBySelfBillId: linkedJobs.map,
+    partnerPaidByJobId: linkedJobs.partnerPaidByJobId,
+    jobRefToAccountId,
+    clientNameToAccountId,
+    accountNameById: accountMeta.accountNameById,
+    accountTermsById: accountMeta.accountTermsById,
+    accountLogoById: accountMeta.accountLogoById,
+    partnerTermsById: partnerTerms,
+    partnerAvatarById: partnerAvatars,
+    mapsFailed,
+    accountMetaFailed,
+  };
 }
 
-export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterValue) {
+export type BillingRepairAccountLabel = {
+  id: string;
+  label: string;
+  logoUrl: string | null;
+  count: number;
+};
+
+export function useBillingStandaloneData() {
   const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
@@ -139,6 +177,7 @@ export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterVa
   >({});
   const [partnerPaidByJobId, setPartnerPaidByJobId] = useState<Record<string, number>>({});
   const [partnerTermsById, setPartnerTermsById] = useState<Record<string, string | null>>({});
+  const [partnerAvatarById, setPartnerAvatarById] = useState<Record<string, string | null>>({});
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   const [accountTermsById, setAccountTermsById] = useState<Record<string, string>>({});
   const [accountLogoById, setAccountLogoById] = useState<Record<string, string | null>>({});
@@ -147,11 +186,9 @@ export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterVa
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-
-  const fetchBounds = useMemo(
-    () => resolveBillingStandaloneFilterBounds(periodFilter),
-    [periodFilter],
-  );
+  const fullHistoryLoadedRef = useRef(false);
+  const prefetchingRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
 
   const dueCtx = useMemo(
     () => ({
@@ -161,73 +198,138 @@ export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterVa
     [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
   );
 
+  const applyEnrichment = useCallback((enriched: Awaited<ReturnType<typeof enrichBillingRows>>) => {
+    setJobsByRef(enriched.jobsByRef);
+    setCustomerPaidByJobId(enriched.customerPaidByJobId);
+    setJobsBySelfBillId(enriched.jobsBySelfBillId);
+    setPartnerPaidByJobId(enriched.partnerPaidByJobId);
+    setJobRefToAccountId(enriched.jobRefToAccountId);
+    setClientNameToAccountId(enriched.clientNameToAccountId);
+    setAccountNameById(enriched.accountNameById);
+    setAccountTermsById(enriched.accountTermsById);
+    setAccountLogoById(enriched.accountLogoById);
+    setPartnerTermsById(enriched.partnerTermsById);
+    setPartnerAvatarById(enriched.partnerAvatarById);
+  }, []);
+
+  const applyAccountLabels = useCallback((accounts: BillingRepairAccountLabel[]) => {
+    if (accounts.length === 0) return;
+    const names: Record<string, string> = {};
+    const logos: Record<string, string | null> = {};
+    for (const a of accounts) {
+      if (!a.id?.trim() || !a.label?.trim()) continue;
+      names[a.id] = a.label.trim();
+      logos[a.id] = a.logoUrl ?? null;
+    }
+    setAccountNameById((prev) => ({ ...prev, ...names }));
+    setAccountLogoById((prev) => ({ ...prev, ...logos }));
+  }, []);
+
   const loadData = useCallback(
-    async (opts?: { background?: boolean }) => {
-      if (opts?.background) {
+    async (opts?: { background?: boolean; bounds?: YmdBounds | null }) => {
+      const background = opts?.background ?? false;
+      const bounds =
+        opts?.bounds !== undefined
+          ? opts.bounds
+          : fullHistoryLoadedRef.current
+            ? null
+            : getBillingInitialFetchBounds();
+
+      if (background) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
+
+      let invRows: Invoice[] = [];
+      let sbRows: SelfBill[] = [];
+
       try {
-        const [invRows, sbRows] = await Promise.all([
-          fetchInvoicesForBilling(fetchBounds),
-          fetchSelfBillsForBilling(fetchBounds),
+        [invRows, sbRows] = await Promise.all([
+          fetchInvoicesForBilling(bounds),
+          fetchSelfBillsForBilling(bounds),
         ]);
         setInvoices(invRows);
         setSelfBills(sbRows);
-
-        const refs = [...new Set(invRows.map((i) => i.job_reference?.trim()).filter(Boolean))] as string[];
-        const sbIds = sbRows.map((s) => s.id);
-        const partnerIds = [...new Set(sbRows.map((s) => s.partner_id?.trim()).filter(Boolean))] as string[];
-
-        const [jobMap, linkedJobs, accountMaps, partnerTerms] = await Promise.all([
-          fetchJobsByReferences(refs),
-          computeLinkedJobsMapsForSelfBillIds(sbIds),
-          fetchJobRefAccountMaps(refs),
-          fetchPartnerPaymentTerms(partnerIds),
-        ]);
-
-        const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
-        const [paidMap, accountMeta] = await Promise.all([
-          fetchCustomerPaidSumByJobIds(jobIds),
-          fetchAccountMaps(invRows, accountMaps.jobRefToAccountId, accountMaps.clientNameToAccountId),
-        ]);
-
-        setJobsByRef(jobMap);
-        setCustomerPaidByJobId(paidMap);
-        setJobsBySelfBillId(linkedJobs.map);
-        setPartnerPaidByJobId(linkedJobs.partnerPaidByJobId);
-        setJobRefToAccountId(accountMaps.jobRefToAccountId);
-        setClientNameToAccountId(accountMaps.clientNameToAccountId);
-        setAccountNameById(accountMeta.accountNameById);
-        setAccountTermsById(accountMeta.accountTermsById);
-        setAccountLogoById(accountMeta.accountLogoById);
-        setPartnerTermsById(partnerTerms);
-        setHasLoadedOnce(true);
+        if (bounds === null) fullHistoryLoadedRef.current = true;
       } catch (e) {
-        console.error("billing standalone load failed", e);
-        if (!opts?.background) {
+        console.error("billing standalone fetch failed", e);
+        toast.error("Could not load billing data. Try Sync.");
+        if (!background && !hasLoadedOnceRef.current) {
           setInvoices([]);
           setSelfBills([]);
         }
-      } finally {
         setLoading(false);
         setRefreshing(false);
+        return;
       }
+
+      const enriched = await enrichBillingRows(invRows, sbRows);
+      applyEnrichment(enriched);
+      hasLoadedOnceRef.current = true;
+      setHasLoadedOnce(true);
+
+      if (enriched.mapsFailed || enriched.accountMetaFailed) {
+        toast.error("Billing loaded partially — some account or job details may be missing.");
+      }
+
+      setLoading(false);
+      setRefreshing(false);
     },
-    [fetchBounds],
+    [applyEnrichment],
   );
 
+  const prefetchFullHistory = useCallback(async () => {
+    if (fullHistoryLoadedRef.current || prefetchingRef.current) return;
+    prefetchingRef.current = true;
+    try {
+      const [fullInv, fullSb] = await Promise.all([
+        fetchInvoicesForBilling(null),
+        fetchSelfBillsForBilling(null),
+      ]);
+      let mergedInv = fullInv;
+      let mergedSb = fullSb;
+      setInvoices((prev) => {
+        mergedInv = mergeInvoicesById([...prev, ...fullInv]);
+        return mergedInv;
+      });
+      setSelfBills((prev) => {
+        mergedSb = mergeSelfBillsById([...prev, ...fullSb]);
+        return mergedSb;
+      });
+      fullHistoryLoadedRef.current = true;
+      const enriched = await enrichBillingRows(mergedInv, mergedSb);
+      applyEnrichment(enriched);
+    } catch (e) {
+      console.error("billing full history prefetch failed", e);
+    } finally {
+      prefetchingRef.current = false;
+    }
+  }, [applyEnrichment]);
+
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    let cancelled = false;
+    void (async () => {
+      await loadData();
+      if (!cancelled) void prefetchFullHistory();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only initial load + prefetch
+  }, []);
 
   useEffect(() => {
     const supabase = getSupabase();
     let t: ReturnType<typeof setTimeout>;
     const schedule = () => {
       clearTimeout(t);
-      t = setTimeout(() => void loadData({ background: true }), 350);
+      t = setTimeout(() => {
+        void loadData({
+          background: true,
+          bounds: fullHistoryLoadedRef.current ? null : getBillingInitialFetchBounds(),
+        });
+      }, 350);
     };
     const ch = supabase
       .channel("billing_standalone")
@@ -272,8 +374,10 @@ export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterVa
     clientNameToAccountId,
     resolveAccountId,
     partnerDueCtx,
+    partnerAvatarById,
     dueCtx,
     loadData,
+    applyAccountLabels,
     periodBounds: (filter: BillingStandaloneFilterValue) => resolveBillingStandaloneFilterBounds(filter),
     selfBillPeriodBounds: (filter: BillingStandaloneFilterValue) => resolveBillingStandaloneFilterBounds(filter),
   };

@@ -3,14 +3,15 @@ import assert from "node:assert/strict";
 import {
   canSendJobInvoiceEmail,
   canSendJobSelfBillEmail,
+  formatBillingContactLoadError,
+  missingBillingEmailReason,
 } from "./invoice-send-eligibility";
-import { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "./invoice-send-email";
+import { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "./invoice-email-subject";
 
 describe("canSendJobInvoiceEmail", () => {
   it("requires a linked invoice", () => {
     const r = canSendJobInvoiceEmail({
       invoice: null,
-      jobInternalInvoiceApproved: true,
       canIncludeInvoice: true,
       documentEmail: "a@b.com",
     });
@@ -20,27 +21,24 @@ describe("canSendJobInvoiceEmail", () => {
   it("blocks cancelled invoices", () => {
     const r = canSendJobInvoiceEmail({
       invoice: { status: "cancelled" },
-      jobInternalInvoiceApproved: true,
       canIncludeInvoice: true,
       documentEmail: "a@b.com",
     });
     assert.equal(r.ok, false);
   });
 
-  it("blocks when finance not approved on job", () => {
+  it("allows draft invoices when email and policy are ok", () => {
     const r = canSendJobInvoiceEmail({
-      invoice: { status: "pending" },
-      jobInternalInvoiceApproved: false,
+      invoice: { status: "draft" },
       canIncludeInvoice: true,
-      documentEmail: "a@b.com",
+      documentEmail: "finance@client.com",
     });
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true);
   });
 
   it("blocks when account disallows invoice emails", () => {
     const r = canSendJobInvoiceEmail({
       invoice: { status: "pending" },
-      jobInternalInvoiceApproved: true,
       canIncludeInvoice: false,
       documentEmail: "a@b.com",
     });
@@ -50,17 +48,68 @@ describe("canSendJobInvoiceEmail", () => {
   it("blocks when billing email missing", () => {
     const r = canSendJobInvoiceEmail({
       invoice: { status: "pending" },
-      jobInternalInvoiceApproved: true,
       canIncludeInvoice: true,
       documentEmail: null,
     });
     assert.equal(r.ok, false);
   });
 
+  it("blocks while billing contact is loading", () => {
+    const r = canSendJobInvoiceEmail({
+      invoice: { status: "pending" },
+      canIncludeInvoice: true,
+      documentEmail: "a@b.com",
+      loading: true,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.reason, /Loading billing contact/);
+  });
+
+  it("uses account-specific message when billing email missing", () => {
+    const r = canSendJobInvoiceEmail({
+      invoice: { status: "pending" },
+      canIncludeInvoice: true,
+      documentEmail: null,
+      mode: "account",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.reason, missingBillingEmailReason("account"));
+  });
+
+  it("uses end-client message when client email missing", () => {
+    const r = canSendJobInvoiceEmail({
+      invoice: { status: "pending" },
+      canIncludeInvoice: true,
+      documentEmail: null,
+      mode: "end_client",
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.reason, missingBillingEmailReason("end_client"));
+  });
+
+  it("surfaces billing-contact API errors separately from missing email", () => {
+    const apiError = formatBillingContactLoadError(503, "SERVICE_ROLE_KEY missing");
+    const r = canSendJobInvoiceEmail({
+      invoice: { status: "pending" },
+      canIncludeInvoice: true,
+      documentEmail: null,
+      mode: "end_client",
+      loadError: apiError,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.match(r.reason, /Could not load billing contact \(503\)/);
+      assert.notEqual(r.reason, missingBillingEmailReason("end_client"));
+    }
+  });
+
+  it("formatBillingContactLoadError handles network failures", () => {
+    assert.match(formatBillingContactLoadError(0, "Failed to fetch"), /Could not load billing contact:/);
+  });
+
   it("allows when all gates pass", () => {
     const r = canSendJobInvoiceEmail({
       invoice: { status: "pending" },
-      jobInternalInvoiceApproved: true,
       canIncludeInvoice: true,
       documentEmail: "finance@client.com",
     });

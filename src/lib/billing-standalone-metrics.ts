@@ -18,6 +18,7 @@ import {
   type YmdBounds,
 } from "@/lib/billing-standalone-period";
 import {
+  effectiveInvoiceSourceAccountId,
   invoiceListBalanceDue,
   isInvoiceOpen,
   type InvoiceListJobSnapshot,
@@ -217,23 +218,90 @@ export function computeAgingTotals(
   return totals;
 }
 
+export const UNLINKED_ATTENTION_ACCOUNT_KEY = "acc:unlinked";
+
 export type WorklistRow = {
   invoice: Invoice;
   balanceDue: number;
   daysLate: number;
   accountKey: string;
   accountName: string;
+  clientName: string;
   jobCount: number;
 };
 
 export type AttentionAccountGroup = {
   accountKey: string;
+  accountId: string | null;
   accountName: string;
   invoiceCount: number;
   totalDue: number;
   maxDaysLate: number;
   rows: WorklistRow[];
 };
+
+export type InvoiceLedgerAccountGroup = {
+  accountKey: string;
+  accountId: string | null;
+  accountName: string;
+  invoiceCount: number;
+  totalAmount: number;
+  invoices: Invoice[];
+};
+
+function invoiceLedgerAccountMeta(
+  inv: Invoice,
+  accountNameById: Record<string, string>,
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): { accountKey: string; accountId: string | null; accountName: string } {
+  const accId = effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId);
+  const accountKey = accId ? `acc:${accId}` : UNLINKED_ATTENTION_ACCOUNT_KEY;
+  const accountName = accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked";
+  return { accountKey, accountId: accId, accountName };
+}
+
+export function buildInvoiceLedgerAccountGroups(
+  invoices: Invoice[],
+  accountNameById: Record<string, string>,
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): InvoiceLedgerAccountGroup[] {
+  const byAccount = new Map<string, InvoiceLedgerAccountGroup>();
+  for (const inv of invoices) {
+    const { accountKey, accountId, accountName } = invoiceLedgerAccountMeta(
+      inv,
+      accountNameById,
+      jobRefToAccountId,
+      clientNameToAccountId,
+    );
+    let group = byAccount.get(accountKey);
+    if (!group) {
+      group = {
+        accountKey,
+        accountId,
+        accountName,
+        invoiceCount: 0,
+        totalAmount: 0,
+        invoices: [],
+      };
+      byAccount.set(accountKey, group);
+    }
+    group.invoices.push(inv);
+    group.invoiceCount += 1;
+    group.totalAmount = Math.round((group.totalAmount + Number(inv.amount ?? 0)) * 100) / 100;
+  }
+  return [...byAccount.values()]
+    .map((group) => ({
+      ...group,
+      invoices: [...group.invoices].sort(
+        (a, b) =>
+          (a.due_date ?? "").localeCompare(b.due_date ?? "") ||
+          (a.reference ?? "").localeCompare(b.reference ?? ""),
+      ),
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount || a.accountName.localeCompare(b.accountName));
+}
 
 function collectAttentionWorklistRows(
   invoices: Invoice[],
@@ -254,18 +322,15 @@ function collectAttentionWorklistRows(
     const isOverdue = invoiceIsDerivedOverdue(inv, todayYmd);
     if (periodBounds && !isOverdue && !ymdInBounds(dueYmd, periodBounds)) continue;
     const daysLate = Math.max(0, daysBetweenYmd(dueYmd, todayYmd));
-    const accId =
-      inv.source_account_id?.trim() ||
-      (inv.job_reference ? jobRefToAccountId[inv.job_reference.trim()] : null) ||
-      clientNameToAccountId[inv.client_name?.trim() ?? ""] ||
-      null;
-    const accountKey = accId ?? inv.client_name?.trim() ?? "unknown";
+    const accId = effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId);
+    const accountKey = accId ? `acc:${accId}` : UNLINKED_ATTENTION_ACCOUNT_KEY;
     rows.push({
       invoice: inv,
       balanceDue,
       daysLate,
       accountKey,
-      accountName: accId ? accountNameById[accId] ?? inv.client_name : inv.client_name,
+      accountName: accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked",
+      clientName: inv.client_name?.trim() || "—",
       jobCount: inv.job_reference ? 1 : 0,
     });
   }
@@ -316,8 +381,11 @@ export function buildAttentionAccountGroups(
   )) {
     let group = byAccount.get(row.accountKey);
     if (!group) {
+      const accountId =
+        row.accountKey === UNLINKED_ATTENTION_ACCOUNT_KEY ? null : row.accountKey.replace(/^acc:/, "");
       group = {
         accountKey: row.accountKey,
+        accountId,
         accountName: row.accountName,
         invoiceCount: 0,
         totalDue: 0,

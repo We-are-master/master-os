@@ -1,6 +1,13 @@
 .bl-standalone .cf {
   display: flex;
   gap: 2px;
+  padding-bottom: 0.25rem;
+}
+
+@media (min-width: 640px) {
+  .bl-standalone .cf {
+    gap: 3px;
+  }
 }
 
 .bl-standalone .cf__day {

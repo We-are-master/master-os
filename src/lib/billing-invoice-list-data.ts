@@ -8,6 +8,8 @@ import {
 } from "@/lib/invoice-finance-tab";
 import type { Invoice, JobStatus } from "@/types/database";
 
+export { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
+
 export type InvoiceListJobSnapshot = {
   id: string;
   status: JobStatus;

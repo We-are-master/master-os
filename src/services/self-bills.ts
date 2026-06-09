@@ -405,6 +405,13 @@ export function jobSelfBillWeekAnchorYmd(
   return jobSelfBillPeriodAnchorYmd(job);
 }
 
+/** Draft weekly self-bill: partner assigned + scheduled week anchor (no completed_date). */
+export function canDraftSelfBillForJob(
+  job: Pick<Job, "partner_id" | "scheduled_start_at" | "scheduled_date">,
+): boolean {
+  return Boolean(job.partner_id?.trim() && jobSelfBillPeriodAnchorYmd(job));
+}
+
 export function canLinkJobToSelfBill(
   job: Pick<Job, "scheduled_start_at" | "scheduled_date" | "completed_date">,
 ): boolean {
@@ -425,7 +432,7 @@ export type EnsureWeeklySelfBillOptions = {
 
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
-  if (!canLinkJobToSelfBill(job)) return null;
+  if (!canDraftSelfBillForJob(job)) return null;
   const supabase = getSupabase();
   let partnerId = job.partner_id.trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
@@ -782,8 +789,8 @@ export async function createSelfBillFromJob(
   if (fullErr) throw fullErr;
   if (!full) throw new Error("Job not found");
   const j = full as Job;
-  if (!canLinkJobToSelfBill(j)) {
-    throw new Error("Job must have completed_date and a scheduled start before creating a self-bill");
+  if (!canDraftSelfBillForJob(j)) {
+    throw new Error("Job must have a partner and scheduled start date before creating a self-bill");
   }
   const weekAnchorDate = options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(j);
   if (!weekAnchorDate) throw new Error("Job must have a scheduled start date for self-bill week");

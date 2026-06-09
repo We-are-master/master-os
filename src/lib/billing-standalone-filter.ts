@@ -7,14 +7,24 @@ export type BillingStandaloneFilterValue = {
   customTo?: string;
 };
 
-/** Last 90 calendar days (inclusive) — default load window for faster first paint. */
+export const DEFAULT_BILLING_STANDALONE_FILTER: BillingStandaloneFilterValue = {
+  mode: "all",
+  customFrom: "",
+  customTo: "",
+};
+
+/** Last 90 calendar days (inclusive) — initial Supabase fetch window (not the UI default). */
 export function defaultBillingStandaloneFilter(): BillingStandaloneFilterValue {
   const to = todayYmdLocal();
   const from = addDaysYmd(to, -89);
   return { mode: "custom", customFrom: from, customTo: to };
 }
 
-export const DEFAULT_BILLING_STANDALONE_FILTER: BillingStandaloneFilterValue = defaultBillingStandaloneFilter();
+/** Fixed bounds for the first billing data load (open items + last 90 days). */
+export function getBillingInitialFetchBounds(): YmdBounds {
+  const { customFrom, customTo } = defaultBillingStandaloneFilter();
+  return { from: customFrom!, to: customTo! };
+}
 
 export function resolveBillingStandaloneFilterBounds(
   value: BillingStandaloneFilterValue,
