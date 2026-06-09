@@ -19,6 +19,7 @@ import type {
   PayrollInternalProfile,
   SelfBill,
   BusinessUnit,
+  WorkforceCommissionBasis,
 } from "@/types/database";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
@@ -51,6 +52,7 @@ import {
   Loader2,
   Download,
   CheckCircle2,
+  Mail,
 } from "lucide-react";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
@@ -134,6 +136,21 @@ export function WorkforcePersonDrawer({
   const [status, setStatus] = useState<InternalCostStatus>("pending");
   const [profile, setProfile] = useState<PayrollInternalProfile>({});
   const [buId, setBuId] = useState<string>("");
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [payoutBankSort, setPayoutBankSort] = useState("");
+  const [payoutBankAccount, setPayoutBankAccount] = useState("");
+  const [payoutBankHolder, setPayoutBankHolder] = useState("");
+  const [commissionEnabled, setCommissionEnabled] = useState(false);
+  const [commissionRate, setCommissionRate] = useState("");
+  const [commissionBasis, setCommissionBasis] = useState<WorkforceCommissionBasis>("gross_profit");
+  const [commissionPreview, setCommissionPreview] = useState<{
+    estimatedNet: number;
+    jobCount: number;
+    fixedPay: number;
+    commissionAmount: number;
+  } | null>(null);
+  const [sendingWelcome, setSendingWelcome] = useState(false);
+  const [generatingBill, setGeneratingBill] = useState(false);
 
   const [internalBills, setInternalBills] = useState<SelfBill[]>([]);
   const [loadingBills, setLoadingBills] = useState(false);
@@ -172,6 +189,13 @@ export function WorkforcePersonDrawer({
     setStatus(person.status === "paid" ? "paid" : "pending");
     setProfile(parsePayrollProfile(person.payroll_profile));
     setBuId(person.bu_id ?? "");
+    setPaymentMethod(person.payment_method ?? "");
+    setPayoutBankSort(person.payout_bank_sort_code ?? "");
+    setPayoutBankAccount(person.payout_bank_account_number ?? "");
+    setPayoutBankHolder(person.payout_bank_account_holder ?? "");
+    setCommissionEnabled(!!person.commission_enabled);
+    setCommissionRate(person.commission_rate_percent != null ? String(person.commission_rate_percent) : "");
+    setCommissionBasis(person.commission_basis ?? "gross_profit");
     const files = parsePayrollDocumentFiles(person.payroll_document_files);
     const photoMeta = files[PROFILE_PHOTO_DOC_KEY];
     if (photoMeta?.path) {
@@ -194,6 +218,33 @@ export function WorkforcePersonDrawer({
   useEffect(() => {
     void syncFromPerson();
   }, [syncFromPerson]);
+
+  useEffect(() => {
+    if (!person?.id || !open || tab !== "finance") return;
+    let cancelled = false;
+    const params = new URLSearchParams({
+      enabled: commissionEnabled ? "1" : "0",
+      fixedPay: amount || "0",
+    });
+    if (commissionEnabled && commissionRate.trim()) params.set("rate", commissionRate.trim());
+    if (commissionEnabled) params.set("basis", commissionBasis);
+    void fetch(`/api/admin/workforce/${person.id}/commission-preview?${params}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data) {
+          setCommissionPreview({
+            estimatedNet: data.estimatedNet,
+            jobCount: data.jobCount,
+            fixedPay: data.fixedPay,
+            commissionAmount: data.commission?.commissionAmount ?? 0,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [person?.id, open, tab, commissionEnabled, commissionRate, commissionBasis, amount, person?.profile_id]);
 
   const loadBills = useCallback(async () => {
     if (!person?.id || !isContractor) return;
@@ -239,8 +290,19 @@ export function WorkforcePersonDrawer({
     }
     const amt = Number(amount);
     if (Number.isNaN(amt) || amt < 0) {
-      toast.error("Enter a valid amount");
+      toast.error("Enter a valid fixed payment amount in the Finance tab");
       return;
+    }
+    if (commissionEnabled) {
+      const rate = Number(commissionRate);
+      if (!commissionRate.trim() || Number.isNaN(rate) || rate <= 0 || rate > 100) {
+        toast.error("Commission must be a percentage between 0 and 100");
+        return;
+      }
+      if (!person.profile_id?.trim()) {
+        toast.error("Link dashboard access first — commission uses jobs where this person is owner");
+        return;
+      }
     }
     setSaving(true);
     const supabase = getSupabase();
@@ -275,6 +337,13 @@ export function WorkforcePersonDrawer({
         payroll_document_files: mergedFiles,
         updated_at: now,
         status,
+        payment_method: paymentMethod.trim() || null,
+        payout_bank_sort_code: payoutBankSort.trim() || null,
+        payout_bank_account_number: payoutBankAccount.trim() || null,
+        payout_bank_account_holder: payoutBankHolder.trim() || null,
+        commission_enabled: commissionEnabled,
+        commission_rate_percent: commissionEnabled && commissionRate.trim() ? Number(commissionRate) : null,
+        commission_basis: commissionEnabled ? commissionBasis : null,
       };
       if (status === "paid") updates.paid_at = now.split("T")[0];
       const { error } = await supabase.from("payroll_internal_costs").update(updates).eq("id", person.id);
@@ -630,6 +699,183 @@ export function WorkforcePersonDrawer({
     { id: "access" as const, label: "Dashboard Access" },
   ];
 
+  const commissionBasisLabel = commissionBasis === "revenue" ? "revenue" : "gross margin";
+
+  const financePaymentSetup = (
+    <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+      <div>
+        <p className="text-sm font-semibold text-text-primary">Payment setup</p>
+        <p className="text-xs text-text-tertiary mt-0.5">
+          Fixed salary plus optional commission as a <strong className="font-medium">percentage</strong> of owner-job billing in the pay period.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Fixed payment (£)</label>
+          <Input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </div>
+        <div>
+          <Select
+            label="Pay frequency"
+            value={payFrequency}
+            onChange={(e) => setPayFrequency(e.target.value)}
+            options={[{ value: "", label: "—" }, ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Next due date</label>
+          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </div>
+        <div>
+          <Select
+            label="Commission"
+            value={commissionEnabled ? "yes" : "no"}
+            onChange={(e) => setCommissionEnabled(e.target.value === "yes")}
+            options={[
+              { value: "no", label: "No" },
+              { value: "yes", label: "Yes" },
+            ]}
+          />
+        </div>
+        {commissionEnabled ? (
+          <>
+            <div>
+              <Select
+                label="Commission on"
+                value={commissionBasis}
+                onChange={(e) => setCommissionBasis(e.target.value as WorkforceCommissionBasis)}
+                options={[
+                  { value: "revenue", label: "Revenue" },
+                  { value: "gross_profit", label: "Gross margin" },
+                ]}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Commission rate (%)</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step="0.1"
+                value={commissionRate}
+                onChange={(e) => setCommissionRate(e.target.value)}
+                placeholder="e.g. 10"
+              />
+            </div>
+          </>
+        ) : null}
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Pay day of month (1–28)</label>
+          <Input
+            type="number"
+            min={1}
+            max={28}
+            value={paymentDay}
+            onChange={(e) => setPaymentDay(e.target.value)}
+          />
+        </div>
+        <div>
+          <Select
+            label="Payment method"
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value)}
+            options={[
+              { value: "", label: "—" },
+              { value: "bank_transfer", label: "Bank transfer" },
+              { value: "wise", label: "Wise" },
+            ]}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Account holder</label>
+          <Input value={payoutBankHolder} onChange={(e) => setPayoutBankHolder(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Sort code</label>
+          <Input value={payoutBankSort} onChange={(e) => setPayoutBankSort(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Account number</label>
+          <Input value={payoutBankAccount} onChange={(e) => setPayoutBankAccount(e.target.value)} />
+        </div>
+      </div>
+
+      {commissionEnabled && commissionRate.trim() ? (
+        <p className="text-sm text-text-secondary rounded-lg bg-surface-hover/60 border border-border-light px-3 py-2">
+          <strong className="text-text-primary">{formatCurrency(Number(amount) || 0)}</strong> base salary
+          {" + "}
+          <strong className="text-text-primary">{commissionRate}%</strong> commission on {commissionBasisLabel}
+          {commissionPreview ? (
+            <>
+              {" "}
+              → est. <strong>{formatCurrency(commissionPreview.estimatedNet)}</strong>
+              {commissionPreview.jobCount > 0 ? ` (${commissionPreview.jobCount} owner job${commissionPreview.jobCount === 1 ? "" : "s"})` : ""}
+            </>
+          ) : null}
+        </p>
+      ) : (
+        <p className="text-sm text-text-secondary rounded-lg bg-surface-hover/60 border border-border-light px-3 py-2">
+          Fixed pay only: <strong className="text-text-primary">{formatCurrency(Number(amount) || 0)}</strong>
+        </p>
+      )}
+
+      {!person.profile_id && commissionEnabled ? (
+        <p className="text-xs text-amber-700">Link dashboard access — commission is calculated on jobs where this person is job owner.</p>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={saving} onClick={() => void handleSaveOverview()}>
+          Save payment setup
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          icon={<Mail className="h-3.5 w-3.5" />}
+          disabled={sendingWelcome || !paymentMethod}
+          onClick={async () => {
+            setSendingWelcome(true);
+            try {
+              const res = await fetch(`/api/admin/workforce/${person.id}/send-welcome`, { method: "POST" });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error ?? "Send failed");
+              toast.success(`Welcome email sent to ${data.sentTo ?? "recipient"}`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Could not send welcome email");
+            } finally {
+              setSendingWelcome(false);
+            }
+          }}
+        >
+          {sendingWelcome ? "Sending…" : "Send onboarding link"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={generatingBill}
+          onClick={async () => {
+            setGeneratingBill(true);
+            try {
+              const res = await fetch("/api/workforce/close-pay-period", { method: "POST" });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error ?? "Generate failed");
+              toast.success(`Generated ${data.count ?? 0} self-bill(s) for due period`);
+              if (isContractor) void loadBills();
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Could not generate self-bill");
+            } finally {
+              setGeneratingBill(false);
+            }
+          }}
+        >
+          {generatingBill ? "Generating…" : "Generate self-bill now"}
+        </Button>
+      </div>
+    </div>
+  );
+
   const stage = person.lifecycle_stage ?? "active";
   const savedPhotoPath = parsePayrollDocumentFiles(person.payroll_document_files)[PROFILE_PHOTO_DOC_KEY]?.path;
   const hasPhoto =
@@ -799,9 +1045,10 @@ export function WorkforcePersonDrawer({
                     />
                   </div>
                 )}
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Amount (GBP)</label>
-                  <Input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                <div className="sm:col-span-2 rounded-lg border border-dashed border-border-light bg-surface-hover/40 px-3 py-2">
+                  <p className="text-xs text-text-secondary">
+                    Fixed payment and commission are configured in the <strong className="font-medium">Finance</strong> tab.
+                  </p>
                 </div>
                 <div>
                   <Select
@@ -809,28 +1056,6 @@ export function WorkforcePersonDrawer({
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     options={[{ value: "", label: "—" }, ...PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))]}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Next due date</label>
-                  <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                </div>
-                <div>
-                  <Select
-                    label="Pay frequency"
-                    value={payFrequency}
-                    onChange={(e) => setPayFrequency(e.target.value)}
-                    options={[{ value: "", label: "—" }, ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Pay day of month (1–28)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={28}
-                    value={paymentDay}
-                    onChange={(e) => setPaymentDay(e.target.value)}
                   />
                 </div>
                 <div>
@@ -1010,6 +1235,7 @@ export function WorkforcePersonDrawer({
 
         {tab === "finance" && isEmployee && (
           <div className="space-y-6">
+            {financePaymentSetup}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <p className="text-sm font-semibold text-text-primary">P60 & P45</p>
               <p className="text-xs text-text-tertiary">HMRC forms and leaving documents. Store PDFs securely.</p>
@@ -1096,6 +1322,7 @@ export function WorkforcePersonDrawer({
 
         {tab === "finance" && isContractor && (
           <div className="space-y-6">
+            {financePaymentSetup}
             <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-3">
               <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
                 <Wallet className="h-4 w-4 text-emerald-600" />

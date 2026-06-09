@@ -4,9 +4,9 @@ import {
   groupViewsByCategory,
   type CatalogServiceCategory,
 } from "@/lib/catalog-service-categories";
-import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import {
   buildAllServicePricingViews,
+  type PricingLineRow,
   type ServicePricingView,
 } from "@/lib/services-pricing-display";
 import { listCatalogServices } from "@/services/catalog-services";
@@ -17,6 +17,12 @@ export type SchoolCatalogPriceItem = {
   label: string;
   price: string;
   detail?: string;
+  pay?: string;
+  charge?: string;
+  payAmount?: number;
+  chargeAmount?: number;
+  marginPct?: number;
+  marginTier?: "good" | "thin" | "bad";
 };
 
 export type SchoolCatalogServiceRow = {
@@ -26,11 +32,8 @@ export type SchoolCatalogServiceRow = {
   missing: boolean;
   isActive: boolean;
   description: string | null;
-  /** Simple single-band pricing (hourly/fixed). */
   simple: SchoolCatalogPriceItem | null;
-  /** Base packages / bands (cleaning sizes, etc.). */
   baseBands: SchoolCatalogPriceItem[];
-  /** Stackable add-ons — each item separate. */
   addons: SchoolCatalogPriceItem[];
 };
 
@@ -50,12 +53,21 @@ function fmt(amount: number): string {
   return formatCurrency(amount).replace(/\u00a0/g, "");
 }
 
-function mapPriceItem(
-  label: string,
-  charge: number,
-  detail?: string,
-): SchoolCatalogPriceItem {
-  return { label, price: fmt(charge), detail };
+function mapLineRow(line: PricingLineRow): SchoolCatalogPriceItem {
+  const chargeAmount = line.charge;
+  const payAmount = line.pay;
+  const price = line.unit === "/h" ? `${fmt(chargeAmount)}${line.unit}` : fmt(chargeAmount);
+  return {
+    label: line.label,
+    price,
+    detail: line.note || line.sub,
+    pay: payAmount > 0 ? fmt(payAmount) : undefined,
+    charge: price,
+    payAmount: payAmount > 0 ? payAmount : undefined,
+    chargeAmount: chargeAmount > 0 ? chargeAmount : undefined,
+    marginPct: Math.round(line.marginPct),
+    marginTier: line.tier,
+  };
 }
 
 function mapView(view: ServicePricingView): SchoolCatalogServiceRow {
@@ -78,51 +90,18 @@ function mapView(view: ServicePricingView): SchoolCatalogServiceRow {
   const addons: SchoolCatalogPriceItem[] = [];
 
   if (view.single) {
-    const line = view.single;
-    if (line.unit === "/h") {
-      const hours = resolveInitialBilledHours(view.service.default_hours);
-      const rate = Number(view.service.hourly_rate) || (hours > 0 ? line.charge / hours : line.charge);
-      simple = {
-        label: view.name,
-        price: `${fmt(rate)}/h`,
-        detail: `Default ${hours}h · ${fmt(rate * hours)} total`,
-      };
-    } else {
-      simple = mapPriceItem(view.name, line.charge, "Fixed price");
-    }
+    simple = mapLineRow(view.single);
   } else if (view.stackable && view.base.length > 0) {
-    for (const band of view.base) {
-      if (band.unit === "/h") {
-        const hours = resolveInitialBilledHours(view.service.default_hours);
-        const rate = hours > 0 ? band.charge / hours : band.charge;
-        baseBands.push({
-          label: band.label,
-          price: `${fmt(rate)}/h`,
-          detail: `Default ${hours}h · ${fmt(band.charge)} total`,
-        });
-      } else if (band.charge > 0) {
-        baseBands.push(mapPriceItem(band.label, band.charge));
-      }
-    }
-    for (const addon of view.addons) {
-      if (addon.charge > 0) {
-        addons.push(mapPriceItem(addon.label, addon.charge));
-      }
-    }
+    view.base.forEach((band) => {
+      if (band.charge > 0) baseBands.push(mapLineRow(band));
+    });
+    view.addons.forEach((addon) => {
+      if (addon.charge > 0) addons.push(mapLineRow(addon));
+    });
   } else if (view.base.length > 0) {
-    for (const band of view.base) {
-      if (band.unit === "/h") {
-        const hours = resolveInitialBilledHours(view.service.default_hours);
-        const rate = hours > 0 ? band.charge / hours : band.charge;
-        baseBands.push({
-          label: band.label,
-          price: `${fmt(rate)}/h`,
-          detail: `Default ${hours}h · ${fmt(band.charge)} total`,
-        });
-      } else if (band.charge > 0) {
-        baseBands.push(mapPriceItem(band.label, band.charge));
-      }
-    }
+    view.base.forEach((band) => {
+      if (band.charge > 0) baseBands.push(mapLineRow(band));
+    });
   }
 
   return {

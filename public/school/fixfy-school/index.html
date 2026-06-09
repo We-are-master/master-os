@@ -11,15 +11,15 @@
 <body>
 <div class="fx-app fx-app--school">
   <div class="fx-main fx-main--school">
-    <div class="sc-embed-bar">
-      <button type="button" class="fx-btn fx-btn--ghost fx-btn--sm sc-embed-back" id="scBackOs">
-        <i data-lucide="arrow-left"></i>Back to OS
-      </button>
-      <span class="fx-mono sc-embed-sep">|</span>
-      <button type="button" class="fx-btn fx-btn--ghost fx-btn--sm sc-embed-home" id="scHome">
+    <header class="sc-topnav">
+      <button type="button" class="sc-topnav__home" id="scHome">
         <i data-lucide="graduation-cap"></i>School home
       </button>
-    </div>
+      <div class="sc-topnav__spacer"></div>
+      <button type="button" class="fx-btn fx-btn--ghost fx-btn--sm sc-topnav__os" id="scBackOs">
+        <i data-lucide="arrow-left"></i>Back to OS
+      </button>
+    </header>
 
     <main class="fx-page sc-view is-active" data-view="home">
       <div class="sc-wrap" id="homeWrap"></div>
@@ -33,6 +33,7 @@
 
 <div class="sc-player" id="player">
   <header class="sc-hud">
+    <button type="button" class="sc-hud__home" id="hudHome"><i data-lucide="graduation-cap"></i>School home</button>
     <div class="sc-hud__back" id="hudBack"><i data-lucide="arrow-left"></i>Exit lesson</div>
     <div class="sc-hud__sep"></div>
     <div class="sc-hud__title" id="hudTitle">Lesson</div>
@@ -56,8 +57,8 @@
       </button>
       <button type="button" class="sc-complete-dock__btn sc-complete-dock__btn--review" data-review-lesson>
         <span class="sc-complete-dock__copy">
-          <span class="sc-complete-dock__k">Need a refresher?</span>
-          <span class="sc-complete-dock__title">Review from the top</span>
+          <span class="sc-complete-dock__k">Back to review</span>
+          <span class="sc-complete-dock__title">Read the scenes from the top</span>
         </span>
         <span class="sc-complete-dock__icon"><i data-lucide="chevrons-up"></i></span>
       </button>

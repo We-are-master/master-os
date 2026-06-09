@@ -972,7 +972,29 @@ export interface SelfBill {
   approved_at?: string | null;
   /** Profile id of the user who clicked Approve. */
   approved_by?: string | null;
+  /** Workforce auto-bill audit (fixed pay + % commission lines). */
+  payout_breakdown?: WorkforcePayoutBreakdown | null;
 }
+
+export type WorkforcePaymentMethod = "bank_transfer" | "wise";
+export type WorkforceCommissionBasis = "revenue" | "gross_profit";
+
+export type WorkforcePayoutBreakdown = {
+  fixed_pay: number;
+  commission_amount: number;
+  commission_basis?: WorkforceCommissionBasis | null;
+  commission_rate_percent?: number | null;
+  period_start: string;
+  period_end: string;
+  basis_total: number;
+  jobs: {
+    job_id: string;
+    reference: string;
+    revenue: number;
+    gross_profit: number;
+    commission: number;
+  }[];
+};
 
 /** Custos internos (payroll, despesas operacionais pontuais) */
 export type InternalCostStatus = "pending" | "paid";
@@ -1036,6 +1058,17 @@ export interface InternalCost {
   payroll_profile?: PayrollInternalProfile | null;
   /** Linked profiles.id when the person has a dashboard login (nullable). */
   profile_id?: string | null;
+  payment_method?: WorkforcePaymentMethod | null;
+  payout_bank_sort_code?: string | null;
+  payout_bank_account_number?: string | null;
+  payout_bank_account_holder?: string | null;
+  payout_wise_recipient_id?: string | null;
+  /** When true, commission_rate_percent applies to owner jobs in the pay period. */
+  commission_enabled?: boolean | null;
+  /** Percentage (0–100), not a fixed £ amount. */
+  commission_rate_percent?: number | null;
+  /** revenue | gross_profit (gross margin). */
+  commission_basis?: WorkforceCommissionBasis | null;
   created_at: string;
   updated_at: string;
 }
