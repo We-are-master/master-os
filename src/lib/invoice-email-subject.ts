@@ -16,5 +16,5 @@ export function buildInvoiceEmailSubject(
   if (isInvoicePaymentVerified(invoice)) {
     return `Payment receipt — ${invoice.reference}`;
   }
-  return `Invoice ${invoice.reference} — ${jobReference}`;
+  return `${jobReference} Your billing is ready`;
 }

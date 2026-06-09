@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, Check, ChevronDown, ChevronLeft, ChevronRight, FileText } from "lucide-react";
+import { Plus, Download, RefreshCw, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import {
 } from "@/lib/billing-standalone-period";
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
+import { PaymentHistoryTab } from "@/app/(dashboard)/finance/billing/payment-history-tab";
 import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
@@ -55,6 +56,7 @@ import {
   getBulkCancellableSelfBillIds,
   getBulkEligibleSelfBillIds,
   markSelfBillsPaid,
+  payWithWise,
   type SelfBillJobLine,
 } from "@/lib/billing-selfbill-actions";
 import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
@@ -76,7 +78,7 @@ const SelfBillDetailDrawer = dynamic(
   { ssr: false },
 );
 
-type LedgerTab = "inv" | "sb";
+type LedgerTab = "inv" | "sb" | "history";
 
 const CASHFLOW_WINDOW_WEEKS = 8;
 
@@ -104,9 +106,10 @@ function BillingStandaloneInner() {
   const { profile } = useProfile();
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(DEFAULT_BILLING_STANDALONE_FILTER);
   const data = useBillingStandaloneData();
-  const [ledgerTab, setLedgerTab] = useState<LedgerTab>(
-    searchParams.get("tab") === "sb" ? "sb" : "inv",
-  );
+  const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => {
+    const t = searchParams.get("tab");
+    return t === "sb" || t === "history" ? t : "inv";
+  });
   const invoiceIdFromUrl = searchParams.get("invoiceId");
   const selfBillIdFromUrl = searchParams.get("selfBillId");
   const [createOpen, setCreateOpen] = useState(false);
@@ -115,6 +118,75 @@ function BillingStandaloneInner() {
   const [selectedSbIds, setSelectedSbIds] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
+  const [sendingSelfBillIds, setSendingSelfBillIds] = useState<Set<string>>(new Set());
+  const [payingSelfBillIds, setPayingSelfBillIds] = useState<Set<string>>(new Set());
+
+  // Inline Send / Resend handler used by the Going Out · Money Out widget:
+  // `week` → standard cycle (master ticket), single-row sends pass `auto` so the
+  // server reuses an existing standard run for the same week if there is one.
+  const handlePayWithWise = useCallback(
+    async (selfBillId: string) => {
+      setPayingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        next.add(selfBillId);
+        return next;
+      });
+      try {
+        const r = await payWithWise(selfBillId, { scope: "full" });
+        if (!r.ok) {
+          toast.error(r.error ?? "Wise pay failed");
+          return;
+        }
+        if (r.funded) toast.success("Payment funded");
+        else toast.success(`Transfer created — ${r.wise_status ?? "pending fund"}`);
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Wise pay failed");
+      } finally {
+        setPayingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          next.delete(selfBillId);
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  const handleSendSelfBills = useCallback(
+    async (ids: string[], scope: "week" | "partner" | "row") => {
+      if (!ids.length) return;
+      setSendingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const cycleKind = scope === "week" ? "standard" : "auto";
+        const result = await bulkSendSelfBillEmails(ids, { cycleKind });
+        if (result.sent > 0) {
+          toast.success(
+            result.sent === 1 ? "Self-bill sent" : `${result.sent} self-bills sent`,
+          );
+        }
+        if (result.skipped.length > 0) {
+          toast.error(
+            `${result.skipped.length} skipped — ${result.skipped[0]?.reason ?? "see logs"}`,
+          );
+        }
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Send failed");
+      } finally {
+        setSendingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [drawerSb, setDrawerSb] = useState<SelfBill | null>(null);
   const [drawerSbJobs, setDrawerSbJobs] = useState<Awaited<ReturnType<typeof listJobsForSelfBill>>>([]);
@@ -944,6 +1016,10 @@ function BillingStandaloneInner() {
                       expandedKeys: expandedGoingOutPartners,
                       onToggle: toggleGoingOutPartner,
                     }}
+                    onSendBills={handleSendSelfBills}
+                    sendingIds={sendingSelfBillIds}
+                    onPayWithWise={handlePayWithWise}
+                    payingIds={payingSelfBillIds}
                   />
                 </div>
               </div>
@@ -954,6 +1030,7 @@ function BillingStandaloneInner() {
                 <div className="flex gap-1">
                   <LedgerTabBtn active={ledgerTab === "inv"} onClick={() => setLedgerTab("inv")} label="Invoices" count={activePeriodInvoices.length} />
                   <LedgerTabBtn active={ledgerTab === "sb"} onClick={() => setLedgerTab("sb")} label="Self-bills" count={activePeriodSelfBills.length} />
+                  <LedgerTabBtn active={ledgerTab === "history"} onClick={() => setLedgerTab("history")} label="Payment History" count={null} />
                 </div>
                 {ledgerTab === "sb" ? (
                   <button type="button" className="text-xs font-semibold text-primary hover:underline" onClick={() => setSelectedSbIds(new Set(payableSelfBills.map((s) => s.id)))}>
@@ -962,7 +1039,11 @@ function BillingStandaloneInner() {
                 ) : null}
               </div>
 
-              {ledgerTab === "inv" ? (
+              {ledgerTab === "history" ? (
+                <div className="px-4 py-4">
+                  <PaymentHistoryTab />
+                </div>
+              ) : ledgerTab === "inv" ? (
                 <>
                   <InvoiceGroupedLedger
                     groups={activeInvoiceLedgerGroups}
@@ -1043,6 +1124,10 @@ function BillingStandaloneInner() {
                       expandedKeys: expandedLedgerSelfBillPartners,
                       onToggle: toggleLedgerSelfBillPartner,
                     }}
+                    onSendBills={handleSendSelfBills}
+                    sendingIds={sendingSelfBillIds}
+                    onPayWithWise={handlePayWithWise}
+                    payingIds={payingSelfBillIds}
                   />
                   {inactivePeriodSelfBills.length > 0 ? (
                     <div className="border-t border-border-light bg-surface-hover/20">
@@ -1189,7 +1274,7 @@ function BillingStandaloneInner() {
 
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
 
-        {ledgerTab === "inv" ? (
+        {ledgerTab === "history" ? null : ledgerTab === "inv" ? (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
             saving={bulkSaving}
@@ -1672,6 +1757,10 @@ function SelfBillGroupedLedger({
   partnerAvatarById,
   onOpen,
   onMarkPaid,
+  onSendBills,
+  sendingIds,
+  onPayWithWise,
+  payingIds,
   variant = "full",
   emptyLabel = "No self-bills in this period.",
   collapsiblePartners,
@@ -1684,6 +1773,14 @@ function SelfBillGroupedLedger({
   partnerAvatarById: Record<string, string | null>;
   onOpen: (sb: SelfBill) => void;
   onMarkPaid: (id: string) => Promise<void>;
+  /** Send the given self-bill ids — handler decides cycle kind from scope. */
+  onSendBills?: (ids: string[], scope: "week" | "partner" | "row") => Promise<void>;
+  /** Self-bill ids currently sending — drives the per-row spinner state. */
+  sendingIds?: Set<string>;
+  /** Trigger a Wise Business payout for one self-bill (full payout for the row). */
+  onPayWithWise?: (selfBillId: string) => Promise<void>;
+  /** Self-bill ids currently being paid via Wise. */
+  payingIds?: Set<string>;
   variant?: "full" | "compact";
   emptyLabel?: string;
   collapsiblePartners?: {
@@ -1708,7 +1805,29 @@ function SelfBillGroupedLedger({
               <p className="text-sm font-semibold text-[#020040]">{week.weekTitle}</p>
               {week.weekSubtitle ? <p className="text-xs text-text-secondary">{week.weekSubtitle}</p> : null}
             </div>
-            <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+              {onSendBills ? (() => {
+                const weekIds = week.partners.flatMap((p) =>
+                  p.rows
+                    .filter((sb) => !isSelfBillPayoutVoided(sb) && sb.bill_origin !== "internal" && !!sb.partner_id?.trim())
+                    .map((sb) => sb.id),
+                );
+                if (!weekIds.length) return null;
+                const sendingHere = weekIds.some((id) => sendingIds?.has(id));
+                return (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    loading={sendingHere}
+                    onClick={() => void onSendBills(weekIds, "week")}
+                  >
+                    Send all
+                  </Button>
+                );
+              })() : null}
+            </div>
           </div>
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
@@ -1785,11 +1904,45 @@ function SelfBillGroupedLedger({
                           <td className={cn(compact ? "px-2 py-2" : "px-3 py-2")}><StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} /></td>
                           <td className={cn("text-right font-medium tabular-nums", compact ? "px-4 py-2" : "px-3 py-2")}>{formatCurrency(Number(sb.net_payout ?? 0))}</td>
                           <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
                               {canSelect ? (
                                 <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => void onMarkPaid(sb.id)}>
                                   <Check className="h-3.5 w-3.5 text-emerald-700" />
                                 </button>
+                              ) : null}
+                              {onSendBills && sb.bill_origin !== "internal" && !!sb.partner_id?.trim() && !isSelfBillPayoutVoided(sb) ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  loading={sendingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onSendBills([sb.id], "row")}
+                                  title={sb.email_sent_at ? `Last sent ${new Date(sb.email_sent_at).toLocaleString("en-GB")}` : "Send self-bill to partner"}
+                                >
+                                  {sb.email_sent_at ? "Resend" : "Send"}
+                                </Button>
+                              ) : null}
+                              {onPayWithWise && canSelect && !sb.wise_paid_at ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  loading={payingIds?.has(sb.id) ?? false}
+                                  disabled={!sb.email_sent_at}
+                                  title={sb.email_sent_at ? "Pay partner via Wise" : "Send self-bill first"}
+                                  onClick={() => void onPayWithWise(sb.id)}
+                                >
+                                  Make payment
+                                </Button>
+                              ) : null}
+                              {sb.zendesk_ticket_url ? (
+                                <a
+                                  href={sb.zendesk_ticket_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Open Zendesk payment ticket"
+                                  className="rounded border border-border-light p-1 hover:bg-surface-hover/50"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5 text-text-secondary" />
+                                </a>
                               ) : null}
                               <Button variant="ghost" size="sm" onClick={() => onOpen(sb)}>{compact ? "Review" : "Open"}</Button>
                             </div>
@@ -1823,10 +1976,11 @@ function KpiCard({ label, value, sub, alert, coral, green }: { label: string; va
   );
 }
 
-function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number | null }) {
   return (
     <button type="button" onClick={onClick} className={cn("rounded-lg px-3 py-1.5 text-sm font-semibold", active ? "bg-[#020040] text-white" : "text-text-secondary hover:bg-surface-hover")}>
-      {label} <span className="ml-1 opacity-70">{count}</span>
+      {label}
+      {count != null ? <span className="ml-1 opacity-70">{count}</span> : null}
     </button>
   );
 }
