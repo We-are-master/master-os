@@ -8,7 +8,8 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { isInvoicePaymentVerified } from "@/lib/invoice-client-email-template";
+import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
+import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
@@ -128,10 +129,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   });
   const emailTo = billing.documentEmail?.trim();
   if (!emailTo) {
-    return NextResponse.json(
-      { error: "No billing email for this client. Add an email on the client or account before sending." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: missingBillingEmailReason(billing.mode) }, { status: 400 });
   }
 
   const { data: reportRows, error: rErr } = await admin

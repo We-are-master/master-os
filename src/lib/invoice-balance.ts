@@ -31,18 +31,26 @@ export function invoiceBalanceDue(inv: Pick<Invoice, "amount" | "amount_paid">):
  * customer payments on that job (`customer_deposit` + `customer_final`), effective paid is
  * `min(invoice amount, max(amount_paid on invoice row, job ledger sum))` — same as `InvoiceDetailDrawer`.
  */
+export function invoiceEffectivePaidWithJobCustomerPaid(
+  inv: Pick<Invoice, "amount" | "amount_paid" | "job_reference">,
+  jobCustomerPaidSum: number | undefined,
+): number {
+  const invAmt = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
+  const rowPaid = Math.round(invoiceAmountPaid(inv) * 100) / 100;
+  const ref = inv.job_reference?.trim();
+  if (!ref || jobCustomerPaidSum === undefined || !Number.isFinite(jobCustomerPaidSum)) {
+    return rowPaid;
+  }
+  const ledger = Math.round(jobCustomerPaidSum * 100) / 100;
+  return Math.min(invAmt, Math.max(rowPaid, ledger));
+}
+
 export function invoiceBalanceDueWithJobCustomerPaid(
   inv: Pick<Invoice, "amount" | "amount_paid" | "job_reference">,
   jobCustomerPaidSum: number | undefined,
 ): number {
-  const ref = inv.job_reference?.trim();
-  if (!ref || jobCustomerPaidSum === undefined || !Number.isFinite(jobCustomerPaidSum)) {
-    return invoiceBalanceDue(inv);
-  }
   const invAmt = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
-  const rowPaid = Math.round(invoiceAmountPaid(inv) * 100) / 100;
-  const ledger = Math.round(jobCustomerPaidSum * 100) / 100;
-  const effectivePaid = Math.min(invAmt, Math.max(rowPaid, ledger));
+  const effectivePaid = invoiceEffectivePaidWithJobCustomerPaid(inv, jobCustomerPaidSum);
   return Math.max(0, Math.round((invAmt - effectivePaid) * 100) / 100);
 }
 

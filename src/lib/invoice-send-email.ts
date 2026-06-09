@@ -1,57 +1,37 @@
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import {
   accountFinalEmailPolicyFromRow,
   type AccountFinalEmailPolicy,
 } from "@/lib/account-final-email-policy";
-import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import {
+  resolveJobBillingContact,
+  resolveJobForInvoiceSend,
+  type JobBillingContactSnapshot,
+} from "@/lib/job-billing-contact";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
-import { isInvoicePaymentVerified } from "@/lib/invoice-client-email-template";
+import { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
+import { invoiceAmountDueForRequest } from "@/lib/invoice-request-amount";
 import { loadInvoicePdfData } from "@/lib/invoice-pdf-data";
 import { renderInvoicePdfBufferFromData } from "@/lib/render-invoice-pdf-buffer";
-import {
-  canSendJobInvoiceEmail,
-  type InvoiceSendEligibilityInput,
-} from "@/lib/invoice-send-eligibility";
+import { canSendJobInvoiceEmail } from "@/lib/invoice-send-eligibility";
 import type { Account, Invoice, Job } from "@/types/database";
 
-export {
-  canSendJobInvoiceEmail,
-  canSendJobSelfBillEmail,
-  type InvoiceSendEligibilityInput,
-  type SelfBillSendEligibilityInput,
-  type SendEligibility,
-} from "@/lib/invoice-send-eligibility";
-
-export function resolveInvoiceCcEmail(companyEmail?: string | null): string {
-  return (
-    process.env.INVOICE_CC_EMAIL?.trim() ||
-    (companyEmail && String(companyEmail).trim()) ||
-    "support@getfixfy.com"
-  );
-}
-
-export function buildInvoiceEmailSubject(
-  invoice: Pick<Invoice, "reference" | "status" | "amount" | "amount_paid" | "stripe_payment_status" | "stripe_paid_at">,
-  jobReference: string,
-): string {
-  if (isInvoicePaymentVerified(invoice)) {
-    return `Payment receipt — ${invoice.reference}`;
-  }
-  return `Invoice ${invoice.reference} — ${jobReference}`;
-}
+export { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
 
 export type InvoiceSendContext = {
   invoice: Invoice;
   job: Job | null;
   quoteReference: string | null;
-  billing: Awaited<ReturnType<typeof resolveNominalBillingParty>>;
+  billing: JobBillingContactSnapshot;
   policy: AccountFinalEmailPolicy;
 };
 
 export async function loadInvoiceSendContext(
   admin: SupabaseClient,
   invoiceId: string,
+  options?: { jobId?: string | null },
 ): Promise<InvoiceSendContext | { error: string; status: number }> {
   const { data: invoice, error: invErr } = await admin
     .from("invoices")
@@ -68,68 +48,61 @@ export async function loadInvoiceSendContext(
     return { error: "Invoice is cancelled", status: 400 };
   }
 
-  let job: Job | null = null;
+  const jobRow = await resolveJobForInvoiceSend(admin, inv, options?.jobId);
+  const job = (jobRow ?? null) as Job | null;
   let quoteReference: string | null = null;
-  let clientId: string | null = null;
-
-  if (inv.job_reference?.trim()) {
-    const { data: jobRow } = await admin
-      .from("jobs")
-      .select(
-        "id, reference, title, client_id, client_name, property_address, service_type, completed_date, quote_id, partner_agreed_value, partner_cost, materials_cost, internal_invoice_approved",
-      )
-      .eq("reference", inv.job_reference.trim())
-      .is("deleted_at", null)
-      .maybeSingle();
-    job = (jobRow ?? null) as Job | null;
-    clientId = job?.client_id ?? null;
-
-    const quoteId = job?.quote_id ?? null;
-    if (quoteId) {
-      const { data: quote } = await admin.from("quotes").select("reference").eq("id", quoteId).maybeSingle();
-      quoteReference = (quote as { reference?: string } | null)?.reference?.trim() ?? null;
-    }
+  const quoteId = job?.quote_id ?? null;
+  if (quoteId) {
+    const { data: quote } = await admin.from("quotes").select("reference").eq("id", quoteId).maybeSingle();
+    quoteReference = (quote as { reference?: string } | null)?.reference?.trim() ?? null;
   }
 
-  const billing = clientId
-    ? await resolveNominalBillingParty(admin, {
-        clientId,
-        fallbackName: inv.client_name,
-        fallbackEmail: null,
-      })
-    : {
-        displayName: inv.client_name?.trim() || "Client",
-        documentEmail: null,
-        sourceAccountId: null,
-        mode: "end_client" as const,
-      };
+  const billing = await resolveJobBillingContact(admin, {
+    id: job?.id,
+    client_id: job?.client_id,
+    client_name: job?.client_name ?? inv.client_name,
+    quote_id: job?.quote_id,
+    invoice_id: inv.id,
+  });
 
   let policy = accountFinalEmailPolicyFromRow(null);
   const aid = billing.sourceAccountId?.trim();
   if (aid) {
     const { data: acc } = await admin.from("accounts").select("*").eq("id", aid).is("deleted_at", null).maybeSingle();
     policy = accountFinalEmailPolicyFromRow((acc ?? null) as Account | null);
-  } else if (clientId) {
-    const { data: client } = await admin
-      .from("clients")
-      .select("source_account_id")
-      .eq("id", clientId)
-      .is("deleted_at", null)
-      .maybeSingle();
-    const sourceId = (client as { source_account_id?: string | null } | null)?.source_account_id?.trim();
-    if (sourceId) {
-      const { data: acc } = await admin.from("accounts").select("*").eq("id", sourceId).is("deleted_at", null).maybeSingle();
-      policy = accountFinalEmailPolicyFromRow((acc ?? null) as Account | null);
+  } else {
+    const clientId = job?.client_id?.trim();
+    if (clientId) {
+      const { data: client } = await admin
+        .from("clients")
+        .select("source_account_id")
+        .eq("id", clientId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      const sourceId = (client as { source_account_id?: string | null } | null)?.source_account_id?.trim();
+      if (sourceId) {
+        const { data: acc } = await admin.from("accounts").select("*").eq("id", sourceId).is("deleted_at", null).maybeSingle();
+        policy = accountFinalEmailPolicyFromRow((acc ?? null) as Account | null);
+      }
     }
   }
 
   const eligibility = canSendJobInvoiceEmail({
     invoice: inv,
-    jobInternalInvoiceApproved: Boolean(job?.internal_invoice_approved),
     canIncludeInvoice: policy.canIncludeInvoice,
     documentEmail: billing.documentEmail,
+    mode: billing.mode,
   });
   if (!eligibility.ok) {
+    console.warn("[invoice-send-email] eligibility failed", {
+      invoiceId: inv.id,
+      jobId: job?.id ?? options?.jobId ?? null,
+      client_id: job?.client_id ?? null,
+      quote_id: job?.quote_id ?? null,
+      documentEmail: billing.documentEmail,
+      mode: billing.mode,
+      reason: eligibility.reason,
+    });
     return { error: eligibility.reason, status: 400 };
   }
 
@@ -139,8 +112,9 @@ export async function loadInvoiceSendContext(
 export async function renderInvoicePdfBuffer(
   admin: SupabaseClient,
   invoiceId: string,
+  opts?: { amountDueNow?: number; requestPercent?: number },
 ): Promise<{ buffer: Buffer; reference: string } | { error: string }> {
-  const data = await loadInvoicePdfData(admin, invoiceId);
+  const data = await loadInvoicePdfData(admin, invoiceId, opts);
   if (!data) return { error: "Could not load invoice PDF data" };
   const buffer = await renderInvoicePdfBufferFromData(data);
   return { buffer, reference: String(data.reference ?? "invoice") };
@@ -153,9 +127,9 @@ export type SendInvoiceEmailResult =
 export async function sendInvoiceEmail(
   admin: SupabaseClient,
   invoiceId: string,
-  options: { userId: string; userName: string },
+  options: { userId: string; userName: string; requestPercent?: number; jobId?: string | null },
 ): Promise<SendInvoiceEmailResult> {
-  const ctx = await loadInvoiceSendContext(admin, invoiceId);
+  const ctx = await loadInvoiceSendContext(admin, invoiceId, { jobId: options.jobId });
   if ("error" in ctx && "status" in ctx) {
     return { error: ctx.error, status: ctx.status };
   }
@@ -175,12 +149,21 @@ export async function sendInvoiceEmail(
   const ccEmail = resolveInvoiceCcEmail(company?.email);
   const ccList = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
 
-  const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId);
+  const { invoice: inv, job, quoteReference, billing } = ctx;
+  const request =
+    options.requestPercent != null
+      ? invoiceAmountDueForRequest(inv, options.requestPercent)
+      : invoiceAmountDueForRequest(inv, 100);
+  const emailOpts =
+    request.percent < 100
+      ? { amountDueNow: request.amountDueNow, requestPercent: request.percent }
+      : undefined;
+
+  const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOpts);
   if ("error" in pdfResult) {
     return { error: pdfResult.error, status: 500 };
   }
 
-  const { invoice: inv, job, quoteReference, billing } = ctx;
   const html = buildInvoiceEmailHTML(
     inv,
     {
@@ -192,6 +175,7 @@ export async function sendInvoiceEmail(
       quoteReference,
     },
     job,
+    emailOpts,
   );
 
   const jobRef = job?.reference ?? inv.job_reference ?? "Job";
@@ -222,6 +206,16 @@ export async function sendInvoiceEmail(
     return { error: message, status: 502 };
   }
 
+  if (inv.status === "draft") {
+    const { error: statusErr } = await admin
+      .from("invoices")
+      .update({ status: "pending" })
+      .eq("id", invoiceId);
+    if (statusErr) {
+      return { error: "Email sent but invoice status could not be updated", status: 500 };
+    }
+  }
+
   void admin.from("audit_logs").insert({
     entity_type: "invoice",
     entity_id: invoiceId,
@@ -231,7 +225,14 @@ export async function sendInvoiceEmail(
     new_value: emailTo,
     user_id: options.userId,
     user_name: options.userName,
-    metadata: { email_to: emailTo, cc: ccList, resend_id: emailResult?.id, channel: "resend" },
+    metadata: {
+      email_to: emailTo,
+      cc: ccList,
+      resend_id: emailResult?.id,
+      channel: "resend",
+      request_percent: request?.percent ?? 100,
+      amount_due_now: request?.amountDueNow ?? invoiceAmountDueForRequest(inv, 100).amountDueNow,
+    },
   });
 
   return { ok: true, to: emailTo, cc: ccList, resendId: emailResult?.id };

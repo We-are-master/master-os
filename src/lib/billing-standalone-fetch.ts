@@ -7,6 +7,8 @@ const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
 
 const CLOSED_INVOICE_STATUSES = ["paid", "cancelled"] as const;
+const CLOSED_INVOICE_LIST = `(${CLOSED_INVOICE_STATUSES.map((s) => `"${s}"`).join(",")})`;
+
 const CLOSED_SELF_BILL_STATUSES = [
   "paid",
   "rejected",
@@ -14,23 +16,24 @@ const CLOSED_SELF_BILL_STATUSES = [
   "payout_archived",
   "payout_lost",
 ] as const;
+const CLOSED_SELF_BILL_LIST = `(${CLOSED_SELF_BILL_STATUSES.map((s) => `"${s}"`).join(",")})`;
 
-type InvoiceRowQuery = {
-  not: (col: string, op: string, val: string) => InvoiceRowQuery;
-  gte: (col: string, val: string) => InvoiceRowQuery;
-  lte: (col: string, val: string) => InvoiceRowQuery;
-  eq: (col: string, val: string) => InvoiceRowQuery;
-  order: (col: string, opts: { ascending: boolean }) => InvoiceRowQuery;
-  range: (from: number, to: number) => Promise<{ data: Invoice[] | null; error: Error | null }>;
-};
+function invoiceQueryBase() {
+  return getSupabase().from("invoices").select("*").is("deleted_at", null);
+}
 
-async function fetchInvoiceQueryPages(apply: (q: InvoiceRowQuery) => InvoiceRowQuery): Promise<Invoice[]> {
-  const supabase = getSupabase();
+function selfBillQueryBase() {
+  return getSupabase().from("self_bills").select("*");
+}
+
+type InvoiceQuery = ReturnType<typeof invoiceQueryBase>;
+type SelfBillQuery = ReturnType<typeof selfBillQueryBase>;
+
+async function fetchInvoiceQueryPages(apply: (q: InvoiceQuery) => InvoiceQuery): Promise<Invoice[]> {
   const acc: Invoice[] = [];
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const from = page * PAGE_SIZE;
-    const base = supabase.from("invoices").select("*").is("deleted_at", null) as unknown as InvoiceRowQuery;
-    const { data, error } = await apply(base)
+    const { data, error } = await apply(invoiceQueryBase())
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
@@ -42,7 +45,7 @@ async function fetchInvoiceQueryPages(apply: (q: InvoiceRowQuery) => InvoiceRowQ
   return acc;
 }
 
-function mergeInvoicesById(rows: Invoice[]): Invoice[] {
+export function mergeInvoicesById(rows: Invoice[]): Invoice[] {
   const byId = new Map<string, Invoice>();
   for (const row of rows) byId.set(row.id, row);
   return [...byId.values()].sort(
@@ -57,10 +60,8 @@ function mergeInvoicesById(rows: Invoice[]): Invoice[] {
 export async function fetchInvoicesForBilling(bounds: YmdBounds | null): Promise<Invoice[]> {
   if (!bounds) return fetchAllActiveInvoices();
 
-  const closedList = `(${CLOSED_INVOICE_STATUSES.map((s) => `"${s}"`).join(",")})`;
-
   const [openRows, dueRows, paidByDueRows, paidByPaidDateRows, paidByStripeRows] = await Promise.all([
-    fetchInvoiceQueryPages((q) => q.not("status", "in", closedList)),
+    fetchInvoiceQueryPages((q) => q.not("status", "in", CLOSED_INVOICE_LIST)),
     fetchInvoiceQueryPages((q) => q.gte("due_date", bounds.from).lte("due_date", bounds.to)),
     fetchInvoiceQueryPages((q) =>
       q.eq("status", "paid").gte("paid_date", bounds.from).lte("paid_date", bounds.to),
@@ -85,21 +86,11 @@ export async function fetchInvoicesForBilling(bounds: YmdBounds | null): Promise
   ]);
 }
 
-type SelfBillRowQuery = {
-  not: (col: string, op: string, val: string) => SelfBillRowQuery;
-  gte: (col: string, val: string) => SelfBillRowQuery;
-  lte: (col: string, val: string) => SelfBillRowQuery;
-  order: (col: string, opts: { ascending: boolean }) => SelfBillRowQuery;
-  range: (from: number, to: number) => Promise<{ data: SelfBill[] | null; error: Error | null }>;
-};
-
-async function fetchSelfBillQueryPages(apply: (q: SelfBillRowQuery) => SelfBillRowQuery): Promise<SelfBill[]> {
-  const supabase = getSupabase();
+async function fetchSelfBillQueryPages(apply: (q: SelfBillQuery) => SelfBillQuery): Promise<SelfBill[]> {
   const acc: SelfBill[] = [];
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const from = page * PAGE_SIZE;
-    const base = supabase.from("self_bills").select("*") as unknown as SelfBillRowQuery;
-    const { data, error } = await apply(base)
+    const { data, error } = await apply(selfBillQueryBase())
       .order("created_at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
@@ -111,7 +102,7 @@ async function fetchSelfBillQueryPages(apply: (q: SelfBillRowQuery) => SelfBillR
   return acc;
 }
 
-function mergeSelfBillsById(rows: SelfBill[]): SelfBill[] {
+export function mergeSelfBillsById(rows: SelfBill[]): SelfBill[] {
   const byId = new Map<string, SelfBill>();
   for (const row of rows) byId.set(row.id, row);
   return [...byId.values()].sort(
@@ -140,10 +131,8 @@ export async function fetchSelfBillsForBilling(bounds: YmdBounds | null): Promis
     return acc;
   }
 
-  const closedList = `(${CLOSED_SELF_BILL_STATUSES.map((s) => `"${s}"`).join(",")})`;
-
   const [openRows, overlapRows, weekEndRows] = await Promise.all([
-    fetchSelfBillQueryPages((q) => q.not("status", "in", closedList)),
+    fetchSelfBillQueryPages((q) => q.not("status", "in", CLOSED_SELF_BILL_LIST)),
     fetchSelfBillQueryPages((q) => q.lte("week_start", bounds.to).gte("week_end", bounds.from)),
     fetchSelfBillQueryPages((q) => q.gte("week_end", bounds.from).lte("week_end", bounds.to)),
   ]);

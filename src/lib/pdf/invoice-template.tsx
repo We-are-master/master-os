@@ -22,6 +22,10 @@ export interface InvoicePdfData {
   completionDate?: string;
   tradeAmount: number;
   feeAmount: number;
+  /** When set (partial request), amount due now — may be less than full balance. */
+  amountDueNow?: number;
+  /** % of base requested (for PDF note). */
+  requestPercent?: number;
 }
 
 const styles = StyleSheet.create({
@@ -60,8 +64,24 @@ function money(n: number): string {
 }
 
 export function InvoicePDF({ data }: { data: InvoicePdfData }) {
-  const totalLabel = data.paid ? "Total paid" : data.partial ? "Balance due" : "Total due";
-  const totalAmount = data.paid ? data.amount : data.balanceDue > 0 ? data.balanceDue : data.amount;
+  const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
+  const requestedDue =
+    !data.paid && data.amountDueNow != null && data.amountDueNow > 0
+      ? data.amountDueNow
+      : fullDue;
+  const isPartialRequest =
+    !data.paid &&
+    data.amountDueNow != null &&
+    data.amountDueNow > 0.02 &&
+    Math.abs(data.amountDueNow - fullDue) > 0.02;
+  const totalLabel = data.paid
+    ? "Total paid"
+    : isPartialRequest
+      ? "Amount due now"
+      : data.partial
+        ? "Balance due"
+        : "Total due";
+  const totalAmount = data.paid ? data.amount : requestedDue;
 
   return (
     <Document>
@@ -75,7 +95,9 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
               ? `Payment received — ${money(data.amount)}`
               : data.partial
                 ? `Partial payment — ${money(data.paidAmount)} paid, ${money(data.balanceDue)} remaining`
-                : `Amount due — ${money(totalAmount)} by ${data.dueDate}`}
+                : isPartialRequest
+                  ? `Payment request — ${money(totalAmount)} now (${data.requestPercent ?? 0}% of ${money(fullDue)}) by ${data.dueDate}`
+                  : `Amount due — ${money(totalAmount)} by ${data.dueDate}`}
           </Text>
         </View>
 

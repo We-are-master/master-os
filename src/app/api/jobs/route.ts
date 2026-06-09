@@ -25,6 +25,7 @@ import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
 } from "@/lib/zendesk-job-ingest";
+import { resolveClientIdForZendeskJob } from "@/lib/zendesk-job-client-resolve";
 import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
 import {
   catalogDefaultHoursForBilling,
@@ -550,63 +551,24 @@ export async function POST(req: NextRequest) {
   // service_type doubles as title when the caller doesn't supply one.
   const titleResolved = title || serviceType;
 
-  // Find or create a client in this account — unless we're converting an
-  // existing quote, in which case we trust its linkage.
-  //
-  // Lookup strategy:
-  //   - When client_email is present, match on email (unique-ish across the
-  //     account, case-insensitive).
-  //   - Otherwise fall back to matching on full_name in the same account.
-  //     Duplicates with the same name are possible but acceptable — the
-  //     caller chose to omit the email, and creating a fresh row each time
-  //     would silently fragment history worse than reusing a name match.
+  // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
+  let resolvedClientFullName = clientName;
   if (!clientId) {
-    const baseQuery = supabase
-      .from("clients")
-      .select("id, phone")
-      .eq("source_account_id", accountId)
-      .limit(1);
-    const { data: existing, error: findErr } = clientEmail
-      ? await baseQuery.ilike("email", clientEmail).maybeSingle()
-      : await baseQuery.ilike("full_name", clientName).maybeSingle();
-    if (findErr) {
-      console.error("[api/jobs] client lookup failed:", findErr.message);
+    try {
+      const resolved = await resolveClientIdForZendeskJob(supabase, {
+        accountId,
+        clientName,
+        clientEmail,
+        clientPhone,
+        accountCompanyName: accountCompanyName || null,
+      });
+      clientId = resolved.clientId;
+      resolvedClientFullName = resolved.clientFullName;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Client lookup failed.";
+      console.error("[api/jobs] client resolve failed:", message);
       return NextResponse.json({ error: "Client lookup failed." }, { status: 500 });
-    }
-    if (existing?.id) {
-      clientId = existing.id as string;
-      // Backfill phone when the existing client doesn't have one yet and the
-      // caller now has a number. We never overwrite a phone that's already
-      // there — staff may have curated it.
-      const existingPhone = (existing as { phone: string | null }).phone;
-      if (clientPhone && !existingPhone?.trim()) {
-        const { error: phoneErr } = await supabase
-          .from("clients")
-          .update({ phone: clientPhone })
-          .eq("id", clientId);
-        if (phoneErr) {
-          console.error("[api/jobs] client phone backfill failed:", phoneErr.message);
-        }
-      }
-    } else {
-      const { data: created, error: createErr } = await supabase
-        .from("clients")
-        .insert({
-          full_name: clientName,
-          email: clientEmail,
-          phone: clientPhone,
-          client_type: "commercial",
-          source: "corporate",
-          source_account_id: accountId,
-        })
-        .select("id")
-        .single();
-      if (createErr || !created) {
-        console.error("[api/jobs] client create failed:", createErr?.message);
-        return NextResponse.json({ error: "Could not create client." }, { status: 500 });
-      }
-      clientId = created.id as string;
     }
   }
 
@@ -734,7 +696,7 @@ export async function POST(req: NextRequest) {
     reference:          String(ref),
     title:              titleResolved,
     client_id:          clientId,
-    client_name:        clientName,
+    client_name:        resolvedClientFullName,
     property_address:   propertyAddress,
     status,
     client_price:       rateType === "hourly" ? 0 : clientPrice,

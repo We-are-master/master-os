@@ -1,7 +1,7 @@
 import { format, isValid, parseISO } from "date-fns";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
-import { isInvoicePaymentVerified } from "@/lib/invoice-client-email-template";
+import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 import type { InvoicePdfData } from "@/lib/pdf/invoice-template";
 import type { Invoice, Job } from "@/types/database";
@@ -26,9 +26,15 @@ function splitTradeAndFee(
   return { trade, fee };
 }
 
+export type LoadInvoicePdfOptions = {
+  amountDueNow?: number;
+  requestPercent?: number;
+};
+
 export async function loadInvoicePdfData(
   admin: SupabaseClient,
   invoiceId: string,
+  opts?: LoadInvoicePdfOptions,
 ): Promise<InvoicePdfData | null> {
   const { data: invoice, error: invErr } = await admin
     .from("invoices")
@@ -99,5 +105,7 @@ export async function loadInvoicePdfData(
     completionDate: job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
     tradeAmount: trade,
     feeAmount: fee,
+    amountDueNow: opts?.amountDueNow,
+    requestPercent: opts?.requestPercent,
   };
 }
