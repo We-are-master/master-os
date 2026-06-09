@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8"/>
+<title>Fixfy School</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="stylesheet" href="app.css"/>
+<link rel="stylesheet" href="school.css"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ED4B00'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='600' fill='white' text-anchor='middle'%3Ef%3C/text%3E%3C/svg%3E"/>
+</head>
+<body>
+<template id="__bundler_thumbnail" data-bg-color="#020040">
+  <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <rect width="200" height="200" fill="#020040"/>
+    <rect x="54" y="62" width="92" height="68" rx="12" fill="#ED4B00"/>
+    <path d="M100 50 L150 74 L100 98 L50 74 Z" fill="#fff"/>
+    <rect x="92" y="92" width="16" height="30" fill="#fff"/>
+  </svg>
+</template>
+
+<div class="fx-app">
+  <!-- ===== SIDEBAR (OS) ===== -->
+  <aside class="fx-side">
+    <div class="fx-side__brand"><span class="fx-side__brand-mark">f</span><span class="fx-side__brand-name">fixfy</span></div>
+    <div class="fx-side__group">
+      <div class="fx-side__group-h">Learn</div>
+      <nav class="fx-side__nav">
+        <a class="fx-side__link is-active" data-home><i data-lucide="graduation-cap"></i>Fixfy School<span class="fx-pill fx-pill--coral" style="margin-left:auto;font-size:8.5px">NEW</span></a>
+      </nav>
+    </div>
+    <div class="fx-side__group">
+      <div class="fx-side__group-h">Overview</div>
+      <nav class="fx-side__nav">
+        <a class="fx-side__link"><i data-lucide="layout-dashboard"></i>Pulse</a>
+        <a class="fx-side__link"><i data-lucide="calendar-clock"></i>Live View</a>
+      </nav>
+    </div>
+    <div class="fx-side__group">
+      <div class="fx-side__group-h">Operations</div>
+      <nav class="fx-side__nav">
+        <a class="fx-side__link"><i data-lucide="user-round-search"></i>Leads</a>
+        <a class="fx-side__link"><i data-lucide="file-text"></i>Quotes</a>
+        <a class="fx-side__link"><i data-lucide="briefcase"></i>Jobs</a>
+        <a class="fx-side__link"><i data-lucide="calendar"></i>Schedule</a>
+      </nav>
+    </div>
+    <div class="fx-side__group">
+      <div class="fx-side__group-h">Network</div>
+      <nav class="fx-side__nav">
+        <a class="fx-side__link"><i data-lucide="monitor"></i>Accounts</a>
+        <a class="fx-side__link"><i data-lucide="users"></i>Partners</a>
+      </nav>
+    </div>
+    <div class="fx-side__foot">
+      <div class="fx-side__avatar">V</div>
+      <div style="flex:1"><div class="fx-side__user-name">Victor</div><div class="fx-side__user-role">Admin</div></div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <div class="fx-main">
+    <header class="fx-top">
+      <div class="fx-top__search"><i data-lucide="search" style="width:14px;height:14px"></i>Search jobs, quotes, requests, address, postcode<span class="fx-top__search-kbd">⌘K</span></div>
+      <div class="fx-top__actions">
+        <button class="fx-top__icon-btn"><i data-lucide="moon"></i></button>
+        <button class="fx-top__icon-btn"><i data-lucide="history"></i></button>
+        <button class="fx-top__icon-btn"><i data-lucide="bell"></i><span class="fx-top__badge">9+</span></button>
+        <button class="fx-top__icon-btn"><i data-lucide="sparkles"></i></button>
+        <button class="fx-top__icon-btn"><i data-lucide="settings"></i></button>
+      </div>
+    </header>
+
+    <!-- breadcrumb bar (OS style) -->
+    <div style="padding:14px 32px 0">
+      <div class="fx-card" style="display:flex;align-items:center;gap:18px;padding:12px 18px">
+        <a class="fx-btn fx-btn--ghost fx-btn--sm" style="color:var(--fx-coral-p);font-weight:600"><i data-lucide="arrow-left"></i>Back to OS</a>
+        <span class="fx-mono" style="font-size:11px;color:var(--fx-line-2)">|</span>
+        <a class="fx-side__link" style="padding:4px 8px;color:var(--fx-slate)" data-home><i data-lucide="graduation-cap" style="width:14px;height:14px"></i>School home</a>
+      </div>
+    </div>
+
+    <!-- HOME -->
+    <main class="fx-page sc-view is-active" data-view="home" style="padding-top:14px">
+      <div class="sc-wrap" id="homeWrap"></div>
+    </main>
+
+    <!-- PHASE -->
+    <main class="fx-page sc-view" data-view="phase" style="padding-top:14px">
+      <div class="sc-wrap" id="phaseWrap"></div>
+    </main>
+  </div>
+</div>
+
+<!-- ===== LESSON PLAYER (fixed overlay) ===== -->
+<div class="sc-player" id="player">
+  <header class="sc-hud">
+    <div class="sc-hud__back" id="hudBack"><i data-lucide="arrow-left"></i>Exit lesson</div>
+    <div class="sc-hud__sep"></div>
+    <div class="sc-hud__title" id="hudTitle">Welcome &amp; System</div>
+    <div class="sc-hud__sep"></div>
+    <div class="sc-hud__scene" id="hudScene">Scene 1 of 10</div>
+    <div class="sc-hud__spacer"></div>
+    <div class="sc-hud__xp" id="hudXp"><i data-lucide="zap"></i><span class="n">0</span>&nbsp;XP</div>
+    <div class="sc-hud__prog" id="hudProg"></div>
+  </header>
+  <div class="sc-toast" id="scToast"><i data-lucide="zap"></i><span></span></div>
+  <div class="sc-stage" id="stage"></div>
+</div>
+
+<canvas id="scConfetti"></canvas>
+
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="school-data.js"></script>
+<script src="school.js"></script>
+</body>
+</html>

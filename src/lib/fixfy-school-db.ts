@@ -42,7 +42,7 @@ export function emptySchoolProgressRow(profileId: string): SchoolProgressRow {
     profile_id: profileId,
     completed_lesson_ids: [],
     last_lesson_id: null,
-    unlocked_at: { zendesk: now },
+    unlocked_at: { "fixfy-products": now },
     quiz_stars: {},
     total_xp_earned: 0,
     created_at: now,
@@ -51,8 +51,8 @@ export function emptySchoolProgressRow(profileId: string): SchoolProgressRow {
 }
 
 export function rowToSchoolProgress(row: SchoolProgressRow): SchoolProgress {
-  const unlockedAt = { zendesk: new Date().toISOString(), ...(row.unlocked_at ?? {}) };
-  if (!unlockedAt.zendesk) unlockedAt.zendesk = new Date().toISOString();
+  const unlockedAt = { "fixfy-products": new Date().toISOString(), ...(row.unlocked_at ?? {}) };
+  if (!unlockedAt["fixfy-products"]) unlockedAt["fixfy-products"] = new Date().toISOString();
   return {
     completedLessonIds: Array.isArray(row.completed_lesson_ids) ? row.completed_lesson_ids : [],
     lastLessonId: row.last_lesson_id,

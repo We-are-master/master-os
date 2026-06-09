@@ -19,6 +19,12 @@ import { getLocalizedPhase } from "@/lib/fixfy-school-localized";
 import { useFixfySchoolLocale } from "@/hooks/use-fixfy-school-locale";
 
 const ACCENT: Record<SchoolPhase["accent"], { ring: string; bg: string; text: string; bar: string }> = {
+  violet: {
+    ring: "ring-violet-500/30",
+    bg: "bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/40 dark:to-[#0c0c12]",
+    text: "text-violet-700 dark:text-violet-300",
+    bar: "bg-gradient-to-r from-violet-500 to-purple-600",
+  },
   coral: {
     ring: "ring-[#E94A02]/30",
     bg: "bg-gradient-to-br from-[#FFF4ED] to-white dark:from-[#2a1508] dark:to-[#1a1008]",
@@ -52,7 +58,7 @@ export function PhaseCard({ phase, progress }: Props) {
   const quizPassed = isPhaseQuizPassed(progress, phase.id);
   const quizStars = getQuizStars(progress, phase.id);
   const stats = phaseProgress(progress, phase.id);
-  const accent = ACCENT[phase.accent];
+  const accent = ACCENT[phase.accent] ?? ACCENT.coral;
   const prevPhase = previousPhaseId(phase.id);
   const prevTitle = prevPhase ? getLocalizedPhase(prevPhase, locale)?.title : null;
 

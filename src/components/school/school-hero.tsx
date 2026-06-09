@@ -34,7 +34,7 @@ export function SchoolHero({ progress, overallPercent }: Props) {
         <div className="space-y-3 min-w-0">
           <MicroLabel className="!text-[#FF8A5C]">Fixfy School</MicroLabel>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight m-0">
-            Learn Fixfy in 3 phases
+            Learn Fixfy in 5 phases
           </h1>
           <p className="text-sm text-white/65 max-w-xl m-0 leading-relaxed">
             Start with Zendesk, then the Operating System and Trade Portal — earn XP, pass each

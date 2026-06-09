@@ -12,6 +12,48 @@ export type SchoolQuizQuestion = {
 export const SCHOOL_QUIZ_SIZE = 5;
 
 export const FIXFY_SCHOOL_QUIZZES: Record<SchoolPhaseId, SchoolQuizQuestion[]> = {
+  "fixfy-products": [
+    {
+      id: "fp-1",
+      prompt: "What is the Foundation phase mainly about?",
+      options: [
+        "Zendesk ticket routing only",
+        "Fixfy products, vision, certifications and live service pricing",
+        "Partner app onboarding",
+        "Emergency escalation procedures",
+      ],
+      correctIndex: 1,
+      explanation: "Foundation covers who Fixfy is, what we sell, certifications and the services board.",
+    },
+    {
+      id: "fp-2",
+      prompt: "Which trades typically require Gas Safe or NICEIC certification?",
+      options: ["Gardening only", "Certified trades such as gas and electrical", "All handyman jobs", "Cleaning packages"],
+      correctIndex: 1,
+      explanation: "Certified trades need compliance certificates before partners can do regulated work.",
+    },
+    {
+      id: "fp-3",
+      prompt: "Where does the Services & Pricing Board get its live rates?",
+      options: ["A static PDF updated yearly", "Fixfy OS Services catalog", "Partner emails", "Zendesk macros"],
+      correctIndex: 1,
+      explanation: "The board syncs from Services in Fixfy OS so ops sees current pricing.",
+    },
+    {
+      id: "fp-4",
+      prompt: "Fixfy Trade is primarily for:",
+      options: ["Corporate clients paying invoices", "Partners receiving leads, bids and jobs", "Zendesk agents", "Finance self-bills only"],
+      correctIndex: 1,
+      explanation: "Partners use Fixfy Trade and the Partner app for daily work.",
+    },
+    {
+      id: "fp-5",
+      prompt: "After Foundation, what is the recommended next School phase?",
+      options: ["Trade Portal", "Ops Playbook", "Zendesk Complete (Phase 1)", "Skip to certification"],
+      correctIndex: 2,
+      explanation: "The learning path continues with Zendesk after Products & Vision.",
+    },
+  ],
   zendesk: [
     {
       id: "zd-1",
@@ -109,6 +151,53 @@ export const FIXFY_SCHOOL_QUIZZES: Record<SchoolPhaseId, SchoolQuizQuestion[]> =
       ],
       correctIndex: 2,
       explanation: "Pulse is the operations overview — health of the business at a glance.",
+    },
+  ],
+  "ops-playbook": [
+    {
+      id: "op-1",
+      prompt: "When should you escalate to a manager instead of resolving alone?",
+      options: [
+        "Every routine ticket",
+        "When the decision tree says manager involvement is required",
+        "Never — always close as Solved",
+        "Only for finance payouts",
+      ],
+      correctIndex: 1,
+      explanation: "Use the escalation decision tree — some situations need manager sign-off.",
+    },
+    {
+      id: "op-2",
+      prompt: "For gas leak, flood or injury on site, the first priority is:",
+      options: ["Document in Zendesk first", "Act on safety — escalate and follow emergency playbook", "Wait for partner callback", "Move ticket to Finance"],
+      correctIndex: 1,
+      explanation: "Emergencies: act first, document after — follow the emergency chapter.",
+    },
+    {
+      id: "op-3",
+      prompt: "Complaint SLA at Fixfy is typically:",
+      options: ["48 hours", "24 hours", "7 days", "No SLA"],
+      correctIndex: 1,
+      explanation: "Complaints have a 24h SLA — warn manager if at risk.",
+    },
+    {
+      id: "op-4",
+      prompt: "A sensible daily ops rhythm starts with:",
+      options: ["Random tickets only", "Pulse → Live View → Zendesk queue → OS actions", "Partner payouts first", "Closing all Solved tickets"],
+      correctIndex: 1,
+      explanation: "Daily rhythm: overview on Pulse, triage Live View, then queue and OS work.",
+    },
+    {
+      id: "op-5",
+      prompt: "Which is part of the quality bar?",
+      options: [
+        "Duplicate jobs to speed things up",
+        "Right macros, Submit, no duplicate jobs",
+        "Skip side conversations on quotes",
+        "Always manual pricing without partner bid",
+      ],
+      correctIndex: 1,
+      explanation: "Golden rules include correct macros, Submit discipline and no duplicate jobs.",
     },
   ],
   "trade-portal": [

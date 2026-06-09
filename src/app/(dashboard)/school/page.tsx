@@ -43,7 +43,7 @@ export default function FixfySchoolPage() {
           <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wide mb-3">
             Your learning path
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...phases]
               .sort((a, b) => a.order - b.order)
               .map((phase) => (
@@ -56,7 +56,7 @@ export default function FixfySchoolPage() {
           <h2 className="text-sm font-semibold text-text-primary m-0">Badges</h2>
           <SchoolAchievementStrip progress={progress} locale={locale} />
           <p className="text-xs text-text-tertiary m-0 leading-relaxed">
-            Complete all lessons and score 5/5 on each phase quiz to earn badges. Finish all three
+            Complete all lessons and score 5/5 on each phase quiz to earn badges. Finish all five
             phases to unlock <strong className="text-text-secondary">Fixfy Scholar</strong>.
           </p>
         </div>

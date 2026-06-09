@@ -1,0 +1,133 @@
+/* Fixfy School — design tokens */
+:root {
+  --fx-coral: #ed4b00;
+  --fx-coral-h: #f58a3c;
+  --fx-coral-p: #e94a02;
+  --fx-blue: #0b5fff;
+  --fx-green: #0e8a5f;
+  --fx-purple: #7c3aed;
+  --fx-ink: #15153d;
+  --fx-ink-2: #3a3a55;
+  --fx-mute: #7c7c92;
+  --fx-on: #fff;
+  --fx-on-2: rgba(255, 255, 255, 0.82);
+  --fx-on-3: rgba(255, 255, 255, 0.55);
+  --fx-paper: #f7f7fb;
+  --fx-paper-2: #ececf4;
+  --fx-line: #e2e2ec;
+  --fx-line-2: #d0d0dc;
+  --fx-mono: "SF Mono", "Fira Code", ui-monospace, monospace;
+  --fx-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --fx-radius: 12px;
+  --fx-shadow: 0 8px 32px rgba(21, 21, 61, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--fx-sans);
+  color: var(--fx-ink);
+  background: var(--fx-paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+.fx-app--school {
+  display: block;
+  min-height: 100vh;
+  background: var(--fx-paper);
+}
+
+.fx-main--school {
+  min-height: 100vh;
+}
+
+.fx-page {
+  display: none;
+}
+
+.fx-page.is-active {
+  display: block;
+}
+
+.fx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 11px 18px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.fx-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fx-ink-2);
+}
+
+.fx-btn--ghost:hover {
+  background: var(--fx-paper-2);
+}
+
+.fx-btn--g {
+  background: #fff;
+  border-color: var(--fx-line);
+  color: var(--fx-ink);
+}
+
+.fx-btn--g:hover {
+  border-color: var(--fx-line-2);
+}
+
+.fx-btn--p {
+  background: var(--fx-coral);
+  border-color: var(--fx-coral);
+  color: #fff;
+}
+
+.fx-btn--p:hover {
+  background: var(--fx-coral-h);
+}
+
+.fx-btn--sm {
+  font-size: 13px;
+  padding: 7px 12px;
+}
+
+.fx-btn--icon {
+  padding: 8px;
+}
+
+.fx-mono {
+  font-family: var(--fx-mono);
+}
+
+.fx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--fx-on-2);
+}
+
+.fx-pill--coral {
+  background: rgba(237, 75, 0, 0.18);
+  color: #ffd4bf;
+}
