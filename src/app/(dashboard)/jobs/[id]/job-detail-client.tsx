@@ -253,7 +253,7 @@ import {
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
-import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
+import { invoiceAmountPaid, invoiceBalanceDue, invoiceBalanceDueWithJobCustomerPaid, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
   type JobMoneyDrawerClientCashContext,
@@ -5913,6 +5913,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const primaryInvoiceForBadge = job.invoice_id
     ? jobInvoices.find((inv) => inv.id === job.invoice_id) ?? jobInvoices[0]
     : jobInvoices[0];
+  const clientPaidInFull =
+    amountDue <= 0.02 ||
+    Boolean(job.customer_final_paid) ||
+    (primaryInvoiceForBadge != null &&
+      (primaryInvoiceForBadge.status === "paid" ||
+        invoiceBalanceDueWithJobCustomerPaid(primaryInvoiceForBadge, customerPaidTotal) <= 0.02));
   const invoiceSendGate = canSendJobInvoiceEmail({
     invoice: primaryInvoiceForBadge ?? null,
     canIncludeInvoice: financeBillingContact?.canIncludeInvoice ?? true,
@@ -9037,21 +9043,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     email is on the client linked to this job, or retry after saving in /clients.
                   </p>
                 ) : null}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="primary"
-                  className="w-full sm:w-auto"
-                  icon={<Mail className="h-3 w-3" />}
-                  loading={sendingInvoiceEmail}
-                  disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
-                  title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
-                  onClick={() => void handleOpenRequestPaymentModal()}
-                >
-                  Request payment
-                </Button>
-                {!invoiceSendGate.ok && !financeBillingLoading ? (
-                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
+                {!clientPaidInFull ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      className="w-full sm:w-auto"
+                      icon={<Mail className="h-3 w-3" />}
+                      loading={sendingInvoiceEmail}
+                      disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
+                      title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
+                      onClick={() => void handleOpenRequestPaymentModal()}
+                    >
+                      Request payment
+                    </Button>
+                    {!invoiceSendGate.ok && !financeBillingLoading ? (
+                      <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             </div>
