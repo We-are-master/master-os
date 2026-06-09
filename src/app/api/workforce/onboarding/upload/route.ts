@@ -1,0 +1,50 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { verifyWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
+
+export const dynamic = "force-dynamic";
+
+const BUCKET = "payroll-internal-documents";
+const MAX_BYTES = 10 * 1024 * 1024;
+
+export async function POST(req: NextRequest) {
+  const token = req.nextUrl.searchParams.get("token")?.trim();
+  if (!token) return NextResponse.json({ error: "token required" }, { status: 400 });
+
+  const payload = verifyWorkforceOnboardingToken(token);
+  if (!payload) return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+
+  const form = await req.formData();
+  const docKey = String(form.get("docKey") ?? "").trim();
+  const file = form.get("file");
+  if (!docKey || !(file instanceof File)) {
+    return NextResponse.json({ error: "docKey and file required" }, { status: 400 });
+  }
+  if (file.size > MAX_BYTES) {
+    return NextResponse.json({ error: "File must be 10 MB or less" }, { status: 400 });
+  }
+
+  const admin = createServiceClient();
+  const path = `${payload.payrollInternalCostId}/${docKey}/${file.name.replace(/[^\w.\-]+/g, "_")}`;
+  const { error: uploadErr } = await admin.storage.from(BUCKET).upload(path, file, {
+    upsert: true,
+    contentType: file.type || "application/octet-stream",
+  });
+  if (uploadErr) return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+
+  const { data: person } = await admin
+    .from("payroll_internal_costs")
+    .select("payroll_document_files")
+    .eq("id", payload.payrollInternalCostId)
+    .maybeSingle();
+  const prev = (person?.payroll_document_files ?? {}) as Record<string, { path: string; file_name: string }>;
+  const next = { ...prev, [docKey]: { path, file_name: file.name } };
+
+  const { error: updateErr } = await admin
+    .from("payroll_internal_costs")
+    .update({ payroll_document_files: next, updated_at: new Date().toISOString() })
+    .eq("id", payload.payrollInternalCostId);
+  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true });
+}

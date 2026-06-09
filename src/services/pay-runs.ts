@@ -3,6 +3,7 @@ import type { PayRun, PayRunItem } from "@/types/database";
 import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
 import { isWorkforceCostActive } from "@/lib/workforce-lifecycle";
+import { parseISO } from "date-fns";
 
 /** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
 export function getWeekBounds(date: Date): { week_start: string; week_end: string } {
@@ -206,11 +207,19 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     };
     const name = row.payee_name?.trim() || row.description || "Workforce";
     const ref = row.description?.trim() || "—";
+    let payoutAmount = Number(row.amount) || 0;
+    try {
+      const { ensureWorkforceSelfBillForPeriod } = await import("./workforce-self-bills");
+      const bill = await ensureWorkforceSelfBillForPeriod(row.id, parseISO(weekEnd));
+      if (bill && Number(bill.net_payout) > 0) payoutAmount = Number(bill.net_payout);
+    } catch {
+      /* use payroll fixed amount */
+    }
     out.push({
       item_type: "internal_cost",
       source_id: row.id,
       source_label: encodePayRunLabel(name, ref),
-      amount: Number(row.amount) || 0,
+      amount: payoutAmount,
       due_date: row.due_date,
     });
   }
@@ -469,6 +478,17 @@ export async function markPayRunItemsPaid(itemIds: string[]): Promise<void> {
           .in("id", internalCostIds)
           .then(({ error }) => { if (error) throw error; }),
   ]);
+
+  if (internalCostIds.length > 0) {
+    const { advanceWorkforceDueDateAfterPayment } = await import("./workforce-self-bills");
+    await Promise.all(internalCostIds.map((id) => advanceWorkforceDueDateAfterPayment(id)));
+    await supabase
+      .from("self_bills")
+      .update({ status: "paid", paid_at: paidDay })
+      .eq("bill_origin", "internal")
+      .in("internal_cost_id", internalCostIds)
+      .neq("status", "paid");
+  }
 }
 
 /** Partner self-bill states shown as “Draft” in Pay Run (not yet cleared for payout). */

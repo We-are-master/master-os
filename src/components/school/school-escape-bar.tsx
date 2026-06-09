@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, LayoutGrid } from "lucide-react";
+import { ArrowLeft, GraduationCap, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const QUICK_LINKS = [
@@ -23,16 +23,28 @@ export function SchoolEscapeBar({ className }: { className?: string }) {
       )}
     >
       <Link
-        href="/"
-        className="inline-flex items-center gap-1.5 font-semibold text-[#E94A02] hover:text-[#C73A00] transition-colors shrink-0"
+        href="/school"
+        className={cn(
+          "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-semibold shrink-0 transition-colors",
+          onSchoolHome
+            ? "border-[#FBD9C4] bg-[#FFF5EE] text-[#E94A02]"
+            : "border-[#FBD9C4] bg-gradient-to-b from-[#FFF5EE] to-[#FFEFE4] text-[#E94A02] hover:bg-[#FFE8D9] hover:border-[#F5C4A8]",
+        )}
       >
-        <ArrowLeft className="h-4 w-4" />
-        Back to OS
+        <GraduationCap className="h-4 w-4" />
+        School home
       </Link>
       <span className="hidden sm:inline text-border-light" aria-hidden>
         |
       </span>
-      <div className="flex flex-wrap items-center gap-2 min-w-0">
+      <Link
+        href="/"
+        className="inline-flex items-center gap-1.5 font-semibold text-text-secondary hover:text-text-primary transition-colors shrink-0"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to OS
+      </Link>
+      <div className="flex flex-wrap items-center gap-2 min-w-0 sm:ml-auto">
         {QUICK_LINKS.map((item) => (
           <Link
             key={item.href}
@@ -43,19 +55,6 @@ export function SchoolEscapeBar({ className }: { className?: string }) {
             {item.label}
           </Link>
         ))}
-        {!onSchoolHome && (
-          <>
-            <span className="text-border-light hidden sm:inline" aria-hidden>
-              ·
-            </span>
-            <Link
-              href="/school"
-              className="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
-            >
-              School home
-            </Link>
-          </>
-        )}
       </div>
     </div>
   );

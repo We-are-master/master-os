@@ -1040,7 +1040,8 @@
       bridge.navigate("/school/" + op.dataset.openPhase);
       return;
     }
-    if (e.target.closest("#scHome") || e.target.closest("[data-home]")) {
+    if (e.target.closest("#scHome") || e.target.closest("#hudHome") || e.target.closest("[data-home]")) {
+      if (document.body.classList.contains("sc-reading")) closeLesson();
       goHome();
       bridge.navigate("/school");
       return;

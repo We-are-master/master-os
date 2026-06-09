@@ -253,7 +253,12 @@ import {
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
-import { invoiceAmountPaid, invoiceBalanceDue, invoiceBalanceDueWithJobCustomerPaid, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
+import {
+  invoiceAmountPaid,
+  invoiceBalanceDue,
+  invoiceBalanceDueWithJobCustomerPaid,
+  isInvoiceFullyPaidByAmount,
+} from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
   type JobMoneyDrawerClientCashContext,
@@ -586,7 +591,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
   const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
   const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
   return (
-    <div className="rounded-lg border border-border-light p-2">
+    <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
         <button
           type="button"
@@ -8846,24 +8851,44 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : null}
             </div>
 
-            {/* Financial documents: client invoices (us→client) */}
-            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
-                  {invoiceLifecycleBadge ? (
-                    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", invoiceLifecycleBadge.className)}>
-                      {invoiceLifecycleBadge.label}
-                    </span>
-                  ) : (
-                    <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
-                      Not created
-                    </span>
-                  )}
+            {/* Billing documents — client invoice vs partner self-bill */}
+            <div className="space-y-3 border-t border-border-light pt-3 dark:border-[#2f3642]">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-text-primary flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
+                    Billing documents
+                  </p>
+                  <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+                    Invoice the client · Self-bill the partner
+                  </p>
                 </div>
-                <p className="text-[11px] text-text-tertiary leading-snug">
-                  We invoice the <strong className="font-medium text-text-secondary">client</strong> for this job.
-                </p>
+              </div>
+
+            <div className="rounded-xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-emerald-500/30 dark:from-emerald-950/35 dark:to-[#141922]">
+              <div className="flex items-center gap-2 border-b border-emerald-200/60 pb-2 dark:border-emerald-500/20">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm dark:bg-emerald-700">
+                  <Building2 className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs font-bold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">Client invoice</p>
+                    {invoiceLifecycleBadge ? (
+                      <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", invoiceLifecycleBadge.className)}>
+                        {invoiceLifecycleBadge.label}
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                        Not created
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-emerald-800/80 dark:text-emerald-200/70 leading-snug mt-0.5">
+                    Money in · We invoice the <strong className="font-semibold">client</strong>
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
                 {loadingInvoices ? (
                   <p className="text-xs text-text-tertiary">Loading…</p>
                 ) : jobInvoices.length === 0 ? (
@@ -8880,7 +8905,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         (inv.due_date ? String(inv.due_date).slice(0, 10) : "");
                       const duePrev = inv.due_date ? String(inv.due_date).slice(0, 10) : "";
                       return (
-                        <div key={inv.id} className="rounded-md border border-border-light p-2">
+                        <div key={inv.id} className="rounded-lg border border-emerald-200/70 bg-white/80 p-2.5 shadow-sm dark:border-emerald-500/20 dark:bg-[#101621]/80">
                           <div className="flex items-start gap-2">
                             <button
                               type="button"
@@ -9012,7 +9037,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               </div>
 
-              <div className="border-t border-border-light pt-3 mt-2 space-y-2">
+              <div className="border-t border-emerald-200/60 pt-3 dark:border-emerald-500/20 space-y-2">
                 {financeBillingLoading ? (
                   <p className="text-[11px] leading-snug text-text-tertiary">Loading billing contact…</p>
                 ) : financeBillingLoadError ? (
@@ -9049,8 +9074,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       type="button"
                       size="sm"
                       variant="primary"
-                      className="w-full sm:w-auto"
-                      icon={<Mail className="h-3 w-3" />}
+                      className="w-full min-h-[2.5rem] font-semibold shadow-sm"
+                      icon={<Mail className="h-3.5 w-3.5" />}
                       loading={sendingInvoiceEmail}
                       disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
                       title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
@@ -9066,16 +9091,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <div className="flex items-center gap-2">
-                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Partner self-bill</p>
-                {selfBillLifecycleBadge ? (
-                  <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", selfBillLifecycleBadge.className)}>
-                    {selfBillLifecycleBadge.label}
-                  </span>
-                ) : null}
+            <div className="rounded-xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-rose-500/30 dark:from-rose-950/35 dark:to-[#141922]">
+              <div className="flex items-center gap-2 border-b border-rose-200/60 pb-2 dark:border-rose-500/20">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040] text-white shadow-sm">
+                  <HardHat className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs font-bold uppercase tracking-wide text-rose-900 dark:text-rose-100">Partner self-bill</p>
+                    {selfBillLifecycleBadge ? (
+                      <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", selfBillLifecycleBadge.className)}>
+                        {selfBillLifecycleBadge.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-[10px] text-rose-800/80 dark:text-rose-200/70 leading-snug mt-0.5">
+                    Money out · We pay the <strong className="font-semibold">partner</strong>
+                  </p>
+                </div>
               </div>
-              <p className="text-[10px] text-text-tertiary leading-snug">Assign a partner on this job to use self billing.</p>
+              <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
@@ -9118,24 +9153,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
               )}
 
-              <div className="border-t border-border-light pt-3 mt-2 space-y-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="primary"
-                  className="w-full sm:w-auto"
-                  icon={<Mail className="h-3 w-3" />}
-                  loading={sendingSelfBillEmail}
-                  disabled={!selfBillSendGate.ok || sendingSelfBillEmail || loadingSelfBill}
-                  title={selfBillSendGate.ok ? "Email self-bill PDF to partner (Resend)" : selfBillSendGate.reason}
-                  onClick={() => void handleSendJobSelfBillEmail()}
-                >
-                  Send self bill
-                </Button>
-                {!selfBillSendGate.ok ? (
-                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{selfBillSendGate.reason}</p>
-                ) : null}
-              </div>
+            </div>
+
             </div>
 
           </div>

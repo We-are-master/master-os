@@ -38,6 +38,15 @@ export interface SelfBillPdfData {
   financeStatusLabel?: string | null;
   /** Explicit flag from server — preferred over inferring from optional text fields. */
   payoutVoided?: boolean;
+  billOrigin?: "partner" | "internal";
+  internalBreakdown?: {
+    fixedPay: number;
+    commissionAmount: number;
+    commissionBasis?: string | null;
+    commissionRatePercent?: number | null;
+    basisTotal?: number;
+    jobs?: { reference: string; revenue: number; grossProfit: number; commission: number }[];
+  };
 }
 
 const styles = StyleSheet.create({
@@ -88,6 +97,7 @@ function fmt(n: number): string {
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
+  const isInternal = data.billOrigin === "internal";
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
   const originalAmt =
@@ -152,22 +162,42 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
 
         <View style={styles.totals}>
           <Text style={{ fontWeight: "bold", marginBottom: 8 }}>Summary</Text>
-          <View style={styles.totalRow}>
-            <Text>Jobs</Text>
-            <Text>{data.jobsCount}</Text>
-          </View>
-          <View style={styles.totalRow}>
-            <Text>Partner labour</Text>
-            <Text>{fmt(data.jobValue)}</Text>
-          </View>
-          <View style={styles.totalRow}>
-            <Text>Materials</Text>
-            <Text>{fmt(data.materials)}</Text>
-          </View>
-          <View style={styles.totalRow}>
-            <Text>Commission</Text>
-            <Text>-{fmt(data.commission)}</Text>
-          </View>
+          {isInternal ? (
+            <>
+              <View style={styles.totalRow}>
+                <Text>Fixed pay</Text>
+                <Text>{fmt(data.internalBreakdown?.fixedPay ?? data.jobValue)}</Text>
+              </View>
+              {(data.internalBreakdown?.commissionAmount ?? 0) > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text>
+                    Commission ({data.internalBreakdown?.commissionRatePercent ?? 0}% on{" "}
+                    {data.internalBreakdown?.commissionBasis === "revenue" ? "revenue" : "gross margin"})
+                  </Text>
+                  <Text>{fmt(data.internalBreakdown?.commissionAmount ?? data.commission)}</Text>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <View style={styles.totalRow}>
+                <Text>Jobs</Text>
+                <Text>{data.jobsCount}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text>Partner labour</Text>
+                <Text>{fmt(data.jobValue)}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text>Materials</Text>
+                <Text>{fmt(data.materials)}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text>Commission</Text>
+                <Text>-{fmt(data.commission)}</Text>
+              </View>
+            </>
+          )}
           <View style={[styles.totalRow, { marginTop: 8, fontWeight: "bold", fontSize: 11 }]}>
             <Text>Net payout</Text>
             <Text>{fmt(data.netPayout)}</Text>
