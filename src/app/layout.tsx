@@ -29,7 +29,10 @@ export const metadata: Metadata = {
   description: "Fixfy internal operations management system",
   // Favicon: src/app/icon.png (+ apple-icon.png) via App Router metadata.
   icons: {
-    icon: [{ url: "/favicon.png", type: "image/png" }],
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.png", type: "image/png" },
+    ],
     apple: [{ url: "/fixfy-icon.png", type: "image/png" }],
   },
 };

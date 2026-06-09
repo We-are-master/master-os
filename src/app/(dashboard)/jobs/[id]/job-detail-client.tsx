@@ -1979,10 +1979,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     const gate = canSendJobInvoiceEmail({
       invoice: inv,
-      canIncludeInvoice: result.ok ? result.contact.canIncludeInvoice : true,
-      documentEmail: result.ok ? result.contact.documentEmail : null,
-      mode: result.ok ? result.contact.mode : undefined,
-      loadError: result.ok ? null : result.error,
+      canIncludeInvoice: result.contact.canIncludeInvoice,
+      documentEmail: result.contact.documentEmail,
+      mode: result.contact.mode,
+      loadError: null,
     });
     if (!gate.ok) {
       toast.error(gate.reason);

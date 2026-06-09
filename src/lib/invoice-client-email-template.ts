@@ -4,7 +4,7 @@ import { join } from "path";
 import { format, parseISO, isValid } from "date-fns";
 import type { Invoice } from "@/types/database";
 import type { Job } from "@/types/database";
-import { invoiceAmountPaid } from "@/lib/invoice-balance";
+import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 
