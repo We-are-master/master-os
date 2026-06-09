@@ -33,8 +33,12 @@ function fmtSbDate(ymd?: string | null): string {
 /** Branded "Self-Bill Issued" partner email — mirrors the Fixfy statement
  *  design (navy header, orange accent, reference bar, summary, HMRC notice).
  *  The full job-by-job breakdown rides along as the attached PDF. */
-function buildSelfBillEmailHtml(sb: SelfBill, dueYmd: string | null): string {
-  const firstName = esc((sb.partner_name || "").trim().split(/\s+/)[0] || "there");
+function buildSelfBillEmailHtml(
+  sb: SelfBill,
+  dueYmd: string | null,
+  args?: { partnerName?: string | null; companyName?: string | null },
+): string {
+  const firstName = esc((args?.partnerName?.trim() || sb.partner_name || "").split(/\s+/)[0] || "there");
   const ref = esc(sb.reference || "");
   const periodStart = sb.week_start ? fmtSbDate(sb.week_start) : null;
   const periodEnd = sb.week_end ? fmtSbDate(sb.week_end) : null;
@@ -155,6 +159,24 @@ function buildSelfBillEmailHtml(sb: SelfBill, dueYmd: string | null): string {
     </table>
   </td></tr></table>
 </body></html>`;
+}
+
+/**
+ * Mirror of the partner Resend email, posted as a Zendesk side conversation under the
+ * payment-run master ticket so finance has a single thread per partner per cycle.
+ * Side conversations don't carry PDF attachments — the partner gets the PDF via Resend;
+ * Zendesk just records the activity.
+ */
+function buildSelfBillSideConvHtml(sb: SelfBill, dueYmd: string | null, partnerEmail: string): string {
+  const week = sb.week_label ?? sb.period ?? "—";
+  const dueLine = dueYmd ? `<p style="margin:0 0 8px;">Payment due: <strong>${dueYmd}</strong></p>` : "";
+  return `<div style="font-family:system-ui,sans-serif;color:#0A0A1F;max-width:560px;">
+      <p style="margin:0 0 8px;">Self-bill <strong>${sb.reference}</strong> sent to <strong>${partnerEmail}</strong>.</p>
+      <p style="margin:0 0 8px;">Week: ${week}</p>
+      ${dueLine}
+      <p style="margin:0 0 8px;">Amount: <strong>${formatCurrency(Number(sb.net_payout ?? 0))}</strong></p>
+      <p style="margin:0;color:#6B6B85;font-size:13px;">PDF was emailed via Resend (Zendesk side conversations don't carry attachments).</p>
+    </div>`;
 }
 
 function parseCycleHint(raw: unknown): PaymentRunCycleKind | "auto" {

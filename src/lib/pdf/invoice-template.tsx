@@ -110,8 +110,24 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
   const intro = isPaid
     ? "Thank you — your payment has been received. This statement is for your records."
     : "Your job is complete. Below is your statement of charges. This statement PDF is for your records.";
-  const totalLabel = isPaid ? "Amount paid" : data.partial ? "Balance due" : "Amount due";
-  const totalAmount = isPaid ? data.amount : data.balanceDue > 0 ? data.balanceDue : data.amount;
+  // Partial-payment-request aware totals (a request can ask for less than the
+  // full balance — e.g. a deposit). Falls back to the full balance otherwise.
+  const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
+  const requestedDue =
+    !isPaid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
+  const isPartialRequest =
+    !isPaid &&
+    data.amountDueNow != null &&
+    data.amountDueNow > 0.02 &&
+    Math.abs(data.amountDueNow - fullDue) > 0.02;
+  const totalLabel = isPaid
+    ? "Amount paid"
+    : isPartialRequest
+      ? "Amount due now"
+      : data.partial
+        ? "Balance due"
+        : "Amount due";
+  const totalAmount = isPaid ? data.amount : requestedDue;
 
   return (
     <Document>
