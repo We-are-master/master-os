@@ -796,6 +796,8 @@ export interface Partner {
   bank_account_number?: string | null;
   bank_account_holder?: string | null;
   bank_name?: string | null;
+  /** Cached Wise Business recipient id — set first time we pay this partner via Wise. */
+  wise_recipient_id?: string | null;
   /** Payout schedule — same format as accounts.payment_terms. Null = default Friday-after-week-end. */
   payment_terms?: string | null;
   /** Default partner owes cancellation fee (£) — office may override; falls back to company_settings. */
@@ -950,6 +952,22 @@ export interface SelfBill {
   partner_status_label?: string | null;
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
+  /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
+  email_sent_at?: string | null;
+  /** Zendesk master ticket id for the last send. Mirrors self_bill_payment_runs.zendesk_ticket_id. */
+  zendesk_ticket_id?: string | null;
+  /** Cached Zendesk ticket URL for the badge link. */
+  zendesk_ticket_url?: string | null;
+  /** Per-partner side conversation inside the master ticket. Reused on Resend. */
+  zendesk_side_conversation_id?: string | null;
+  /** FK to self_bill_payment_runs — groups this self-bill under one Zendesk master ticket. */
+  payment_run_id?: string | null;
+  /** Wise Business transfer id minted for this payout. */
+  wise_transfer_id?: string | null;
+  /** Wise transfer last-known status (created, funded, outgoing_payment_sent, refunded, …). */
+  wise_status?: string | null;
+  /** Stamp when the Wise transfer was funded successfully. */
+  wise_paid_at?: string | null;
 }
 
 /** Custos internos (payroll, despesas operacionais pontuais) */

@@ -200,6 +200,46 @@ function buildPayNowBlock(paymentLinkUrl: string): string {
           </tr>`;
 }
 
+/**
+ * GetFixfy LTD bank details — shown on unpaid invoices so the client can pay
+ * by bank transfer as an alternative to the Stripe link. Hidden on paid
+ * receipts (no need to repeat).
+ */
+function buildBankDetailsBlock(): string {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Account name", value: "GETFIXFY LTD" },
+    { label: "Sort code",    value: "04-00-03" },
+    { label: "Account no.",  value: "06913415" },
+    { label: "IBAN",         value: "GB38 MONZ 0400 0306 9134 15" },
+    { label: "Bank",         value: "Monzo Bank" },
+  ];
+  const rowsHtml = rows
+    .map(
+      (r) => `
+                      <tr>
+                        <td valign="middle" style="padding-top:4px; font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(r.label)}</td>
+                        <td valign="middle" align="right" style="padding-top:4px; font-size:13px; color:#020040; font-family:monospace;">${escapeHtml(r.value)}</td>
+                      </tr>`,
+    )
+    .join("");
+
+  return `
+          <tr>
+            <td class="px" style="padding:0 40px 28px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">Or pay by bank transfer</p>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
+                    </table>
+                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the invoice reference as the payment reference so we can match it automatically.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+}
+
 function buildReportNoticeBlock(count: number): string {
   const label = count === 1 ? "report" : "reports";
   return `
@@ -340,6 +380,7 @@ export function buildInvoiceClientEmailHTML(
     ? invoice.stripe_payment_link_url.trim()
     : "";
   const payNowBlock = payLink ? buildPayNowBlock(payLink) : "";
+  const bankDetailsBlock = paid ? "" : buildBankDetailsBlock();
 
   const vatPrimary = paid
     ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
@@ -379,6 +420,7 @@ export function buildInvoiceClientEmailHTML(
   html = replaceAll(html, "breakdown_total_amount", breakdownTotalAmount);
   html = replaceAll(html, "payment_method_block", paymentMethodBlock);
   html = replaceAll(html, "pay_now_block", payNowBlock);
+  html = replaceAll(html, "bank_details_block", bankDetailsBlock);
   html = replaceAll(html, "vat_disclaimer_primary", escapeHtml(vatPrimary));
   html = replaceAll(html, "total_amount", formatMoneyPlain(invAmt));
 

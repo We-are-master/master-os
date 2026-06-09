@@ -113,14 +113,48 @@ export async function bulkCancelSelfBills(ids: string[]): Promise<void> {
   await cancelSelfBillsByIds(ids);
 }
 
-export async function bulkSendSelfBillEmails(ids: string[]): Promise<{
+export async function payWithWise(
+  selfBillId: string,
+  opts?: { scope?: "full" | "job"; jobId?: string; jobAmount?: number },
+): Promise<{
+  ok: boolean;
+  wise_transfer_id?: string;
+  wise_status?: string;
+  funded?: boolean;
+  error?: string;
+}> {
+  const res = await fetch("/api/self-bills/wise-pay", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      selfBillId,
+      scope: opts?.scope ?? "full",
+      jobId: opts?.jobId,
+      jobAmount: opts?.jobAmount,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    wise_transfer_id?: string;
+    wise_status?: string;
+    funded?: boolean;
+    error?: string;
+  };
+  if (!res.ok) return { ok: false, error: data.error ?? "Wise pay failed" };
+  return { ok: true, ...data };
+}
+
+export async function bulkSendSelfBillEmails(
+  ids: string[],
+  opts?: { cycleKind?: "standard" | "off_cycle" | "auto" },
+): Promise<{
   sent: number;
   skipped: { id: string; reference?: string; reason: string }[];
 }> {
   const res = await fetch("/api/self-bills/send-email", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selfBillIds: ids }),
+    body: JSON.stringify({ selfBillIds: ids, paymentRunHint: opts?.cycleKind ?? "auto" }),
   });
   const data = (await res.json()) as {
     sent?: number;
