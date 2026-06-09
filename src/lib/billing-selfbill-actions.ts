@@ -113,6 +113,40 @@ export async function bulkCancelSelfBills(ids: string[]): Promise<void> {
   await cancelSelfBillsByIds(ids);
 }
 
+export async function bulkApproveSelfBills(
+  ids: string[],
+): Promise<{ approved: number; skipped: { id: string; reference?: string; reason: string }[] }> {
+  const res = await fetch("/api/self-bills/approve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selfBillIds: ids }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    approved?: number;
+    skipped?: { id: string; reference?: string; reason: string }[];
+    error?: string;
+  };
+  if (!res.ok) throw new Error(data.error ?? "Failed to approve");
+  return { approved: data.approved ?? 0, skipped: data.skipped ?? [] };
+}
+
+export async function bulkUnapproveSelfBills(
+  ids: string[],
+): Promise<{ unapproved: number; skipped: { id: string; reference?: string; reason: string }[] }> {
+  const res = await fetch("/api/self-bills/unapprove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selfBillIds: ids }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    unapproved?: number;
+    skipped?: { id: string; reference?: string; reason: string }[];
+    error?: string;
+  };
+  if (!res.ok) throw new Error(data.error ?? "Failed to unapprove");
+  return { unapproved: data.unapproved ?? 0, skipped: data.skipped ?? [] };
+}
+
 export async function payWithWise(
   selfBillId: string,
   opts?: { scope?: "full" | "job"; jobId?: string; jobAmount?: number },

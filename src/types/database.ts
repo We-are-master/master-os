@@ -968,6 +968,10 @@ export interface SelfBill {
   wise_status?: string | null;
   /** Stamp when the Wise transfer was funded successfully. */
   wise_paid_at?: string | null;
+  /** Office signoff stamp — required before Wise payout fires. Cleared by Unapprove. */
+  approved_at?: string | null;
+  /** Profile id of the user who clicked Approve. */
+  approved_by?: string | null;
 }
 
 /** Custos internos (payroll, despesas operacionais pontuais) */

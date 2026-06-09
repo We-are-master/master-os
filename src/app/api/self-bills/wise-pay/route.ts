@@ -75,6 +75,9 @@ export async function POST(req: NextRequest) {
   if (!sb.email_sent_at) {
     return NextResponse.json({ error: "Send the self-bill before paying" }, { status: 400 });
   }
+  if (!sb.approved_at) {
+    return NextResponse.json({ error: "Self-bill not approved" }, { status: 400 });
+  }
 
   const { data: partnerRow } = await admin
     .from("partners")
