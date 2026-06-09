@@ -145,9 +145,6 @@ export async function resolveJobBillingContact(
   };
 }
 
-const JOB_FOR_INVOICE_SELECT =
-  "id, reference, title, client_id, client_name, property_address, service_type, completed_date, quote_id, partner_agreed_value, partner_cost, materials_cost, internal_invoice_approved";
-
 /** Resolve the job row for an invoice (reference → invoice_id link → explicit job id). */
 export async function resolveJobForInvoiceSend(
   admin: SupabaseClient,
@@ -158,7 +155,7 @@ export async function resolveJobForInvoiceSend(
   if (jobId) {
     const { data } = await admin
       .from("jobs")
-      .select(JOB_FOR_INVOICE_SELECT)
+      .select("*")
       .eq("id", jobId)
       .is("deleted_at", null)
       .maybeSingle();
@@ -169,7 +166,7 @@ export async function resolveJobForInvoiceSend(
   if (ref) {
     const { data } = await admin
       .from("jobs")
-      .select(JOB_FOR_INVOICE_SELECT)
+      .select("*")
       .eq("reference", ref)
       .is("deleted_at", null)
       .maybeSingle();
@@ -178,7 +175,7 @@ export async function resolveJobForInvoiceSend(
 
   const { data } = await admin
     .from("jobs")
-    .select(JOB_FOR_INVOICE_SELECT)
+    .select("*")
     .eq("invoice_id", invoice.id)
     .is("deleted_at", null)
     .maybeSingle();
