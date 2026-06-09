@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SchoolPhase } from "@/lib/fixfy-school-curriculum";
+import { FIXFY_SCHOOL_PHASES } from "@/lib/fixfy-school-curriculum";
 import { SCHOOL_QUIZ_PASS_STARS, type SchoolQuizQuestion } from "@/lib/fixfy-school-quizzes";
 import { getLocalizedPhase, getLocalizedQuiz } from "@/lib/fixfy-school-localized";
 import { useFixfySchoolLocale } from "@/hooks/use-fixfy-school-locale";
@@ -179,7 +180,7 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
   };
 
   const nextPhase = (() => {
-    const phases = ["zendesk", "fixfy-os", "trade-portal"] as const;
+    const phases = FIXFY_SCHOOL_PHASES.map((p) => p.id);
     const idx = phases.indexOf(phase.id);
     if (idx < 0 || idx >= phases.length - 1) return null;
     return getLocalizedPhase(phases[idx + 1]!, locale);
@@ -331,7 +332,7 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
 
 export function PhaseQuizLocked({ phaseId }: { phaseId: string }) {
   const { locale } = useFixfySchoolLocale();
-  const prev = previousPhaseId(phaseId as "fixfy-os" | "zendesk" | "trade-portal");
+  const prev = previousPhaseId(phaseId as import("@/lib/fixfy-school-curriculum").SchoolPhaseId);
   const prevPhase = prev ? getLocalizedPhase(prev, locale) : null;
 
   return (

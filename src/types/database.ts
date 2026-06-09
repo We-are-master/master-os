@@ -59,6 +59,8 @@ export interface CatalogService {
   partner_email_notes_fixed?: string | null;
   /** Type-of-work rules appended after hourly/fixed note (e.g. Gardener). */
   partner_email_notes_default?: string | null;
+  /** When true, service can be booked as Smart Price (hourly). */
+  accepts_smart_price?: boolean;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -466,6 +468,8 @@ export interface Job {
   catalog_service_id?: string | null;
   /** When set with catalog_service_id, preset id inside service_catalog.pricing_presets. */
   catalog_pricing_preset_id?: string | null;
+  /** Denormalized band label at creation (Zendesk / webhook). */
+  catalog_band_label?: string | null;
   /** Ids from service_catalog.pricing_addons selected at creation (stacked). */
   catalog_pricing_addon_ids?: string[] | null;
   /** Access / logistics flags used for automatic surcharge. */
@@ -792,6 +796,8 @@ export interface Partner {
   bank_account_number?: string | null;
   bank_account_holder?: string | null;
   bank_name?: string | null;
+  /** Cached Wise Business recipient id — set first time we pay this partner via Wise. */
+  wise_recipient_id?: string | null;
   /** Payout schedule — same format as accounts.payment_terms. Null = default Friday-after-week-end. */
   payment_terms?: string | null;
   /** Default partner owes cancellation fee (£) — office may override; falls back to company_settings. */
@@ -946,7 +952,49 @@ export interface SelfBill {
   partner_status_label?: string | null;
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
+  /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
+  email_sent_at?: string | null;
+  /** Zendesk master ticket id for the last send. Mirrors self_bill_payment_runs.zendesk_ticket_id. */
+  zendesk_ticket_id?: string | null;
+  /** Cached Zendesk ticket URL for the badge link. */
+  zendesk_ticket_url?: string | null;
+  /** Per-partner side conversation inside the master ticket. Reused on Resend. */
+  zendesk_side_conversation_id?: string | null;
+  /** FK to self_bill_payment_runs — groups this self-bill under one Zendesk master ticket. */
+  payment_run_id?: string | null;
+  /** Wise Business transfer id minted for this payout. */
+  wise_transfer_id?: string | null;
+  /** Wise transfer last-known status (created, funded, outgoing_payment_sent, refunded, …). */
+  wise_status?: string | null;
+  /** Stamp when the Wise transfer was funded successfully. */
+  wise_paid_at?: string | null;
+  /** Office signoff stamp — required before Wise payout fires. Cleared by Unapprove. */
+  approved_at?: string | null;
+  /** Profile id of the user who clicked Approve. */
+  approved_by?: string | null;
+  /** Workforce auto-bill audit (fixed pay + % commission lines). */
+  payout_breakdown?: WorkforcePayoutBreakdown | null;
 }
+
+export type WorkforcePaymentMethod = "bank_transfer" | "wise";
+export type WorkforceCommissionBasis = "revenue" | "gross_profit";
+
+export type WorkforcePayoutBreakdown = {
+  fixed_pay: number;
+  commission_amount: number;
+  commission_basis?: WorkforceCommissionBasis | null;
+  commission_rate_percent?: number | null;
+  period_start: string;
+  period_end: string;
+  basis_total: number;
+  jobs: {
+    job_id: string;
+    reference: string;
+    revenue: number;
+    gross_profit: number;
+    commission: number;
+  }[];
+};
 
 /** Custos internos (payroll, despesas operacionais pontuais) */
 export type InternalCostStatus = "pending" | "paid";
@@ -1010,6 +1058,17 @@ export interface InternalCost {
   payroll_profile?: PayrollInternalProfile | null;
   /** Linked profiles.id when the person has a dashboard login (nullable). */
   profile_id?: string | null;
+  payment_method?: WorkforcePaymentMethod | null;
+  payout_bank_sort_code?: string | null;
+  payout_bank_account_number?: string | null;
+  payout_bank_account_holder?: string | null;
+  payout_wise_recipient_id?: string | null;
+  /** When true, commission_rate_percent applies to owner jobs in the pay period. */
+  commission_enabled?: boolean | null;
+  /** Percentage (0–100), not a fixed £ amount. */
+  commission_rate_percent?: number | null;
+  /** revenue | gross_profit (gross margin). */
+  commission_basis?: WorkforceCommissionBasis | null;
   created_at: string;
   updated_at: string;
 }

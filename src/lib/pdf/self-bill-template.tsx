@@ -38,6 +38,15 @@ export interface SelfBillPdfData {
   financeStatusLabel?: string | null;
   /** Explicit flag from server — preferred over inferring from optional text fields. */
   payoutVoided?: boolean;
+  billOrigin?: "partner" | "internal";
+  internalBreakdown?: {
+    fixedPay: number;
+    commissionAmount: number;
+    commissionBasis?: string | null;
+    commissionRatePercent?: number | null;
+    basisTotal?: number;
+    jobs?: { reference: string; revenue: number; grossProfit: number; commission: number }[];
+  };
 }
 
 /* Brand palette — mirrors the Self-Bill Issued email
@@ -127,6 +136,7 @@ function firstNameOf(name: string): string {
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
+  const isInternal = data.billOrigin === "internal";
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
   const originalAmt =

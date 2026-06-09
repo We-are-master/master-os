@@ -24,7 +24,7 @@ function parseProgressBody(body: unknown): SchoolProgress | null {
   const unlockedAt =
     o.unlockedAt && typeof o.unlockedAt === "object" && !Array.isArray(o.unlockedAt)
       ? (o.unlockedAt as Partial<Record<SchoolPhaseId, string>>)
-      : { zendesk: new Date().toISOString() };
+      : { "fixfy-products": new Date().toISOString() };
   const quizStars =
     o.quizStars && typeof o.quizStars === "object" && !Array.isArray(o.quizStars)
       ? (o.quizStars as Partial<Record<SchoolPhaseId, number>>)
@@ -49,6 +49,15 @@ export async function GET() {
     return NextResponse.json({ error: "Could not load progress." }, { status: 500 });
   }
 
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  const role = (profileRow as { role?: string } | null)?.role ?? null;
+  const isAdmin = role === "admin";
+
   const row = (data as SchoolProgressRow | null) ?? emptySchoolProgressRow(auth.user.id);
   const progress = rowToSchoolProgress(row);
 
@@ -62,9 +71,11 @@ export async function GET() {
   return NextResponse.json({
     progress,
     quizAttempts: attempts ?? [],
+    isAdmin,
     profileSummary: {
       xp: row.total_xp_earned,
       certifiedPhases: certifiedPhaseIds(progress),
+      isAdmin,
     },
   });
 }

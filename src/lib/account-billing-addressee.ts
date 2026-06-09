@@ -9,7 +9,7 @@ export type ResolvedNominalBilling = {
    * Email used for customer-facing documents and sends (quotes, final-review email, etc.).
    * - **end_client** (including linked account with `billing_type === "end_client"`): always from the
    *   `clients` row (`clients.email`), plus optional `fallbackEmail` from the resolver if missing.
-   * - **account** (`billing_type === "account"`): `accounts.finance_email` → `accounts.email` → `clients.email` → fallback.
+   * - **account** (`billing_type === "account"`): `accounts.finance_email` → `accounts.email` → optional `fallbackEmail`.
    */
   documentEmail: string | null;
   sourceAccountId: string | null;
@@ -36,6 +36,7 @@ async function fetchAccountForBilling(
     .is("deleted_at", null)
     .maybeSingle();
   if (!withBilling.error) return (withBilling.data ?? null) as AccountRow | null;
+
   if (isSupabaseMissingColumnError(withBilling.error, "billing_type")) {
     const noBilling = await supabase
       .from("accounts")
@@ -43,9 +44,55 @@ async function fetchAccountForBilling(
       .eq("id", sourceId)
       .is("deleted_at", null)
       .maybeSingle();
-    if (noBilling.error || !noBilling.data) return null;
-    return { ...(noBilling.data as Omit<AccountRow, "billing_type">), billing_type: "end_client" };
+    if (!noBilling.error && noBilling.data) {
+      return { ...(noBilling.data as Omit<AccountRow, "billing_type">), billing_type: "end_client" };
+    }
+    if (isSupabaseMissingColumnError(noBilling.error, "finance_email")) {
+      const minimal = await supabase
+        .from("accounts")
+        .select("id, company_name, contact_name, email")
+        .eq("id", sourceId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (!minimal.error && minimal.data) {
+        return {
+          ...(minimal.data as Omit<AccountRow, "billing_type" | "finance_email">),
+          finance_email: null,
+          billing_type: "end_client",
+        };
+      }
+    }
+    return null;
   }
+
+  if (isSupabaseMissingColumnError(withBilling.error, "finance_email")) {
+    const noFinance = await supabase
+      .from("accounts")
+      .select("id, company_name, contact_name, email, billing_type")
+      .eq("id", sourceId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!noFinance.error && noFinance.data) {
+      return { ...(noFinance.data as Omit<AccountRow, "finance_email">), finance_email: null };
+    }
+    if (isSupabaseMissingColumnError(noFinance.error, "billing_type")) {
+      const minimal = await supabase
+        .from("accounts")
+        .select("id, company_name, contact_name, email")
+        .eq("id", sourceId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (!minimal.error && minimal.data) {
+        return {
+          ...(minimal.data as Omit<AccountRow, "billing_type" | "finance_email">),
+          finance_email: null,
+          billing_type: "end_client",
+        };
+      }
+    }
+    return null;
+  }
+
   return null;
 }
 
@@ -117,7 +164,7 @@ export async function resolveNominalBillingParty(
   const accName = (a.company_name?.trim() || a.contact_name?.trim() || c.full_name?.trim() || fbName) || "Client";
   const fe = a.finance_email?.trim();
   const main = a.email?.trim();
-  const documentEmail = fe || main || c.email?.trim() || fbEmail;
+  const documentEmail = fe || main || fbEmail;
   return {
     displayName: accName,
     documentEmail,

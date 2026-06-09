@@ -6,6 +6,7 @@ import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { dispatchQuoteBidInvites } from "@/lib/quote-bid-invites";
 import { syncQuoteZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
+import { resolveClientIdForZendeskJob } from "@/lib/zendesk-job-client-resolve";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -13,7 +14,7 @@ export const runtime  = "nodejs";
 /**
  * POST /api/quotes
  *
- * Creates a draft quote from an external caller (n8n, integration scripts).
+ * Creates a draft quote from an external caller (Zendesk webhooks, integration scripts).
  * Auth: header `X-API-Key` must match env `MASTER_OS_QUOTE_WEBHOOK_API_KEY`.
  *
  * Body (JSON):
@@ -183,43 +184,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
 
-  // Client linkage:
-  //   - If both `client_name` and `client_email` are provided, look up an
-  //     existing client in this account by email and create one if not found.
-  //   - If either is missing, leave `client_id = null` and just keep the
-  //     free-text fields (or null) on the quote row.
+  const accountCompanyName = String((account as { company_name?: string }).company_name ?? "").trim();
+
   let clientId: string | null = null;
+  let resolvedClientFullName = clientName;
   if (clientEmail && clientName) {
-    const { data: existing, error: findErr } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("source_account_id", accountId)
-      .ilike("email", clientEmail)
-      .limit(1)
-      .maybeSingle();
-    if (findErr) {
-      console.error("[api/quotes] client lookup failed:", findErr.message);
+    try {
+      const resolved = await resolveClientIdForZendeskJob(supabase, {
+        accountId,
+        clientName,
+        clientEmail,
+        clientPhone: null,
+        accountCompanyName: accountCompanyName || null,
+      });
+      clientId = resolved.clientId;
+      resolvedClientFullName = resolved.clientFullName;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Client lookup failed.";
+      console.error("[api/quotes] client resolve failed:", message);
       return NextResponse.json({ error: "Client lookup failed." }, { status: 500 });
-    }
-    if (existing?.id) {
-      clientId = existing.id as string;
-    } else {
-      const { data: created, error: createErr } = await supabase
-        .from("clients")
-        .insert({
-          full_name:         clientName,
-          email:             clientEmail,
-          client_type:       "commercial",
-          source:            "corporate",
-          source_account_id: accountId,
-        })
-        .select("id")
-        .single();
-      if (createErr || !created) {
-        console.error("[api/quotes] client create failed:", createErr?.message);
-        return NextResponse.json({ error: "Could not create client." }, { status: 500 });
-      }
-      clientId = created.id as string;
     }
   }
 
@@ -267,7 +250,7 @@ export async function POST(req: NextRequest) {
     title:                effectiveTitle,
     status,
     client_id:            clientId,
-    client_name:          clientName || null,
+    client_name:          resolvedClientFullName || clientName || null,
     client_email:         clientEmail || null,
     scope:                description,
     service_type:         resolvedServiceType,

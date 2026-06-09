@@ -1,4 +1,4 @@
-import type { YmdBounds } from "@/lib/billing-standalone-period";
+import { addDaysYmd, todayYmdLocal, type YmdBounds } from "@/lib/billing-standalone-period";
 
 /** Billing control tower: All or custom calendar range for due / pay-period views. */
 export type BillingStandaloneFilterValue = {
@@ -12,6 +12,19 @@ export const DEFAULT_BILLING_STANDALONE_FILTER: BillingStandaloneFilterValue = {
   customFrom: "",
   customTo: "",
 };
+
+/** Last 90 calendar days (inclusive) — initial Supabase fetch window (not the UI default). */
+export function defaultBillingStandaloneFilter(): BillingStandaloneFilterValue {
+  const to = todayYmdLocal();
+  const from = addDaysYmd(to, -89);
+  return { mode: "custom", customFrom: from, customTo: to };
+}
+
+/** Fixed bounds for the first billing data load (open items + last 90 days). */
+export function getBillingInitialFetchBounds(): YmdBounds {
+  const { customFrom, customTo } = defaultBillingStandaloneFilter();
+  return { from: customFrom!, to: customTo! };
+}
 
 export function resolveBillingStandaloneFilterBounds(
   value: BillingStandaloneFilterValue,

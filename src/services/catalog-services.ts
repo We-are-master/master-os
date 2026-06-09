@@ -1,31 +1,43 @@
 import { getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
 import type { CatalogService } from "@/types/database";
-import {
-  upsertCatalogOptionInZendesk,
-  removeCatalogOptionFromZendesk,
-} from "@/lib/zendesk-service-catalog-sync";
 
 /**
- * Fire-and-forget the Zendesk option sync after a catalog mutation. The
- * upsert/remove helpers no-op when Zendesk isn't configured and swallow
- * their own errors via a logged result, so a Zendesk outage never blocks
- * the mutation that just succeeded against Supabase.
+ * Fire-and-forget Zendesk sync after a catalog mutation (server / dashboard only).
+ * Dynamic import keeps zendesk sync modules out of client bundles that only
+ * import listCatalogServicesForPicker from this file.
  */
 function dispatchZendeskOptionSync(
   kind: "upsert" | "remove",
   catalogId: string,
 ): void {
-  const op = kind === "upsert"
-    ? upsertCatalogOptionInZendesk(catalogId)
-    : removeCatalogOptionFromZendesk(catalogId);
-  void op
+  if (typeof window !== "undefined") return;
+  void import("@/lib/zendesk-service-catalog-sync")
+    .then((mod) =>
+      kind === "upsert"
+        ? mod.upsertCatalogOptionInZendesk(catalogId)
+        : mod.removeCatalogOptionFromZendesk(catalogId),
+    )
     .then((r) => {
-      if (!r.ok && !r.skipped) {
+      if (r && !r.ok && !r.skipped) {
         console.error(`[catalog-services] Zendesk ${kind} failed:`, r.error);
       }
     })
     .catch((err) => {
       console.error(`[catalog-services] Zendesk ${kind} threw:`, err);
+    });
+}
+
+function dispatchZendeskBandsSync(catalogId: string, presetsRaw: unknown): void {
+  if (typeof window !== "undefined") return;
+  void import("@/lib/zendesk-service-bands-sync")
+    .then((mod) => mod.syncBandsToZendesk(catalogId, presetsRaw))
+    .then((r) => {
+      if (r && !r.ok && !r.skipped) {
+        console.error("[catalog-services] Zendesk bands sync failed:", r.error);
+      }
+    })
+    .catch((err) => {
+      console.error("[catalog-services] Zendesk bands sync threw:", err);
     });
 }
 
@@ -92,6 +104,7 @@ export async function createCatalogService(
   if (error) throw new Error(error.message);
   const row = data as CatalogService;
   dispatchZendeskOptionSync("upsert", row.id);
+  dispatchZendeskBandsSync(row.id, row.pricing_presets);
   return row;
 }
 
@@ -107,6 +120,9 @@ export async function updateCatalogService(id: string, input: Partial<CatalogSer
   if (error) throw new Error(error.message);
   const row = data as CatalogService;
   dispatchZendeskOptionSync("upsert", row.id);
+  if ("pricing_presets" in input) {
+    dispatchZendeskBandsSync(row.id, row.pricing_presets);
+  }
   return row;
 }
 

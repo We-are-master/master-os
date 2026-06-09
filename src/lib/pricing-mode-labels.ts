@@ -2,8 +2,8 @@
  * Shared UI copy for job billing ({@link Job["job_type"]}) and catalog `pricing_mode` rows.
  */
 export const PRICING_MODE_LABELS = {
-  fixed: "Custom Price",
-  hourly: "Smart Pricing",
+  fixed: "Fixed Price",
+  hourly: "Smart Price",
 } as const;
 
 export function pricingModeLabel(mode: "fixed" | "hourly"): string {

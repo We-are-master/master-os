@@ -3,14 +3,16 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
-import { extractUkPostcode } from "@/lib/uk-postcode";
+import {
+  propertyAddressWithPostcode,
+  resolvePropertyPostcode,
+} from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
-import { resolveJobPricing } from "@/lib/job-pricing-resolver";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import type {
   AccountServicePrice,
@@ -23,7 +25,20 @@ import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
 } from "@/lib/zendesk-job-ingest";
+import { resolveClientIdForZendeskJob } from "@/lib/zendesk-job-client-resolve";
 import { resolveInitialBilledHours } from "@/lib/job-hourly-billing";
+import {
+  catalogDefaultHoursForBilling,
+  inferWebhookRateTypeFromCatalog,
+  normalizeBandId,
+  normalizeWebhookRateType,
+  resolveFixedManualPricing,
+  resolveSmartPriceRates,
+  resolveWebhookAutoAssignStatus,
+  validateServiceBand,
+} from "@/lib/zendesk-webhook-pricing";
+import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
+import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -34,7 +49,7 @@ export const runtime  = "nodejs";
 /**
  * POST /api/jobs
  *
- * Creates a job from an external caller (n8n, integration scripts).
+ * Creates a job from an external caller (Zendesk webhooks, integration scripts).
  * Auth: header `X-API-Key` must match env `MASTER_OS_JOB_WEBHOOK_API_KEY`.
  *
  * Body (JSON):
@@ -81,7 +96,10 @@ export const runtime  = "nodejs";
  *                                    //   already exists with an empty phone,
  *                                    //   this value backfills it; a non-empty
  *                                    //   phone is never overwritten.
- *     property_address: string,      // required (geocoded by app for partner map)
+ *     property_address: string,      // required street/place (geocoded for map)
+ *     postcode?:        string,      // optional UK postcode when not embedded in
+ *                                    //   property_address — used for partner match
+ *                                    //   and appended for geocoding when separate
  *     service_type?:    string,      // trade label. Optional when
  *                                    //   catalog_service_id is sent — the
  *                                    //   catalog row's `name` is used instead.
@@ -245,16 +263,15 @@ export async function POST(req: NextRequest) {
   let clientEmail       = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
   const clientPhone     = nullish(body.client_phone);
   let propertyAddress   = str(body.property_address);
+  let postcodeIn        = str(body.postcode);
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
   const description     = str(body.description) || null;
-  // Accept either the bare value (`hourly` / `fixed`) or the Zendesk Job Type
-  // field tag form (`job_type_hourly` / `job_type_fixed`) — the prefix is
-  // stripped so the macro can post the tag straight through.
-  const rateType        = (
-    str(body.rate_type).toLowerCase().replace(/^job[_-]type[_-]/, "") || "fixed"
-  ) as "fixed" | "hourly";
+  // Accept bare values, Zendesk tags (`job_type_hourly` / `job_type_fixed`), or
+  // Smart Price alias (`job_type_smart_price` → hourly).
+  const rateTypeFromBody = normalizeWebhookRateType(body.rate_type);
+  let rateType: "fixed" | "hourly" = rateTypeFromBody ?? "fixed";
   // `let` because we drop the value to service_type below when it isn't a UUID
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
   let catalogServiceIdIn = str(body.catalog_service_id)?.replace(/^os_/i, "") || null;
@@ -271,9 +288,14 @@ export async function POST(req: NextRequest) {
   // The two pricing modes use different columns:
   //   fixed  → client_price / partner_cost
   //   hourly → hourly_client_rate / hourly_partner_rate
-  const clientPrice          = num(body.client_price);
+  let clientPrice            = num(body.client_price);
+  const clientPriceSent      = isPresent(body.client_price);
   const partnerCostSent      = isPresent(body.partner_cost);
   const partnerCostIn        = partnerCostSent ? num(body.partner_cost) : 0;
+  let partnerCost            = partnerCostSent ? partnerCostIn : 0;
+  let bandId                 = normalizeBandId(body.band_id, body.catalog_pricing_preset_id);
+  let catalogPresetId: string | null = null;
+  let catalogBandLabel: string | null = null;
   // For hourly: the body values act as caller overrides; when omitted (or
   // explicitly 0, which a Zendesk macro will send when the rate field on the
   // ticket is left blank), rates are resolved from the Services catalog
@@ -365,15 +387,6 @@ export async function POST(req: NextRequest) {
     (companyRow as { frontend_setup?: unknown } | null)?.frontend_setup ?? null,
   ).target_margin_pct ?? AUTO_PARTNER_MARGIN_PCT_FALLBACK;
 
-  // Now that we know the target margin, finalise the fixed-mode partner cost.
-  // An explicit value from the body still wins; otherwise the auto-margin
-  // default kicks in only when there's a positive client price to apply it to.
-  const partnerCost = partnerCostSent
-    ? partnerCostIn
-    : clientPrice > 0
-      ? autoMargin(clientPrice, targetMarginPct)
-      : 0;
-
   // When the caller pinned a catalog_service_id, treat the catalog row's name
   // as the trade label. The macro's mental model is "catalog id IS the type of
   // work" — there's no separate service_type to send. The resolved name is
@@ -382,7 +395,7 @@ export async function POST(req: NextRequest) {
   if (catalogServiceIdIn) {
     const { data: catRow, error: catErr } = await supabase
       .from("service_catalog")
-      .select("name")
+      .select("name, pricing_mode, accepts_smart_price")
       .eq("id", catalogServiceIdIn)
       .is("deleted_at", null)
       .maybeSingle();
@@ -393,7 +406,18 @@ export async function POST(req: NextRequest) {
     if (!catRow) {
       return NextResponse.json({ error: "catalog_service_id not found." }, { status: 400 });
     }
-    serviceType = String((catRow as { name: string }).name).trim();
+    const typedCat = catRow as Pick<CatalogService, "name" | "pricing_mode" | "accepts_smart_price">;
+    serviceType = String(typedCat.name).trim();
+    if (rateTypeFromBody === null) {
+      const inferred = inferWebhookRateTypeFromCatalog(typedCat);
+      if (inferred) {
+        rateType = inferred;
+        zendeskCorrections.push("inferred_rate_type_hourly_from_catalog");
+      } else {
+        console.warn("[api/jobs] rate_type empty; defaulting to fixed", { catalogServiceIdIn });
+        zendeskCorrections.push("rate_type_defaulted_fixed");
+      }
+    }
   }
 
   // Idempotency: if a Zendesk ticket id was supplied and we already have a
@@ -467,6 +491,7 @@ export async function POST(req: NextRequest) {
       propertyAddress,
       autoAssign,
       catalogServiceId: catalogServiceIdIn,
+      bandId,
       accountCompanyName: accountCompanyName || null,
     });
     clientName = reconciled.clientName;
@@ -474,6 +499,7 @@ export async function POST(req: NextRequest) {
     propertyAddress = reconciled.propertyAddress;
     autoAssign = reconciled.autoAssign;
     if (reconciled.catalogServiceId) catalogServiceIdIn = reconciled.catalogServiceId;
+    if (reconciled.bandId) bandId = reconciled.bandId;
     zendeskCorrections = reconciled.corrections;
     if (zendeskCorrections.length > 0) {
       console.info("[api/jobs] Zendesk ingest corrections:", zendeskCorrections.join(", "));
@@ -487,6 +513,19 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const propertyPostcode = resolvePropertyPostcode(postcodeIn, propertyAddress);
+  if (!propertyPostcode) {
+    return NextResponse.json(
+      {
+        error:
+          'Provide a valid UK postcode in property_address or in the postcode field ' +
+          '(e.g. "14 Park Lane, London W1K 1BE" or property_address + postcode: "W1K 1BE"). ' +
+          "Required for geocoding and partner matching.",
+      },
+      { status: 400 },
+    );
+  }
+  propertyAddress = propertyAddressWithPostcode(propertyAddress, propertyPostcode);
 
   if (
     catalogServiceIdIn &&
@@ -512,63 +551,24 @@ export async function POST(req: NextRequest) {
   // service_type doubles as title when the caller doesn't supply one.
   const titleResolved = title || serviceType;
 
-  // Find or create a client in this account — unless we're converting an
-  // existing quote, in which case we trust its linkage.
-  //
-  // Lookup strategy:
-  //   - When client_email is present, match on email (unique-ish across the
-  //     account, case-insensitive).
-  //   - Otherwise fall back to matching on full_name in the same account.
-  //     Duplicates with the same name are possible but acceptable — the
-  //     caller chose to omit the email, and creating a fresh row each time
-  //     would silently fragment history worse than reusing a name match.
+  // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
+  let resolvedClientFullName = clientName;
   if (!clientId) {
-    const baseQuery = supabase
-      .from("clients")
-      .select("id, phone")
-      .eq("source_account_id", accountId)
-      .limit(1);
-    const { data: existing, error: findErr } = clientEmail
-      ? await baseQuery.ilike("email", clientEmail).maybeSingle()
-      : await baseQuery.ilike("full_name", clientName).maybeSingle();
-    if (findErr) {
-      console.error("[api/jobs] client lookup failed:", findErr.message);
+    try {
+      const resolved = await resolveClientIdForZendeskJob(supabase, {
+        accountId,
+        clientName,
+        clientEmail,
+        clientPhone,
+        accountCompanyName: accountCompanyName || null,
+      });
+      clientId = resolved.clientId;
+      resolvedClientFullName = resolved.clientFullName;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Client lookup failed.";
+      console.error("[api/jobs] client resolve failed:", message);
       return NextResponse.json({ error: "Client lookup failed." }, { status: 500 });
-    }
-    if (existing?.id) {
-      clientId = existing.id as string;
-      // Backfill phone when the existing client doesn't have one yet and the
-      // caller now has a number. We never overwrite a phone that's already
-      // there — staff may have curated it.
-      const existingPhone = (existing as { phone: string | null }).phone;
-      if (clientPhone && !existingPhone?.trim()) {
-        const { error: phoneErr } = await supabase
-          .from("clients")
-          .update({ phone: clientPhone })
-          .eq("id", clientId);
-        if (phoneErr) {
-          console.error("[api/jobs] client phone backfill failed:", phoneErr.message);
-        }
-      }
-    } else {
-      const { data: created, error: createErr } = await supabase
-        .from("clients")
-        .insert({
-          full_name: clientName,
-          email: clientEmail,
-          phone: clientPhone,
-          client_type: "commercial",
-          source: "corporate",
-          source_account_id: accountId,
-        })
-        .select("id")
-        .single();
-      if (createErr || !created) {
-        console.error("[api/jobs] client create failed:", createErr?.message);
-        return NextResponse.json({ error: "Could not create client." }, { status: 500 });
-      }
-      clientId = created.id as string;
     }
   }
 
@@ -582,24 +582,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Hourly: resolve rates from Services catalog ────────────────────
-  // For hourly jobs the rate is sourced from the Services catalog instead of
-  // the payload. Resolution order for hourly_client_rate:
-  //   1) explicit body.hourly_client_rate (caller override — still respected)
-  //   2) account_service_prices.hourly_rate when use_standard = false
-  //   3) service_catalog.hourly_rate (standard)
-  // Resolution order for hourly_partner_rate when the caller doesn't send
-  // one (or sends 0):
-  //   1) service_catalog.partner_cost / default_hours (what staff captured)
-  //   2) company margin target × hourly_client_rate (Settings → Setup)
-  // Jobs land allocated either way and stay unassigned (or auto_assigning)
-  // for staff/partners to pick up.
+  // ─── Pricing: catalog bands, floor/ceiling, Smart Price ─────────────
   let resolvedCatalogServiceId: string | null = null;
   let hourlyClientRate = hourlyClientRateIn;
   let hourlyPartnerRate = hourlyPartnerRateIn;
   let hourlyCatalogDefaultHours: number | null = null;
+  let hourlyBillingBand: ServicePricingPreset | null = null;
+
   if (rateType === "hourly") {
-    const catalog = await resolveCatalogServiceForHourly(
+    const catalog = await resolveCatalogServiceForSmartPrice(
       supabase,
       catalogServiceIdIn,
       serviceType,
@@ -608,18 +599,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: catalog.error }, { status: catalog.status });
     }
     resolvedCatalogServiceId = catalog.row.id;
-    hourlyCatalogDefaultHours =
-      catalog.row.default_hours != null ? Number(catalog.row.default_hours) : null;
 
-    if (!hourlyClientRateSent) {
-      const override = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
-      const resolved = resolveJobPricing({
-        catalog: catalog.row,
-        accountOverride: override,
-        partnerOverride: null,
-      });
-      hourlyClientRate = Number(resolved.client.hourly_rate ?? 0);
+    const bandResult = validateServiceBand(catalog.row, bandId);
+    if (!bandResult.ok) {
+      return NextResponse.json({ error: bandResult.error }, { status: bandResult.status });
     }
+    if (bandResult.hasBands && bandResult.band) {
+      catalogPresetId = bandResult.band.id;
+      catalogBandLabel = bandResult.band.label ?? null;
+      hourlyBillingBand = bandResult.band;
+    }
+    hourlyCatalogDefaultHours = catalogDefaultHoursForBilling(catalog.row, hourlyBillingBand);
+
+    const accountOverride = await fetchAccountServiceOverride(supabase, accountId, catalog.row.id);
+    const hourlyResolved = resolveSmartPriceRates({
+      hourlyClientRateFromBody: hourlyClientRateIn,
+      hourlyClientRateSent,
+      hourlyPartnerRateFromBody: hourlyPartnerRateIn,
+      hourlyPartnerRateSent: hourlyPartnerRateSet,
+      catalog: catalog.row,
+      accountOverride,
+      band: bandResult.hasBands ? bandResult.band : null,
+      setupMarginPct: targetMarginPct,
+    });
+    hourlyClientRate = hourlyResolved.hourlyClientRate;
+    hourlyPartnerRate = hourlyResolved.hourlyPartnerRate;
+
     if (!(hourlyClientRate > 0)) {
       return NextResponse.json(
         {
@@ -630,28 +635,20 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (!hourlyPartnerRateSet) {
-      // Partner side: prefer the service_catalog standard (where staff already
-      // captured what we pay) over a generic margin formula. Catalog stores
-      // partner_cost as the total for `default_hours` of work, so divide.
-      // When the catalog has no partner_cost configured for this trade, fall
-      // back to the company margin target — same lever fixed-mode uses.
-      const catRow = catalog.row;
-      const catPartnerCost = catRow.partner_cost != null ? Number(catRow.partner_cost) : 0;
-      const hours = catRow.default_hours && Number(catRow.default_hours) > 0
-        ? Number(catRow.default_hours)
-        : 1;
-      const fromCatalog = catPartnerCost > 0
-        ? Math.round((catPartnerCost / hours) * 100) / 100
-        : 0;
-      hourlyPartnerRate = fromCatalog > 0
-        ? fromCatalog
-        : autoMargin(hourlyClientRate, targetMarginPct);
-    }
   }
 
-  if (rateType === "fixed" && catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
-    resolvedCatalogServiceId = catalogServiceIdIn;
+  if (rateType === "fixed") {
+    if (catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
+      resolvedCatalogServiceId = catalogServiceIdIn;
+    }
+    const fixedResolved = resolveFixedManualPricing({
+      clientPrice,
+      partnerCostSent,
+      partnerCost,
+      targetMarginPct,
+    });
+    clientPrice = fixedResolved.clientPrice;
+    partnerCost = fixedResolved.partnerCost;
   }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
@@ -662,14 +659,23 @@ export async function POST(req: NextRequest) {
     matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
       serviceType,
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
-      postcode: extractUkPostcode(propertyAddress),
+      postcode: propertyPostcode,
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
     });
   }
 
   // ─── Determine status ───────────────────────────────────────────────
-  const status = autoAssign ? "auto_assigning" : "unassigned";
+  const noMatchingPartners = autoAssign && matchedPartnerIds.length === 0;
+  if (noMatchingPartners) {
+    console.warn("[api/jobs] auto_assign: no matching partners", {
+      serviceType,
+      catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
+      postcode: propertyPostcode,
+      scheduledDate: isoDate,
+    });
+  }
+  const status = resolveWebhookAutoAssignStatus(autoAssign, matchedPartnerIds);
 
   // ─── Reference ──────────────────────────────────────────────────────
   const { data: ref, error: refErr } = await supabase.rpc("next_job_ref");
@@ -683,18 +689,14 @@ export async function POST(req: NextRequest) {
   // vs partner_cost; hourly compares the per-hour rates (totals scale linearly
   // so the percentage is the same).
   const margin = rateType === "hourly"
-    ? (hourlyClientRate > 0 && hourlyPartnerRate > 0
-        ? Math.round(((hourlyClientRate - hourlyPartnerRate) / hourlyClientRate) * 10000) / 100
-        : 0)
-    : (clientPrice > 0 && partnerCost > 0
-        ? Math.round(((clientPrice - partnerCost) / clientPrice) * 10000) / 100
-        : 0);
+    ? (marginPercent(hourlyClientRate, hourlyPartnerRate) ?? 0)
+    : (marginPercent(clientPrice, partnerCost) ?? 0);
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
     title:              titleResolved,
     client_id:          clientId,
-    client_name:        clientName,
+    client_name:        resolvedClientFullName,
     property_address:   propertyAddress,
     status,
     client_price:       rateType === "hourly" ? 0 : clientPrice,
@@ -718,6 +720,12 @@ export async function POST(req: NextRequest) {
   }
   if (resolvedCatalogServiceId) {
     jobRow.catalog_service_id = resolvedCatalogServiceId;
+  }
+  if (catalogPresetId) {
+    jobRow.catalog_pricing_preset_id = catalogPresetId;
+  }
+  if (catalogBandLabel) {
+    jobRow.catalog_band_label = catalogBandLabel;
   }
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
@@ -814,6 +822,7 @@ export async function POST(req: NextRequest) {
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
+      ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
     },
     { status: 201 },
@@ -825,8 +834,8 @@ export async function POST(req: NextRequest) {
 /**
  * Partner app URL for the job report submission page. Same shape the Zoho
  * Desk webhook and partner email use (`${partnerAppBase}/jobs/{reference}/report`)
- * so anything carrying this link — Zendesk macros, partner emails, n8n
- * forwards — resolves to the same destination. Bare URL with no token:
+ * so anything carrying this link — Zendesk macros, partner emails, external
+ * integrations — resolves to the same destination. Bare URL with no token:
  * the partner needs to be logged in to the partner app to view the report.
  */
 function buildReportLink(reference: string): string {
@@ -846,7 +855,10 @@ type CatalogResolveResult =
  * type-of-work) so Zendesk macros can keep sending "deep_cleaning" /
  * "Cleaning" / "General Maintenance" without learning UUIDs.
  */
-async function resolveCatalogServiceForHourly(
+const CATALOG_SMART_PRICE_SELECT =
+  "id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets, pricing_addons";
+
+async function resolveCatalogServiceForSmartPrice(
   supabase: SupabaseClient,
   catalogServiceIdIn: string | null,
   serviceType: string,
@@ -854,7 +866,7 @@ async function resolveCatalogServiceForHourly(
   if (catalogServiceIdIn) {
     const { data, error } = await supabase
       .from("service_catalog")
-      .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+      .select(CATALOG_SMART_PRICE_SELECT)
       .eq("id", catalogServiceIdIn)
       .is("deleted_at", null)
       .maybeSingle();
@@ -870,7 +882,7 @@ async function resolveCatalogServiceForHourly(
 
   const { data: catalogRows, error: listErr } = await supabase
     .from("service_catalog")
-    .select("id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost")
+    .select(CATALOG_SMART_PRICE_SELECT)
     .eq("is_active", true)
     .is("deleted_at", null);
   if (listErr) {
@@ -956,7 +968,7 @@ async function fetchAccountServiceOverride(
 ): Promise<AccountServicePrice | null> {
   const { data, error } = await supabase
     .from("account_service_prices")
-    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours")
+    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides")
     .eq("account_id", accountId)
     .eq("catalog_service_id", catalogServiceId)
     .maybeSingle();
@@ -969,16 +981,6 @@ async function fetchAccountServiceOverride(
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
-}
-
-/**
- * Partner side of the company margin target. With targetPct = 40 returns
- * round(clientSide * 0.60, 2) — but the caller passes the value from
- * Settings → Setup, so it always reflects current configuration.
- */
-function autoMargin(clientSide: number, targetPct: number): number {
-  const clamped = Math.max(0, Math.min(100, targetPct));
-  return Math.round(clientSide * (100 - clamped)) / 100;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */

@@ -15,6 +15,7 @@ import {
   sortPricingAddonsDisplay,
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
+import { resolveAccountSell, resolvePartnerPay } from "@/lib/catalog-pricing-floor-ceiling";
 
 export type CatalogLineKind = "base" | "addon";
 
@@ -62,25 +63,32 @@ function pickClientBase(
       hourly_rate: eff.hourly_rate,
     },
   );
-  let client = mode === "fixed" ? Number(eff.fixed_price) || 0 : estimatedValueFromCatalog(eff);
-  let partner = Number(eff.partner_cost) || 0;
+  const floorClient = mode === "fixed" ? Number(eff.fixed_price) || 0 : estimatedValueFromCatalog(eff);
+  const ceilingPartner = Number(eff.partner_cost) || 0;
+  let clientOverride: number | null = null;
+  let partnerOverride: number | null = null;
   let clientSource: "standard" | "custom" = "standard";
   let partnerSource: "standard" | "custom" = "standard";
 
   if (account && !account.use_standard) {
     const presetOvr = parseOverridesMap<CatalogPresetOverridesMap>(account.preset_overrides)[presetId];
     if (presetOvr?.fixed_price != null) {
-      client = Number(presetOvr.fixed_price) || 0;
+      clientOverride = Number(presetOvr.fixed_price) || 0;
       clientSource = "custom";
     } else if (account.fixed_price != null) {
-      client = Number(account.fixed_price) || 0;
+      clientOverride = Number(account.fixed_price) || 0;
       clientSource = "custom";
     }
     if (presetOvr?.partner_cost != null) {
-      partner = Number(presetOvr.partner_cost) || 0;
+      partnerOverride = Number(presetOvr.partner_cost) || 0;
       partnerSource = "custom";
     }
   }
+
+  const client = resolveAccountSell(floorClient, clientOverride);
+  const partner = resolvePartnerPay(ceilingPartner, partnerOverride);
+  if (clientSource === "custom" && client <= floorClient) clientSource = "standard";
+  if (partnerSource === "custom" && partner >= ceilingPartner) partnerSource = "standard";
 
   return { client, partner, clientSource, partnerSource };
 }
@@ -90,19 +98,21 @@ function pickAddonLine(
   account: AccountServicePrice | null,
   partnerPrice?: PartnerServicePrice | null,
 ): { client: number; partner: number; clientSource: "standard" | "custom"; partnerSource: "standard" | "custom" } {
-  let client = Number(addon.fixed_price) || 0;
-  let partner = addon.partner_cost != null ? Number(addon.partner_cost) || 0 : 0;
+  const floorClient = Number(addon.fixed_price) || 0;
+  const ceilingPartner = addon.partner_cost != null ? Number(addon.partner_cost) || 0 : 0;
+  let clientOverride: number | null = null;
+  let partnerOverride: number | null = null;
   let clientSource: "standard" | "custom" = "standard";
   let partnerSource: "standard" | "custom" = "standard";
 
   if (account && !account.use_standard) {
     const addonOvr = parseOverridesMap<CatalogAddonOverridesMap>(account.addon_overrides)[addon.id];
     if (addonOvr?.fixed_price != null) {
-      client = Number(addonOvr.fixed_price) || 0;
+      clientOverride = Number(addonOvr.fixed_price) || 0;
       clientSource = "custom";
     }
     if (addonOvr?.partner_cost != null) {
-      partner = Number(addonOvr.partner_cost) || 0;
+      partnerOverride = Number(addonOvr.partner_cost) || 0;
       partnerSource = "custom";
     }
   }
@@ -110,10 +120,15 @@ function pickAddonLine(
   if (partnerPrice && !partnerPrice.use_standard) {
     const partnerAddonOvr = parseOverridesMap<CatalogAddonOverridesMap>(partnerPrice.addon_overrides)[addon.id];
     if (partnerAddonOvr?.partner_cost != null) {
-      partner = Number(partnerAddonOvr.partner_cost) || 0;
+      partnerOverride = Number(partnerAddonOvr.partner_cost) || 0;
       partnerSource = "custom";
     }
   }
+
+  const client = resolveAccountSell(floorClient, clientOverride);
+  const partner = resolvePartnerPay(ceilingPartner, partnerOverride);
+  if (clientSource === "custom" && client <= floorClient) clientSource = "standard";
+  if (partnerSource === "custom" && partner >= ceilingPartner) partnerSource = "standard";
 
   return { client, partner, clientSource, partnerSource };
 }
@@ -145,16 +160,22 @@ export function resolveCatalogLinePricing(input: {
   let basePartner = base.partner;
   let basePartnerSource = base.partnerSource;
 
+  const ceilingPartner = base.partner;
   const pp = input.partnerPrice;
+  let partnerOverride: number | null = null;
   if (pp && !pp.use_standard) {
     const partnerPresetOvr = parseOverridesMap<CatalogPresetOverridesMap>(pp.preset_overrides)[presetId];
     if (partnerPresetOvr?.partner_cost != null) {
-      basePartner = Number(partnerPresetOvr.partner_cost) || 0;
+      partnerOverride = Number(partnerPresetOvr.partner_cost) || 0;
       basePartnerSource = "custom";
     } else if (pp.fixed_partner_cost != null) {
-      basePartner = Number(pp.fixed_partner_cost) || 0;
+      partnerOverride = Number(pp.fixed_partner_cost) || 0;
       basePartnerSource = "custom";
     }
+  }
+  basePartner = resolvePartnerPay(ceilingPartner, partnerOverride);
+  if (basePartnerSource === "custom" && basePartner >= ceilingPartner) {
+    basePartnerSource = "standard";
   }
 
   const lines: CatalogPricingLine[] = [

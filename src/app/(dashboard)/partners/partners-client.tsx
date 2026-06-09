@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
+import { enrichPartnersDirectoryEarnings } from "@/lib/partner-directory-earnings";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
@@ -140,6 +141,20 @@ import { refreshLegacyZeroPartnerRatings, refreshPartnerRating } from "@/service
 const PARTNERS_PAGE_SIZE = 10;
 const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
 
+function complianceTier(score: number): {
+  label: "AT RISK" | "REVIEW" | "ON TRACK";
+  barClass: string;
+  textClass: string;
+} {
+  if (score >= 75) {
+    return { label: "ON TRACK", barClass: "bg-emerald-500", textClass: "text-emerald-600 dark:text-emerald-400" };
+  }
+  if (score >= 50) {
+    return { label: "REVIEW", barClass: "bg-amber-500", textClass: "text-amber-600 dark:text-amber-400" };
+  }
+  return { label: "AT RISK", barClass: "bg-rose-500", textClass: "text-rose-600 dark:text-rose-400" };
+}
+
 /** Directory stage filters — same pill pattern as People → Workforce sub-filters */
 const PARTNER_DIRECTORY_STAGE_FILTERS = [
   { id: "all", label: "All" },
@@ -200,6 +215,34 @@ function PartnersDirectoryGridCheckbox({
   );
 }
 
+function PartnerRevenueMeter({
+  amount,
+  maxAmount,
+  className,
+  valueClassName,
+}: {
+  amount: number;
+  maxAmount: number;
+  className?: string;
+  valueClassName?: string;
+}) {
+  const earned = Math.round((Number(amount) || 0) * 100) / 100;
+  const pct = Math.round((earned / Math.max(1, maxAmount)) * 100);
+  return (
+    <div className={cn("space-y-1.5", className)}>
+      <span className={cn("block font-bold tabular-nums text-text-primary", valueClassName ?? "text-sm")}>
+        {formatCurrency(earned)}
+      </span>
+      <div className="h-1 w-full rounded-full bg-surface-tertiary overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary/75 transition-all"
+          style={{ width: `${Math.max(pct, earned > 0 ? 4 : 0)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function PartnersDirectoryGridView({
   data,
   loading,
@@ -214,6 +257,7 @@ function PartnersDirectoryGridView({
   isAdmin,
   bulkActionsSlot,
   catalogServices,
+  maxEarningsInView,
 }: {
   data: Partner[];
   loading: boolean;
@@ -228,6 +272,7 @@ function PartnersDirectoryGridView({
   isAdmin: boolean;
   bulkActionsSlot: ReactNode;
   catalogServices: readonly CatalogService[];
+  maxEarningsInView: number;
 }) {
   const allIds = data.map((p) => p.id);
   const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
@@ -403,9 +448,15 @@ function PartnersDirectoryGridView({
                       <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Jobs</dt>
                       <dd className="font-semibold text-sm text-text-primary tabular-nums">{item.jobs_completed}</dd>
                     </div>
-                    <div>
-                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Earnings</dt>
-                      <dd className="font-semibold text-sm text-text-primary tabular-nums truncate">{formatCurrency(item.total_earnings)}</dd>
+                    <div className="col-span-2">
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Revenue</dt>
+                      <dd>
+                        <PartnerRevenueMeter
+                          amount={item.total_earnings}
+                          maxAmount={maxEarningsInView}
+                          valueClassName="text-lg"
+                        />
+                      </dd>
                     </div>
                   </dl>
 
@@ -628,6 +679,12 @@ function partnerMatchesKanbanColumn(
   );
 }
 
+function sortPartnersByEarnings(partners: Partner[]): Partner[] {
+  return [...partners].sort(
+    (a, b) => (Number(b.total_earnings) || 0) - (Number(a.total_earnings) || 0),
+  );
+}
+
 function buildPartnersTradeKanbanColumns(
   partners: Partner[],
   columnLabels: readonly string[],
@@ -638,7 +695,7 @@ function buildPartnersTradeKanbanColumns(
     id: label,
     title: label,
     color: KANBAN_TRADE_COLUMN_COLORS[i % KANBAN_TRADE_COLUMN_COLORS.length],
-    items: partners.filter((p) => partnerMatchesKanbanColumn(p, label, catalog)),
+    items: sortPartnersByEarnings(partners.filter((p) => partnerMatchesKanbanColumn(p, label, catalog))),
   }));
   if (!includeOtherColumn) return cols;
   const otherItems = partners.filter((p) => {
@@ -655,7 +712,7 @@ function buildPartnersTradeKanbanColumns(
       id: KANBAN_OTHER_TRADE_COLUMN,
       title: KANBAN_OTHER_TRADE_COLUMN,
       color: "bg-slate-500",
-      items: otherItems,
+      items: sortPartnersByEarnings(otherItems),
     },
   ];
 }
@@ -760,7 +817,7 @@ const emptyForm = {
 const CREATE_PARTNER_WIZARD_STEPS = [
   { id: "info", label: "Partner info" },
   { id: "documents", label: "Documents" },
-  { id: "rates", label: "Rate card" },
+  { id: "rates", label: "Rate Card" },
 ] as const;
 
 type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
@@ -863,12 +920,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
+  const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
+  const [listSortKey, setListSortKey] = useState<string | null>("total_earnings");
+  const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
     try {
@@ -926,10 +986,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     if (viewMode === "team") loadTeam();
   }, [viewMode, loadTeam]);
 
-  const fetcher = useCallback(
-    (params: ListParams) => listPartners({ ...params, trade: tradeFilter !== "all" ? tradeFilter : undefined }),
-    [tradeFilter]
-  );
+  const fetcher = useCallback(async (params: ListParams) => {
+    const result = await listPartners({
+      ...params,
+      trade: tradeFilter !== "all" ? tradeFilter : undefined,
+    });
+    try {
+      const data = await enrichPartnersDirectoryEarnings(result.data);
+      return { ...result, data };
+    } catch {
+      return result;
+    }
+  }, [tradeFilter]);
 
   const {
     data: partners,
@@ -977,7 +1045,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         search: search.trim() || undefined,
         trade: tradeFilter !== "all" ? tradeFilter : undefined,
       });
-      setKanbanPartners(rows);
+      let enriched = rows;
+      try {
+        enriched = await enrichPartnersDirectoryEarnings(rows);
+      } catch {
+        /* keep DB values */
+      }
+      setKanbanPartners(sortPartnersByEarnings(enriched));
       setKanbanTotalItems(rows.length);
     } catch {
       toast.error("Failed to load partners for kanban");
@@ -1020,13 +1094,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   const loadCounts = useCallback(async () => {
     try {
-      const [counts, complianceAgg] = await Promise.all([
+      const supabase = getSupabase();
+      const [counts, complianceAgg, below50Res] = await Promise.all([
         getStatusCounts("partners", ["active", "inactive", "onboarding", "needs_attention", "on_break"]),
         getAggregates("partners", "compliance_score"),
+        supabase
+          .from("partners")
+          .select("id", { count: "exact", head: true })
+          .lt("compliance_score", 50)
+          .is("deleted_at", null),
       ]);
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
+      setPartnersBelow50Count(below50Res.count ?? 0);
     } catch { /* cosmetic */ }
   }, []);
 
@@ -1113,6 +1194,19 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
   const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
+
+  const partnerDirectoryTabs = useMemo(
+    () =>
+      PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => ({
+        id: s.id,
+        label: s.label,
+        count:
+          s.id === "inactive"
+            ? inactiveStageCount
+            : (statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0)),
+      })),
+    [statusCounts, totalPartners, inactiveStageCount],
+  );
 
   const createWizardStepIndex = CREATE_PARTNER_WIZARD_STEPS.findIndex((s) => s.id === createWizardStep);
   const isLastCreateWizardStep = createWizardStepIndex === CREATE_PARTNER_WIZARD_STEPS.length - 1;
@@ -1399,6 +1493,29 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  const sortedPartners = useMemo(() => {
+    const sortKey = listSortKey ?? "total_earnings";
+    const rows = [...partners];
+    const dir = listSortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av =
+        sortKey === "compliance_score"
+          ? Number(a.compliance_score) || 0
+          : Number(a.total_earnings) || 0;
+      const bv =
+        sortKey === "compliance_score"
+          ? Number(b.compliance_score) || 0
+          : Number(b.total_earnings) || 0;
+      return (av - bv) * dir;
+    });
+    return rows;
+  }, [partners, listSortKey, listSortDir]);
+
+  const maxEarningsInView = useMemo(
+    () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
+    [sortedPartners],
+  );
+
   const partnersTableCell = "px-3 sm:px-4 py-3";
   const partnersTableHeader = "px-3 sm:px-4 py-3";
 
@@ -1407,7 +1524,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       key: "company_name",
       label: "Partner",
       width: "24%",
-      minWidth: "200px",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => (
@@ -1426,13 +1542,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "trade",
       label: "Trade",
-      width: "11%",
-      minWidth: "96px",
+      width: "12%",
       align: "center",
       headerClassName: partnersTableHeader,
-      cellClassName: partnersTableCell,
+      cellClassName: cn(partnersTableCell, "overflow-visible"),
       render: (item) => (
-        <div className="flex justify-center">
+        <div className="flex justify-center overflow-visible">
           <PartnerTradesIconStrip
             trades={partnerTradesForDisplay(item, partnerCatalogServices)}
             catalogServices={partnerCatalogServices}
@@ -1444,98 +1559,76 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "location",
       label: "Coverage",
-      width: "14%",
-      minWidth: "120px",
-      headerClassName: partnersTableHeader,
-      cellClassName: partnersTableCell,
-      render: (item) => (
-        <div className="flex items-center gap-1.5 text-sm text-text-secondary min-w-0" title={formatPartnerCoverageSummary(item)}>
-          <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-          <span className="truncate">{formatPartnerCoverageSummary(item) || "—"}</span>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      label: "Status",
-      width: "12%",
-      minWidth: "108px",
+      width: "16%",
+      align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
-        const cfg = statusConfig[item.status] ?? statusConfig.active;
-        const reasons = item.partner_status_reasons ?? [];
-        const reasonRows =
-          item.status === "on_break"
-            ? reasons.filter((r) => r !== "on_break")
-            : reasons;
-        const showReasons =
-          (item.status === "needs_attention" && reasonRows.length > 0) ||
-          (item.status === "on_break" && reasonRows.length > 0);
+        const summary = formatPartnerCoverageSummary(item);
+        const [cityLine, detailLine] = summary.includes("·")
+          ? summary.split("·").map((s) => s.trim())
+          : [summary, ""];
         return (
-          <div className="flex flex-col gap-1 min-w-0">
-            <Badge variant={cfg.variant} dot>
-              {item.status === "on_break" ? "Inactive" : cfg.label}
-            </Badge>
-            {item.status === "on_break" ? (
-              <span className="inline-flex w-fit items-center rounded-md border border-stone-400/50 bg-stone-500/10 px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
-                On break
-              </span>
-            ) : null}
-            {showReasons ? (
-              <div className="flex flex-wrap gap-0.5">
-                {reasonRows.map((r) => (
-                  <span
-                    key={r}
-                    className="inline-flex items-center rounded-md border border-border-light bg-surface-hover px-1.5 py-0.5 text-[10px] font-medium text-text-secondary"
-                  >
-                    {partnerReasonLabel(r)}
-                  </span>
-                ))}
-              </div>
+          <div className="mx-auto min-w-0 max-w-[11rem] text-sm text-text-secondary text-center" title={summary}>
+            <span className="block truncate font-medium text-text-primary">{cityLine || "—"}</span>
+            {detailLine ? (
+              <span className="block truncate text-[11px] text-text-tertiary mt-0.5">{detailLine}</span>
             ) : null}
           </div>
         );
       },
     },
     {
+      key: "total_earnings",
+      label: "Revenue",
+      width: "18%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      sortable: true,
+      render: (item) => (
+        <PartnerRevenueMeter
+          amount={item.total_earnings}
+          maxAmount={maxEarningsInView}
+          className="mx-auto w-full max-w-[9rem] text-center"
+        />
+      ),
+    },
+    {
       key: "compliance_score",
       label: "Compliance",
-      width: "11%",
-      minWidth: "96px",
+      width: "14%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
         const raw = item.compliance_score;
         const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
-        const colorClass =
-          s >= 97 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+        const tier = complianceTier(s);
         return (
-          <div className="flex flex-col items-center" title="Blended score (documents + profile), 0–100">
-            <span className={cn("text-sm font-bold tabular-nums", colorClass)}>
-              {Math.round(s)}
-              <span className="text-[10px] font-semibold text-text-tertiary ml-0.5">%</span>
-            </span>
+          <div className="mx-auto min-w-0 max-w-[9rem] space-y-1 text-center" title="Blended score (documents + profile), 0–100">
+            <div className="flex items-center justify-center gap-2">
+              <span className={cn("text-sm font-bold tabular-nums", tier.textClass)}>
+                {Math.round(s)}%
+              </span>
+              <span className={cn("text-[9px] font-bold uppercase tracking-wide", tier.textClass)}>
+                {tier.label}
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", tier.barClass)}
+                style={{ width: `${Math.max(4, Math.min(100, Math.round(s)))}%` }}
+              />
+            </div>
           </div>
         );
       },
     },
     {
-      key: "jobs_completed",
-      label: "Jobs",
-      width: "10%",
-      minWidth: "72px",
-      align: "center",
-      headerClassName: partnersTableHeader,
-      cellClassName: partnersTableCell,
-      render: (item) => <span className="text-sm font-semibold text-text-primary tabular-nums">{item.jobs_completed}</span>,
-    },
-    {
       key: "rating",
       label: "Rating",
-      width: "10%",
-      minWidth: "80px",
+      width: "12%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
@@ -1547,9 +1640,29 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       ),
     },
     {
+      key: "status",
+      label: "Status",
+      width: "12%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: (item) => {
+        const cfg = statusConfig[item.status] ?? statusConfig.active;
+        const label = item.status === "on_break" ? "Inactive" : cfg.label;
+        return (
+          <div className="flex justify-center">
+            <Badge variant={cfg.variant} size="sm" className="uppercase tracking-wide">
+              {label}
+            </Badge>
+          </div>
+        );
+      },
+    },
+    {
       key: "actions",
       label: "",
       width: "48px",
+      align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors mx-auto" />,
@@ -1593,14 +1706,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Inactive" value={inactiveStageCount} format="number" icon={XCircle} accent="stone" />
-          <KpiCard title="Total" value={totalPartners} format="number" icon={Users} accent="blue" />
+          <KpiCard title="Active" value={activeCount} format="number" description="Currently taking work" icon={Briefcase} accent="emerald" />
+          <KpiCard title="Inactive" value={inactiveStageCount} format="number" description="Paused or off-boarded" icon={XCircle} accent="stone" />
+          <KpiCard title="Total" value={totalPartners} format="number" description="In directory" icon={Users} accent="blue" />
           <KpiCard
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
             format={complianceAvg == null ? "none" : "percent"}
-            description="0–100 scale · profile & documents (directory)"
+            description="Profile & documents"
             icon={ShieldCheck}
             accent="primary"
           />
@@ -1649,97 +1762,95 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
         {viewMode === "directory" && (
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
-            <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end w-full">
-                <div
-                  className={cn(
-                    "inline-flex self-end sm:self-auto rounded-xl border border-primary/25 bg-gradient-to-b from-card to-primary/[0.06]",
-                    "p-[3px] gap-0.5 shadow-inner dark:border-primary/35 dark:to-primary/[0.08] shrink-0",
-                  )}
-                  role="group"
-                  aria-label="Partners directory layout"
-                >
-                  <button
-                    type="button"
-                    aria-pressed={directoryDisplayMode === "list"}
-                    onClick={() => setDirectoryDisplayMode("list")}
-                    className={cn(
-                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                      directoryDisplayMode === "list"
-                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
-                        : "font-medium text-text-primary/72 hover:text-text-primary",
-                    )}
-                    title="List view"
-                  >
-                    <LayoutList className="h-4 w-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={directoryDisplayMode === "grid"}
-                    onClick={() => setDirectoryDisplayMode("grid")}
-                    className={cn(
-                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                      directoryDisplayMode === "grid"
-                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
-                        : "font-medium text-text-primary/72 hover:text-text-primary",
-                    )}
-                    title="Grid view"
-                  >
-                    <LayoutGrid className="h-4 w-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={directoryDisplayMode === "kanban"}
-                    onClick={() => setDirectoryDisplayMode("kanban")}
-                    className={cn(
-                      "relative rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                      directoryDisplayMode === "kanban"
-                        ? "font-semibold text-text-primary shadow-sm bg-card ring-1 ring-primary/25 dark:ring-primary/40"
-                        : "font-medium text-text-primary/72 hover:text-text-primary",
-                    )}
-                    title="Kanban by type of work"
-                  >
-                    <Columns3 className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
-                {directoryDisplayMode !== "kanban" ? (
-                  <Select
-                    value={tradeFilter}
-                    onChange={(e) => {
-                      setTradeFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    options={tradeCatalogSelectOptions}
-                    className="min-w-[160px] shrink-0 w-full sm:w-auto"
-                  />
-                ) : null}
-                <SearchInput
-                  placeholder="Search partners…"
-                  className="flex-1 w-full min-w-0 sm:min-w-[200px]"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+          <div className="rounded-xl border border-border-light bg-card shadow-soft overflow-hidden">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between px-4 sm:px-5 py-3 border-b border-border-light bg-surface/40 min-w-0">
+              <div className="w-full min-w-0 md:flex-1 md:pr-4">
+                <Tabs
+                  tabs={partnerDirectoryTabs}
+                  activeTab={statusFilter}
+                  onChange={setStatusFilter}
+                  className="border-b-0"
                 />
-                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} className="shrink-0 w-full sm:w-auto">
-                  Filter
-                </Button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setStatusFilter(s.id)}
-                    className={cn(
-                      "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
-                      statusFilter === s.id
-                        ? "bg-primary text-white"
-                        : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
-                    )}
+              <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:min-w-[20rem] md:max-w-[42rem] shrink-0">
+                <p className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap md:hidden">
+                  {totalItems} partner{totalItems === 1 ? "" : "s"}
+                </p>
+                <div className="flex items-center gap-2 w-full min-w-0">
+                  <div
+                    className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
+                    role="group"
+                    aria-label="Partners directory layout"
                   >
-                    {s.label}
-                  </button>
-                ))}
+                    <button
+                      type="button"
+                      aria-pressed={directoryDisplayMode === "list"}
+                      onClick={() => setDirectoryDisplayMode("list")}
+                      className={cn(
+                        "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                        directoryDisplayMode === "list"
+                          ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                          : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                      )}
+                      title="List view"
+                    >
+                      <LayoutList className="h-4 w-4" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={directoryDisplayMode === "grid"}
+                      onClick={() => setDirectoryDisplayMode("grid")}
+                      className={cn(
+                        "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                        directoryDisplayMode === "grid"
+                          ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                          : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                      )}
+                      title="Grid view"
+                    >
+                      <LayoutGrid className="h-4 w-4" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={directoryDisplayMode === "kanban"}
+                      onClick={() => setDirectoryDisplayMode("kanban")}
+                      className={cn(
+                        "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                        directoryDisplayMode === "kanban"
+                          ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
+                          : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
+                      )}
+                      title="Kanban by type of work"
+                    >
+                      <Columns3 className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
+                  {directoryDisplayMode !== "kanban" ? (
+                    <Select
+                      value={tradeFilter}
+                      onChange={(e) => {
+                        setTradeFilter(e.target.value);
+                        setPage(1);
+                      }}
+                      options={tradeCatalogSelectOptions}
+                      className="w-[7.25rem] sm:w-[9rem] shrink-0"
+                    />
+                  ) : null}
+                  <SearchInput
+                    placeholder="Search partners…"
+                    className="min-w-0 flex-1"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={<Filter className="h-3.5 w-3.5" />}
+                    className="shrink-0 px-2.5 sm:px-3"
+                  >
+                    <span className="hidden sm:inline">Filter</span>
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1757,9 +1868,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 }}
               />
             ) : directoryDisplayMode === "list" ? (
+              <>
               <DataTable
                 columns={columns}
-                data={partners}
+                data={sortedPartners}
                 getRowId={(item) => item.id}
                 selectedId={selectedPartner?.id}
                 onRowClick={(p) => {
@@ -1775,8 +1887,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 selectable={isAdmin}
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
-                className="rounded-none rounded-b-2xl border-0 border-t border-border-light shadow-none bg-transparent"
-                tableClassName="w-full min-w-0 table-fixed"
+                className="border-0 shadow-none rounded-none"
+                tableClassName="w-full table-fixed"
+                sortColumnKey={listSortKey}
+                sortDirection={listSortDir}
+                onSortChange={(key, direction) => {
+                  setListSortKey(key);
+                  setListSortDir(direction);
+                }}
                 bulkActions={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -1790,9 +1908,21 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   </>
                 }
               />
+              {totalItems > 0 ? (
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                  <span>
+                    Showing {(page - 1) * PARTNERS_PAGE_SIZE + 1}–{Math.min(page * PARTNERS_PAGE_SIZE, totalItems)} of {totalItems} partners
+                  </span>
+                  <span className="tabular-nums">
+                    Avg compliance {complianceAvg == null ? "—" : `${Math.round(complianceAvg)}%`}
+                    {partnersBelow50Count > 0 ? ` · ${partnersBelow50Count} below 50%` : ""}
+                  </span>
+                </div>
+              ) : null}
+              </>
             ) : (
               <PartnersDirectoryGridView
-                data={partners}
+                data={sortedPartners}
                 loading={loading}
                 page={page}
                 totalPages={totalPages}
@@ -1801,6 +1931,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 selectedPartnerId={selectedPartner?.id}
+                maxEarningsInView={maxEarningsInView}
                 onOpenPartner={(p) => {
                   setPartnerDrawerInitialTab(undefined);
                   setSelectedPartner(p);
@@ -3149,6 +3280,50 @@ function ContractsTab({ partnerId }: { partnerId: string }) {
   );
 }
 
+type PartnerDocumentsSubTab = "files" | "compliance" | "contracts";
+
+function PartnerDocumentsSubNav({
+  active,
+  onChange,
+  complianceCount,
+}: {
+  active: PartnerDocumentsSubTab;
+  onChange: (id: PartnerDocumentsSubTab) => void;
+  complianceCount?: number;
+}) {
+  const items: { id: PartnerDocumentsSubTab; label: string; count?: number }[] = [
+    { id: "files", label: "Files" },
+    { id: "compliance", label: "Compliance", count: complianceCount },
+    { id: "contracts", label: "Contracts" },
+  ];
+  return (
+    <div className="px-4 sm:px-6 pt-4 pb-0 border-b border-border-light bg-card/95 backdrop-blur-sm sticky top-0 z-[1]">
+      <div className="flex flex-wrap gap-2 pb-3">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onChange(item.id)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+              active === item.id
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border-light bg-surface text-text-secondary hover:border-primary/30 hover:text-text-primary",
+            )}
+          >
+            {item.label}
+            {item.count != null && item.count > 0 ? (
+              <span className="rounded-full bg-amber-500 text-white text-[10px] font-bold min-w-[1.125rem] h-[1.125rem] inline-flex items-center justify-center px-1">
+                {item.count}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PartnerDetailDrawer({
   partner,
   teamMember,
@@ -3182,6 +3357,17 @@ function PartnerDetailDrawer({
     partnerPayoutStandardTerms;
 
   const [tab, setTab] = useState("overview");
+  const [documentsSubTab, setDocumentsSubTab] = useState<PartnerDocumentsSubTab>("files");
+
+  const openDocuments = useCallback((sub: PartnerDocumentsSubTab = "files") => {
+    setTab("documents");
+    setDocumentsSubTab(sub);
+  }, []);
+
+  const handleDrawerTabChange = useCallback((id: string) => {
+    setTab(id);
+    if (id === "documents") setDocumentsSubTab("files");
+  }, []);
   const [documents, setDocuments] = useState<PartnerDoc[]>([]);
   const [notes, setNotes] = useState<PartnerNote[]>([]);
   const [partnerJobs, setPartnerJobs] = useState<PartnerJobRow[]>([]);
@@ -3356,7 +3542,20 @@ function PartnerDetailDrawer({
     const idChanged = lastPartnerIdForTabRef.current !== partner.id;
     if (idChanged) {
       lastPartnerIdForTabRef.current = partner.id;
-      setTab(initialTab ?? "overview");
+      const nextTab = initialTab ?? "overview";
+      if (nextTab === "compliance") {
+        setTab("documents");
+        setDocumentsSubTab("compliance");
+      } else if (nextTab === "contracts") {
+        setTab("documents");
+        setDocumentsSubTab("contracts");
+      } else if (nextTab === "notes" || nextTab === "location") {
+        setTab("overview");
+        setDocumentsSubTab("files");
+      } else {
+        setTab(nextTab);
+        setDocumentsSubTab("files");
+      }
     }
     setSelectedDoc(null);
     setLinkEmail(partner.email ?? "");
@@ -4205,21 +4404,22 @@ function PartnerDetailDrawer({
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
-    { id: "trades", label: "Trades & skills" },
+    { id: "trades", label: "Trades & Skill" },
+    { id: "rates" as const, label: "Rate Card" },
     { id: "coverage", label: "Coverage" },
-    { id: "documents", label: "Documents", count: documents.length },
-    { id: "financial", label: "Financial", count: selfBills.length },
-    { id: "jobs", label: "Jobs", count: realJobsCount },
     {
-      id: "compliance",
-      label: "Compliance",
-      count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
+      id: "documents",
+      label: "Documents",
+      count:
+        complianceAttentionCount > 0
+          ? complianceAttentionCount
+          : documents.length > 0
+            ? documents.length
+            : undefined,
     },
-    { id: "rates" as const, label: "Rate card" },
-    { id: "contracts" as const, label: "Contracts" },
+    { id: "financial", label: "Finance", count: selfBills.length },
+    { id: "jobs", label: "Jobs", count: realJobsCount },
     { id: "actions" as const, label: "Privacy & Permissions" },
-    { id: "notes", label: "Notes", count: notes.length },
-    ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
   ];
 
   return (
@@ -4238,7 +4438,7 @@ function PartnerDetailDrawer({
       width="w-[min(100vw-1rem,40rem)]"
     >
       <div className="px-6 pt-3 pb-0 border-b border-border-light">
-        <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
+        <Tabs tabs={drawerTabs} activeTab={tab} onChange={handleDrawerTabChange} />
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -4709,7 +4909,11 @@ function PartnerDetailDrawer({
                     : " No complaint jobs on record."}
                 </p>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
+              <button
+                type="button"
+                onClick={() => openDocuments("compliance")}
+                className="p-3 rounded-xl bg-surface-hover border border-border-light text-left transition-colors hover:border-primary/25 hover:bg-primary/[0.03] w-full"
+              >
                 <div className="flex items-center gap-1">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
                   <span title="Profile completeness, required documents, and expired docs (higher penalty)" className="text-text-tertiary cursor-help">
@@ -4726,7 +4930,8 @@ function PartnerDetailDrawer({
                     className="mt-1.5"
                   />
                 </div>
-              </div>
+                <p className="text-[10px] text-primary mt-1.5 font-medium">View in Documents →</p>
+              </button>
             </div>
             {isAdmin && editingOverview && (
               <div className="flex flex-col @sm:flex-row gap-2">
@@ -4781,7 +4986,7 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== TRADES & SKILLS ========== */}
+        {/* ========== TRADES & SKILL ========== */}
         {tab === "trades" && onPartnerUpdate && (
           <CatalogTradesSkillsTab
             kind="partner"
@@ -4868,9 +5073,17 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== COMPLIANCE ========== */}
-        {tab === "compliance" && (
-          <div className="p-6 space-y-5">
+        {tab === "documents" && (
+          <PartnerDocumentsSubNav
+            active={documentsSubTab}
+            onChange={setDocumentsSubTab}
+            complianceCount={complianceAttentionCount > 0 ? complianceAttentionCount : undefined}
+          />
+        )}
+
+        {/* ========== DOCUMENTS · COMPLIANCE ========== */}
+        {tab === "documents" && documentsSubTab === "compliance" && (
+          <div className="p-4 sm:p-6 space-y-5">
             <div className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-primary/[0.03] p-5 shadow-sm">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
@@ -4904,8 +5117,8 @@ function PartnerDetailDrawer({
                       Edit profile
                     </Button>
                   )}
-                  <Button size="sm" onClick={() => setTab("documents")}>
-                    Documents
+                  <Button size="sm" onClick={() => openDocuments("files")}>
+                    Upload files
                   </Button>
                 </div>
               </div>
@@ -4974,7 +5187,7 @@ function PartnerDetailDrawer({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-text-primary">Mandatory documents (score)</h3>
-                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => openDocuments("files")}>
                   Upload / replace
                 </Button>
               </div>
@@ -5010,7 +5223,7 @@ function PartnerDetailDrawer({
                           onClick={() => {
                             setDocPreset({ docType: req.docType, name: req.name });
                             setAddDocOpen(true);
-                            setTab("documents");
+                            openDocuments("files");
                           }}
                         >
                           {st === "valid" ? "Update" : "Add"}
@@ -5026,7 +5239,7 @@ function PartnerDetailDrawer({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-text-primary">Trade certificates (not in score)</h3>
-                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => openDocuments("files")}>
                   Upload / replace
                 </Button>
               </div>
@@ -5062,7 +5275,7 @@ function PartnerDetailDrawer({
                           onClick={() => {
                             setDocPreset({ docType: req.docType, name: req.name });
                             setAddDocOpen(true);
-                            setTab("documents");
+                            openDocuments("files");
                           }}
                         >
                           {st === "valid" ? "Update" : "Add"}
@@ -5078,7 +5291,7 @@ function PartnerDetailDrawer({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-text-primary">Optional documents</h3>
-                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => openDocuments("files")}>
                   Upload / replace
                 </Button>
               </div>
@@ -5121,7 +5334,7 @@ function PartnerDetailDrawer({
                       onClick={() => {
                         setDocPreset({ docType: "dbs", name: "DBS certificate" });
                         setAddDocOpen(true);
-                        setTab("documents");
+                        openDocuments("files");
                       }}
                     >
                       {dbsOptionalStatus === "valid" ? "Update" : "Add"}
@@ -5151,7 +5364,7 @@ function PartnerDetailDrawer({
                           type="button"
                           className="w-full rounded-lg border border-border-light bg-card px-3 py-2 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
                           onClick={() => {
-                            setTab("documents");
+                            openDocuments("files");
                             setSelectedDoc(d);
                           }}
                         >
@@ -5166,9 +5379,9 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== FINANCIAL ========== */}
+        {/* ========== FINANCE ========== */}
         {tab === "financial" && (
-          <div className="p-6 space-y-4">
+          <div className="p-4 sm:p-6 space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100">
                 <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">Total Paid</p>
@@ -5460,9 +5673,11 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== CONTRACTS ========== */}
-        {tab === "contracts" && (
-          <ContractsTab partnerId={partner.id} />
+        {/* ========== DOCUMENTS · CONTRACTS ========== */}
+        {tab === "documents" && documentsSubTab === "contracts" && (
+          <div className="p-4 sm:p-6">
+            <ContractsTab partnerId={partner.id} />
+          </div>
         )}
 
         {/* ========== PRIVACY & PERMISSIONS ========== */}
@@ -5691,9 +5906,9 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== DOCUMENTS ========== */}
-        {tab === "documents" && (
-          <div className="p-6 space-y-4">
+        {/* ========== DOCUMENTS · FILES ========== */}
+        {tab === "documents" && documentsSubTab === "files" && (
+          <div className="p-4 sm:p-6 space-y-4">
             {missingRequiredDocs.length > 0 && (
               <div
                 role="alert"
@@ -6297,33 +6512,6 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== NOTES ========== */}
-        {tab === "notes" && (
-          <div className="p-6 space-y-4">
-            <div className="flex gap-2">
-              <input value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Add a note about this partner..."
-                className="flex-1 h-9 px-3 rounded-lg border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all"
-                onKeyDown={(e) => { if (e.key === "Enter" && newNote.trim()) handleAddNote(); }} />
-              <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={handleAddNote} disabled={!newNote.trim()}>Add</Button>
-            </div>
-            {loadingNotes && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-12 bg-surface-hover rounded-xl" />)}</div>}
-            {!loadingNotes && notes.length === 0 && (
-              <div className="py-12 text-center">
-                <MessageSquare className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No notes yet</p>
-              </div>
-            )}
-            {!loadingNotes && notes.map((note) => (
-              <motion.div key={note.id} variants={staggerItem} className="p-3 rounded-xl bg-surface-hover">
-                <p className="text-sm text-text-primary">{note.content}</p>
-                <div className="flex items-center gap-2 mt-2 text-[11px] text-text-tertiary">
-                  {note.author_name && <span className="font-medium">{note.author_name}</span>}
-                  <span>{new Date(note.created_at).toLocaleString()}</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
       </div>
 
       <Modal

@@ -71,6 +71,35 @@ export async function renderSelfBillPdfBuffer(
       ? partnerFieldSelfBillPaymentDueDate(weekEndStr.trim())
       : undefined;
 
+  const breakdown = sb.payout_breakdown;
+  const internalBreakdown =
+    billOrigin === "internal" && breakdown
+      ? {
+          fixedPay: Number(breakdown.fixed_pay) || 0,
+          commissionAmount: Number(breakdown.commission_amount) || 0,
+          commissionBasis: breakdown.commission_basis ?? null,
+          commissionRatePercent: breakdown.commission_rate_percent ?? null,
+          basisTotal: breakdown.basis_total,
+          jobs: (breakdown.jobs ?? []).map((j) => ({
+            reference: j.reference,
+            revenue: j.revenue,
+            grossProfit: j.gross_profit,
+            commission: j.commission,
+          })),
+        }
+      : undefined;
+
+  const pdfLines =
+    internalBreakdown?.jobs?.length
+      ? internalBreakdown.jobs.map((j) => ({
+          reference: j.reference,
+          title: "Owner job commission",
+          partner_cost: j.commission,
+          materials_cost: 0,
+          property_address: undefined,
+        }))
+      : lines;
+
   const buffer = await renderToBuffer(
     <SelfBillPDF
       data={{
@@ -87,12 +116,14 @@ export async function renderSelfBillPdfBuffer(
         commission: Number(sb.commission) || 0,
         netPayout: Number(sb.net_payout) || 0,
         status: String(sb.status),
-        lines,
+        lines: pdfLines,
         originalNetPayout: sb.original_net_payout ?? null,
         payoutVoidReason: sb.payout_void_reason ?? null,
         partnerStatusLabel: sb.partner_status_label ?? null,
         financeStatusLabel: voided ? SELF_BILL_FINANCE_VOID_LABEL : null,
         payoutVoided: voided,
+        billOrigin: billOrigin ?? undefined,
+        internalBreakdown,
       }}
     />,
   );

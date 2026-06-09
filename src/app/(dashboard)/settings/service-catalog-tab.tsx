@@ -29,6 +29,7 @@ import {
 } from "@/lib/catalog-pricing-presets";
 import { catalogHasStackableAddons } from "@/lib/catalog-line-pricing";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
+import { catalogPricingStructureLabel } from "@/lib/catalog-pricing-labels";
 import { getSupabase } from "@/services/base";
 import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, Copy } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
@@ -64,6 +65,7 @@ const emptyForm = {
   sort_order: "0",
   is_active: true,
   display_icon_key: "",
+  accepts_smart_price: false,
 };
 
 type PresetFormRow = {
@@ -356,6 +358,7 @@ export function ServiceCatalogTab() {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      accepts_smart_price: row.accepts_smart_price ?? false,
     });
   };
 
@@ -386,6 +389,7 @@ export function ServiceCatalogTab() {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      accepts_smart_price: row.accepts_smart_price ?? false,
     });
     setCreateOpen(true);
   };
@@ -411,6 +415,7 @@ export function ServiceCatalogTab() {
         sort_order: Math.floor(Number(form.sort_order) || 0),
         is_active: form.is_active,
         display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+        accepts_smart_price: form.accepts_smart_price,
       };
     }
     return {
@@ -433,6 +438,7 @@ export function ServiceCatalogTab() {
       sort_order: Math.floor(Number(form.sort_order) || 0),
       is_active: form.is_active,
       display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+      accepts_smart_price: form.accepts_smart_price,
     };
   };
 
@@ -866,9 +872,9 @@ export function ServiceCatalogTab() {
           }
         }}
         options={[
-          { value: "single", label: "Single Value" },
-          { value: "variable", label: "Variable" },
-          { value: "base_plus_addons", label: "Base + additionals" },
+          { value: "single", label: catalogPricingStructureLabel("single") },
+          { value: "variable", label: catalogPricingStructureLabel("variable") },
+          { value: "base_plus_addons", label: catalogPricingStructureLabel("base_plus_addons") },
         ]}
       />
 
@@ -879,10 +885,21 @@ export function ServiceCatalogTab() {
             value={form.pricing_mode}
             onChange={(e) => setForm((f) => ({ ...f, pricing_mode: e.target.value as CatalogPricingMode }))}
             options={[
-              { value: "fixed", label: "Fixed Price" },
-              { value: "hourly", label: "Hourly Rate" },
+              { value: "fixed", label: pricingModeLabel("fixed") },
+              { value: "hourly", label: pricingModeLabel("hourly") },
             ]}
           />
+          {form.pricing_mode === "hourly" ? (
+            <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.accepts_smart_price}
+                onChange={(e) => setForm((f) => ({ ...f, accepts_smart_price: e.target.checked }))}
+                className="h-3.5 w-3.5 rounded border-border-light"
+              />
+              Accept Smart Price bookings (hourly)
+            </label>
+          ) : null}
           {form.pricing_mode === "fixed" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>

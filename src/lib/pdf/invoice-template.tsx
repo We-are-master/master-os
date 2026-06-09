@@ -22,6 +22,10 @@ export interface InvoicePdfData {
   completionDate?: string;
   tradeAmount: number;
   feeAmount: number;
+  /** When set (partial request), amount due now — may be less than full balance. */
+  amountDueNow?: number;
+  /** % of base requested (for PDF note). */
+  requestPercent?: number;
 }
 
 /* Brand palette — mirrors the Statement of Charges email

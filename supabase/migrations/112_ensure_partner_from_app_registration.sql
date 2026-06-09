@@ -1,4 +1,4 @@
--- App registration: create a directory partner row linked to the auth user (replaces n8n webhook).
+-- App registration: create a directory partner row linked to the auth user.
 -- Idempotent: safe to call multiple times; returns existing partners.id when already linked.
 
 CREATE OR REPLACE FUNCTION public.ensure_partner_from_app_registration()

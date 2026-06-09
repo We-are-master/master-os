@@ -30,6 +30,12 @@ import {
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
 import { catalogHasStackableAddons } from "@/lib/catalog-line-pricing";
+import {
+  buildSellDelta,
+  isAccountSellValid,
+  marginPercent,
+} from "@/lib/catalog-pricing-floor-ceiling";
+import { PricingDeltaChip } from "@/components/pricing/pricing-delta-chip";
 
 /**
  * Per-account override of what THIS account pays for each catalog service.
@@ -81,6 +87,13 @@ export function AccountServiceRatesTabSection({
   async function persistRow(service: CatalogService) {
     const draft = drafts[service.id];
     if (!draft) return;
+    if (!draft.use_standard) {
+      const err = validateAccountDraft(service, draft);
+      if (err) {
+        toast.error(err);
+        return;
+      }
+    }
     const payload = {
       account_id: accountId,
       catalog_service_id: service.id,
@@ -271,6 +284,30 @@ function parseNumOrNull(s: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function validateAccountDraft(service: CatalogService, draft: RowDraft): string | null {
+  const isHourly = service.pricing_mode === "hourly";
+  if (isHourly) {
+    const rate = parseNumOrNull(draft.hourly_rate);
+    if (rate != null && !isAccountSellValid(Number(service.hourly_rate) || 0, rate)) {
+      return `"${service.name}": hourly rate cannot be below catalog minimum (£${Number(service.hourly_rate) || 0}).`;
+    }
+  } else {
+    const rate = parseNumOrNull(draft.fixed_price);
+    if (rate != null && !isAccountSellValid(Number(service.fixed_price) || 0, rate)) {
+      return `"${service.name}": fixed price cannot be below catalog minimum (£${Number(service.fixed_price) || 0}).`;
+    }
+  }
+  for (const p of sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets))) {
+    const d = draft.preset_overrides[p.id];
+    const floor = Number(p.fixed_price) || 0;
+    const rate = d ? parseNumOrNull(d.fixed_price) : null;
+    if (rate != null && !isAccountSellValid(floor, rate)) {
+      return `"${p.label}": client price cannot be below minimum (£${floor}).`;
+    }
+  }
+  return null;
+}
+
 function ServiceRateRow({
   service, override, draft, onDraftChange, onCommit, onResetToStandard,
 }: {
@@ -287,6 +324,16 @@ function ServiceRateRow({
   const isHourly = service.pricing_mode === "hourly";
   const isCustom = !draft.use_standard;
   const hasPersistedOverride = !!override && !override.use_standard;
+  const sellFloor = isHourly ? Number(service.hourly_rate) || 0 : Number(service.fixed_price) || 0;
+  const draftSellRate = isHourly ? parseNumOrNull(draft.hourly_rate) : parseNumOrNull(draft.fixed_price);
+  const sellDelta = isCustom && draftSellRate != null ? buildSellDelta(sellFloor, draftSellRate) : null;
+  const draftPartnerCeiling = isHourly
+    ? (Number(service.partner_cost) || 0) / Math.max(1, Number(service.default_hours) || 1)
+    : Number(service.partner_cost) || 0;
+  const marginPreview =
+    isCustom && draftSellRate != null && draftSellRate > 0
+      ? marginPercent(draftSellRate, draftPartnerCeiling)
+      : null;
 
   return (
     <div className={
@@ -315,6 +362,15 @@ function ServiceRateRow({
             ) : (
               <strong>{formatCurrency(service.fixed_price ?? 0)}</strong>
             )}
+            {sellDelta ? (
+              <>
+                {" · "}
+                <PricingDeltaChip delta={sellDelta} />
+              </>
+            ) : null}
+            {marginPreview != null ? (
+              <span className="ml-1 text-[10px] text-text-tertiary">· margin {marginPreview}%</span>
+            ) : null}
           </p>
         </div>
 

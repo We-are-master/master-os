@@ -160,7 +160,7 @@ export function formatAccountDbError(error: unknown): Error {
 export async function listAccounts(params: ListParams): Promise<ListResult<Account>> {
   return queryList<Account>("accounts", params, {
     searchColumns: ["company_name", "contact_name", "email", "finance_email", "industry"],
-    defaultSort: "created_at",
+    defaultSort: "total_revenue",
   });
 }
 

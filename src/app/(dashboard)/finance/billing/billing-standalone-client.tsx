@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, Check, ChevronDown, FileText } from "lucide-react";
+import { Plus, Download, RefreshCw, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
@@ -16,34 +18,47 @@ import {
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
 import {
+  addDaysYmd,
   formatPeriodBoundsLabel,
   resolveBillingStandaloneBounds,
   todayYmdLocal,
   selfBillPayWorkPeriodInPeriod,
   ymdInBounds,
 } from "@/lib/billing-standalone-period";
+import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
+import { PaymentHistoryTab } from "@/app/(dashboard)/finance/billing/payment-history-tab";
 import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
-  buildCashflow14Days,
+  buildInvoiceLedgerAccountGroups,
+  buildCashflowWeekly,
   buildCustomerExposure,
   computeAgingTotals,
   computeBillingKpis,
   selfBillCountsAsReady,
   selfBillDueYmd,
   isSelfBillOverdue,
+  UNLINKED_ATTENTION_ACCOUNT_KEY,
 } from "@/lib/billing-standalone-metrics";
-import { invoiceDisplayStatus, vatSplitFromGross } from "@/lib/billing-invoice-list-data";
+import { invoiceDisplayStatus } from "@/lib/billing-invoice-list-data";
+import type { InvoiceListJobSnapshot } from "@/lib/billing-invoice-list-data";
+import {
+  invoiceEffectivePaidWithJobCustomerPaid,
+  invoiceBalanceDueWithJobCustomerPaid,
+} from "@/lib/invoice-balance";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { bulkMarkInvoicesPaid, syncInvoicesForJobIds, updateInvoiceStatusOne } from "@/lib/billing-invoice-actions";
 import {
+  bulkApproveSelfBills,
   bulkCancelSelfBills,
   bulkSendSelfBillEmails,
+  bulkUnapproveSelfBills,
   computeSelfBillAmountDue,
   getBulkCancellableSelfBillIds,
   getBulkEligibleSelfBillIds,
   markSelfBillsPaid,
+  payWithWise,
   type SelfBillJobLine,
 } from "@/lib/billing-selfbill-actions";
 import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
@@ -53,22 +68,50 @@ import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-ba
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { createInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { logAudit } from "@/services/audit";
-import { InvoiceDetailDrawer } from "./invoices-finance-client";
-import { SelfBillDetailDrawer } from "./selfbill-finance-client";
 import type { Invoice, SelfBill } from "@/types/database";
 import "./billing-standalone.css";
 
-type LedgerTab = "inv" | "sb";
+const InvoiceDetailDrawer = dynamic(
+  () => import("./invoices-finance-client").then((m) => m.InvoiceDetailDrawer),
+  { ssr: false },
+);
+const SelfBillDetailDrawer = dynamic(
+  () => import("./selfbill-finance-client").then((m) => m.SelfBillDetailDrawer),
+  { ssr: false },
+);
+
+type LedgerTab = "inv" | "sb" | "history";
+
+const CASHFLOW_WINDOW_WEEKS = 8;
+
+function BillingContentSkeleton() {
+  return (
+    <div className="flex flex-col gap-5 sm:gap-6 animate-pulse" aria-hidden>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="h-[88px] rounded-xl bg-surface-hover" />
+        ))}
+      </div>
+      <div className="h-36 rounded-xl bg-surface-hover" />
+      <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2 lg:gap-6">
+        <div className="h-52 rounded-xl bg-surface-hover" />
+        <div className="h-52 rounded-xl bg-surface-hover" />
+      </div>
+      <div className="h-80 rounded-xl bg-surface-hover" />
+    </div>
+  );
+}
 
 function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const data = useBillingStandaloneData();
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(DEFAULT_BILLING_STANDALONE_FILTER);
-  const [ledgerTab, setLedgerTab] = useState<LedgerTab>(
-    searchParams.get("tab") === "sb" ? "sb" : "inv",
-  );
+  const data = useBillingStandaloneData();
+  const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => {
+    const t = searchParams.get("tab");
+    return t === "sb" || t === "history" ? t : "inv";
+  });
   const invoiceIdFromUrl = searchParams.get("invoiceId");
   const selfBillIdFromUrl = searchParams.get("selfBillId");
   const [createOpen, setCreateOpen] = useState(false);
@@ -77,6 +120,171 @@ function BillingStandaloneInner() {
   const [selectedSbIds, setSelectedSbIds] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
+  const [sendingSelfBillIds, setSendingSelfBillIds] = useState<Set<string>>(new Set());
+  const [payingSelfBillIds, setPayingSelfBillIds] = useState<Set<string>>(new Set());
+  const [approvingSelfBillIds, setApprovingSelfBillIds] = useState<Set<string>>(new Set());
+  const [goingOutTab, setGoingOutTab] = useState<"pending" | "approved">("pending");
+
+  // Inline Send / Resend handler used by the Going Out · Money Out widget:
+  // `week` → standard cycle (master ticket), single-row sends pass `auto` so the
+  // server reuses an existing standard run for the same week if there is one.
+  const handleApproveSelfBills = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      setApprovingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const r = await bulkApproveSelfBills(ids);
+        if (r.approved > 0) {
+          toast.success(r.approved === 1 ? "Self-bill approved" : `${r.approved} approved`);
+        }
+        if (r.skipped.length > 0) {
+          toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
+        }
+        setSelectedSbIds(new Set());
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Approve failed");
+      } finally {
+        setApprovingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  const handleUnapproveSelfBills = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      setApprovingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const r = await bulkUnapproveSelfBills(ids);
+        if (r.unapproved > 0) {
+          toast.success(r.unapproved === 1 ? "Approval revoked" : `${r.unapproved} unapproved`);
+        }
+        if (r.skipped.length > 0) {
+          toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
+        }
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Unapprove failed");
+      } finally {
+        setApprovingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  /** Sequential Wise payouts — used by the Approved tab's Pay all / Pay selected button. */
+  const handleBulkPayWithWise = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      let success = 0;
+      let failed = 0;
+      for (const id of ids) {
+        setPayingSelfBillIds((prev) => new Set(prev).add(id));
+        try {
+          const r = await payWithWise(id, { scope: "full" });
+          if (r.ok) success += 1;
+          else {
+            failed += 1;
+            toast.error(`${id.slice(0, 8)} — ${r.error ?? "Wise pay failed"}`);
+          }
+        } catch (e) {
+          failed += 1;
+          toast.error(e instanceof Error ? e.message : "Wise pay failed");
+        } finally {
+          setPayingSelfBillIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
+      }
+      if (success > 0) toast.success(`${success} payment${success === 1 ? "" : "s"} sent`);
+      if (failed === 0) setSelectedSbIds(new Set());
+      await data.loadData();
+    },
+    [data],
+  );
+
+  const handlePayWithWise = useCallback(
+    async (selfBillId: string) => {
+      setPayingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        next.add(selfBillId);
+        return next;
+      });
+      try {
+        const r = await payWithWise(selfBillId, { scope: "full" });
+        if (!r.ok) {
+          toast.error(r.error ?? "Wise pay failed");
+          return;
+        }
+        if (r.funded) toast.success("Payment funded");
+        else toast.success(`Transfer created — ${r.wise_status ?? "pending fund"}`);
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Wise pay failed");
+      } finally {
+        setPayingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          next.delete(selfBillId);
+          return next;
+        });
+      }
+    },
+    [data],
+  );
+
+  const handleSendSelfBills = useCallback(
+    async (ids: string[], scope: "week" | "partner" | "row") => {
+      if (!ids.length) return;
+      setSendingSelfBillIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      try {
+        const cycleKind = scope === "week" ? "standard" : "auto";
+        const result = await bulkSendSelfBillEmails(ids, { cycleKind });
+        if (result.sent > 0) {
+          toast.success(
+            result.sent === 1 ? "Self-bill sent" : `${result.sent} self-bills sent`,
+          );
+        }
+        if (result.skipped.length > 0) {
+          toast.error(
+            `${result.skipped.length} skipped — ${result.skipped[0]?.reason ?? "see logs"}`,
+          );
+        }
+        await data.loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Send failed");
+      } finally {
+        setSendingSelfBillIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [data],
+  );
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [drawerSb, setDrawerSb] = useState<SelfBill | null>(null);
   const [drawerSbJobs, setDrawerSbJobs] = useState<Awaited<ReturnType<typeof listJobsForSelfBill>>>([]);
@@ -84,8 +292,12 @@ function BillingStandaloneInner() {
   const [showInactiveInvoices, setShowInactiveInvoices] = useState(false);
   const [showInactiveSelfBills, setShowInactiveSelfBills] = useState(false);
   const [expandedAttentionAccounts, setExpandedAttentionAccounts] = useState<Set<string>>(new Set());
+  const attentionGroupsSigRef = useRef("");
+  const [markingPaidIds, setMarkingPaidIds] = useState<Set<string>>(new Set());
   const [expandedGoingOutPartners, setExpandedGoingOutPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
+  const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
+  const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
 
   const todayYmd = invoiceFinanceListTodayYmd();
   const periodBounds = useMemo(() => data.periodBounds(periodFilter), [data, periodFilter]);
@@ -175,6 +387,28 @@ function BillingStandaloneInner() {
     [periodInvoices],
   );
 
+  const activeInvoiceLedgerGroups = useMemo(
+    () =>
+      buildInvoiceLedgerAccountGroups(
+        activePeriodInvoices,
+        data.accountNameById,
+        data.jobRefToAccountId,
+        data.clientNameToAccountId,
+      ),
+    [activePeriodInvoices, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId],
+  );
+
+  const inactiveInvoiceLedgerGroups = useMemo(
+    () =>
+      buildInvoiceLedgerAccountGroups(
+        inactivePeriodInvoices,
+        data.accountNameById,
+        data.jobRefToAccountId,
+        data.clientNameToAccountId,
+      ),
+    [inactivePeriodInvoices, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId],
+  );
+
   const inactiveInvoiceCounts = useMemo(() => {
     let cancelled = 0;
     let paid = 0;
@@ -211,8 +445,25 @@ function BillingStandaloneInner() {
         data.clientNameToAccountId,
         periodBounds ?? undefined,
       ),
-    [data, periodBounds],
+    [
+      data.invoices,
+      data.jobsByRef,
+      data.customerPaidByJobId,
+      data.accountNameById,
+      data.jobRefToAccountId,
+      data.clientNameToAccountId,
+      periodBounds,
+    ],
   );
+
+  const attentionGroupStats = useMemo(() => {
+    const linked = attentionAccountGroups.filter((g) => g.accountKey !== UNLINKED_ATTENTION_ACCOUNT_KEY);
+    const unlinked = attentionAccountGroups.find((g) => g.accountKey === UNLINKED_ATTENTION_ACCOUNT_KEY);
+    return {
+      linkedAccountCount: linked.length,
+      unlinkedInvoiceCount: unlinked?.invoiceCount ?? 0,
+    };
+  }, [attentionAccountGroups]);
 
   const toggleAttentionAccount = useCallback((accountKey: string) => {
     setExpandedAttentionAccounts((prev) => {
@@ -241,9 +492,27 @@ function BillingStandaloneInner() {
     });
   }, []);
 
+  const toggleLedgerInvoiceAccount = useCallback((accountKey: string) => {
+    setExpandedLedgerInvoiceAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(accountKey)) next.delete(accountKey);
+      else next.add(accountKey);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    setCashflowWeekOffset(0);
+  }, [periodFilter]);
+
+  const cashflowWeekStart = useMemo(() => {
+    const monday = startOfWeekMondayFromYmd(todayYmd);
+    return addDaysYmd(monday, cashflowWeekOffset * 7);
+  }, [todayYmd, cashflowWeekOffset]);
+
   const cashflow = useMemo(
     () =>
-      buildCashflow14Days({
+      buildCashflowWeekly({
         invoices: data.invoices,
         selfBills: data.selfBills,
         jobsByRef: data.jobsByRef,
@@ -251,11 +520,18 @@ function BillingStandaloneInner() {
         jobsBySelfBillId: data.jobsBySelfBillId,
         partnerPaidByJobId: data.partnerPaidByJobId,
         dueCtx: data.dueCtx,
-        startYmd: periodBounds?.from ?? todayYmd,
+        startYmd: periodBounds?.from ?? cashflowWeekStart,
         endYmd: periodBounds?.to,
+        weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
       }),
-    [data, periodBounds],
+    [data, periodBounds, cashflowWeekStart],
   );
+
+  const cashflowRangeLabel = useMemo(() => {
+    if (!cashflow.length) return "";
+    if (cashflow.length === 1) return cashflow[0]!.title;
+    return `${cashflow[0]!.dayNum} – ${cashflow[cashflow.length - 1]!.dayNum}`;
+  }, [cashflow]);
 
   const customers = useMemo(
     () =>
@@ -294,20 +570,38 @@ function BillingStandaloneInner() {
     [periodSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId],
   );
 
-  const goingOutGroups = useMemo(
-    () => buildSelfBillWeekPartnerGroups(goingOutSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [goingOutSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  // Pending vs Approved buckets for the widget toggle. Pending = needs office
+  // signoff before Wise can pay; Approved = signed off, awaiting Wise transfer.
+  // Wise-paid rows leave both buckets (they appear in Payment History).
+  const goingOutPendingSelfBills = useMemo(
+    () => goingOutSelfBills.filter((sb) => !sb.approved_at && !sb.wise_paid_at),
+    [goingOutSelfBills],
+  );
+  const goingOutApprovedSelfBills = useMemo(
+    () => goingOutSelfBills.filter((sb) => !!sb.approved_at && !sb.wise_paid_at),
+    [goingOutSelfBills],
   );
 
-  const goingOutTotal = useMemo(
-    () =>
-      goingOutSelfBills.reduce(
-        (sum, sb) =>
-          sum + computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId),
+  const goingOutPendingGroups = useMemo(
+    () => buildSelfBillWeekPartnerGroups(goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
+    [goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  );
+  const goingOutApprovedGroups = useMemo(
+    () => buildSelfBillWeekPartnerGroups(goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
+    [goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  );
+
+  const sumDue = useCallback(
+    (rows: SelfBill[]) =>
+      rows.reduce(
+        (sum, sb) => sum + computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId),
         0,
       ),
-    [goingOutSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId],
+    [data.jobsBySelfBillId, data.partnerPaidByJobId],
   );
+  const goingOutPendingTotal = useMemo(() => sumDue(goingOutPendingSelfBills), [sumDue, goingOutPendingSelfBills]);
+  const goingOutApprovedTotal = useMemo(() => sumDue(goingOutApprovedSelfBills), [sumDue, goingOutApprovedSelfBills]);
+  const goingOutTotal = goingOutPendingTotal + goingOutApprovedTotal;
 
   useEffect(() => {
     setSelectedInvoiceIds(new Set());
@@ -317,7 +611,41 @@ function BillingStandaloneInner() {
     setExpandedAttentionAccounts(new Set());
     setExpandedGoingOutPartners(new Set());
     setExpandedLedgerSelfBillPartners(new Set());
+    setExpandedLedgerInvoiceAccounts(new Set());
+    attentionGroupsSigRef.current = "";
   }, [periodFilter]);
+
+  useEffect(() => {
+    const sig = attentionAccountGroups.map((g) => g.accountKey).join("|");
+    if (sig === attentionGroupsSigRef.current) return;
+    attentionGroupsSigRef.current = sig;
+    if (attentionAccountGroups.length === 0) {
+      setExpandedAttentionAccounts(new Set());
+      return;
+    }
+    setExpandedAttentionAccounts(new Set([attentionAccountGroups[0]!.accountKey]));
+  }, [attentionAccountGroups]);
+
+  const handleMarkInvoicesPaid = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      setMarkingPaidIds((prev) => new Set([...prev, ...ids]));
+      try {
+        await bulkMarkInvoicesPaid(ids, profile ?? undefined);
+        toast.success(ids.length === 1 ? "Marked paid" : `Marked ${ids.length} invoices paid`);
+        await data.loadData();
+      } catch {
+        toast.error("Failed to mark paid");
+      } finally {
+        setMarkingPaidIds((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+      }
+    },
+    [data, profile],
+  );
 
   const openInvoice = useCallback(
     (inv: Invoice) => {
@@ -383,6 +711,22 @@ function BillingStandaloneInner() {
   const handleSync = async () => {
     setSyncing(true);
     try {
+      const repairRes = await fetch("/api/billing/repair-invoice-accounts", { method: "POST" });
+      const repairBody = (await repairRes.json()) as {
+        ok?: boolean;
+        error?: string;
+        linked?: number;
+        unlinked?: number;
+        updated?: number;
+        skippedInvalid?: number;
+        accounts?: Array<{ id: string; label: string; logoUrl: string | null; count: number }>;
+      };
+      if (!repairRes.ok) throw new Error(repairBody.error ?? "Account repair failed");
+
+      if (repairBody.accounts?.length) {
+        data.applyAccountLabels(repairBody.accounts);
+      }
+
       const jobIds = [
         ...new Set(
           data.invoices
@@ -394,7 +738,24 @@ function BillingStandaloneInner() {
       const res = await fetch("/api/admin/selfbills/full-sync", { method: "POST" });
       const body = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok) throw new Error(body.error ?? "Self-bill sync failed");
-      toast.success(`Synced ${n} job(s) + self-bills`);
+
+      const linked = repairBody.linked ?? 0;
+      const unlinked = repairBody.unlinked ?? 0;
+      const accountHint =
+        repairBody.accounts
+          ?.slice(0, 3)
+          .map((a) => `${a.label} (${a.count})`)
+          .join(", ") ?? "";
+      if (linked === 0 && unlinked > 0) {
+        toast.warning(
+          `No invoices linked to accounts (${unlinked} unlinked). Check Zendesk jobs without quote sibling.`,
+        );
+      } else {
+        const suffix = accountHint ? ` · ${accountHint}` : "";
+        toast.success(
+          `Linked ${linked} invoice(s) to accounts · ${unlinked} unlinked · synced ${n} job(s) + self-bills${suffix}`,
+        );
+      }
       await data.loadData();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Sync failed");
@@ -480,7 +841,13 @@ function BillingStandaloneInner() {
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
               Export
             </Button>
-            <Button variant="outline" size="sm" loading={syncing} icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => void handleSync()}>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={syncing || data.refreshing}
+              icon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={() => void handleSync()}
+            >
               Sync
             </Button>
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>
@@ -489,11 +856,16 @@ function BillingStandaloneInner() {
           </div>
         </div>
 
-        {data.loading ? (
-          <p className="py-16 text-center text-sm text-text-tertiary">Loading billing…</p>
+        {data.loading && !data.hasLoadedOnce ? (
+          <BillingContentSkeleton />
         ) : (
-          <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div
+            className={cn(
+              "flex flex-col gap-5 sm:gap-6",
+              data.loading || data.refreshing ? "opacity-70 transition-opacity" : undefined,
+            )}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
               <KpiCard label="To collect · receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
               <KpiCard label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
               <KpiCard label="To pay · self-bills" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
@@ -501,49 +873,107 @@ function BillingStandaloneInner() {
               <KpiCard label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
             </div>
 
-            <div className="rounded-xl border border-border-light bg-white p-4 shadow-sm">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-[#020040]">Cash-flow runway · next 14 days</h2>
-                  <p className="text-xs text-text-secondary">Green up = expected in · coral down = scheduled out.</p>
+            <div className="rounded-xl border border-border-light bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {!periodBounds ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      aria-label="Previous week"
+                      onClick={() => setCashflowWeekOffset((o) => o - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                  <div className="min-w-0">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                      Cash-Flow Runway
+                      <FixfyHintIcon
+                        text="Green up = expected in · coral down = scheduled out · Mon–Sun buckets."
+                        placement="bottom-start"
+                      />
+                    </h2>
+                    {cashflowRangeLabel ? (
+                      <p className="mt-0.5 text-xs text-text-tertiary tabular-nums">{cashflowRangeLabel}</p>
+                    ) : null}
+                  </div>
+                  {!periodBounds ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      aria-label="Next week"
+                      onClick={() => setCashflowWeekOffset((o) => o + 1)}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                  {!periodBounds && cashflowWeekOffset !== 0 ? (
+                    <button
+                      type="button"
+                      className="shrink-0 text-[11px] font-semibold text-[#ED4B00] hover:underline"
+                      onClick={() => setCashflowWeekOffset(0)}
+                    >
+                      Today
+                    </button>
+                  ) : null}
                 </div>
-                <div className="flex gap-4 text-xs text-text-secondary">
+                <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Money in</span>
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Money out</span>
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
-                {cashflow.map((d) => {
-                  const ih = d.moneyIn ? Math.max(8, Math.round((d.moneyIn / cfMax) * 72)) : 0;
-                  const oh = d.moneyOut ? Math.max(8, Math.round((d.moneyOut / cfMax) * 72)) : 0;
+                {cashflow.map((w) => {
+                  const ih = w.moneyIn ? Math.max(8, Math.round((w.moneyIn / cfMax) * 72)) : 0;
+                  const oh = w.moneyOut ? Math.max(8, Math.round((w.moneyOut / cfMax) * 72)) : 0;
                   return (
-                    <div key={d.ymd} className={cn("cf__day min-w-[36px] flex-1", d.isWeekend && "is-weekend", d.isToday && "is-today")}>
-                      <div className={cn("cf__amt cf__amt--in", !d.moneyIn && "is-empty")}>{d.moneyIn ? formatCurrency(d.moneyIn) : "·"}</div>
+                    <div
+                      key={w.weekStart}
+                      title={w.title}
+                      className={cn("cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]", w.isCurrentWeek && "is-today")}
+                    >
+                      <div className={cn("cf__amt cf__amt--in", !w.moneyIn && "is-empty")}>{w.moneyIn ? formatCurrency(w.moneyIn) : "·"}</div>
                       <div className="cf__well"><div className="cf__bar cf__bar--in" style={{ height: ih }} /></div>
                       <div className="cf__axis" />
                       <div className="cf__well cf__well--out"><div className="cf__bar cf__bar--out" style={{ height: oh }} /></div>
-                      <div className={cn("cf__amt cf__amt--out", !d.moneyOut && "is-empty")}>{d.moneyOut ? formatCurrency(d.moneyOut) : "·"}</div>
-                      <div className="cf__lbl">{d.label}<b>{d.dayNum}</b></div>
+                      <div className={cn("cf__amt cf__amt--out", !w.moneyOut && "is-empty")}>{w.moneyOut ? formatCurrency(w.moneyOut) : "·"}</div>
+                      <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2 lg:gap-6">
               <div className="rounded-xl border border-border-light bg-white shadow-sm">
-                <div className="border-b border-border-light px-5 py-4">
-                  <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                    Needs attention · money in
-                    <FixfyHintIcon
-                      text={`Overdue first, then ${periodBounds ? `due in ${periodLabel}` : "all open receivables"}.`}
-                      placement="bottom-start"
-                    />
-                  </h2>
+                <div className="border-b border-border-light px-4 py-4 sm:px-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                      Needs Attention · Money In
+                      <FixfyHintIcon
+                        text={`Overdue first, then ${periodBounds ? `due in ${periodLabel}` : "all open receivables"}.`}
+                        placement="bottom-start"
+                      />
+                    </h2>
+                    {attentionAccountGroups.length > 0 ? (
+                      <p className="text-xs text-text-tertiary">
+                        {attentionGroupStats.linkedAccountCount > 0
+                          ? `${attentionGroupStats.linkedAccountCount} account${attentionGroupStats.linkedAccountCount === 1 ? "" : "s"}`
+                          : null}
+                        {attentionGroupStats.linkedAccountCount > 0 && attentionGroupStats.unlinkedInvoiceCount > 0
+                          ? " · "
+                          : null}
+                        {attentionGroupStats.unlinkedInvoiceCount > 0
+                          ? `${attentionGroupStats.unlinkedInvoiceCount} unlinked`
+                          : null}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="border-b border-border-light px-5 py-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
+                <div className="border-b border-border-light px-4 py-4 sm:px-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                    <div className="min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">To collect · receivables</p>
                       <p className="text-sm font-semibold text-[#020040]">
                         {kpiRow.toCollectCount} open
@@ -563,57 +993,84 @@ function BillingStandaloneInner() {
                   ) : (
                     attentionAccountGroups.map((group) => {
                       const open = expandedAttentionAccounts.has(group.accountKey);
+                      const groupInvoiceIds = group.rows.map((r) => r.invoice.id);
+                      const groupMarking = groupInvoiceIds.some((id) => markingPaidIds.has(id));
+                      const logoUrl = group.accountId ? data.accountLogoById[group.accountId] : null;
                       return (
                         <div key={group.accountKey}>
-                          <button
-                            type="button"
-                            className="flex w-full items-center justify-between gap-3 bg-surface-hover/30 px-5 py-2.5 text-left hover:bg-surface-hover/50"
-                            onClick={() => toggleAttentionAccount(group.accountKey)}
-                          >
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
-                                {group.accountName.slice(0, 2).toUpperCase()}
+                          <div className="flex items-center gap-2 bg-surface-hover/30 px-5 py-2.5">
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left hover:opacity-90"
+                              onClick={() => toggleAttentionAccount(group.accountKey)}
+                            >
+                              <div className="flex min-w-0 items-center gap-2.5">
+                                {logoUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={logoUrl}
+                                    alt=""
+                                    className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                                  />
+                                ) : (
+                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                                    {group.accountName.slice(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                                  <p className="text-xs text-text-tertiary">
+                                    {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
+                                    {group.maxDaysLate > 0 ? ` · ${group.maxDaysLate}d late` : ""}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
-                                <p className="text-xs text-text-tertiary">
-                                  {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
-                                  {group.maxDaysLate > 0 ? ` · ${group.maxDaysLate}d late` : ""}
-                                </p>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(group.totalDue)}</p>
+                                <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", open && "rotate-180")} />
                               </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(group.totalDue)}</p>
-                              <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", open && "rotate-180")} />
-                            </div>
-                          </button>
+                            </button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              loading={groupMarking}
+                              disabled={groupMarking}
+                              icon={<Check className="h-3.5 w-3.5 text-emerald-700" />}
+                              onClick={() => void handleMarkInvoicesPaid(groupInvoiceIds)}
+                            >
+                              Mark paid
+                            </Button>
+                          </div>
                           {open ? (
                             <div className="divide-y divide-border-light border-t border-border-light">
-                              {group.rows.map((row) => (
+                              {group.rows.map((row) => {
+                                const rowMarking = markingPaidIds.has(row.invoice.id);
+                                return (
                                 <div key={row.invoice.id} className="flex flex-wrap items-center gap-3 px-5 py-3 hover:bg-surface-hover/50">
                                   <span className={cn("h-8 w-1 rounded-full", row.daysLate > 0 ? "bg-red-500" : "bg-amber-400")} />
                                   <div className="min-w-0 flex-1">
-                                    <p className="text-sm font-semibold text-[#020040]">{row.invoice.reference}</p>
-                                    <p className="text-xs text-text-secondary">Issued {formatDate(row.invoice.created_at.slice(0, 10))}</p>
+                                    <p className="text-sm font-semibold text-[#020040]">{row.clientName}</p>
+                                    <p className="text-xs text-text-secondary">
+                                      {row.invoice.reference}
+                                      {row.invoice.job_reference ? ` · ${row.invoice.job_reference}` : ""}
+                                      {" · "}Issued {formatDate(row.invoice.created_at.slice(0, 10))}
+                                    </p>
                                   </div>
                                   <span className={cn("text-xs font-medium", row.daysLate > 0 ? "text-red-600" : "text-text-secondary")}>
                                     {row.daysLate > 0 ? `${row.daysLate}d late` : "Due soon"}
                                   </span>
                                   <span className="text-sm font-semibold tabular-nums">{formatCurrency(row.balanceDue)}</span>
                                   <div className="flex gap-1">
-                                    <button
-                                      type="button"
-                                      title="Mark paid"
-                                      className="rounded border border-border-light p-1 hover:bg-emerald-50"
-                                      onClick={() =>
-                                        void bulkMarkInvoicesPaid([row.invoice.id], profile ?? undefined).then(async () => {
-                                          toast.success("Marked paid");
-                                          await data.loadData();
-                                        })
-                                      }
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      loading={rowMarking}
+                                      disabled={rowMarking}
+                                      icon={<Check className="h-3.5 w-3.5 text-emerald-700" />}
+                                      onClick={() => void handleMarkInvoicesPaid([row.invoice.id])}
                                     >
-                                      <Check className="h-3.5 w-3.5 text-emerald-700" />
-                                    </button>
+                                      Paid
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -626,7 +1083,8 @@ function BillingStandaloneInner() {
                                     <Button variant="ghost" size="sm" onClick={() => openInvoice(row.invoice)}>Open</Button>
                                   </div>
                                 </div>
-                              ))}
+                              );
+                              })}
                             </div>
                           ) : null}
                         </div>
@@ -637,44 +1095,147 @@ function BillingStandaloneInner() {
               </div>
 
               <div className="rounded-xl border border-border-light bg-white shadow-sm">
-                <div className="border-b border-border-light px-5 py-4">
+                <div className="border-b border-border-light px-4 py-4 sm:px-5">
                   <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                    Going out · money out
+                    Going Out · Money Out
                     <FixfyHintIcon
-                      text={`Work week · ${periodWorkWeekLabel} · ready to pay only (no drafts).`}
+                      text={`Work week · ${periodWorkWeekLabel} · Approve in Pending, then Pay in Approved.`}
                       placement="bottom-start"
                     />
                   </h2>
                 </div>
-                <div className="border-b border-border-light px-5 py-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Next self-bill run</p>
-                      <p className="text-sm font-semibold text-[#020040]">{kpiRow.nextRunLabel}</p>
-                    </div>
-                    <p className="text-xl font-bold tabular-nums text-[#020040]">{formatCurrency(goingOutTotal)}</p>
-                  </div>
-                </div>
-                <div className="max-h-[420px] overflow-y-auto">
-                  <SelfBillGroupedLedger
-                    variant="compact"
-                    groups={goingOutGroups}
-                    todayYmd={todayYmd}
-                    selectedIds={selectedSbIds}
-                    onSelectionChange={setSelectedSbIds}
-                    partnerDueCtx={data.partnerDueCtx}
-                    onOpen={(sb) => void openSelfBill(sb)}
-                    onMarkPaid={async (id) => {
-                      await markSelfBillsPaid([id]);
-                      toast.success("Marked paid");
-                      await data.loadData();
-                    }}
-                    collapsiblePartners={{
-                      expandedKeys: expandedGoingOutPartners,
-                      onToggle: toggleGoingOutPartner,
-                    }}
-                  />
-                </div>
+                {(() => {
+                  const activeSelfBills =
+                    goingOutTab === "pending" ? goingOutPendingSelfBills : goingOutApprovedSelfBills;
+                  const activeGroups = goingOutTab === "pending" ? goingOutPendingGroups : goingOutApprovedGroups;
+                  const activeTotal = goingOutTab === "pending" ? goingOutPendingTotal : goingOutApprovedTotal;
+
+                  // Selection-aware eligible IDs scoped to the active tab.
+                  const eligibleSendableIds = activeSelfBills
+                    .filter((sb) => sb.bill_origin !== "internal" && !!sb.partner_id?.trim())
+                    .map((sb) => sb.id);
+                  const allTabIds = activeSelfBills.map((sb) => sb.id);
+                  const selectedInTab = allTabIds.filter((id) => selectedSbIds.has(id));
+                  const selectedSendableInTab = eligibleSendableIds.filter((id) => selectedSbIds.has(id));
+                  const hasSelection = selectedInTab.length > 0;
+
+                  const eligiblePayIds = activeSelfBills
+                    .filter((sb) => !!sb.approved_at && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb))
+                    .map((sb) => sb.id);
+                  const selectedPayInTab = eligiblePayIds.filter((id) => selectedSbIds.has(id));
+                  const payTargetIds = hasSelection ? selectedPayInTab : eligiblePayIds;
+                  const payTargetTotal = sumDue(activeSelfBills.filter((sb) => payTargetIds.includes(sb.id)));
+
+                  const sendTargetIds = hasSelection ? selectedSendableInTab : eligibleSendableIds;
+                  const approveTargetIds = hasSelection ? selectedInTab : allTabIds;
+
+                  return (
+                    <>
+                      <div className="border-b border-border-light px-4 py-3 sm:px-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-1">
+                            <TabPill
+                              active={goingOutTab === "pending"}
+                              onClick={() => setGoingOutTab("pending")}
+                              label="Pending"
+                              count={goingOutPendingSelfBills.length}
+                              total={goingOutPendingTotal}
+                            />
+                            <TabPill
+                              active={goingOutTab === "approved"}
+                              onClick={() => setGoingOutTab("approved")}
+                              label="Approved"
+                              count={goingOutApprovedSelfBills.length}
+                              total={goingOutApprovedTotal}
+                            />
+                          </div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                            {kpiRow.nextRunLabel}
+                          </p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xl font-bold tabular-nums text-[#020040]">
+                            {formatCurrency(activeTotal)}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {goingOutTab === "pending" ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  loading={sendTargetIds.some((id) => sendingSelfBillIds.has(id))}
+                                  disabled={sendTargetIds.length === 0}
+                                  onClick={() => void handleSendSelfBills(sendTargetIds, "week")}
+                                >
+                                  {hasSelection
+                                    ? `Send selected (${sendTargetIds.length})`
+                                    : `Send all${eligibleSendableIds.length ? ` (${eligibleSendableIds.length})` : ""}`}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  loading={approveTargetIds.some((id) => approvingSelfBillIds.has(id))}
+                                  disabled={approveTargetIds.length === 0}
+                                  onClick={() => void handleApproveSelfBills(approveTargetIds)}
+                                >
+                                  {hasSelection
+                                    ? `Approve selected (${approveTargetIds.length})`
+                                    : `Approve all${allTabIds.length ? ` (${allTabIds.length})` : ""}`}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                loading={payTargetIds.some((id) => payingSelfBillIds.has(id))}
+                                disabled={payTargetIds.length === 0}
+                                onClick={() => void handleBulkPayWithWise(payTargetIds)}
+                              >
+                                {hasSelection
+                                  ? `Pay selected ${formatCurrency(payTargetTotal)} (${payTargetIds.length})`
+                                  : `Pay all ${formatCurrency(payTargetTotal)}`}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="max-h-[420px] overflow-y-auto">
+                        <SelfBillGroupedLedger
+                          variant="compact"
+                          groups={activeGroups}
+                          todayYmd={todayYmd}
+                          selectedIds={selectedSbIds}
+                          onSelectionChange={setSelectedSbIds}
+                          partnerDueCtx={data.partnerDueCtx}
+                          partnerAvatarById={data.partnerAvatarById}
+                          onOpen={(sb) => void openSelfBill(sb)}
+                          onMarkPaid={async (id) => {
+                            await markSelfBillsPaid([id]);
+                            toast.success("Marked paid");
+                            await data.loadData();
+                          }}
+                          collapsiblePartners={{
+                            expandedKeys: expandedGoingOutPartners,
+                            onToggle: toggleGoingOutPartner,
+                          }}
+                          onSendBills={handleSendSelfBills}
+                          sendingIds={sendingSelfBillIds}
+                          onPayWithWise={goingOutTab === "approved" ? handlePayWithWise : undefined}
+                          payingIds={payingSelfBillIds}
+                          onApprove={handleApproveSelfBills}
+                          onUnapprove={handleUnapproveSelfBills}
+                          approvingIds={approvingSelfBillIds}
+                          showApproveAction={goingOutTab === "pending" ? "approve" : "unapprove"}
+                          emptyLabel={
+                            goingOutTab === "pending"
+                              ? "Nothing pending approval."
+                              : "Nothing approved yet. Approve self-bills in Pending."
+                          }
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -683,6 +1244,7 @@ function BillingStandaloneInner() {
                 <div className="flex gap-1">
                   <LedgerTabBtn active={ledgerTab === "inv"} onClick={() => setLedgerTab("inv")} label="Invoices" count={activePeriodInvoices.length} />
                   <LedgerTabBtn active={ledgerTab === "sb"} onClick={() => setLedgerTab("sb")} label="Self-bills" count={activePeriodSelfBills.length} />
+                  <LedgerTabBtn active={ledgerTab === "history"} onClick={() => setLedgerTab("history")} label="Payment History" count={null} />
                 </div>
                 {ledgerTab === "sb" ? (
                   <button type="button" className="text-xs font-semibold text-primary hover:underline" onClick={() => setSelectedSbIds(new Set(payableSelfBills.map((s) => s.id)))}>
@@ -691,18 +1253,27 @@ function BillingStandaloneInner() {
                 ) : null}
               </div>
 
-              {ledgerTab === "inv" ? (
+              {ledgerTab === "history" ? (
+                <div className="px-4 py-4">
+                  <PaymentHistoryTab />
+                </div>
+              ) : ledgerTab === "inv" ? (
                 <>
-                  <InvoiceLedgerTable
-                    invoices={activePeriodInvoices}
+                  <InvoiceGroupedLedger
+                    groups={activeInvoiceLedgerGroups}
                     todayYmd={todayYmd}
                     selectedIds={selectedInvoiceIds}
                     onSelectionChange={setSelectedInvoiceIds}
-                    resolveAccountId={data.resolveAccountId}
-                    accountNameById={data.accountNameById}
+                    jobsByRef={data.jobsByRef}
+                    customerPaidByJobId={data.customerPaidByJobId}
+                    accountLogoById={data.accountLogoById}
                     onOpen={openInvoice}
                     onMarkPaid={(id) => void bulkMarkInvoicesPaid([id], profile ?? undefined).then(() => data.loadData())}
                     emptyLabel="No active invoices in this period."
+                    collapsibleAccounts={{
+                      expandedKeys: expandedLedgerInvoiceAccounts,
+                      onToggle: toggleLedgerInvoiceAccount,
+                    }}
                   />
                   {inactivePeriodInvoices.length > 0 ? (
                     <div className="border-t border-border-light bg-surface-hover/20">
@@ -727,16 +1298,21 @@ function BillingStandaloneInner() {
                         <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", showInactiveInvoices && "rotate-180")} />
                       </button>
                       {showInactiveInvoices ? (
-                        <InvoiceLedgerTable
-                          invoices={inactivePeriodInvoices}
+                        <InvoiceGroupedLedger
+                          groups={inactiveInvoiceLedgerGroups}
                           todayYmd={todayYmd}
                           selectedIds={selectedInvoiceIds}
                           onSelectionChange={setSelectedInvoiceIds}
-                          resolveAccountId={data.resolveAccountId}
-                          accountNameById={data.accountNameById}
+                          jobsByRef={data.jobsByRef}
+                          customerPaidByJobId={data.customerPaidByJobId}
+                          accountLogoById={data.accountLogoById}
                           onOpen={openInvoice}
                           onMarkPaid={(id) => void bulkMarkInvoicesPaid([id], profile ?? undefined).then(() => data.loadData())}
                           compact
+                          collapsibleAccounts={{
+                            expandedKeys: expandedLedgerInvoiceAccounts,
+                            onToggle: toggleLedgerInvoiceAccount,
+                          }}
                         />
                       ) : null}
                     </div>
@@ -750,6 +1326,7 @@ function BillingStandaloneInner() {
                     selectedIds={selectedSbIds}
                     onSelectionChange={setSelectedSbIds}
                     partnerDueCtx={data.partnerDueCtx}
+                    partnerAvatarById={data.partnerAvatarById}
                     onOpen={(sb) => void openSelfBill(sb)}
                     onMarkPaid={async (id) => {
                       await markSelfBillsPaid([id]);
@@ -761,6 +1338,10 @@ function BillingStandaloneInner() {
                       expandedKeys: expandedLedgerSelfBillPartners,
                       onToggle: toggleLedgerSelfBillPartner,
                     }}
+                    onSendBills={handleSendSelfBills}
+                    sendingIds={sendingSelfBillIds}
+                    onPayWithWise={handlePayWithWise}
+                    payingIds={payingSelfBillIds}
                   />
                   {inactivePeriodSelfBills.length > 0 ? (
                     <div className="border-t border-border-light bg-surface-hover/20">
@@ -796,6 +1377,7 @@ function BillingStandaloneInner() {
                           selectedIds={selectedSbIds}
                           onSelectionChange={setSelectedSbIds}
                           partnerDueCtx={data.partnerDueCtx}
+                          partnerAvatarById={data.partnerAvatarById}
                           onOpen={(sb) => void openSelfBill(sb)}
                           onMarkPaid={async (id) => {
                             await markSelfBillsPaid([id]);
@@ -852,7 +1434,7 @@ function BillingStandaloneInner() {
                 </table>
               </div>
             </div>
-          </>
+          </div>
         )}
 
         <InvoiceDetailDrawer
@@ -906,7 +1488,7 @@ function BillingStandaloneInner() {
 
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
 
-        {ledgerTab === "inv" ? (
+        {ledgerTab === "history" ? null : ledgerTab === "inv" ? (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
             saving={bulkSaving}
@@ -1083,110 +1665,300 @@ function openInvoicePdf(invoiceId: string) {
   window.open(`/api/invoices/${invoiceId}/pdf`, "_blank", "noopener,noreferrer");
 }
 
-function InvoiceLedgerTable({
-  invoices,
+function jobCustomerPaidForInvoice(
+  inv: Invoice,
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+  customerPaidByJobId: Record<string, number>,
+): number | undefined {
+  const ref = inv.job_reference?.trim();
+  if (!ref) return undefined;
+  const jobId = jobsByRef[ref]?.id;
+  if (!jobId) return undefined;
+  const paid = customerPaidByJobId[jobId];
+  return paid !== undefined && Number.isFinite(paid) ? paid : undefined;
+}
+
+function invoiceLedgerAmounts(
+  inv: Invoice,
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+  customerPaidByJobId: Record<string, number>,
+) {
+  const total = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
+  const ledgerPaid = jobCustomerPaidForInvoice(inv, jobsByRef, customerPaidByJobId);
+  const paid = invoiceEffectivePaidWithJobCustomerPaid(inv, ledgerPaid);
+  const outstanding = invoiceBalanceDueWithJobCustomerPaid(inv, ledgerPaid);
+  return { total, paid, outstanding };
+}
+
+function InvoiceLedgerRow({
+  inv,
   todayYmd,
   selectedIds,
   onSelectionChange,
-  resolveAccountId,
-  accountNameById,
+  jobsByRef,
+  customerPaidByJobId,
+  onOpen,
+  onMarkPaid,
+  compact,
+}: {
+  inv: Invoice;
+  todayYmd: string;
+  selectedIds: Set<string>;
+  onSelectionChange: (ids: Set<string>) => void;
+  jobsByRef: Record<string, InvoiceListJobSnapshot>;
+  customerPaidByJobId: Record<string, number>;
+  onOpen: (inv: Invoice) => void;
+  onMarkPaid: (id: string) => void;
+  compact?: boolean;
+}) {
+  const canSelect = inv.status !== "paid" && inv.status !== "cancelled";
+  const st = invoiceDisplayStatus(inv, todayYmd);
+  const { total, paid, outstanding } = invoiceLedgerAmounts(inv, jobsByRef, customerPaidByJobId);
+  return (
+    <tr className="cursor-pointer hover:bg-surface-hover/30" onClick={() => onOpen(inv)}>
+      <td className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+        {canSelect ? (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(inv.id)}
+            onChange={(e) => {
+              const next = new Set(selectedIds);
+              if (e.target.checked) next.add(inv.id);
+              else next.delete(inv.id);
+              onSelectionChange(next);
+            }}
+            className="h-3.5 w-3.5 accent-[#020040]"
+          />
+        ) : null}
+      </td>
+      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
+        <p className="font-semibold">{inv.reference}</p>
+        <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
+      </td>
+      <td className={cn("text-xs", compact ? "px-4 py-2" : "px-3 py-2")}>{formatDate(inv.due_date)}</td>
+      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
+        <InvoiceStatusPill status={st} />
+      </td>
+      <td className={cn("text-right font-medium tabular-nums", compact ? "px-4 py-2" : "px-3 py-2")}>
+        {formatCurrency(total)}
+      </td>
+      <td className={cn("text-right tabular-nums text-emerald-700", compact ? "px-4 py-2" : "px-3 py-2")}>
+        {paid > 0 ? formatCurrency(paid) : "—"}
+      </td>
+      <td
+        className={cn(
+          "text-right font-medium tabular-nums",
+          outstanding > 0 ? "text-amber-800" : "text-text-tertiary",
+          compact ? "px-4 py-2" : "px-3 py-2",
+        )}
+      >
+        {outstanding > 0 ? formatCurrency(outstanding) : "—"}
+      </td>
+      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-1">
+          {canSelect ? (
+            <button
+              type="button"
+              title="Mark paid"
+              className="rounded border border-border-light p-1 hover:bg-emerald-50"
+              onClick={() => onMarkPaid(inv.id)}
+            >
+              <Check className="h-3.5 w-3.5 text-emerald-700" />
+            </button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            title="View PDF"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            onClick={() => openInvoicePdf(inv.id)}
+          >
+            PDF
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>
+            Open
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function InvoiceGroupedLedger({
+  groups,
+  todayYmd,
+  selectedIds,
+  onSelectionChange,
+  jobsByRef,
+  customerPaidByJobId,
+  accountLogoById,
   onOpen,
   onMarkPaid,
   emptyLabel,
   compact,
+  collapsibleAccounts,
 }: {
-  invoices: Invoice[];
+  groups: ReturnType<typeof buildInvoiceLedgerAccountGroups>;
   todayYmd: string;
   selectedIds: Set<string>;
   onSelectionChange: (ids: Set<string>) => void;
-  resolveAccountId: (inv: Invoice) => string | null;
-  accountNameById: Record<string, string>;
+  jobsByRef: Record<string, InvoiceListJobSnapshot>;
+  customerPaidByJobId: Record<string, number>;
+  accountLogoById: Record<string, string | null>;
   onOpen: (inv: Invoice) => void;
   onMarkPaid: (id: string) => void;
   emptyLabel?: string;
   compact?: boolean;
+  collapsibleAccounts?: {
+    expandedKeys: Set<string>;
+    onToggle: (accountKey: string) => void;
+  };
 }) {
-  if (!invoices.length) {
+  if (!groups.length) {
     return emptyLabel ? (
-      <p className={cn("text-center text-sm text-text-tertiary", compact ? "px-4 py-6" : "px-4 py-12")}>{emptyLabel}</p>
+      <p className={cn("text-center text-sm text-text-tertiary", compact ? "px-4 py-6" : "px-4 py-12")}>
+        {emptyLabel}
+      </p>
     ) : null;
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        {!compact ? (
-          <thead className="border-b border-border-light bg-surface-hover/40 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-            <tr>
-              <th className="w-8 px-3 py-2" />
-              <th className="px-3 py-2">Invoice</th>
-              <th className="px-3 py-2">Account</th>
-              <th className="px-3 py-2">Due</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2 text-right">Total</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-        ) : null}
-        <tbody className="divide-y divide-border-light">
-          {invoices.map((inv) => {
-            const canSelect = inv.status !== "paid" && inv.status !== "cancelled";
-            const st = invoiceDisplayStatus(inv, todayYmd);
-            const accId = resolveAccountId(inv);
-            const { total } = vatSplitFromGross(Number(inv.amount ?? 0));
-            return (
-              <tr key={inv.id} className="hover:bg-surface-hover/30">
-                <td className="px-3 py-2">
-                  {canSelect ? (
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(inv.id)}
-                      onChange={(e) => {
-                        onSelectionChange(
-                          (() => {
-                            const next = new Set(selectedIds);
-                            if (e.target.checked) next.add(inv.id);
-                            else next.delete(inv.id);
-                            return next;
-                          })(),
-                        );
-                      }}
-                      className="h-3.5 w-3.5 accent-[#020040]"
+    <div className="divide-y divide-border-light">
+      {groups.map((group) => {
+        const groupOpen = !collapsibleAccounts || collapsibleAccounts.expandedKeys.has(group.accountKey);
+        const logoUrl = group.accountId ? accountLogoById[group.accountId] : null;
+        const groupTotal = group.invoices.reduce((sum, inv) => {
+          const { total } = invoiceLedgerAmounts(inv, jobsByRef, customerPaidByJobId);
+          return Math.round((sum + total) * 100) / 100;
+        }, 0);
+        const groupOutstanding = group.invoices.reduce((sum, inv) => {
+          const { outstanding } = invoiceLedgerAmounts(inv, jobsByRef, customerPaidByJobId);
+          return Math.round((sum + outstanding) * 100) / 100;
+        }, 0);
+        return (
+          <div key={group.accountKey}>
+            {collapsibleAccounts ? (
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5 text-left hover:bg-surface-hover/50"
+                onClick={() => collapsibleAccounts.onToggle(group.accountKey)}
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  {logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
-                  ) : null}
-                </td>
-                <td className="px-3 py-2">
-                  <p className="font-semibold">{inv.reference}</p>
-                  <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
-                </td>
-                <td className="px-3 py-2 text-xs">{accId ? accountNameById[accId] ?? inv.client_name : inv.client_name}</td>
-                <td className="px-3 py-2 text-xs">{formatDate(inv.due_date)}</td>
-                <td className="px-3 py-2"><InvoiceStatusPill status={st} /></td>
-                <td className="px-3 py-2 text-right font-medium tabular-nums">{formatCurrency(total)}</td>
-                <td className="px-3 py-2">
-                  <div className="flex gap-1">
-                    {canSelect ? (
-                      <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => onMarkPaid(inv.id)}>
-                        <Check className="h-3.5 w-3.5 text-emerald-700" />
-                      </button>
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="View PDF"
-                      icon={<FileText className="h-3.5 w-3.5" />}
-                      onClick={() => openInvoicePdf(inv.id)}
-                    >
-                      PDF
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>Open</Button>
+                  ) : (
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                      {group.accountName.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                    <p className="text-xs text-text-tertiary">
+                      {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
+                    </p>
                   </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="text-right">
+                    <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
+                    {groupOutstanding > 0 ? (
+                      <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
+                    ) : null}
+                  </div>
+                  <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", groupOpen && "rotate-180")} />
+                </div>
+              </button>
+            ) : (
+              <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  {logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                    />
+                  ) : (
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                      {group.accountName.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                    <p className="text-xs text-text-tertiary">
+                      {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
+                  {groupOutstanding > 0 ? (
+                    <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
+            {groupOpen ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-border-light bg-surface-hover/20 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                    <tr>
+                      <th className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} />
+                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Invoice</th>
+                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Due</th>
+                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Status</th>
+                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Total</th>
+                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Paid</th>
+                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Outstanding</th>
+                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")} />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border-light">
+                    {group.invoices.map((inv) => (
+                      <InvoiceLedgerRow
+                        key={inv.id}
+                        inv={inv}
+                        todayYmd={todayYmd}
+                        selectedIds={selectedIds}
+                        onSelectionChange={onSelectionChange}
+                        jobsByRef={jobsByRef}
+                        customerPaidByJobId={customerPaidByJobId}
+                        onOpen={onOpen}
+                        onMarkPaid={onMarkPaid}
+                        compact={compact}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+function PartnerGroupAvatar({
+  partnerKey,
+  partnerName,
+  partnerAvatarById,
+}: {
+  partnerKey: string;
+  partnerName: string;
+  partnerAvatarById: Record<string, string | null>;
+}) {
+  return (
+    <Avatar
+      name={partnerName}
+      size="xs"
+      src={partnerAvatarById[partnerKey] ?? undefined}
+      className="h-7 w-7 shrink-0 border border-border-light"
+    />
   );
 }
 
@@ -1196,8 +1968,17 @@ function SelfBillGroupedLedger({
   selectedIds,
   onSelectionChange,
   partnerDueCtx,
+  partnerAvatarById,
   onOpen,
   onMarkPaid,
+  onSendBills,
+  sendingIds,
+  onPayWithWise,
+  payingIds,
+  onApprove,
+  onUnapprove,
+  approvingIds,
+  showApproveAction,
   variant = "full",
   emptyLabel = "No self-bills in this period.",
   collapsiblePartners,
@@ -1207,8 +1988,25 @@ function SelfBillGroupedLedger({
   selectedIds: Set<string>;
   onSelectionChange: (ids: Set<string>) => void;
   partnerDueCtx: (partnerId: string | null | undefined) => SelfBillDueResolveContext;
+  partnerAvatarById: Record<string, string | null>;
   onOpen: (sb: SelfBill) => void;
   onMarkPaid: (id: string) => Promise<void>;
+  /** Send the given self-bill ids — handler decides cycle kind from scope. */
+  onSendBills?: (ids: string[], scope: "week" | "partner" | "row") => Promise<void>;
+  /** Self-bill ids currently sending — drives the per-row spinner state. */
+  sendingIds?: Set<string>;
+  /** Trigger a Wise Business payout for one self-bill (full payout for the row). */
+  onPayWithWise?: (selfBillId: string) => Promise<void>;
+  /** Self-bill ids currently being paid via Wise. */
+  payingIds?: Set<string>;
+  /** Approve (Pending tab) — marks the self-bill as ready for Wise payout. */
+  onApprove?: (ids: string[]) => Promise<void>;
+  /** Unapprove (Approved tab) — reverts the signoff. */
+  onUnapprove?: (ids: string[]) => Promise<void>;
+  /** Self-bill ids currently being approved / unapproved. */
+  approvingIds?: Set<string>;
+  /** "approve" → render Approve; "unapprove" → render Unapprove; undefined → hide. */
+  showApproveAction?: "approve" | "unapprove";
   variant?: "full" | "compact";
   emptyLabel?: string;
   collapsiblePartners?: {
@@ -1233,7 +2031,29 @@ function SelfBillGroupedLedger({
               <p className="text-sm font-semibold text-[#020040]">{week.weekTitle}</p>
               {week.weekSubtitle ? <p className="text-xs text-text-secondary">{week.weekSubtitle}</p> : null}
             </div>
-            <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+              {onSendBills ? (() => {
+                const weekIds = week.partners.flatMap((p) =>
+                  p.rows
+                    .filter((sb) => !isSelfBillPayoutVoided(sb) && sb.bill_origin !== "internal" && !!sb.partner_id?.trim())
+                    .map((sb) => sb.id),
+                );
+                if (!weekIds.length) return null;
+                const sendingHere = weekIds.some((id) => sendingIds?.has(id));
+                return (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    loading={sendingHere}
+                    onClick={() => void onSendBills(weekIds, "week")}
+                  >
+                    Send all
+                  </Button>
+                );
+              })() : null}
+            </div>
           </div>
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
@@ -1247,9 +2067,11 @@ function SelfBillGroupedLedger({
                   onClick={() => collapsiblePartners.onToggle(partnerGroupKey)}
                 >
                   <div className="flex min-w-0 items-center gap-2.5">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-800">
-                      {partner.partnerName.slice(0, 2).toUpperCase()}
-                    </div>
+                    <PartnerGroupAvatar
+                      partnerKey={partner.partnerKey}
+                      partnerName={partner.partnerName}
+                      partnerAvatarById={partnerAvatarById}
+                    />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
                       <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
@@ -1263,9 +2085,11 @@ function SelfBillGroupedLedger({
               ) : (
                 <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5">
                   <div className="flex min-w-0 items-center gap-2.5">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-800">
-                      {partner.partnerName.slice(0, 2).toUpperCase()}
-                    </div>
+                    <PartnerGroupAvatar
+                      partnerKey={partner.partnerKey}
+                      partnerName={partner.partnerName}
+                      partnerAvatarById={partnerAvatarById}
+                    />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
                       <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
@@ -1306,11 +2130,66 @@ function SelfBillGroupedLedger({
                           <td className={cn(compact ? "px-2 py-2" : "px-3 py-2")}><StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} /></td>
                           <td className={cn("text-right font-medium tabular-nums", compact ? "px-4 py-2" : "px-3 py-2")}>{formatCurrency(Number(sb.net_payout ?? 0))}</td>
                           <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
                               {canSelect ? (
                                 <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => void onMarkPaid(sb.id)}>
                                   <Check className="h-3.5 w-3.5 text-emerald-700" />
                                 </button>
+                              ) : null}
+                              {onSendBills && sb.bill_origin !== "internal" && !!sb.partner_id?.trim() && !isSelfBillPayoutVoided(sb) ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  loading={sendingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onSendBills([sb.id], "row")}
+                                  title={sb.email_sent_at ? `Last sent ${new Date(sb.email_sent_at).toLocaleString("en-GB")}` : "Send self-bill to partner"}
+                                >
+                                  {sb.email_sent_at ? "Resend" : "Send"}
+                                </Button>
+                              ) : null}
+                              {showApproveAction === "approve" && onApprove && canSelect && !sb.approved_at ? (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  loading={approvingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onApprove([sb.id])}
+                                  title="Mark approved — unlocks Wise payment"
+                                >
+                                  Approve
+                                </Button>
+                              ) : null}
+                              {showApproveAction === "unapprove" && onUnapprove && canSelect && !!sb.approved_at && !sb.wise_paid_at ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  loading={approvingIds?.has(sb.id) ?? false}
+                                  onClick={() => void onUnapprove([sb.id])}
+                                  title="Revoke approval"
+                                >
+                                  Unapprove
+                                </Button>
+                              ) : null}
+                              {onPayWithWise && canSelect && !sb.wise_paid_at && !!sb.approved_at ? (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  loading={payingIds?.has(sb.id) ?? false}
+                                  title="Pay partner via Wise"
+                                  onClick={() => void onPayWithWise(sb.id)}
+                                >
+                                  Make payment
+                                </Button>
+                              ) : null}
+                              {sb.zendesk_ticket_url ? (
+                                <a
+                                  href={sb.zendesk_ticket_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Open Zendesk payment ticket"
+                                  className="rounded border border-border-light p-1 hover:bg-surface-hover/50"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5 text-text-secondary" />
+                                </a>
                               ) : null}
                               <Button variant="ghost" size="sm" onClick={() => onOpen(sb)}>{compact ? "Review" : "Open"}</Button>
                             </div>
@@ -1334,20 +2213,58 @@ function SelfBillGroupedLedger({
 function KpiCard({ label, value, sub, alert, coral, green }: { label: string; value: string; sub: string; alert?: boolean; coral?: boolean; green?: boolean }) {
   return (
     <div className={cn(
-      "rounded-xl border bg-white px-4 py-3 shadow-sm",
+      "min-w-0 rounded-xl border bg-white px-3 py-3 shadow-sm sm:px-4",
       alert ? "border-red-200 bg-red-50/30" : coral ? "border-orange-200 bg-orange-50/30" : "border-border-light",
     )}>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">{label}</p>
-      <p className={cn("mt-1 text-xl font-bold tabular-nums", green ? "text-emerald-700" : "text-[#020040]")}>{value}</p>
-      <p className="mt-0.5 text-xs text-text-secondary">{sub}</p>
+      <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px]">{label}</p>
+      <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-[#020040]")}>{value}</p>
+      <p className="mt-0.5 text-[11px] leading-snug text-text-secondary sm:text-xs">{sub}</p>
     </div>
   );
 }
 
-function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function TabPill({
+  active,
+  onClick,
+  label,
+  count,
+  total,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  total: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
+        active
+          ? "bg-[#020040] text-white"
+          : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
+      )}
+    >
+      {label}
+      <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] tabular-nums", active ? "bg-white/20 text-white" : "bg-white text-text-secondary")}>
+        {count}
+      </span>
+      {count > 0 ? (
+        <span className={cn("text-[10px] tabular-nums", active ? "text-white/80" : "text-text-tertiary")}>
+          {formatCurrency(total)}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number | null }) {
   return (
     <button type="button" onClick={onClick} className={cn("rounded-lg px-3 py-1.5 text-sm font-semibold", active ? "bg-[#020040] text-white" : "text-text-secondary hover:bg-surface-hover")}>
-      {label} <span className="ml-1 opacity-70">{count}</span>
+      {label}
+      {count != null ? <span className="ml-1 opacity-70">{count}</span> : null}
     </button>
   );
 }

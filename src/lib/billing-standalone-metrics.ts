@@ -18,13 +18,17 @@ import {
   type YmdBounds,
 } from "@/lib/billing-standalone-period";
 import {
+  effectiveInvoiceSourceAccountId,
   invoiceListBalanceDue,
   isInvoiceOpen,
   type InvoiceListJobSnapshot,
 } from "@/lib/billing-invoice-list-data";
 import { computeSelfBillAmountDue, type SelfBillJobLine } from "@/lib/billing-selfbill-actions";
+import { startOfWeekMondayFromYmd, weekRangeLabel } from "@/lib/dashboard-cashflow-buckets";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
 import type { Invoice, SelfBill } from "@/types/database";
+
+const DEFAULT_CASHFLOW_WEEKS = 8;
 
 export type AgingBucket = "current" | "d1_7" | "d8_30" | "d30plus";
 
@@ -217,23 +221,90 @@ export function computeAgingTotals(
   return totals;
 }
 
+export const UNLINKED_ATTENTION_ACCOUNT_KEY = "acc:unlinked";
+
 export type WorklistRow = {
   invoice: Invoice;
   balanceDue: number;
   daysLate: number;
   accountKey: string;
   accountName: string;
+  clientName: string;
   jobCount: number;
 };
 
 export type AttentionAccountGroup = {
   accountKey: string;
+  accountId: string | null;
   accountName: string;
   invoiceCount: number;
   totalDue: number;
   maxDaysLate: number;
   rows: WorklistRow[];
 };
+
+export type InvoiceLedgerAccountGroup = {
+  accountKey: string;
+  accountId: string | null;
+  accountName: string;
+  invoiceCount: number;
+  totalAmount: number;
+  invoices: Invoice[];
+};
+
+function invoiceLedgerAccountMeta(
+  inv: Invoice,
+  accountNameById: Record<string, string>,
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): { accountKey: string; accountId: string | null; accountName: string } {
+  const accId = effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId);
+  const accountKey = accId ? `acc:${accId}` : UNLINKED_ATTENTION_ACCOUNT_KEY;
+  const accountName = accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked";
+  return { accountKey, accountId: accId, accountName };
+}
+
+export function buildInvoiceLedgerAccountGroups(
+  invoices: Invoice[],
+  accountNameById: Record<string, string>,
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): InvoiceLedgerAccountGroup[] {
+  const byAccount = new Map<string, InvoiceLedgerAccountGroup>();
+  for (const inv of invoices) {
+    const { accountKey, accountId, accountName } = invoiceLedgerAccountMeta(
+      inv,
+      accountNameById,
+      jobRefToAccountId,
+      clientNameToAccountId,
+    );
+    let group = byAccount.get(accountKey);
+    if (!group) {
+      group = {
+        accountKey,
+        accountId,
+        accountName,
+        invoiceCount: 0,
+        totalAmount: 0,
+        invoices: [],
+      };
+      byAccount.set(accountKey, group);
+    }
+    group.invoices.push(inv);
+    group.invoiceCount += 1;
+    group.totalAmount = Math.round((group.totalAmount + Number(inv.amount ?? 0)) * 100) / 100;
+  }
+  return [...byAccount.values()]
+    .map((group) => ({
+      ...group,
+      invoices: [...group.invoices].sort(
+        (a, b) =>
+          (a.due_date ?? "").localeCompare(b.due_date ?? "") ||
+          (a.reference ?? "").localeCompare(b.reference ?? ""),
+      ),
+    }))
+    .sort((a, b) => b.totalAmount - a.totalAmount || a.accountName.localeCompare(b.accountName));
+}
 
 function collectAttentionWorklistRows(
   invoices: Invoice[],
@@ -254,18 +325,15 @@ function collectAttentionWorklistRows(
     const isOverdue = invoiceIsDerivedOverdue(inv, todayYmd);
     if (periodBounds && !isOverdue && !ymdInBounds(dueYmd, periodBounds)) continue;
     const daysLate = Math.max(0, daysBetweenYmd(dueYmd, todayYmd));
-    const accId =
-      inv.source_account_id?.trim() ||
-      (inv.job_reference ? jobRefToAccountId[inv.job_reference.trim()] : null) ||
-      clientNameToAccountId[inv.client_name?.trim() ?? ""] ||
-      null;
-    const accountKey = accId ?? inv.client_name?.trim() ?? "unknown";
+    const accId = effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId);
+    const accountKey = accId ? `acc:${accId}` : UNLINKED_ATTENTION_ACCOUNT_KEY;
     rows.push({
       invoice: inv,
       balanceDue,
       daysLate,
       accountKey,
-      accountName: accId ? accountNameById[accId] ?? inv.client_name : inv.client_name,
+      accountName: accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked",
+      clientName: inv.client_name?.trim() || "—",
       jobCount: inv.job_reference ? 1 : 0,
     });
   }
@@ -316,8 +384,11 @@ export function buildAttentionAccountGroups(
   )) {
     let group = byAccount.get(row.accountKey);
     if (!group) {
+      const accountId =
+        row.accountKey === UNLINKED_ATTENTION_ACCOUNT_KEY ? null : row.accountKey.replace(/^acc:/, "");
       group = {
         accountKey: row.accountKey,
+        accountId,
         accountName: row.accountName,
         invoiceCount: 0,
         totalDue: 0,
@@ -336,17 +407,45 @@ export function buildAttentionAccountGroups(
   );
 }
 
-export type CashflowDay = {
-  ymd: string;
+export type CashflowWeek = {
+  weekStart: string;
   label: string;
   dayNum: string;
+  title: string;
   moneyIn: number;
   moneyOut: number;
-  isWeekend: boolean;
-  isToday: boolean;
+  isCurrentWeek: boolean;
 };
 
-export function buildCashflow14Days(args: {
+function isoWeekNumberFromYmd(ymd: string): number {
+  const d = new Date(`${ymd}T12:00:00`);
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
+function compactWeekColumnLabels(weekStartYmd: string): { label: string; dayNum: string; title: string } {
+  const title = weekRangeLabel(weekStartYmd, true);
+  const s = new Date(`${weekStartYmd}T12:00:00`);
+  const e = new Date(s);
+  e.setDate(e.getDate() + 6);
+  const label = `Wk ${isoWeekNumberFromYmd(weekStartYmd)}`;
+  const fmtShort = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const dayNum =
+    s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()
+      ? `${s.getDate()}–${e.getDate()} ${s.toLocaleDateString("en-GB", { month: "short" })}`
+      : `${fmtShort(s)} – ${fmtShort(e)}`;
+  return { label, dayNum, title };
+}
+
+function ymdInWeekBounds(ymd: string, weekStart: string): boolean {
+  const weekEnd = addDaysYmd(weekStart, 6);
+  return ymd >= weekStart && ymd <= weekEnd;
+}
+
+/** Mon–Sun buckets: open invoice balances due in-week (in) vs self-bill partner pay due in-week (out). */
+export function buildCashflowWeekly(args: {
   invoices: Invoice[];
   selfBills: SelfBill[];
   jobsByRef: Record<string, InvoiceListJobSnapshot>;
@@ -356,39 +455,48 @@ export function buildCashflow14Days(args: {
   dueCtx: SelfBillDueResolveContext;
   startYmd?: string;
   endYmd?: string;
-}): CashflowDay[] {
+  weekCount?: number;
+}): CashflowWeek[] {
   const todayYmd = todayYmdLocal();
-  const start = args.startYmd ?? todayYmd;
-  const endCap = args.endYmd;
-  const days: CashflowDay[] = [];
-  for (let i = 0; days.length < 14; i++) {
-    const ymd = addDaysYmd(start, i);
-    if (endCap && ymd > endCap) break;
-    const d = new Date(`${ymd}T12:00:00`);
-    const dow = d.getDay();
+  const anchor = args.startYmd ?? todayYmd;
+  let weekStart = startOfWeekMondayFromYmd(anchor);
+  const lastWeekMonday = args.endYmd
+    ? startOfWeekMondayFromYmd(args.endYmd)
+    : addDaysYmd(
+        startOfWeekMondayFromYmd(todayYmd),
+        7 * ((args.weekCount ?? DEFAULT_CASHFLOW_WEEKS) - 1),
+      );
+
+  const weeks: CashflowWeek[] = [];
+  while (weekStart <= lastWeekMonday) {
     let moneyIn = 0;
     let moneyOut = 0;
     for (const inv of args.invoices) {
       if (!isInvoiceOpen(inv, todayYmd)) continue;
-      if ((inv.due_date ?? "").slice(0, 10) !== ymd) continue;
+      const dueYmd = (inv.due_date ?? "").slice(0, 10);
+      if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
       moneyIn += invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
     }
     for (const sb of args.selfBills) {
       if (isSelfBillPayoutVoided(sb) || !selfBillCountsAsReady(sb)) continue;
-      if (selfBillDueYmd(sb, args.dueCtx) !== ymd) continue;
+      const dueYmd = selfBillDueYmd(sb, args.dueCtx);
+      if (!ymdInWeekBounds(dueYmd, weekStart)) continue;
       moneyOut += computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
     }
-    days.push({
-      ymd,
-      label: d.toLocaleDateString("en-GB", { weekday: "short" }).toUpperCase().slice(0, 3),
-      dayNum: String(d.getDate()).padStart(2, "0"),
+    const { label, dayNum, title } = compactWeekColumnLabels(weekStart);
+    weeks.push({
+      weekStart,
+      label,
+      dayNum,
+      title,
       moneyIn: Math.round(moneyIn * 100) / 100,
       moneyOut: Math.round(moneyOut * 100) / 100,
-      isWeekend: dow === 0 || dow === 6,
-      isToday: ymd === todayYmd,
+      isCurrentWeek: ymdInWeekBounds(todayYmd, weekStart),
     });
+    weekStart = addDaysYmd(weekStart, 7);
+    if (!args.endYmd && weeks.length >= (args.weekCount ?? DEFAULT_CASHFLOW_WEEKS)) break;
   }
-  return days;
+  return weeks;
 }
 
 export type CustomerExposureRow = {

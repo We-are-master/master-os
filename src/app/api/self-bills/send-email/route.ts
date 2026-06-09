@@ -7,6 +7,13 @@ import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { formatCurrency } from "@/lib/utils";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
 import { createClient } from "@/lib/supabase/server";
+import {
+  groupSelfBillsByPeriod,
+  resolvePaymentRunForGroup,
+  type PaymentRunCycleKind,
+  type ResolvedPaymentRun,
+} from "@/lib/self-bill-payment-run";
+import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import type { SelfBill } from "@/types/database";
 
 type Skipped = { id: string; reference?: string; reason: string };
@@ -150,11 +157,16 @@ function buildSelfBillEmailHtml(sb: SelfBill, dueYmd: string | null): string {
 </body></html>`;
 }
 
+function parseCycleHint(raw: unknown): PaymentRunCycleKind | "auto" {
+  if (raw === "standard" || raw === "off_cycle" || raw === "auto") return raw;
+  return "auto";
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
-  let body: { selfBillIds?: unknown };
+  let body: { selfBillIds?: unknown; paymentRunHint?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -169,6 +181,7 @@ export async function POST(req: NextRequest) {
   if (selfBillIds.length === 0) {
     return NextResponse.json({ error: "No valid self-bill ids" }, { status: 400 });
   }
+  const cycleHint = parseCycleHint(body.paymentRunHint);
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (!resendKey) {
@@ -185,6 +198,8 @@ export async function POST(req: NextRequest) {
     process.env.SELF_BILL_CC_EMAIL?.trim() ||
     (company?.email && String(company.email).trim()) ||
     null;
+  const companyEmail = (company?.email && String(company.email).trim()) || null;
+  const companyName = (company?.company_name && String(company.company_name).trim()) || null;
 
   const profileClient = await createClient();
   const { data: profile } = await profileClient
@@ -194,17 +209,46 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   const userName = profile?.full_name?.trim() || auth.user.email || "User";
 
+  // Load all self-bills up front so we can group by (week_start, week_end) and
+  // resolve a payment run per group BEFORE we start sending — guarantees every
+  // partner side-conv lands under the right master ticket.
+  const { data: sbRows } = await supabase
+    .from("self_bills")
+    .select("*")
+    .in("id", selfBillIds);
+  const sbList = ((sbRows ?? []) as SelfBill[]).filter((sb) => !!sb);
+  const sbById = new Map(sbList.map((sb) => [sb.id, sb]));
+
+  const cycleKind: PaymentRunCycleKind = cycleHint === "off_cycle" ? "off_cycle" : "standard";
+  const requesterEmail = companyEmail || auth.user.email || "no-reply@example.com";
+  const requesterName = companyName || userName;
+
+  const groups = groupSelfBillsByPeriod(sbList);
+  const runByGroupKey = new Map<string, ResolvedPaymentRun>();
+  for (const group of groups) {
+    try {
+      const run = await resolvePaymentRunForGroup(supabase, group, {
+        cycleKind,
+        createdBy: auth.user.id,
+        requesterEmail,
+        requesterName,
+      });
+      runByGroupKey.set(`${group.period_start}|${group.period_end}`, run);
+    } catch (e) {
+      console.error("[self-bills send-email] payment run resolve failed", group, e);
+    }
+  }
+
   const resend = new Resend(resendKey);
   const sentIds: string[] = [];
   const skipped: Skipped[] = [];
 
   for (const id of selfBillIds) {
-    const { data: sbRow } = await supabase.from("self_bills").select("*").eq("id", id).maybeSingle();
-    if (!sbRow) {
+    const sb = sbById.get(id);
+    if (!sb) {
       skipped.push({ id, reason: "Not found" });
       continue;
     }
-    const sb = sbRow as SelfBill;
     if (isSelfBillPayoutVoided(sb)) {
       skipped.push({ id, reference: sb.reference, reason: "Void or cancelled" });
       continue;
@@ -224,6 +268,7 @@ export async function POST(req: NextRequest) {
       .eq("id", sb.partner_id)
       .maybeSingle();
     const partnerEmail = partner?.email?.trim().toLowerCase();
+    const partnerName = partner?.name?.trim() ?? null;
     if (!partnerEmail) {
       skipped.push({ id, reference: sb.reference, reason: "Partner has no email" });
       continue;
@@ -247,8 +292,8 @@ export async function POST(req: NextRequest) {
       from: fromEmail,
       to: [partnerEmail],
       cc: ccList,
-      subject: `Self-bill ${sb.reference} — ${sb.week_label ?? sb.period ?? "weekly"}`,
-      html: buildSelfBillEmailHtml(sb, dueYmd),
+      subject: `Self-Billing Statement | ${sb.week_label ?? sb.period ?? "weekly"}`,
+      html: buildSelfBillEmailHtml(sb, dueYmd, { partnerName, companyName }),
       attachments: [
         {
           filename: `${safeName}.pdf`,
@@ -269,13 +314,65 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    void supabase
+    // Zendesk side conversation — recorded under the master payment-run ticket.
+    // On Resend, prefer replyToSideConversation so finance keeps one thread per
+    // partner per cycle.
+    const groupKey = `${sb.week_start ?? ""}|${sb.week_end ?? ""}`;
+    const run = runByGroupKey.get(groupKey) ?? null;
+    let sideConvId: string | null = sb.zendesk_side_conversation_id?.trim() || null;
+
+    if (run?.zendesk_ticket_id) {
+      const subject = `Self-bill ${sb.reference} — ${partnerName ?? partnerEmail}`;
+      const htmlBody = buildSelfBillSideConvHtml(sb, dueYmd, partnerEmail);
+
+      if (sideConvId) {
+        const reply = await replyToSideConversation({
+          ticketId: run.zendesk_ticket_id,
+          sideConversationId: sideConvId,
+          htmlBody,
+          toEmail: partnerEmail,
+          toName: partnerName,
+        });
+        if (!reply.ok) {
+          console.warn("[self-bills send-email] side conv reply failed; opening fresh thread", reply.error);
+          const fresh = await createSideConversation({
+            ticketId: run.zendesk_ticket_id,
+            toEmail: partnerEmail,
+            toName: partnerName,
+            subject,
+            htmlBody,
+          });
+          if (fresh.ok && fresh.id) sideConvId = String(fresh.id);
+        }
+      } else {
+        const opened = await createSideConversation({
+          ticketId: run.zendesk_ticket_id,
+          toEmail: partnerEmail,
+          toName: partnerName,
+          subject,
+          htmlBody,
+        });
+        if (opened.ok && opened.id) {
+          sideConvId = String(opened.id);
+        } else {
+          console.warn("[self-bills send-email] side conv create failed", opened.error);
+        }
+      }
+    }
+
+    const stamp = new Date().toISOString();
+    const { error: stampErr } = await supabase
       .from("self_bills")
-      .update({ pdf_generated_at: new Date().toISOString() })
-      .eq("id", id)
-      .then(({ error }) => {
-        if (error) console.warn("[self-bills send-email] pdf_generated_at update failed", id, error);
-      });
+      .update({
+        pdf_generated_at: stamp,
+        email_sent_at: stamp,
+        payment_run_id: run?.id ?? null,
+        zendesk_ticket_id: run?.zendesk_ticket_id ?? null,
+        zendesk_ticket_url: run?.zendesk_ticket_url ?? null,
+        zendesk_side_conversation_id: sideConvId,
+      })
+      .eq("id", id);
+    if (stampErr) console.warn("[self-bills send-email] state stamp failed", id, stampErr);
 
     void supabase.from("audit_logs").insert({
       entity_type: "self_bill",
@@ -286,7 +383,16 @@ export async function POST(req: NextRequest) {
       new_value: partnerEmail,
       user_id: auth.user.id,
       user_name: userName,
-      metadata: { email_to: partnerEmail, cc: ccList ?? [], resend_id: emailResult?.id },
+      metadata: {
+        email_to: partnerEmail,
+        cc: ccList ?? [],
+        resend_id: emailResult?.id,
+        payment_run_id: run?.id ?? null,
+        zendesk_ticket_id: run?.zendesk_ticket_id ?? null,
+        zendesk_ticket_url: run?.zendesk_ticket_url ?? null,
+        zendesk_side_conversation_id: sideConvId,
+        cycle_kind: run?.cycle_kind ?? cycleKind,
+      },
     });
 
     sentIds.push(id);

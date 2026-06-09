@@ -96,6 +96,9 @@ Se enviares o mesmo `ticket_id` duas vezes, a segunda chamada devolve a quote ex
 
 ## 2. POST `/api/jobs` — criar job externo
 
+> **Zendesk (produção):** macro *Move to Job* → trigger `5703043672095` → webhook nativo com body Liquid.
+> Documentação completa: [`docs/zendesk-create-job-webhook.md`](zendesk-create-job-webhook.md).
+
 **Auth**: `X-API-Key: $JOB_KEY`
 **Requeridos**: `account_id`, `date`, `hour`, `title`, `client_name`, `client_email`, `property_address`, `service_type`.
 **Opcionais**: `description`, `client_price`, `partner_cost`, `auto_assign`, `ticket_id`.
@@ -470,7 +473,7 @@ As rotas com auth de sessão precisam do cookie Supabase. Mais fácil:
 export SB_COOKIE='sb-abc123-auth-token=eyJhbGciOi…'
 ```
 
-Para integrações de produção (n8n / scripts), prefere as rotas externas com `X-API-Key` em vez de impersonar uma sessão.
+Para integrações de produção (Zendesk webhooks / scripts), prefere as rotas externas com `X-API-Key` em vez de impersonar uma sessão.
 
 ---
 
@@ -492,9 +495,9 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `ZENDESK_COMPLAINT_SOLUTION_FIELD_ID` | Partner solution after on-hold form submit |
 | `ZENDESK_JOB_ID_FIELD_ID` | Job reference on ticket (default `5824403479839`) |
 | `ZENDESK_QUOTE_REF_FIELD_ID` | Quote reference (QT-…); falls back to job id field when unset |
-| `ZENDESK_TYPE_OF_WORK_FIELD_ID` | Tagger: `service_catalog.id` UUID |
+| `ZENDESK_TYPE_OF_WORK_FIELD_ID` | Tagger: `os_<service_catalog.id>` (default `5687087915551`) |
 | `ZENDESK_JOB_TYPE_FIELD_ID` | Tagger: `job_type_fixed` / `job_type_hourly` |
-| `ZENDESK_RATE_TYPE_FIELD_ID` | Text/dropdown: `fixed` / `hourly` (if separate from Job Type) |
+| `ZENDESK_RATE_TYPE_FIELD_ID` | Text/dropdown: `fixed` / `hourly` (default `5807260876063`) |
 | `ZENDESK_ARRIVAL_WINDOW_FIELD_ID` | Tagger: `arrival_morning`, `arrival_early_afternoon`, … |
 | `ZENDESK_AUTO_ASSIGN_FIELD_ID` | Checkbox: `true` / `false` from job auto-assign |
 | `ZENDESK_CLIENT_EMAIL_FIELD_ID` | `clients.email` (not account finance email) |
@@ -507,3 +510,37 @@ Para integrações de produção (n8n / scripts), prefere as rotas externas com 
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Emails Resend (fallback quando não há Zendesk) |
 | `CRON_SECRET` | `/api/cron/*` (`Authorization: Bearer …`) |
 | `QUOTE_RESPONSE_SECRET` | Assinar tokens de accept/reject |
+
+### Zendesk catalog sync (Type of Work + bands)
+
+**Schema** (prod must have migrations 202 + 219; optional 220 backfill):
+
+```bash
+npm run verify:zendesk-schema
+# If missing columns — add DATABASE_URL to .env.local, then:
+npm run apply:zendesk-migrations
+```
+
+Audit OS vs live Zendesk (`.env.local` with Zendesk + `SERVICE_ROLE_KEY`):
+
+```bash
+npm run audit:zendesk-catalog
+```
+
+CLI backfill (no admin cookie; same as dashboard sync):
+
+```bash
+npm run sync:zendesk-catalog
+npm run sync:zendesk-catalog -- --dry-run
+```
+
+Dashboard backfill (admin session cookie; pushes `os_<uuid>` TOW tags + `band_<uuid>` for EPC/FRA/EICR/PAT/GSC/FAC):
+
+```bash
+curl -sS -X POST "$BASE/api/admin/service-catalog/zendesk-sync" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: $SB_COOKIE" \
+  -d '{"syncBands": true}'
+```
+
+Dry-run plan only: `{"dryRun": true, "syncBands": true}`.

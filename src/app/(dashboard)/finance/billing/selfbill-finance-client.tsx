@@ -1738,6 +1738,7 @@ export function SelfBillDetailDrawer({
     return Math.round(due * 100) / 100;
   })();
   const grossTotal = Math.round((Number(sb.job_value ?? 0) + Number(sb.materials ?? 0)) * 100) / 100;
+  const workforceBreakdown = sb.bill_origin === "internal" ? sb.payout_breakdown : null;
 
   const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; count?: number }> = [
     { id: "details", label: "Details" },
@@ -2040,14 +2041,36 @@ export function SelfBillDetailDrawer({
               </div>
               <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
                 <div className="flex items-center justify-between border-b border-border px-3 py-3">
-                  <p className="text-[13px] font-semibold text-text-primary">• Labour</p>
+                  <p className="text-[13px] font-semibold text-text-primary">• {sb.bill_origin === "internal" ? "Fixed pay" : "Labour"}</p>
                   <p className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(sb.job_value)}</p>
                 </div>
+                {workforceBreakdown && Number(workforceBreakdown.commission_amount) > 0 ? (
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                    <p className="text-[12px] text-text-secondary">
+                      • Commission ({workforceBreakdown.commission_rate_percent}% on{" "}
+                      {workforceBreakdown.commission_basis === "revenue" ? "revenue" : "gross margin"})
+                    </p>
+                    <p className="text-[12px] text-emerald-700 tabular-nums">+{formatCurrency(Number(workforceBreakdown.commission_amount))}</p>
+                  </div>
+                ) : null}
+                {workforceBreakdown?.jobs?.length ? (
+                  <div className="border-b border-border px-3 py-2 space-y-1">
+                    <p className="text-[11px] font-semibold uppercase text-text-tertiary">Owner jobs</p>
+                    {workforceBreakdown.jobs.map((j) => (
+                      <div key={j.job_id} className="flex justify-between text-[11px] text-text-secondary">
+                        <span>{j.reference}</span>
+                        <span className="tabular-nums">{formatCurrency(j.commission)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {sb.bill_origin !== "internal" ? (
                 <div className="flex items-center justify-between border-b border-border px-3 py-3">
                   <p className="text-[13px] font-semibold text-text-primary">• Materials</p>
                   <p className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(sb.materials)}</p>
                 </div>
-                {Number(sb.commission) > 0 ? (
+                ) : null}
+                {Number(sb.commission) > 0 && sb.bill_origin !== "internal" ? (
                   <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
                     <p className="text-[12px] text-text-secondary">• Commission deduction</p>
                     <p className="text-[12px] text-red-600 tabular-nums">−{formatCurrency(sb.commission)}</p>

@@ -1,9 +1,11 @@
+import "server-only";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { format, parseISO, isValid } from "date-fns";
 import type { Invoice } from "@/types/database";
 import type { Job } from "@/types/database";
-import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
+import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
+import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 
 export type InvoiceClientEmailContext = {
@@ -22,6 +24,10 @@ export type InvoiceEmailOptions = {
   /** Shown when reports were requested but files could not be attached. */
   missingReportNote?: string;
   customMessage?: string;
+  /** £ amount requested in this send (may be % of balance). */
+  amountDueNow?: number;
+  /** % of invoice base used for this request (0–100). */
+  requestPercent?: number;
 };
 
 const PAID_INTRO =
@@ -98,16 +104,6 @@ function splitAddressAndPostcode(
 
 function replaceAll(template: string, key: string, value: string): string {
   return template.split(`{{${key}}}`).join(value);
-}
-
-export function isInvoicePaymentVerified(inv: Pick<
-  Invoice,
-  "status" | "amount" | "amount_paid" | "stripe_payment_status" | "stripe_paid_at"
->): boolean {
-  if (inv.status === "paid") return true;
-  if (inv.stripe_payment_status === "paid") return true;
-  if (inv.stripe_paid_at?.trim()) return true;
-  return invoiceBalanceDue(inv) <= 0.02;
 }
 
 function splitTradeAndFee(
@@ -204,6 +200,46 @@ function buildPayNowBlock(paymentLinkUrl: string): string {
           </tr>`;
 }
 
+/**
+ * GetFixfy LTD bank details — shown on unpaid invoices so the client can pay
+ * by bank transfer as an alternative to the Stripe link. Hidden on paid
+ * receipts (no need to repeat).
+ */
+function buildBankDetailsBlock(): string {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Account name", value: "GETFIXFY LTD" },
+    { label: "Sort code",    value: "04-00-03" },
+    { label: "Account no.",  value: "06913415" },
+    { label: "IBAN",         value: "GB38 MONZ 0400 0306 9134 15" },
+    { label: "Bank",         value: "Monzo Bank" },
+  ];
+  const rowsHtml = rows
+    .map(
+      (r) => `
+                      <tr>
+                        <td valign="middle" style="padding-top:4px; font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(r.label)}</td>
+                        <td valign="middle" align="right" style="padding-top:4px; font-size:13px; color:#020040; font-family:monospace;">${escapeHtml(r.value)}</td>
+                      </tr>`,
+    )
+    .join("");
+
+  return `
+          <tr>
+            <td class="px" style="padding:0 40px 28px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">Or pay by bank transfer</p>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
+                    </table>
+                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the invoice reference as the payment reference so we can match it automatically.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+}
+
 function buildReportNoticeBlock(count: number): string {
   const label = count === 1 ? "report" : "reports";
   return `
@@ -248,6 +284,16 @@ export function buildInvoiceClientEmailHTML(
   const invAmt = Math.max(0, Math.round((Number(invoice.amount ?? 0) || 0) * 100) / 100);
   const paidAmt = Math.round(invoiceAmountPaid(invoice) * 100) / 100;
   const balanceDue = invoiceBalanceDue(invoice);
+  const fullDue = balanceDue > 0.02 ? balanceDue : invAmt;
+  const amountDueNow =
+    !paid && options?.amountDueNow != null && options.amountDueNow > 0
+      ? Math.round(options.amountDueNow * 100) / 100
+      : fullDue;
+  const isPartialRequest =
+    !paid &&
+    options?.amountDueNow != null &&
+    options.amountDueNow > 0.02 &&
+    Math.abs(amountDueNow - fullDue) > 0.02;
   const partial = !paid && paidAmt > 0.02;
   const { trade, fee } = splitTradeAndFee(invAmt, job);
   const { street, outward } = splitAddressAndPostcode(context.propertyAddress, context.postcode);
@@ -267,7 +313,7 @@ export function buildInvoiceClientEmailHTML(
 
   const statusBanner = paid
     ? buildPaymentReceivedBanner(formatMoneyPlain(invAmt), paymentDate)
-    : buildPaymentDueBanner(formatMoneyPlain(balanceDue > 0 ? balanceDue : invAmt), dueDate);
+    : buildPaymentDueBanner(formatMoneyPlain(amountDueNow), dueDate);
 
   const reportCount = options?.reportAttachmentCount ?? 0;
   const missingReport = options?.missingReportNote?.trim() ?? "";
@@ -317,10 +363,14 @@ export function buildInvoiceClientEmailHTML(
                 </tr>`
     : "";
 
-  const breakdownTotalLabel = paid ? "Total paid" : partial ? "Balance due" : "Total due";
-  const breakdownTotalAmount = paid
-    ? formatMoneyPlain(invAmt)
-    : formatMoneyPlain(balanceDue > 0 ? balanceDue : invAmt);
+  const breakdownTotalLabel = paid
+    ? "Total paid"
+    : isPartialRequest
+      ? "Amount due now"
+      : partial
+        ? "Balance due"
+        : "Total due";
+  const breakdownTotalAmount = paid ? formatMoneyPlain(invAmt) : formatMoneyPlain(amountDueNow);
 
   const paymentMethodBlock = paid
     ? buildPaymentMethodBlock(resolvePaymentMethod(invoice), resolveTransactionId(invoice))
@@ -330,6 +380,7 @@ export function buildInvoiceClientEmailHTML(
     ? invoice.stripe_payment_link_url.trim()
     : "";
   const payNowBlock = payLink ? buildPayNowBlock(payLink) : "";
+  const bankDetailsBlock = paid ? "" : buildBankDetailsBlock();
 
   const vatPrimary = paid
     ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
@@ -337,7 +388,9 @@ export function buildInvoiceClientEmailHTML(
 
   const preheader = paid
     ? `Payment received — £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt RC-${receiptRefShort}.`
-    : `Invoice INV-${invRefShort} — £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
+    : isPartialRequest
+      ? `Invoice INV-${invRefShort} — £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
+      : `Invoice INV-${invRefShort} — £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
 
   html = replaceAll(html, "page_title", escapeHtml(pageTitle));
   html = replaceAll(html, "preheader", escapeHtml(preheader));
@@ -367,6 +420,7 @@ export function buildInvoiceClientEmailHTML(
   html = replaceAll(html, "breakdown_total_amount", breakdownTotalAmount);
   html = replaceAll(html, "payment_method_block", paymentMethodBlock);
   html = replaceAll(html, "pay_now_block", payNowBlock);
+  html = replaceAll(html, "bank_details_block", bankDetailsBlock);
   html = replaceAll(html, "vat_disclaimer_primary", escapeHtml(vatPrimary));
   html = replaceAll(html, "total_amount", formatMoneyPlain(invAmt));
 

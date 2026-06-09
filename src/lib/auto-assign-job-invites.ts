@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
+import {
+  formatPartnerJobPriceDisplay,
+  resolvePartnerHourlyForJob,
+} from "@/lib/job-pricing-resolver";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
+import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import {
   repairJobIngestFromZendeskTicket,
   resolveJobMatchServiceType,
@@ -15,6 +20,68 @@ import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+
+const CATALOG_PRICING_SELECT =
+  "id, name, pricing_mode, fixed_price, hourly_rate, default_hours, partner_cost, pricing_presets, pricing_addons";
+
+async function loadSmartPriceInviteContext(
+  supabase: SupabaseClient,
+  catalogServiceId: string | null,
+  partnerIds: string[],
+): Promise<{
+  catalog: CatalogService | null;
+  overridesByPartnerId: Map<string, PartnerServicePrice>;
+}> {
+  const overridesByPartnerId = new Map<string, PartnerServicePrice>();
+  if (!catalogServiceId || partnerIds.length === 0) {
+    return { catalog: null, overridesByPartnerId };
+  }
+
+  const [{ data: catalogRow }, { data: priceRows }] = await Promise.all([
+    supabase
+      .from("service_catalog")
+      .select(CATALOG_PRICING_SELECT)
+      .eq("id", catalogServiceId)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    supabase
+      .from("partner_service_prices")
+      .select("id, partner_id, catalog_service_id, use_standard, hourly_partner_rate, fixed_partner_cost, default_hours, preset_overrides")
+      .eq("catalog_service_id", catalogServiceId)
+      .in("partner_id", partnerIds)
+      .is("deleted_at", null),
+  ]);
+
+  for (const row of (priceRows ?? []) as PartnerServicePrice[]) {
+    overridesByPartnerId.set(row.partner_id, row);
+  }
+
+  return {
+    catalog: (catalogRow as CatalogService | null) ?? null,
+    overridesByPartnerId,
+  };
+}
+
+function partnerPriceDisplayForInvite(
+  jobType: "hourly" | "fixed" | null,
+  jobHourlyPartnerRate: number | null,
+  jobPartnerCost: number | null,
+  catalog: CatalogService | null,
+  partnerOverride: PartnerServicePrice | null | undefined,
+  presetId?: string | null,
+): string {
+  if (jobType === "hourly" && catalog) {
+    const { value, fixedPartnerTotal } = resolvePartnerHourlyForJob({
+      catalog,
+      partnerOverride: partnerOverride ?? null,
+      presetId,
+    });
+    if (value != null && value > 0) {
+      return formatPartnerJobPriceDisplay("hourly", value, null, fixedPartnerTotal);
+    }
+  }
+  return formatPartnerJobPriceDisplay(jobType, jobHourlyPartnerRate, jobPartnerCost);
+}
 
 export interface BroadcastAutoAssignInvitesParams {
   jobId: string;
@@ -110,7 +177,7 @@ export async function broadcastAutoAssignInvites(
 
   const { data: jobInfo } = await supabase
     .from("jobs")
-    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, title")
+    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id, title")
     .eq("id", params.jobId)
     .maybeSingle();
   const ji = jobInfo as {
@@ -118,12 +185,14 @@ export async function broadcastAutoAssignInvites(
     hourly_partner_rate: number | null;
     partner_cost: number | null;
     catalog_service_id: string | null;
+    catalog_pricing_preset_id: string | null;
     title: string | null;
   } | null;
   const isHourly = ji?.job_type === "hourly";
-  const priceDisplay = isHourly
-    ? `£${Number(ji?.hourly_partner_rate ?? 0).toFixed(2)}/hr`
-    : `£${Number(ji?.partner_cost ?? 0).toFixed(2)}`;
+  const presetId = ji?.catalog_pricing_preset_id ?? null;
+  const smartPriceCtx = isHourly
+    ? await loadSmartPriceInviteContext(supabase, ji?.catalog_service_id ?? null, params.partnerIds)
+    : { catalog: null, overridesByPartnerId: new Map<string, PartnerServicePrice>() };
 
   const base = appBaseUrl();
 
@@ -136,6 +205,14 @@ export async function broadcastAutoAssignInvites(
   }[]) {
     const partnerFirstName =
       row.contact_name?.trim().split(/\s+/)[0] || row.company_name?.trim() || "Partner";
+    const priceDisplay = partnerPriceDisplayForInvite(
+      ji?.job_type ?? null,
+      ji?.hourly_partner_rate ?? null,
+      ji?.partner_cost ?? null,
+      smartPriceCtx.catalog,
+      smartPriceCtx.overridesByPartnerId.get(row.id),
+      presetId,
+    );
 
     let sideConversationId: string | null = null;
 
@@ -232,11 +309,56 @@ export async function dispatchAutoAssignJobInvites(
 
   let pushSent = 0;
   if (args.sendPush !== false) {
-    pushSent = await sendPushToPartners(supabase, args.partnerIds, {
-      title: "New job available",
-      body: `${args.jobReference} · ${args.jobTitle} · ${args.propertyAddress}`,
-      data: { type: "job_offer", jobId: args.jobId },
-    });
+    const { data: jobInfo } = await supabase
+      .from("jobs")
+      .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id")
+      .eq("id", args.jobId)
+      .maybeSingle();
+    const ji = jobInfo as {
+      job_type: "hourly" | "fixed" | null;
+      hourly_partner_rate: number | null;
+      partner_cost: number | null;
+      catalog_service_id: string | null;
+      catalog_pricing_preset_id: string | null;
+    } | null;
+    const isHourly = ji?.job_type === "hourly";
+    const presetId = ji?.catalog_pricing_preset_id ?? null;
+    const smartPriceCtx = isHourly
+      ? await loadSmartPriceInviteContext(
+          supabase,
+          ji?.catalog_service_id ?? null,
+          args.partnerIds,
+        )
+      : { catalog: null, overridesByPartnerId: new Map<string, PartnerServicePrice>() };
+
+    if (isHourly && smartPriceCtx.catalog) {
+      for (const partnerId of args.partnerIds) {
+        const priceDisplay = partnerPriceDisplayForInvite(
+          ji?.job_type ?? null,
+          ji?.hourly_partner_rate ?? null,
+          ji?.partner_cost ?? null,
+          smartPriceCtx.catalog,
+          smartPriceCtx.overridesByPartnerId.get(partnerId),
+          presetId,
+        );
+        pushSent += await sendPushToPartners(supabase, [partnerId], {
+          title: "New job available",
+          body: `${args.jobReference} · ${args.jobTitle} · ${priceDisplay} · ${args.propertyAddress}`,
+          data: { type: "job_offer", jobId: args.jobId },
+        });
+      }
+    } else {
+      const priceDisplay = formatPartnerJobPriceDisplay(
+        ji?.job_type ?? null,
+        ji?.hourly_partner_rate,
+        ji?.partner_cost,
+      );
+      pushSent = await sendPushToPartners(supabase, args.partnerIds, {
+        title: "New job available",
+        body: `${args.jobReference} · ${args.jobTitle} · ${priceDisplay} · ${args.propertyAddress}`,
+        data: { type: "job_offer", jobId: args.jobId },
+      });
+    }
   }
 
   await supabase
