@@ -7,6 +7,10 @@ export type NavItem = {
   icon: string;
   badge?: string | number;
   permission?: string;
+  /** Visible only to the Admin role — never granted to other roles via the
+   *  permissions config. Enforced by href in the nav filter so it holds even
+   *  for nav saved in the DB without this flag. */
+  adminOnly?: boolean;
   children?: NavItem[];
 };
 
@@ -48,7 +52,7 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "People",
     items: [
-      { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
+      { label: "Workforce", href: "/people", icon: "contact", permission: "team", adminOnly: true },
     ],
   },
   // Users Access (/team) intentionally hidden from sidebar (accessible via settings)
@@ -68,6 +72,21 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
 ];
+
+/** Hrefs of nav items flagged `adminOnly` — derived from NAVIGATION so it stays
+ *  the single source of truth. The nav filter drops these for non-admins by
+ *  href, which also covers nav loaded from the DB (which won't carry the flag). */
+export const ADMIN_ONLY_NAV_HREFS: ReadonlySet<string> = (() => {
+  const set = new Set<string>();
+  const walk = (items: NavItem[]) => {
+    for (const item of items) {
+      if (item.adminOnly) set.add(item.href);
+      if (item.children?.length) walk(item.children);
+    }
+  };
+  for (const group of NAVIGATION) walk(group.items);
+  return set;
+})();
 
 export const STATUS_COLORS = {
   active: "emerald",

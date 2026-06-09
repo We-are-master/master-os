@@ -15,6 +15,7 @@ import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat, CheckCircle2 } from "lucide-react";
 import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
+import { useProfile } from "@/hooks/use-profile";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit } from "@/types/database";
@@ -71,6 +72,7 @@ function mapCostRows(
 }
 
 export default function PeoplePage() {
+  const { profile } = useProfile();
   const [section, setSection] = useState<PeopleTab>("internal");
   const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("all");
   const [rows, setRows] = useState<PeopleRow[]>([]);
@@ -454,6 +456,26 @@ export default function PeoplePage() {
       toast.error("Failed to delete BU");
     }
   };
+
+  // Workforce is Admin-only. Once the profile resolves, non-admins get a
+  // restricted notice instead of the roster (the nav item is also hidden for
+  // them, but this blocks direct-URL access too). All hooks run above this
+  // point, so the early return doesn't violate the rules of hooks.
+  if (profile && profile.role !== "admin") {
+    return (
+      <PageTransition>
+        <div className="space-y-6">
+          <PageHeader title="Workforce" subtitle="This area is restricted to administrators." />
+          <div className="rounded-2xl border border-white/[0.06] bg-fx-navy-2/40 p-10 text-center">
+            <Badge variant="primary" dot size="md">Admin access only</Badge>
+            <p className="mt-3 text-sm text-white/60">
+              You don’t have access to Workforce. Contact an administrator if you need it.
+            </p>
+          </div>
+        </div>
+      </PageTransition>
+    );
+  }
 
   return (
     <PageTransition>
