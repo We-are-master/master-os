@@ -96,7 +96,7 @@ export function KpiCard({
                 {title}
               </p>
               {descriptionAsTooltip && description ? (
-                <FixfyHintIcon text={description} />
+                <FixfyHintIcon text={description} placement="top-start" />
               ) : null}
             </div>
             <p

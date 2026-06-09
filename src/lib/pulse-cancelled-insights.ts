@@ -29,6 +29,63 @@ export type PulseCancelledSummary = {
   aiHint: string;
 };
 
+/** Splits on em dash, en dash, or hyphen surrounded by spaces. */
+const CANCELLATION_DETAIL_SPLIT_RE = /\s+(?:—|–|-)\s+/;
+
+/** Detail after preset label (`Other (add details below) — test` → `test`). */
+function cancellationFreeTextDetail(
+  job: Pick<PulseCancelledJobRow, "cancellation_reason">,
+): string {
+  const raw = job.cancellation_reason?.trim() ?? "";
+  const parts = raw.split(CANCELLATION_DETAIL_SPLIT_RE);
+  if (parts.length > 1) {
+    return parts.slice(1).join(" — ").trim();
+  }
+  return raw;
+}
+
+function isTestDetailText(text: string): boolean {
+  const t = text.trim();
+  return /^test(ing)?\.?$/i.test(t);
+}
+
+/** Ignore sandbox cancellations (e.g. Other + detail "test") so Pulse coaching stays actionable. */
+export function isPulseCancelledTestNoise(
+  job: Pick<
+    PulseCancelledJobRow,
+    "cancellation_reason" | "cancellation_reason_preset_id" | "title" | "reference"
+  >,
+): boolean {
+  const reason = job.cancellation_reason?.trim() ?? "";
+  const detail = cancellationFreeTextDetail(job);
+  const preset = job.cancellation_reason_preset_id?.trim() ?? "";
+
+  if (isTestDetailText(detail)) return true;
+  if (isTestDetailText(reason)) return true;
+
+  if (
+    preset === "other"
+    && (isTestDetailText(detail) || /^other\b/i.test(reason) && isTestDetailText(detail))
+  ) {
+    return true;
+  }
+
+  if (/^other\b/i.test(reason) && isTestDetailText(detail)) return true;
+  if (/other\s*\(.*?\)\s*(?:—|–|-)\s*test\b/i.test(reason)) return true;
+
+  const title = job.title?.trim() ?? "";
+  if (/^test(\s|$|job)/i.test(title)) return true;
+
+  const ref = job.reference?.trim() ?? "";
+  if (/\btest\b/i.test(ref)) return true;
+
+  return false;
+}
+
+export function filterPulseCancelledInsightsRows(rows: PulseCancelledJobRow[]): PulseCancelledJobRow[] {
+  return rows.filter((row) => !isPulseCancelledTestNoise(row));
+}
+
 /** Group cancelled jobs by reason; rank by lost £, then job count. */
 export function buildTopFiveCancellationReasons(rows: PulseCancelledJobRow[]): PulseCancelledReasonRow[] {
   const byKey = new Map<string, PulseCancelledReasonRow>();
@@ -281,7 +338,9 @@ export async function fetchPulseCancelledJobs(
     return null;
   }
 
-  const rows = await attachQuoteServiceTypes(supabase, res.data ?? []);
+  const rows = filterPulseCancelledInsightsRows(
+    await attachQuoteServiceTypes(supabase, res.data ?? []),
+  );
   const lostTotal = rows.reduce((sum, j) => sum + jobLostGbp(j), 0);
 
   return {
