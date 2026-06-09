@@ -147,7 +147,7 @@ export function KpiCard({
       <div className="flex items-start justify-between gap-2">
         <span className="fx-kk inline-flex items-center gap-1.5">
           {label}
-          {hint && <FixfyHintIcon text={hint} />}
+          {hint && <FixfyHintIcon text={hint} placement="top-start" />}
           {onShowDetails && (
             <button
               type="button"
