@@ -26,7 +26,7 @@ function emptyProgress(): SchoolProgress {
   return {
     completedLessonIds: [],
     lastLessonId: null,
-    unlockedAt: { zendesk: new Date().toISOString() },
+    unlockedAt: { "fixfy-products": new Date().toISOString() },
     quizStars: {},
   };
 }
@@ -39,7 +39,7 @@ function migrateV1(): SchoolProgress | null {
     return {
       completedLessonIds: Array.isArray(parsed.completedLessonIds) ? parsed.completedLessonIds : [],
       lastLessonId: typeof parsed.lastLessonId === "string" ? parsed.lastLessonId : null,
-      unlockedAt: { zendesk: new Date().toISOString(), ...(parsed.unlockedAt ?? {}) },
+      unlockedAt: { "fixfy-products": new Date().toISOString(), ...(parsed.unlockedAt ?? {}) },
       quizStars: {},
     };
   } catch {
@@ -63,7 +63,7 @@ export function readSchoolProgress(): SchoolProgress {
     return {
       completedLessonIds: Array.isArray(parsed.completedLessonIds) ? parsed.completedLessonIds : [],
       lastLessonId: typeof parsed.lastLessonId === "string" ? parsed.lastLessonId : null,
-      unlockedAt: { zendesk: new Date().toISOString(), ...(parsed.unlockedAt ?? {}) },
+      unlockedAt: { "fixfy-products": new Date().toISOString(), ...(parsed.unlockedAt ?? {}) },
       quizStars: parsed.quizStars ?? {},
     };
   } catch {
@@ -128,7 +128,7 @@ export function previousPhaseId(phaseId: SchoolPhaseId): SchoolPhaseId | null {
   return PHASE_ORDER[idx - 1] ?? null;
 }
 
-/** First phase (Zendesk) always open. Next phases need previous quiz 5/5 stars. */
+/** First phase (Foundation) always open. Next phases need previous quiz 5/5 stars. */
 export function isPhaseUnlocked(progress: SchoolProgress, phaseId: SchoolPhaseId): boolean {
   const prev = previousPhaseId(phaseId);
   if (!prev) return true;

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ops Playbook — Fixfy School</title>
+<style>
+  :root { --navy: #020040; --orange: #ED4B00; --grey: #555; --light: #F2F4F8; --border: #CCC; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; line-height: 1.6; color: var(--navy); background: #FAFBFD; }
+  section { background: white; padding: 40px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 2px 8px rgba(13,27,61,0.05); scroll-margin-top: 88px; }
+  h1 { color: var(--navy); font-size: 32px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 3px solid var(--orange); }
+  h2 { color: var(--navy); font-size: 22px; margin: 30px 0 14px; }
+  h3 { color: var(--orange); font-size: 16px; margin: 22px 0 10px; }
+  p, ul, ol { margin-bottom: 12px; }
+  ul, ol { margin-left: 24px; }
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+  th { background: var(--navy); color: white; padding: 12px; text-align: left; font-size: 14px; }
+  td { padding: 10px 12px; border: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+  tr:nth-child(even) td { background: var(--light); }
+  .callout { background: #FFE8D5; border-left: 6px solid var(--orange); padding: 16px 20px; margin: 20px 0; border-radius: 6px; }
+  .callout-title { font-weight: 700; margin-bottom: 6px; }
+  .callout.danger { background: #FFE8E8; border-color: #CC0000; }
+  .step { background: var(--light); padding: 14px; border-radius: 8px; margin: 8px 0; border-left: 4px solid var(--orange); }
+  .step-num { background: var(--orange); color: white; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; margin-right: 10px; }
+  .hero { background: linear-gradient(135deg, var(--navy), #1a2a5a); color: white; padding: 60px 50px; border-radius: 16px; margin-bottom: 40px; }
+  .hero h1 { border: none; color: white; font-size: 42px; }
+  .hero p { color: #DCE0EC; max-width: 700px; }
+  @media screen {
+    .school-shell { display: block; }
+    .school-nav { display: none; }
+    .school-main { margin: 0 auto; max-width: 920px; padding: 1.5rem 2rem 4rem; }
+  }
+  .school-chapter-banner { display: flex; align-items: center; gap: 1rem; color: #fff; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.25rem; background: linear-gradient(135deg, #020040 0%, #9a3412 100%); }
+  .school-chapter-banner__icon { font-size: 2rem; }
+  .school-chapter-banner__label { margin: 0; font-weight: 700; font-size: 0.95rem; }
+  .school-chapter-banner__xp { margin: 0.15rem 0 0; font-size: 0.75rem; opacity: 0.9; color: #FDBA74; }
+</style>
+</head>
+<body>
+<div class="school-shell">
+<div class="school-main">
+<main>
+
+<div class="hero">
+  <h1>Ops Playbook</h1>
+  <p>Escalation, emergencies, acceptable excuses, daily rhythm and quality bar — the policies every operator needs before going solo.</p>
+</div>
+
+<div class="school-chapter-banner" data-chapter="escalate">
+  <div class="school-chapter-banner__icon">📣</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · When to escalate</p>
+    <p class="school-chapter-banner__xp">+80 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-escalate"></div>
+<section id="escalate">
+  <h1>When to escalate to a manager</h1>
+  <h2>Escalate immediately when</h2>
+  <ul>
+    <li>Customer threatens chargeback, legal action, or media escalation</li>
+    <li>Complaint open <strong>more than 24h</strong> without resolution or documented plan</li>
+    <li>Partner no-show on job day (no contact 30 min before slot)</li>
+    <li>Quote margin below minimum (e.g. &lt;15%) — manager must approve exception</li>
+    <li>Refund or credit above your limit (e.g. &gt;£100) or outside policy</li>
+    <li>Confirmed duplicate charge</li>
+    <li>Safety risk: gas leak, exposed electrics, active flooding</li>
+    <li>Abuse — threatening or discriminatory language from customer or partner</li>
+    <li>System bug: webhook failed twice, job not created in OS, Zendesk/OS data mismatch</li>
+  </ul>
+  <h2>Do NOT escalate — resolve on your track</h2>
+  <ul>
+    <li>Routine status update ("where is my engineer?")</li>
+    <li>On Hold for parts with agreed return date</li>
+    <li>Partner late &lt;30 min with ETA communicated to customer</li>
+    <li>Quote in Bidding within SLA with sufficient bids</li>
+  </ul>
+  <div class="callout">
+    <div class="callout-title">Decision tree</div>
+    <p>If it affects money, safety, legal exposure, or SLA breach → escalate. If it is information or scheduling within policy → resolve and document.</p>
+  </div>
+</section>
+
+<div class="school-chapter-banner" data-chapter="emergencies">
+  <div class="school-chapter-banner__icon">🚨</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Emergencies</p>
+    <p class="school-chapter-banner__xp">+90 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-emergencies"></div>
+<section id="emergencies">
+  <h1>Emergencies — act first, document after</h1>
+  <h2>Immediate actions</h2>
+  <div class="step"><span class="step-num">1</span> Ensure safety — call <strong>999</strong> if life-threatening (gas, fire, injury)</div>
+  <div class="step"><span class="step-num">2</span> Notify manager immediately (Slack #ops-urgent or on-call)</div>
+  <div class="step"><span class="step-num">3</span> Public Reply to customer: acknowledge + next steps + safety guidance</div>
+  <div class="step"><span class="step-num">4</span> Ticket → Complaint + tag <code>emergency</code></div>
+  <div class="step"><span class="step-num">5</span> Job in OS → On Hold reason "Emergency" + detailed internal notes</div>
+  <h2>Emergency types</h2>
+  <table>
+    <thead><tr><th>Type</th><th>First response</th></tr></thead>
+    <tbody>
+      <tr><td>Gas smell / leak</td><td>Customer off premises, no switches/flames, call gas emergency line; do not send partner until cleared</td></tr>
+      <tr><td>Active flood</td><td>Shut water if safe; escalate; arrange emergency plumber if policy allows</td></tr>
+      <tr><td>Injury on site</td><td>999 if needed; preserve scene; Complaint + manager same minute</td></tr>
+      <tr><td>Vulnerable tenant</td><td>Priority handling; manager looped in; document safeguarding notes</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="school-chapter-banner" data-chapter="excuses">
+  <div class="school-chapter-banner__icon">✅</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Acceptable vs not</p>
+    <p class="school-chapter-banner__xp">+75 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-excuses"></div>
+<section id="excuses">
+  <h1>Partner excuses — what we accept</h1>
+  <h2>Accepted with proof</h2>
+  <ul>
+    <li><strong>Severe traffic</strong> — updated ETA + map/screenshot if requested</li>
+    <li><strong>Parts unavailable</strong> — receipt/supplier photo + new date agreed with customer</li>
+    <li><strong>Customer refused access</strong> — photo of door / call log</li>
+    <li><strong>Unsafe conditions on site</strong> — photos + work stopped, job On Hold</li>
+  </ul>
+  <h2>NOT accepted</h2>
+  <ul>
+    <li>No contact / ghosting</li>
+    <li>Repeated lateness same week</li>
+    <li>Unapproved extras charged to customer</li>
+    <li>Job marked complete without reports uploaded</li>
+  </ul>
+  <div class="callout danger">
+    <div class="callout-title">Document everything</div>
+    <p>Acceptable excuse without evidence = not acceptable. Internal note on ticket + OS job timeline.</p>
+  </div>
+</section>
+
+<div class="school-chapter-banner" data-chapter="sla">
+  <div class="school-chapter-banner__icon">⏱️</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · SLA &amp; complaints</p>
+    <p class="school-chapter-banner__xp">+70 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-sla"></div>
+<section id="sla">
+  <h1>SLA &amp; complaints</h1>
+  <h2>Complaint SLA — 24 hours</h2>
+  <p>From Complaint macro applied: Public Reply within 24h with acknowledgement and investigation plan. Escalate to manager if you cannot meet this.</p>
+  <h2>Bidding SLA</h2>
+  <p>Monitor Quoting view. If no bids before SLA cutoff, chase partners via side conversation. Escalate if still empty at deadline.</p>
+  <h2>When to warn manager</h2>
+  <ul>
+    <li>Complaint at 20h without draft reply</li>
+    <li>Customer mentions solicitor, review site, or social media</li>
+    <li>Same partner third complaint in 30 days</li>
+  </ul>
+</section>
+
+<div class="school-chapter-banner" data-chapter="rhythm">
+  <div class="school-chapter-banner__icon">🔄</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Daily ops rhythm</p>
+    <p class="school-chapter-banner__xp">+65 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-rhythm"></div>
+<section id="rhythm">
+  <h1>Daily ops rhythm</h1>
+  <h2>Morning</h2>
+  <ol>
+    <li><strong>Pulse</strong> — KPIs, alerts, anything red</li>
+    <li><strong>Live View</strong> — today's jobs, unassigned, at-risk slots</li>
+    <li><strong>Zendesk Action Required</strong> — oldest first, triage to macro</li>
+  </ol>
+  <h2>Midday</h2>
+  <ul>
+    <li>Quoting view — bids and approvals</li>
+    <li>Needs Attention — On Hold and open Complaints</li>
+  </ul>
+  <h2>End of day</h2>
+  <ul>
+    <li>No ticket left in Action Required without reply or macro</li>
+    <li>OS jobs match Zendesk status for anything you touched</li>
+    <li>Escalations handed to manager with written summary</li>
+  </ul>
+</section>
+
+<div class="school-chapter-banner" data-chapter="quality">
+  <div class="school-chapter-banner__icon">⭐</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Quality bar</p>
+    <p class="school-chapter-banner__xp">+70 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-quality"></div>
+<section id="quality">
+  <h1>Quality bar — golden rules</h1>
+  <ul>
+    <li>Right macro, every time — when unsure, ask before Submit</li>
+    <li>Always click <strong>Submit</strong> after macro — proposals do nothing alone</li>
+    <li>Never duplicate jobs — same ticket = one OS job (idempotent)</li>
+    <li>Fill every * field before macro</li>
+    <li>Public Reply for customers; internal note for ops; side conversation for partners</li>
+    <li>Sync OS after every Zendesk status change you own</li>
+  </ul>
+</section>
+
+<div class="school-chapter-banner" data-chapter="reference">
+  <div class="school-chapter-banner__icon">📇</div>
+  <div class="school-chapter-banner__body">
+    <p class="school-chapter-banner__label">Chapter · Reference cards</p>
+    <p class="school-chapter-banner__xp">+50 XP when you mark this lesson complete in Fixfy School</p>
+  </div>
+</div><div id="chapter-reference"></div>
+<section id="reference">
+  <h1>Reference cards</h1>
+  <h2>Escalation cheat sheet</h2>
+  <table>
+    <thead><tr><th>Signal</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>Money &gt;£100 / chargeback</td><td>Finance + manager</td></tr>
+      <tr><td>Complaint &gt;24h</td><td>Manager + written plan</td></tr>
+      <tr><td>No-show partner</td><td>Manager + customer update</td></tr>
+      <tr><td>Gas / flood / injury</td><td>999 if needed + manager + emergency tag</td></tr>
+      <tr><td>Webhook failed 2×</td><td>Dev escalation + do not re-macro blindly</td></tr>
+    </tbody>
+  </table>
+  <h2>Emergency numbers</h2>
+  <ul>
+    <li><strong>999</strong> — life-threatening emergency</li>
+    <li><strong>Gas Emergency (UK)</strong> — 0800 111 999</li>
+    <li><strong>Fixfy manager on-call</strong> — Slack #ops-urgent</li>
+  </ul>
+</section>
+
+</main>
+</div>
+</div>
+<script src="/school/school-embed.js"></script>
+</body>
+</html>

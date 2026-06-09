@@ -12,6 +12,7 @@
     "audit:zendesk-catalog": "node scripts/audit-zendesk-catalog-sync.mjs",
     "verify:zendesk-schema": "node scripts/verify-zendesk-schema.mjs",
     "sync:zendesk-catalog": "npx tsx scripts/run-zendesk-catalog-sync.mts",
+    "build:school-data": "npx tsx scripts/build-fixfy-school-data.mts",
     "apply:zendesk-migrations": "node supabase/scripts/apply-zendesk-pricing-migrations.mjs"
   },
   "dependencies": {
