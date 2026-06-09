@@ -18,7 +18,10 @@ export const ZENDESK_FIELD_CLIENT_NAME  = envNum(process.env.NEXT_PUBLIC_ZENDESK
 export const ZENDESK_FIELD_CLIENT_EMAIL = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_CLIENT_EMAIL, "5811705681183");
 export const ZENDESK_FIELD_CLIENT_PHONE = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_CLIENT_PHONE, "5811689527071");
 export const ZENDESK_FIELD_ADDRESS      = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_ADDRESS,      "5693026186527");
-export const ZENDESK_FIELD_CLIENT_PRICE = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_CLIENT_PRICE, "5703050059039");
+// Two active decimal "Client Price" fields exist on the form (the old integer
+// field 5703050059039 was deactivated). Populate both — env-overridable.
+export const ZENDESK_FIELD_CLIENT_PRICE   = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_CLIENT_PRICE,   "5856821659679");
+export const ZENDESK_FIELD_CLIENT_PRICE_2 = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_CLIENT_PRICE_2, "5856894119839");
 export const ZENDESK_FIELD_SCOPE        = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_SCOPE,        "5687121072927");
 export const ZENDESK_FIELD_REPORT_LINK  = envNum(process.env.NEXT_PUBLIC_ZENDESK_FIELD_REPORT_LINK,  "5754991026207");
 
