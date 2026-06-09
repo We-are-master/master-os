@@ -1,4 +1,4 @@
-import type { YmdBounds } from "@/lib/billing-standalone-period";
+import { addDaysYmd, todayYmdLocal, type YmdBounds } from "@/lib/billing-standalone-period";
 
 /** Billing control tower: All or custom calendar range for due / pay-period views. */
 export type BillingStandaloneFilterValue = {
@@ -7,11 +7,14 @@ export type BillingStandaloneFilterValue = {
   customTo?: string;
 };
 
-export const DEFAULT_BILLING_STANDALONE_FILTER: BillingStandaloneFilterValue = {
-  mode: "all",
-  customFrom: "",
-  customTo: "",
-};
+/** Last 90 calendar days (inclusive) — default load window for faster first paint. */
+export function defaultBillingStandaloneFilter(): BillingStandaloneFilterValue {
+  const to = todayYmdLocal();
+  const from = addDaysYmd(to, -89);
+  return { mode: "custom", customFrom: from, customTo: to };
+}
+
+export const DEFAULT_BILLING_STANDALONE_FILTER: BillingStandaloneFilterValue = defaultBillingStandaloneFilter();
 
 export function resolveBillingStandaloneFilterBounds(
   value: BillingStandaloneFilterValue,

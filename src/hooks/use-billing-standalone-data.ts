@@ -4,22 +4,139 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/services/base";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import {
-  fetchAllActiveInvoices,
   fetchCustomerPaidSumByJobIds,
   fetchJobsByReferences,
   effectiveInvoiceSourceAccountId,
 } from "@/lib/billing-invoice-list-data";
 import { computeLinkedJobsMapsForSelfBillIds } from "@/lib/billing-selfbill-actions";
-import { resolveBillingStandaloneFilterBounds, type BillingStandaloneFilterValue } from "@/lib/billing-standalone-filter";
+import {
+  fetchInvoicesForBilling,
+  fetchSelfBillsForBilling,
+} from "@/lib/billing-standalone-fetch";
+import {
+  resolveBillingStandaloneFilterBounds,
+  type BillingStandaloneFilterValue,
+} from "@/lib/billing-standalone-filter";
 import type { Invoice, SelfBill } from "@/types/database";
 
-export function useBillingStandaloneData() {
+const PARTNER_TERMS_CHUNK = 80;
+const JOB_CLIENT_CHUNK = 100;
+
+async function fetchPartnerPaymentTerms(partnerIds: string[]): Promise<Record<string, string | null>> {
+  if (partnerIds.length === 0) return {};
+  const supabase = getSupabase();
+  const termsPatch: Record<string, string | null> = {};
+  const chunks: string[][] = [];
+  for (let i = 0; i < partnerIds.length; i += PARTNER_TERMS_CHUNK) {
+    chunks.push(partnerIds.slice(i, i + PARTNER_TERMS_CHUNK));
+  }
+  const results = await Promise.all(
+    chunks.map((chunk) => supabase.from("partners").select("id, payment_terms").in("id", chunk)),
+  );
+  for (const { data, error } of results) {
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const pr = row as { id: string; payment_terms?: string | null };
+      termsPatch[pr.id] = pr.payment_terms?.trim() || null;
+    }
+  }
+  return termsPatch;
+}
+
+async function fetchJobRefAccountMaps(refs: string[]): Promise<{
+  jobRefToAccountId: Record<string, string>;
+  clientNameToAccountId: Record<string, string>;
+}> {
+  const j2a: Record<string, string> = {};
+  const c2a: Record<string, string> = {};
+  if (refs.length === 0) return { jobRefToAccountId: j2a, clientNameToAccountId: c2a };
+
+  const supabase = getSupabase();
+  const chunks: string[][] = [];
+  for (let i = 0; i < refs.length; i += JOB_CLIENT_CHUNK) {
+    chunks.push(refs.slice(i, i + JOB_CLIENT_CHUNK));
+  }
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      supabase
+        .from("jobs")
+        .select("reference, client_id, clients(source_account_id, full_name)")
+        .in("reference", chunk),
+    ),
+  );
+  for (const { data, error } of results) {
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const r = row as {
+        reference?: string;
+        clients?: { source_account_id?: string | null; full_name?: string | null } | {
+          source_account_id?: string | null;
+          full_name?: string | null;
+        }[];
+      };
+      const clients = Array.isArray(r.clients) ? r.clients[0] : r.clients;
+      const aid = clients?.source_account_id?.trim();
+      const ref = r.reference?.trim();
+      if (ref && aid) j2a[ref] = aid;
+      const fn = clients?.full_name?.trim();
+      if (fn && aid) c2a[fn] = aid;
+    }
+  }
+  return { jobRefToAccountId: j2a, clientNameToAccountId: c2a };
+}
+
+async function fetchAccountMaps(
+  invRows: Invoice[],
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): Promise<{
+  accountNameById: Record<string, string>;
+  accountTermsById: Record<string, string>;
+  accountLogoById: Record<string, string | null>;
+}> {
+  const accountIds = [
+    ...new Set([
+      ...invRows.map((i) => i.source_account_id?.trim()).filter(Boolean),
+      ...Object.values(jobRefToAccountId),
+      ...Object.values(clientNameToAccountId),
+    ]),
+  ] as string[];
+
+  const names: Record<string, string> = {};
+  const terms: Record<string, string> = {};
+  const logos: Record<string, string | null> = {};
+  if (accountIds.length === 0) return { accountNameById: names, accountTermsById: terms, accountLogoById: logos };
+
+  const supabase = getSupabase();
+  const { data: accRows, error } = await supabase
+    .from("accounts")
+    .select("id, company_name, contact_name, payment_terms, logo_url")
+    .in("id", accountIds);
+  if (error) throw error;
+  for (const a of accRows ?? []) {
+    const row = a as {
+      id: string;
+      company_name?: string | null;
+      contact_name?: string | null;
+      payment_terms?: string | null;
+      logo_url?: string | null;
+    };
+    names[row.id] = row.company_name?.trim() || row.contact_name?.trim() || row.id;
+    terms[row.id] = row.payment_terms?.trim() || "—";
+    logos[row.id] = row.logo_url ?? null;
+  }
+  return { accountNameById: names, accountTermsById: terms, accountLogoById: logos };
+}
+
+export function useBillingStandaloneData(periodFilter: BillingStandaloneFilterValue) {
   const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
   const [jobsByRef, setJobsByRef] = useState<Awaited<ReturnType<typeof fetchJobsByReferences>>>({});
   const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
-  const [jobsBySelfBillId, setJobsBySelfBillId] = useState<Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["map"]>({});
+  const [jobsBySelfBillId, setJobsBySelfBillId] = useState<
+    Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["map"]
+  >({});
   const [partnerPaidByJobId, setPartnerPaidByJobId] = useState<Record<string, number>>({});
   const [partnerTermsById, setPartnerTermsById] = useState<Record<string, string | null>>({});
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
@@ -28,6 +145,13 @@ export function useBillingStandaloneData() {
   const [jobRefToAccountId, setJobRefToAccountId] = useState<Record<string, string>>({});
   const [clientNameToAccountId, setClientNameToAccountId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+
+  const fetchBounds = useMemo(
+    () => resolveBillingStandaloneFilterBounds(periodFilter),
+    [periodFilter],
+  );
 
   const dueCtx = useMemo(
     () => ({
@@ -37,111 +161,62 @@ export function useBillingStandaloneData() {
     [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
   );
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const supabase = getSupabase();
-      const [invRows, sbRes] = await Promise.all([
-        fetchAllActiveInvoices(),
-        supabase.from("self_bills").select("*").order("created_at", { ascending: false }),
-      ]);
-      if (sbRes.error) throw sbRes.error;
-      const sbRows = (sbRes.data ?? []) as SelfBill[];
-      setInvoices(invRows);
-      setSelfBills(sbRows);
-
-      const refs = [...new Set(invRows.map((i) => i.job_reference?.trim()).filter(Boolean))] as string[];
-      const jobMap = await fetchJobsByReferences(refs);
-      const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
-      const paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
-      setJobsByRef(jobMap);
-      setCustomerPaidByJobId(paidMap);
-
-      const sbIds = sbRows.map((s) => s.id);
-      const { map, partnerPaidByJobId: partnerPaid } = await computeLinkedJobsMapsForSelfBillIds(sbIds);
-      setJobsBySelfBillId(map);
-      setPartnerPaidByJobId(partnerPaid);
-
-      const { data: jobClientRows } =
-        refs.length > 0
-          ? await supabase
-              .from("jobs")
-              .select("reference, client_id, clients(source_account_id, full_name)")
-              .in("reference", refs)
-          : { data: [] as unknown[] };
-      const j2a: Record<string, string> = {};
-      const c2a: Record<string, string> = {};
-      for (const row of jobClientRows ?? []) {
-        const r = row as {
-          reference?: string;
-          clients?: { source_account_id?: string | null; full_name?: string | null } | { source_account_id?: string | null; full_name?: string | null }[];
-        };
-        const clients = Array.isArray(r.clients) ? r.clients[0] : r.clients;
-        const aid = clients?.source_account_id?.trim();
-        const ref = r.reference?.trim();
-        if (ref && aid) j2a[ref] = aid;
-        const fn = clients?.full_name?.trim();
-        if (fn && aid) c2a[fn] = aid;
+  const loadData = useCallback(
+    async (opts?: { background?: boolean }) => {
+      if (opts?.background) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
       }
-      setJobRefToAccountId(j2a);
-      setClientNameToAccountId(c2a);
+      try {
+        const [invRows, sbRows] = await Promise.all([
+          fetchInvoicesForBilling(fetchBounds),
+          fetchSelfBillsForBilling(fetchBounds),
+        ]);
+        setInvoices(invRows);
+        setSelfBills(sbRows);
 
-      const accountIds = [
-        ...new Set([
-          ...invRows.map((i) => i.source_account_id?.trim()).filter(Boolean),
-          ...Object.values(j2a),
-          ...Object.values(c2a),
-        ]),
-      ] as string[];
-      if (accountIds.length) {
-        const { data: accRows } = await supabase
-          .from("accounts")
-          .select("id, company_name, contact_name, payment_terms, logo_url")
-          .in("id", accountIds);
-        const names: Record<string, string> = {};
-        const terms: Record<string, string> = {};
-        const logos: Record<string, string | null> = {};
-        for (const a of accRows ?? []) {
-          const row = a as {
-            id: string;
-            company_name?: string | null;
-            contact_name?: string | null;
-            payment_terms?: string | null;
-            logo_url?: string | null;
-          };
-          names[row.id] = row.company_name?.trim() || row.contact_name?.trim() || row.id;
-          terms[row.id] = row.payment_terms?.trim() || "—";
-          logos[row.id] = row.logo_url ?? null;
+        const refs = [...new Set(invRows.map((i) => i.job_reference?.trim()).filter(Boolean))] as string[];
+        const sbIds = sbRows.map((s) => s.id);
+        const partnerIds = [...new Set(sbRows.map((s) => s.partner_id?.trim()).filter(Boolean))] as string[];
+
+        const [jobMap, linkedJobs, accountMaps, partnerTerms] = await Promise.all([
+          fetchJobsByReferences(refs),
+          computeLinkedJobsMapsForSelfBillIds(sbIds),
+          fetchJobRefAccountMaps(refs),
+          fetchPartnerPaymentTerms(partnerIds),
+        ]);
+
+        const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
+        const [paidMap, accountMeta] = await Promise.all([
+          fetchCustomerPaidSumByJobIds(jobIds),
+          fetchAccountMaps(invRows, accountMaps.jobRefToAccountId, accountMaps.clientNameToAccountId),
+        ]);
+
+        setJobsByRef(jobMap);
+        setCustomerPaidByJobId(paidMap);
+        setJobsBySelfBillId(linkedJobs.map);
+        setPartnerPaidByJobId(linkedJobs.partnerPaidByJobId);
+        setJobRefToAccountId(accountMaps.jobRefToAccountId);
+        setClientNameToAccountId(accountMaps.clientNameToAccountId);
+        setAccountNameById(accountMeta.accountNameById);
+        setAccountTermsById(accountMeta.accountTermsById);
+        setAccountLogoById(accountMeta.accountLogoById);
+        setPartnerTermsById(partnerTerms);
+        setHasLoadedOnce(true);
+      } catch (e) {
+        console.error("billing standalone load failed", e);
+        if (!opts?.background) {
+          setInvoices([]);
+          setSelfBills([]);
         }
-        setAccountNameById(names);
-        setAccountTermsById(terms);
-        setAccountLogoById(logos);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      const partnerIds = [...new Set(sbRows.map((s) => s.partner_id?.trim()).filter(Boolean))] as string[];
-      if (partnerIds.length) {
-        const termsPatch: Record<string, string | null> = {};
-        const CHUNK = 80;
-        for (let i = 0; i < partnerIds.length; i += CHUNK) {
-          const { data } = await supabase
-            .from("partners")
-            .select("id, payment_terms")
-            .in("id", partnerIds.slice(i, i + CHUNK));
-          for (const row of data ?? []) {
-            const pr = row as { id: string; payment_terms?: string | null };
-            termsPatch[pr.id] = pr.payment_terms?.trim() || null;
-          }
-        }
-        setPartnerTermsById(termsPatch);
-      }
-    } catch (e) {
-      console.error("billing standalone load failed", e);
-      setInvoices([]);
-      setSelfBills([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [fetchBounds],
+  );
 
   useEffect(() => {
     void loadData();
@@ -152,7 +227,7 @@ export function useBillingStandaloneData() {
     let t: ReturnType<typeof setTimeout>;
     const schedule = () => {
       clearTimeout(t);
-      t = setTimeout(() => void loadData(), 350);
+      t = setTimeout(() => void loadData({ background: true }), 350);
     };
     const ch = supabase
       .channel("billing_standalone")
@@ -167,8 +242,7 @@ export function useBillingStandaloneData() {
   }, [loadData]);
 
   const resolveAccountId = useCallback(
-    (inv: Invoice) =>
-      effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId),
+    (inv: Invoice) => effectiveInvoiceSourceAccountId(inv, jobRefToAccountId, clientNameToAccountId),
     [jobRefToAccountId, clientNameToAccountId],
   );
 
@@ -183,6 +257,8 @@ export function useBillingStandaloneData() {
 
   return {
     loading,
+    refreshing,
+    hasLoadedOnce,
     invoices,
     selfBills,
     jobsByRef,

@@ -30,6 +30,10 @@ import {
   canSendClientEmailWithPack,
   type AccountFinalEmailPolicy,
 } from "@/lib/account-final-email-policy";
+import {
+  canSendJobInvoiceEmail,
+  canSendJobSelfBillEmail,
+} from "@/lib/invoice-send-eligibility";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
@@ -62,6 +66,7 @@ import {
   Plus,
   ImagePlus,
   ExternalLink,
+  Mail,
   Info,
   AlertTriangle,
   PauseCircle,
@@ -1218,6 +1223,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingJobTypeEdit, setSavingJobTypeEdit] = useState(false);
   const [jobBillingDetailsOpen, setJobBillingDetailsOpen] = useState(false);
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
+  const [financeBillingContact, setFinanceBillingContact] = useState<{
+    documentEmail: string | null;
+    canIncludeInvoice: boolean;
+  } | null>(null);
+  const [sendingInvoiceEmail, setSendingInvoiceEmail] = useState(false);
+  const [sendingSelfBillEmail, setSendingSelfBillEmail] = useState(false);
   const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   /** Job invoice cards: collapsed shows amount only; expand for ref, status, Stripe, actions. */
@@ -1397,6 +1408,35 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       cancelled = true;
     };
   }, [validateCompleteOpen, job?.client_id, job?.client_name]);
+
+  useEffect(() => {
+    if (!job?.client_id?.trim()) {
+      setFinanceBillingContact(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const c = await getClient(job.client_id!.trim());
+        const acc = c?.source_account_id?.trim() ? await getAccount(c.source_account_id.trim()) : null;
+        const policy = accountFinalEmailPolicyFromRow(acc);
+        const billing = await resolveNominalBillingParty(getSupabase(), {
+          clientId: job.client_id!.trim(),
+          fallbackName: job.client_name ?? undefined,
+        });
+        if (cancelled) return;
+        setFinanceBillingContact({
+          documentEmail: billing.documentEmail,
+          canIncludeInvoice: policy.canIncludeInvoice,
+        });
+      } catch {
+        if (!cancelled) setFinanceBillingContact(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.client_id, job?.client_name]);
 
   useEffect(() => {
     if (!validateCompleteOpen || !job) return;
@@ -1808,6 +1848,75 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setRefreshingJob(false);
     }
   }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
+
+  const handleSendJobInvoiceEmail = useCallback(async () => {
+    if (!job) return;
+    const inv =
+      (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
+      jobInvoices[0];
+    if (!inv?.id) {
+      toast.error("No invoice linked to this job yet.");
+      return;
+    }
+    const gate = canSendJobInvoiceEmail({
+      invoice: inv,
+      jobInternalInvoiceApproved: Boolean(job.internal_invoice_approved),
+      canIncludeInvoice: financeBillingContact?.canIncludeInvoice ?? true,
+      documentEmail: financeBillingContact?.documentEmail,
+    });
+    if (!gate.ok) {
+      toast.error(gate.reason);
+      return;
+    }
+    setSendingInvoiceEmail(true);
+    try {
+      const res = await fetch("/api/invoices/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceId: inv.id }),
+      });
+      const data = (await res.json()) as { error?: string; to?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to send invoice");
+      toast.success(data.to ? `Invoice sent to ${data.to}` : "Invoice sent");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to send invoice");
+    } finally {
+      setSendingInvoiceEmail(false);
+    }
+  }, [job, jobInvoices, financeBillingContact]);
+
+  const handleSendJobSelfBillEmail = useCallback(async () => {
+    if (!job || !jobSelfBill?.id) return;
+    const partnerEmail = partners.find((p) => p.id === job.partner_id)?.email ?? null;
+    const gate = canSendJobSelfBillEmail({ selfBill: jobSelfBill, partnerEmail });
+    if (!gate.ok) {
+      toast.error(gate.reason);
+      return;
+    }
+    setSendingSelfBillEmail(true);
+    try {
+      const res = await fetch("/api/self-bills/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selfBillIds: [jobSelfBill.id] }),
+      });
+      const data = (await res.json()) as {
+        sent?: number;
+        skipped?: { reason: string }[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Failed to send self-bill");
+      if ((data.sent ?? 0) < 1) {
+        const reason = data.skipped?.[0]?.reason ?? "Could not send self-bill";
+        throw new Error(reason);
+      }
+      toast.success("Self-bill sent to partner");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to send self-bill");
+    } finally {
+      setSendingSelfBillEmail(false);
+    }
+  }, [job, jobSelfBill, partners]);
 
   const quoteLineBreakdown = useMemo(() => {
     if (!quoteLineItems.length) return null;
@@ -5628,6 +5737,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const primaryInvoiceForBadge = job.invoice_id
     ? jobInvoices.find((inv) => inv.id === job.invoice_id) ?? jobInvoices[0]
     : jobInvoices[0];
+  const invoiceSendGate = canSendJobInvoiceEmail({
+    invoice: primaryInvoiceForBadge ?? null,
+    jobInternalInvoiceApproved: Boolean(job.internal_invoice_approved),
+    canIncludeInvoice: financeBillingContact?.canIncludeInvoice ?? true,
+    documentEmail: financeBillingContact?.documentEmail,
+  });
+  const selfBillSendGate = canSendJobSelfBillEmail({
+    selfBill: jobSelfBill,
+    partnerEmail: partners.find((p) => p.id === job.partner_id)?.email ?? null,
+  });
   /** Invoice + self-bill stay “Draft” on this job until Review & approve (same gate as finalize in FinalReviewModal). */
   const financeDocsAwaitingJobApproval = !job.internal_invoice_approved;
   const financeDocDraftBadge = {
@@ -8518,13 +8637,31 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
-                  <Link href="/finance/billing" className="text-primary hover:underline inline-flex items-center gap-1">
-                    All invoices <ExternalLink className="h-3 w-3" />
-                  </Link>
-                  <Link href="/finance/billing/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
-                    All self bills <ExternalLink className="h-3 w-3" />
-                  </Link>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    icon={<Mail className="h-3 w-3" />}
+                    loading={sendingInvoiceEmail}
+                    disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices}
+                    title={invoiceSendGate.ok ? "Request payment — email invoice PDF to billing contact" : invoiceSendGate.reason}
+                    onClick={() => void handleSendJobInvoiceEmail()}
+                  >
+                    Request payment
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    icon={<Mail className="h-3 w-3" />}
+                    loading={sendingSelfBillEmail}
+                    disabled={!selfBillSendGate.ok || sendingSelfBillEmail || loadingSelfBill}
+                    title={selfBillSendGate.ok ? "Email self-bill PDF to partner (Resend)" : selfBillSendGate.reason}
+                    onClick={() => void handleSendJobSelfBillEmail()}
+                  >
+                    Send self bill
+                  </Button>
                 </div>
               </div>
 
