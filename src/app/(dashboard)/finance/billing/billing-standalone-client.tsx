@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Download, RefreshCw, Check, ChevronDown, FileText } from "lucide-react";
@@ -53,19 +54,44 @@ import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-ba
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { createInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { logAudit } from "@/services/audit";
-import { InvoiceDetailDrawer } from "./invoices-finance-client";
-import { SelfBillDetailDrawer } from "./selfbill-finance-client";
 import type { Invoice, SelfBill } from "@/types/database";
 import "./billing-standalone.css";
 
+const InvoiceDetailDrawer = dynamic(
+  () => import("./invoices-finance-client").then((m) => m.InvoiceDetailDrawer),
+  { ssr: false },
+);
+const SelfBillDetailDrawer = dynamic(
+  () => import("./selfbill-finance-client").then((m) => m.SelfBillDetailDrawer),
+  { ssr: false },
+);
+
 type LedgerTab = "inv" | "sb";
+
+function BillingContentSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse" aria-hidden>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="h-[88px] rounded-xl bg-surface-hover" />
+        ))}
+      </div>
+      <div className="h-36 rounded-xl bg-surface-hover" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="h-52 rounded-xl bg-surface-hover" />
+        <div className="h-52 rounded-xl bg-surface-hover" />
+      </div>
+      <div className="h-80 rounded-xl bg-surface-hover" />
+    </div>
+  );
+}
 
 function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const data = useBillingStandaloneData();
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(DEFAULT_BILLING_STANDALONE_FILTER);
+  const data = useBillingStandaloneData(periodFilter);
   const [ledgerTab, setLedgerTab] = useState<LedgerTab>(
     searchParams.get("tab") === "sb" ? "sb" : "inv",
   );
@@ -480,7 +506,13 @@ function BillingStandaloneInner() {
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
               Export
             </Button>
-            <Button variant="outline" size="sm" loading={syncing} icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => void handleSync()}>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={syncing || data.refreshing}
+              icon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={() => void handleSync()}
+            >
               Sync
             </Button>
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>
@@ -489,9 +521,10 @@ function BillingStandaloneInner() {
           </div>
         </div>
 
-        {data.loading ? (
-          <p className="py-16 text-center text-sm text-text-tertiary">Loading billing…</p>
+        {data.loading && !data.hasLoadedOnce ? (
+          <BillingContentSkeleton />
         ) : (
+          <div className={cn(data.loading || data.refreshing ? "opacity-70 transition-opacity" : undefined)}>
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <KpiCard label="To collect · receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
@@ -853,6 +886,7 @@ function BillingStandaloneInner() {
               </div>
             </div>
           </>
+          </div>
         )}
 
         <InvoiceDetailDrawer
