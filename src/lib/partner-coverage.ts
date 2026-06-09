@@ -199,6 +199,31 @@ export function partnerCoverageIsComplete(partner: PartnerCoverageFields): boole
   return effectiveIncludedPostcodes(partner).length > 0;
 }
 
+/** City line for postcode coverage — includes legacy rows with postcodes but no `coverage_cities`. */
+export function resolveCoverageCityLabels(partner: PartnerCoverageFields): string {
+  const fromIds = (partner.coverage_cities ?? [])
+    .map((id) => coverageCityById(id)?.label ?? id)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (fromIds.length) return fromIds.join(", ");
+
+  const loc = partner.location?.trim();
+  if (loc && /^london$/i.test(loc)) return "London";
+
+  if (partner.uk_coverage_regions?.some((r) => r.trim().toLowerCase() === "london")) {
+    return "London";
+  }
+
+  const rawIncluded = partner.included_postcodes ?? [];
+  if (rawIncluded.length > 0) {
+    const londonSet = new Set(defaultLondonIncludedPostcodes().map(normalizeOutwardCode));
+    const overlap = rawIncluded.filter((c) => londonSet.has(normalizeOutwardCode(c))).length;
+    if (overlap > 0 && overlap / rawIncluded.length >= 0.25) return "London";
+  }
+
+  return "";
+}
+
 export function formatPartnerCoverageSummary(partner: PartnerCoverageFields): string {
   const mode = effectiveCoverageMode(partner);
   if (mode === "radius") {
@@ -211,9 +236,7 @@ export function formatPartnerCoverageSummary(partner: PartnerCoverageFields): st
   }
   if (mode === "postcodes") {
     const n = effectiveIncludedPostcodes(partner).length;
-    const cities = (partner.coverage_cities ?? [])
-      .map((id) => coverageCityById(id)?.label ?? id)
-      .join(", ");
+    const cities = resolveCoverageCityLabels(partner);
     if (n === 0) return cities ? `Postcodes · ${cities}` : "Postcodes (not set)";
     return cities ? `${cities} · ${n} districts` : `${n} postcode districts`;
   }

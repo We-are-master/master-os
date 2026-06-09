@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, Check, ChevronDown, FileText } from "lucide-react";
+import { Plus, Download, RefreshCw, Check, ChevronDown, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,18 +18,20 @@ import {
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
 import {
+  addDaysYmd,
   formatPeriodBoundsLabel,
   resolveBillingStandaloneBounds,
   todayYmdLocal,
   selfBillPayWorkPeriodInPeriod,
   ymdInBounds,
 } from "@/lib/billing-standalone-period";
+import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
 import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
   buildInvoiceLedgerAccountGroups,
-  buildCashflow14Days,
+  buildCashflowWeekly,
   buildCustomerExposure,
   computeAgingTotals,
   computeBillingKpis,
@@ -75,6 +77,8 @@ const SelfBillDetailDrawer = dynamic(
 );
 
 type LedgerTab = "inv" | "sb";
+
+const CASHFLOW_WINDOW_WEEKS = 8;
 
 function BillingContentSkeleton() {
   return (
@@ -123,6 +127,7 @@ function BillingStandaloneInner() {
   const [expandedGoingOutPartners, setExpandedGoingOutPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
+  const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
 
   const todayYmd = invoiceFinanceListTodayYmd();
   const periodBounds = useMemo(() => data.periodBounds(periodFilter), [data, periodFilter]);
@@ -326,9 +331,18 @@ function BillingStandaloneInner() {
     });
   }, []);
 
+  useEffect(() => {
+    setCashflowWeekOffset(0);
+  }, [periodFilter]);
+
+  const cashflowWeekStart = useMemo(() => {
+    const monday = startOfWeekMondayFromYmd(todayYmd);
+    return addDaysYmd(monday, cashflowWeekOffset * 7);
+  }, [todayYmd, cashflowWeekOffset]);
+
   const cashflow = useMemo(
     () =>
-      buildCashflow14Days({
+      buildCashflowWeekly({
         invoices: data.invoices,
         selfBills: data.selfBills,
         jobsByRef: data.jobsByRef,
@@ -336,11 +350,18 @@ function BillingStandaloneInner() {
         jobsBySelfBillId: data.jobsBySelfBillId,
         partnerPaidByJobId: data.partnerPaidByJobId,
         dueCtx: data.dueCtx,
-        startYmd: periodBounds?.from ?? todayYmd,
+        startYmd: periodBounds?.from ?? cashflowWeekStart,
         endYmd: periodBounds?.to,
+        weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
       }),
-    [data, periodBounds],
+    [data, periodBounds, cashflowWeekStart],
   );
+
+  const cashflowRangeLabel = useMemo(() => {
+    if (!cashflow.length) return "";
+    if (cashflow.length === 1) return cashflow[0]!.title;
+    return `${cashflow[0]!.dayNum} – ${cashflow[cashflow.length - 1]!.dayNum}`;
+  }, [cashflow]);
 
   const customers = useMemo(
     () =>
@@ -665,10 +686,49 @@ function BillingStandaloneInner() {
             </div>
 
             <div className="rounded-xl border border-border-light bg-white p-4 shadow-sm sm:p-5">
-              <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold text-[#020040]">Cash-flow runway · next 14 days</h2>
-                  <p className="mt-0.5 text-xs text-text-secondary">Green up = expected in · coral down = scheduled out.</p>
+              <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {!periodBounds ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      aria-label="Previous week"
+                      onClick={() => setCashflowWeekOffset((o) => o - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                  <div className="min-w-0">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                      Cash-Flow Runway
+                      <FixfyHintIcon
+                        text="Green up = expected in · coral down = scheduled out · Mon–Sun buckets."
+                        placement="bottom-start"
+                      />
+                    </h2>
+                    {cashflowRangeLabel ? (
+                      <p className="mt-0.5 text-xs text-text-tertiary tabular-nums">{cashflowRangeLabel}</p>
+                    ) : null}
+                  </div>
+                  {!periodBounds ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      aria-label="Next week"
+                      onClick={() => setCashflowWeekOffset((o) => o + 1)}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                  {!periodBounds && cashflowWeekOffset !== 0 ? (
+                    <button
+                      type="button"
+                      className="shrink-0 text-[11px] font-semibold text-[#ED4B00] hover:underline"
+                      onClick={() => setCashflowWeekOffset(0)}
+                    >
+                      Today
+                    </button>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Money in</span>
@@ -676,17 +736,21 @@ function BillingStandaloneInner() {
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
-                {cashflow.map((d) => {
-                  const ih = d.moneyIn ? Math.max(8, Math.round((d.moneyIn / cfMax) * 72)) : 0;
-                  const oh = d.moneyOut ? Math.max(8, Math.round((d.moneyOut / cfMax) * 72)) : 0;
+                {cashflow.map((w) => {
+                  const ih = w.moneyIn ? Math.max(8, Math.round((w.moneyIn / cfMax) * 72)) : 0;
+                  const oh = w.moneyOut ? Math.max(8, Math.round((w.moneyOut / cfMax) * 72)) : 0;
                   return (
-                    <div key={d.ymd} className={cn("cf__day min-w-[36px] flex-1", d.isWeekend && "is-weekend", d.isToday && "is-today")}>
-                      <div className={cn("cf__amt cf__amt--in", !d.moneyIn && "is-empty")}>{d.moneyIn ? formatCurrency(d.moneyIn) : "·"}</div>
+                    <div
+                      key={w.weekStart}
+                      title={w.title}
+                      className={cn("cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]", w.isCurrentWeek && "is-today")}
+                    >
+                      <div className={cn("cf__amt cf__amt--in", !w.moneyIn && "is-empty")}>{w.moneyIn ? formatCurrency(w.moneyIn) : "·"}</div>
                       <div className="cf__well"><div className="cf__bar cf__bar--in" style={{ height: ih }} /></div>
                       <div className="cf__axis" />
                       <div className="cf__well cf__well--out"><div className="cf__bar cf__bar--out" style={{ height: oh }} /></div>
-                      <div className={cn("cf__amt cf__amt--out", !d.moneyOut && "is-empty")}>{d.moneyOut ? formatCurrency(d.moneyOut) : "·"}</div>
-                      <div className="cf__lbl">{d.label}<b>{d.dayNum}</b></div>
+                      <div className={cn("cf__amt cf__amt--out", !w.moneyOut && "is-empty")}>{w.moneyOut ? formatCurrency(w.moneyOut) : "·"}</div>
+                      <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
                     </div>
                   );
                 })}

@@ -99,7 +99,7 @@ async function listPartnersLegacy(
     }
   }
 
-  query = query.order(params.sortBy ?? "joined_at", { ascending: false });
+  query = query.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc" });
   query = query.range(from, to);
 
   let { data, error, count } = await query;
@@ -125,7 +125,7 @@ async function listPartnersLegacy(
         );
       }
     }
-    fallback = fallback.order(params.sortBy ?? "joined_at", { ascending: false }).range(from, to);
+    fallback = fallback.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc" }).range(from, to);
     const fallbackRes = await fallback;
     data = fallbackRes.data;
     error = fallbackRes.error;

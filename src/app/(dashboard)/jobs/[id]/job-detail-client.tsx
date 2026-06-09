@@ -1503,7 +1503,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setFinanceBillingLoading(false);
       return;
     }
-    setFinanceBillingContact(null);
     setFinanceBillingLoadError(null);
     return refreshFinanceBillingContact(job.id.trim());
   }, [
@@ -2000,14 +1999,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("No invoice linked to this job yet.");
       return;
     }
-    const billingContact = financeBillingContact;
-    const billingLoadError = financeBillingLoadError;
+    const jobId = job.id?.trim();
+    if (!jobId) {
+      toast.error("Job id missing.");
+      return;
+    }
+    const fresh = await loadFinanceBillingContact(jobId);
+    if (fresh.ok) {
+      setFinanceBillingContact(fresh.contact);
+      setFinanceBillingLoadError(null);
+    } else {
+      setFinanceBillingContact(null);
+      setFinanceBillingLoadError(fresh.error);
+    }
     const gate = canSendJobInvoiceEmail({
       invoice: inv,
-      canIncludeInvoice: billingContact?.canIncludeInvoice ?? true,
-      documentEmail: billingContact?.documentEmail,
-      mode: billingContact?.mode,
-      loadError: billingLoadError,
+      canIncludeInvoice: fresh.ok ? fresh.contact.canIncludeInvoice : true,
+      documentEmail: fresh.ok ? fresh.contact.documentEmail : null,
+      mode: fresh.ok ? fresh.contact.mode : undefined,
+      loadError: fresh.ok ? null : fresh.error,
     });
     if (!gate.ok) {
       toast.error(gate.reason);
@@ -2021,7 +2031,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         body: JSON.stringify({
           invoiceId: inv.id,
           requestPercent,
-          jobId: job.id?.trim() || undefined,
+          jobId,
         }),
       });
       const data = (await res.json()) as { error?: string; to?: string };
@@ -2034,7 +2044,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setSendingInvoiceEmail(false);
     }
-  }, [job, jobInvoices, financeBillingContact, financeBillingLoadError, loadFinanceBillingContact, loadJobInvoices]);
+  }, [job, jobInvoices, loadFinanceBillingContact, loadJobInvoices]);
 
   const handleSendJobSelfBillEmail = useCallback(async () => {
     if (!job || !jobSelfBill?.id) return;

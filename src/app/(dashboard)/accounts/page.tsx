@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import type { ListParams } from "@/services/base";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -45,6 +46,7 @@ import {
   listClientsLinkedToAccountPaged,
   listInvoicesForJobReferences,
 } from "@/services/accounts";
+import { enrichAccountsBillableRevenue } from "@/lib/account-billable-revenue";
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
 import { getSupabase, getStatusCounts } from "@/services/base";
@@ -208,6 +210,16 @@ export default function AccountsPage() {
     [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
   );
 
+  const fetchAccountsWithBillableRevenue = useCallback(async (params: ListParams) => {
+    const result = await listAccounts(params);
+    try {
+      const data = await enrichAccountsBillableRevenue(result.data);
+      return { ...result, data };
+    } catch {
+      return result;
+    }
+  }, []);
+
   const {
     data,
     loading,
@@ -221,7 +233,7 @@ export default function AccountsPage() {
     setStatus,
     refresh,
   } = useSupabaseList<Account>({
-    fetcher: listAccounts,
+    fetcher: fetchAccountsWithBillableRevenue,
     realtimeTable: "accounts",
     initialStatus: "active",
   });
@@ -234,7 +246,7 @@ export default function AccountsPage() {
   const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [accountsDisplayMode, setAccountsDisplayMode] = useState<AccountsDisplayMode>("list");
-  const [listSortKey, setListSortKey] = useState<string | null>(null);
+  const [listSortKey, setListSortKey] = useState<string | null>("total_revenue");
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
 
   /** Avoid SSR/localStorage mismatch — restore saved view after mount. */
@@ -274,7 +286,7 @@ export default function AccountsPage() {
     try {
       const supabase = getSupabase();
       const [{ data: rows, error }, counts] = await Promise.all([
-        supabase.from("accounts").select("total_revenue, active_jobs").is("deleted_at", null),
+        supabase.from("accounts").select("id, total_revenue, active_jobs").is("deleted_at", null),
         getStatusCounts("accounts", ["active", "onboarding", "inactive"], "status"),
       ]);
       if (error) throw error;
@@ -306,16 +318,12 @@ export default function AccountsPage() {
   const inactiveAccountCount = accountStatusCounts.inactive ?? 0;
 
   const sortedListData = useMemo(() => {
-    if (!listSortKey) return data;
+    const sortKey = listSortKey ?? "total_revenue";
     const rows = [...data];
     const dir = listSortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
-      const av = listSortKey === "active_jobs"
-        ? Number(a.active_jobs) || 0
-        : Number(b.total_revenue) || 0;
-      const bv = listSortKey === "active_jobs"
-        ? Number(b.active_jobs) || 0
-        : Number(b.total_revenue) || 0;
+      const av = sortKey === "active_jobs" ? Number(a.active_jobs) || 0 : Number(a.total_revenue) || 0;
+      const bv = sortKey === "active_jobs" ? Number(b.active_jobs) || 0 : Number(b.total_revenue) || 0;
       return (av - bv) * dir;
     });
     return rows;
@@ -479,10 +487,7 @@ export default function AccountsPage() {
       cellClassName: accountsTableCell,
       render: (item) => {
         const isActive = item.status === "active";
-        const meta = [
-          accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory),
-          item.industry,
-        ].filter(Boolean).join(" · ");
+        const meta = item.industry?.trim() || "—";
         return (
           <div className="flex items-center gap-3 min-w-0">
             <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
@@ -532,7 +537,7 @@ export default function AccountsPage() {
       key: "total_revenue",
       label: "Revenue",
       width: "22%",
-      align: "right",
+      align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
       sortable: true,
@@ -540,7 +545,7 @@ export default function AccountsPage() {
         const rev = Number(item.total_revenue) || 0;
         const pct = Math.round((rev / maxRevenueInView) * 100);
         return (
-          <div className="ml-auto w-full max-w-[9rem] space-y-1.5">
+          <div className="mx-auto w-full max-w-[9rem] space-y-1.5 text-center">
             <span className="block text-sm font-bold tabular-nums text-text-primary">
               {formatCurrency(rev)}
             </span>
@@ -558,40 +563,28 @@ export default function AccountsPage() {
       key: "billing",
       label: "Billing",
       width: "22%",
-      align: "right",
+      align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
       render: (item) => {
         const termsLabel = shortenPaymentTerms(item.payment_terms);
         return (
-          <div className="ml-auto min-w-0 max-w-[10rem] space-y-1 text-right">
-            <Badge variant="outline" size="sm" className="max-w-full truncate">
-              {termsLabel}
-            </Badge>
+          <div className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center">
+            <div className="flex justify-center">
+              <Badge variant="outline" size="sm" className="max-w-full truncate">
+                {termsLabel}
+              </Badge>
+            </div>
             <div className="text-[11px]">{renderAccountNextPayment(item, paymentOrgCtx)}</div>
           </div>
         );
       },
     },
     {
-      key: "owner_name",
-      label: "Owner",
-      width: "14%",
-      headerClassName: cn(accountsTableHeader, "hidden xl:table-cell"),
-      cellClassName: cn(accountsTableCell, "hidden xl:table-cell"),
-      render: (item) => (
-        <AccountOwnerCell
-          accountOwnerId={item.account_owner_id}
-          legacyOwnerName={item.owner_name}
-          users={accountOwnerDirectory}
-        />
-      ),
-    },
-    {
       key: "credit_limit",
       label: "Credit",
       width: "10%",
-      align: "right",
+      align: "center",
       headerClassName: cn(accountsTableHeader, "hidden 2xl:table-cell"),
       cellClassName: cn(accountsTableCell, "hidden 2xl:table-cell"),
       render: (item) => (
@@ -607,6 +600,7 @@ export default function AccountsPage() {
       key: "actions",
       label: "",
       width: "48px",
+      align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto" aria-hidden />,
@@ -769,7 +763,7 @@ export default function AccountsPage() {
           ) : (
             <AccountsGridView
               embedded
-              data={data}
+              data={sortedListData}
               loading={loading}
               page={page}
               totalPages={totalPages}
@@ -1188,14 +1182,6 @@ function AccountsGridView({
                       <p className="text-[11px] text-text-tertiary truncate mt-0.5">{item.contact_name}</p>
                       <p className="text-[10px] text-text-tertiary truncate mt-1">{item.industry}</p>
                     </div>
-                  </div>
-
-                  <div className="mt-3">
-                    <AccountOwnerCell
-                      accountOwnerId={item.account_owner_id}
-                      legacyOwnerName={item.owner_name}
-                      users={accountOwnerDirectory}
-                    />
                   </div>
 
                   <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border-light/80 pt-4">

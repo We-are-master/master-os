@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   UNLINKED_ATTENTION_ACCOUNT_KEY,
   buildAttentionAccountGroups,
+  buildCashflowWeekly,
   buildInvoiceLedgerAccountGroups,
 } from "@/lib/billing-standalone-metrics";
 import type { Invoice } from "@/types/database";
@@ -97,5 +98,34 @@ describe("buildInvoiceLedgerAccountGroups", () => {
     assert.equal(groups.length, 1);
     assert.equal(groups[0]!.accountKey, UNLINKED_ATTENTION_ACCOUNT_KEY);
     assert.equal(groups[0]!.accountName, "Direct · Unlinked");
+  });
+});
+
+describe("buildCashflowWeekly", () => {
+  it("aggregates open invoice balances into Mon–Sun week buckets", () => {
+    const weeks = buildCashflowWeekly({
+      invoices: [
+        inv("a", {
+          client_name: "Acme",
+          due_date: "2026-06-12",
+          amount: 2574.7,
+          status: "partial",
+          amount_paid: 0,
+        }),
+      ],
+      selfBills: [],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      startYmd: "2026-06-08",
+      endYmd: "2026-06-14",
+    });
+
+    assert.equal(weeks.length, 1);
+    assert.equal(weeks[0]!.weekStart, "2026-06-08");
+    assert.equal(weeks[0]!.moneyIn, 2574.7);
+    assert.equal(weeks[0]!.moneyOut, 0);
   });
 });

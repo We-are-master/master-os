@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
+import { enrichPartnersDirectoryEarnings } from "@/lib/partner-directory-earnings";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
@@ -214,6 +215,34 @@ function PartnersDirectoryGridCheckbox({
   );
 }
 
+function PartnerRevenueMeter({
+  amount,
+  maxAmount,
+  className,
+  valueClassName,
+}: {
+  amount: number;
+  maxAmount: number;
+  className?: string;
+  valueClassName?: string;
+}) {
+  const earned = Math.round((Number(amount) || 0) * 100) / 100;
+  const pct = Math.round((earned / Math.max(1, maxAmount)) * 100);
+  return (
+    <div className={cn("space-y-1.5", className)}>
+      <span className={cn("block font-bold tabular-nums text-text-primary", valueClassName ?? "text-sm")}>
+        {formatCurrency(earned)}
+      </span>
+      <div className="h-1 w-full rounded-full bg-surface-tertiary overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary/75 transition-all"
+          style={{ width: `${Math.max(pct, earned > 0 ? 4 : 0)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function PartnersDirectoryGridView({
   data,
   loading,
@@ -228,6 +257,7 @@ function PartnersDirectoryGridView({
   isAdmin,
   bulkActionsSlot,
   catalogServices,
+  maxEarningsInView,
 }: {
   data: Partner[];
   loading: boolean;
@@ -242,6 +272,7 @@ function PartnersDirectoryGridView({
   isAdmin: boolean;
   bulkActionsSlot: ReactNode;
   catalogServices: readonly CatalogService[];
+  maxEarningsInView: number;
 }) {
   const allIds = data.map((p) => p.id);
   const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
@@ -417,9 +448,15 @@ function PartnersDirectoryGridView({
                       <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Jobs</dt>
                       <dd className="font-semibold text-sm text-text-primary tabular-nums">{item.jobs_completed}</dd>
                     </div>
-                    <div>
-                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Earnings</dt>
-                      <dd className="font-semibold text-sm text-text-primary tabular-nums truncate">{formatCurrency(item.total_earnings)}</dd>
+                    <div className="col-span-2">
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Revenue</dt>
+                      <dd>
+                        <PartnerRevenueMeter
+                          amount={item.total_earnings}
+                          maxAmount={maxEarningsInView}
+                          valueClassName="text-lg"
+                        />
+                      </dd>
                     </div>
                   </dl>
 
@@ -642,6 +679,12 @@ function partnerMatchesKanbanColumn(
   );
 }
 
+function sortPartnersByEarnings(partners: Partner[]): Partner[] {
+  return [...partners].sort(
+    (a, b) => (Number(b.total_earnings) || 0) - (Number(a.total_earnings) || 0),
+  );
+}
+
 function buildPartnersTradeKanbanColumns(
   partners: Partner[],
   columnLabels: readonly string[],
@@ -652,7 +695,7 @@ function buildPartnersTradeKanbanColumns(
     id: label,
     title: label,
     color: KANBAN_TRADE_COLUMN_COLORS[i % KANBAN_TRADE_COLUMN_COLORS.length],
-    items: partners.filter((p) => partnerMatchesKanbanColumn(p, label, catalog)),
+    items: sortPartnersByEarnings(partners.filter((p) => partnerMatchesKanbanColumn(p, label, catalog))),
   }));
   if (!includeOtherColumn) return cols;
   const otherItems = partners.filter((p) => {
@@ -669,7 +712,7 @@ function buildPartnersTradeKanbanColumns(
       id: KANBAN_OTHER_TRADE_COLUMN,
       title: KANBAN_OTHER_TRADE_COLUMN,
       color: "bg-slate-500",
-      items: otherItems,
+      items: sortPartnersByEarnings(otherItems),
     },
   ];
 }
@@ -884,6 +927,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
+  const [listSortKey, setListSortKey] = useState<string | null>("total_earnings");
+  const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
     try {
@@ -941,10 +986,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     if (viewMode === "team") loadTeam();
   }, [viewMode, loadTeam]);
 
-  const fetcher = useCallback(
-    (params: ListParams) => listPartners({ ...params, trade: tradeFilter !== "all" ? tradeFilter : undefined }),
-    [tradeFilter]
-  );
+  const fetcher = useCallback(async (params: ListParams) => {
+    const result = await listPartners({
+      ...params,
+      trade: tradeFilter !== "all" ? tradeFilter : undefined,
+    });
+    try {
+      const data = await enrichPartnersDirectoryEarnings(result.data);
+      return { ...result, data };
+    } catch {
+      return result;
+    }
+  }, [tradeFilter]);
 
   const {
     data: partners,
@@ -992,7 +1045,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         search: search.trim() || undefined,
         trade: tradeFilter !== "all" ? tradeFilter : undefined,
       });
-      setKanbanPartners(rows);
+      let enriched = rows;
+      try {
+        enriched = await enrichPartnersDirectoryEarnings(rows);
+      } catch {
+        /* keep DB values */
+      }
+      setKanbanPartners(sortPartnersByEarnings(enriched));
       setKanbanTotalItems(rows.length);
     } catch {
       toast.error("Failed to load partners for kanban");
@@ -1434,6 +1493,29 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  const sortedPartners = useMemo(() => {
+    const sortKey = listSortKey ?? "total_earnings";
+    const rows = [...partners];
+    const dir = listSortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av =
+        sortKey === "compliance_score"
+          ? Number(a.compliance_score) || 0
+          : Number(a.total_earnings) || 0;
+      const bv =
+        sortKey === "compliance_score"
+          ? Number(b.compliance_score) || 0
+          : Number(b.total_earnings) || 0;
+      return (av - bv) * dir;
+    });
+    return rows;
+  }, [partners, listSortKey, listSortDir]);
+
+  const maxEarningsInView = useMemo(
+    () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
+    [sortedPartners],
+  );
+
   const partnersTableCell = "px-3 sm:px-4 py-3";
   const partnersTableHeader = "px-3 sm:px-4 py-3";
 
@@ -1478,25 +1560,45 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       key: "location",
       label: "Coverage",
       width: "16%",
+      align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
+      render: (item) => {
+        const summary = formatPartnerCoverageSummary(item);
+        const [cityLine, detailLine] = summary.includes("·")
+          ? summary.split("·").map((s) => s.trim())
+          : [summary, ""];
+        return (
+          <div className="mx-auto min-w-0 max-w-[11rem] text-sm text-text-secondary text-center" title={summary}>
+            <span className="block truncate font-medium text-text-primary">{cityLine || "—"}</span>
+            {detailLine ? (
+              <span className="block truncate text-[11px] text-text-tertiary mt-0.5">{detailLine}</span>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "total_earnings",
+      label: "Revenue",
+      width: "18%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      sortable: true,
       render: (item) => (
-        <div className="min-w-0 text-sm text-text-secondary" title={formatPartnerCoverageSummary(item)}>
-          <span className="block truncate font-medium text-text-primary">
-            {formatPartnerCoverageSummary(item).split("·")[0]?.trim() || "—"}
-          </span>
-          <span className="block truncate text-[11px] text-text-tertiary mt-0.5">
-            {formatPartnerCoverageSummary(item).includes("·")
-              ? formatPartnerCoverageSummary(item).split("·").slice(1).join("·").trim()
-              : ""}
-          </span>
-        </div>
+        <PartnerRevenueMeter
+          amount={item.total_earnings}
+          maxAmount={maxEarningsInView}
+          className="mx-auto w-full max-w-[9rem] text-center"
+        />
       ),
     },
     {
       key: "compliance_score",
       label: "Compliance",
-      width: "16%",
+      width: "14%",
+      align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
@@ -1504,8 +1606,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
         const tier = complianceTier(s);
         return (
-          <div className="min-w-0 space-y-1" title="Blended score (documents + profile), 0–100">
-            <div className="flex items-center justify-between gap-2">
+          <div className="mx-auto min-w-0 max-w-[9rem] space-y-1 text-center" title="Blended score (documents + profile), 0–100">
+            <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", tier.textClass)}>
                 {Math.round(s)}%
               </span>
@@ -1548,9 +1650,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         const cfg = statusConfig[item.status] ?? statusConfig.active;
         const label = item.status === "on_break" ? "Inactive" : cfg.label;
         return (
-          <Badge variant={cfg.variant} size="sm" className="uppercase tracking-wide">
-            {label}
-          </Badge>
+          <div className="flex justify-center">
+            <Badge variant={cfg.variant} size="sm" className="uppercase tracking-wide">
+              {label}
+            </Badge>
+          </div>
         );
       },
     },
@@ -1558,6 +1662,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       key: "actions",
       label: "",
       width: "48px",
+      align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors mx-auto" />,
@@ -1667,10 +1772,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   className="border-b-0"
                 />
               </div>
-              <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:min-w-[18rem] md:max-w-[34rem] shrink-0">
-                <div className="flex justify-start md:justify-end">
+              <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:min-w-[20rem] md:max-w-[42rem] shrink-0">
+                <p className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap md:hidden">
+                  {totalItems} partner{totalItems === 1 ? "" : "s"}
+                </p>
+                <div className="flex items-center gap-2 w-full min-w-0">
                   <div
-                    className="inline-flex rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
+                    className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
                     role="group"
                     aria-label="Partners directory layout"
                   >
@@ -1717,8 +1825,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                       <Columns3 className="h-4 w-4" aria-hidden />
                     </button>
                   </div>
-                </div>
-                <div className="flex items-center gap-2 w-full min-w-0">
                   {directoryDisplayMode !== "kanban" ? (
                     <Select
                       value={tradeFilter}
@@ -1727,7 +1833,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                         setPage(1);
                       }}
                       options={tradeCatalogSelectOptions}
-                      className="w-[8rem] sm:w-[9.5rem] shrink-0"
+                      className="w-[7.25rem] sm:w-[9rem] shrink-0"
                     />
                   ) : null}
                   <SearchInput
@@ -1765,7 +1871,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               <>
               <DataTable
                 columns={columns}
-                data={partners}
+                data={sortedPartners}
                 getRowId={(item) => item.id}
                 selectedId={selectedPartner?.id}
                 onRowClick={(p) => {
@@ -1783,6 +1889,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 onSelectionChange={setSelectedIds}
                 className="border-0 shadow-none rounded-none"
                 tableClassName="w-full table-fixed"
+                sortColumnKey={listSortKey}
+                sortDirection={listSortDir}
+                onSortChange={(key, direction) => {
+                  setListSortKey(key);
+                  setListSortDir(direction);
+                }}
                 bulkActions={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -1810,7 +1922,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </>
             ) : (
               <PartnersDirectoryGridView
-                data={partners}
+                data={sortedPartners}
                 loading={loading}
                 page={page}
                 totalPages={totalPages}
@@ -1819,6 +1931,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 selectedPartnerId={selectedPartner?.id}
+                maxEarningsInView={maxEarningsInView}
                 onOpenPartner={(p) => {
                   setPartnerDrawerInitialTab(undefined);
                   setSelectedPartner(p);

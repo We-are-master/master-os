@@ -4,6 +4,7 @@
  * Calls the consolidated `get_partners_list_bundle` RPC (migration 125)
  * which returns paged rows + per-partner doc/job aggregates in one call.
  */
+import { enrichPartnersDirectoryEarnings } from "@/lib/partner-directory-earnings";
 import { getServerSupabase } from "@/lib/supabase/server-cached";
 import type { Partner } from "@/types/database";
 import type { ListResult } from "@/services/base";
@@ -42,8 +43,14 @@ export async function fetchInitialPartners(
     if (error || !data) return null;
     const payload = data as { rows: Partner[]; total: number };
     const total   = payload.total ?? 0;
+    let rows = payload.rows ?? [];
+    try {
+      rows = await enrichPartnersDirectoryEarnings(rows, supabase);
+    } catch {
+      /* keep DB values */
+    }
     return {
-      data:       payload.rows ?? [],
+      data:       rows,
       count:      total,
       page:       1,
       pageSize,
@@ -73,8 +80,14 @@ async function fetchInactivePartnersDirect(
     const { data, count, error } = await query.range(0, pageSize - 1);
     if (error || !data) return null;
     const total = count ?? 0;
+    let rows = data as Partner[];
+    try {
+      rows = await enrichPartnersDirectoryEarnings(rows, supabase);
+    } catch {
+      /* keep DB values */
+    }
     return {
-      data:       data as Partner[],
+      data:       rows,
       count:      total,
       page:       1,
       pageSize,

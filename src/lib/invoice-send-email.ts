@@ -94,16 +94,21 @@ export async function loadInvoiceSendContext(
     mode: billing.mode,
   });
   if (!eligibility.ok) {
-    console.warn("[invoice-send-email] eligibility failed", {
+    const detail = {
       invoiceId: inv.id,
-      jobId: job?.id ?? options?.jobId ?? null,
+      jobLoaded: job !== null,
+      passedJobId: options?.jobId ?? null,
+      resolvedJobId: job?.id ?? null,
       client_id: job?.client_id ?? null,
       quote_id: job?.quote_id ?? null,
+      sourceAccountId: billing.sourceAccountId,
       documentEmail: billing.documentEmail,
       mode: billing.mode,
-      reason: eligibility.reason,
-    });
-    return { error: eligibility.reason, status: 400 };
+      canIncludeInvoice: policy.canIncludeInvoice,
+    };
+    console.warn("[invoice-send-email] eligibility failed", { ...detail, reason: eligibility.reason });
+    const detailStr = `jobLoaded=${detail.jobLoaded} passedJobId=${detail.passedJobId ?? "null"} resolvedJobId=${detail.resolvedJobId ?? "null"} mode=${detail.mode ?? "null"} email=${detail.documentEmail ?? "null"} client=${detail.client_id ?? "null"} quote=${detail.quote_id ?? "null"} acct=${detail.sourceAccountId ?? "null"}`;
+    return { error: `${eligibility.reason} [${detailStr}]`, status: 400 };
   }
 
   return { invoice: inv, job, quoteReference, billing, policy };
