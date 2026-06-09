@@ -38,14 +38,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "Workforce person not found" }, { status: 404 });
   }
 
-  if (!person.payment_method) {
-    return NextResponse.json({ error: "Set payment method before sending welcome email" }, { status: 400 });
-  }
-
   const profile = (person.payroll_profile ?? {}) as { email?: string };
   const email = profile.email?.trim();
   if (!email) {
-    return NextResponse.json({ error: "Set email on the person profile first" }, { status: 400 });
+    return NextResponse.json({ error: "Set work email on the person profile first" }, { status: 400 });
+  }
+
+  if (sendEmail && !person.payment_method) {
+    return NextResponse.json(
+      { error: "Set payment method in Finance before emailing the welcome invite" },
+      { status: 400 },
+    );
   }
 
   const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);

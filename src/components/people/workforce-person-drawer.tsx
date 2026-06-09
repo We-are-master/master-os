@@ -26,9 +26,11 @@ import {
   PAYROLL_COST_CATEGORIES,
   PAYROLL_UPLOAD_LABELS,
   PROFILE_PHOTO_DOC_KEY,
+  payrollDocsRowCompletion,
   payrollUploadKeysForRow,
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
+import { requestWorkforceOnboardingLink } from "@/lib/workforce-payment-options";
 import {
   buildPayLineDescription,
   parsePayLineDescription,
@@ -59,6 +61,7 @@ import {
   Loader2,
   Download,
   CheckCircle2,
+  Link2,
   Mail,
 } from "lucide-react";
 
@@ -154,6 +157,7 @@ export function WorkforcePersonDrawer({
     commissionAmount: number;
   } | null>(null);
   const [sendingWelcome, setSendingWelcome] = useState(false);
+  const [onboardingLinkBusy, setOnboardingLinkBusy] = useState(false);
   const [generatingBill, setGeneratingBill] = useState(false);
 
   const [internalBills, setInternalBills] = useState<SelfBill[]>([]);
@@ -172,6 +176,64 @@ export function WorkforcePersonDrawer({
     () => [...payrollUploadKeysForRow(employmentType ?? null, person?.has_equity ?? false)],
     [employmentType, person?.has_equity],
   );
+
+  const docsProgress = useMemo(() => {
+    if (!person) return { done: 0, total: 0, missing: 0 };
+    const files = parsePayrollDocumentFiles(person.payroll_document_files);
+    const { done, total } = payrollDocsRowCompletion(
+      employmentType ?? null,
+      files,
+      person.documents_on_file ?? null,
+      person.has_equity ?? false,
+    );
+    return { done, total, missing: Math.max(0, total - done) };
+  }, [person, employmentType]);
+
+  const workEmail = (profile.email ?? "").trim();
+
+  const handleCopyOnboardingLink = useCallback(async () => {
+    if (!person) return;
+    if (!workEmail) {
+      toast.error("Set work email on Profile first");
+      setTab("overview");
+      return;
+    }
+    setOnboardingLinkBusy(true);
+    try {
+      const { onboardingUrl, warning } = await requestWorkforceOnboardingLink(person.id, { sendEmail: false });
+      await navigator.clipboard.writeText(onboardingUrl);
+      toast.success("Onboarding link copied — person can upload docs and update profile");
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create onboarding link");
+    } finally {
+      setOnboardingLinkBusy(false);
+    }
+  }, [person, workEmail]);
+
+  const handleSendOnboardingEmail = useCallback(async () => {
+    if (!person) return;
+    if (!workEmail) {
+      toast.error("Set work email on Profile first");
+      setTab("overview");
+      return;
+    }
+    if (!paymentMethod.trim()) {
+      toast.error("Set payment method in Finance before emailing the invite");
+      setTab("finance");
+      return;
+    }
+    setSendingWelcome(true);
+    try {
+      const { sentTo, warning } = await requestWorkforceOnboardingLink(person.id, { sendEmail: true });
+      toast.success(`Onboarding invite sent to ${sentTo ?? workEmail}`);
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send onboarding invite");
+    } finally {
+      setSendingWelcome(false);
+    }
+  }, [person, workEmail, paymentMethod]);
 
   const syncFromPerson = useCallback(async () => {
     if (!person) return;
@@ -997,24 +1059,8 @@ export function WorkforcePersonDrawer({
           variant="outline"
           size="sm"
           icon={<Mail className="h-3.5 w-3.5" />}
-          disabled={sendingWelcome || !paymentMethod}
-          onClick={async () => {
-            setSendingWelcome(true);
-            try {
-              const res = await fetch(`/api/admin/workforce/${person.id}/send-welcome`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ sendEmail: true }),
-              });
-              const data = await res.json();
-              if (!res.ok) throw new Error(data.error ?? "Send failed");
-              toast.success(`Onboarding invite sent to ${data.sentTo ?? "recipient"}`);
-            } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Could not send onboarding invite");
-            } finally {
-              setSendingWelcome(false);
-            }
-          }}
+          disabled={sendingWelcome || !workEmail || !paymentMethod}
+          onClick={() => void handleSendOnboardingEmail()}
         >
           {sendingWelcome ? "Sending…" : "Resend invite"}
         </Button>
@@ -1050,6 +1096,47 @@ export function WorkforcePersonDrawer({
     !removePhotoPending &&
     (!!photoUrl || !!pendingFiles[PROFILE_PHOTO_DOC_KEY] || !!savedPhotoPath);
 
+  const onboardingInviteCard = (
+    <div className={workforceSectionClass}>
+      <p className="text-sm font-semibold text-text-primary">Onboarding link</p>
+      <p className="text-xs text-text-secondary">
+        Send a self-service link so {payeeName || "this person"} can see what&apos;s missing
+        {docsProgress.total > 0 ? (
+          <>
+            {" "}
+            (<strong className="font-medium text-text-primary">{docsProgress.missing}</strong> of{" "}
+            {docsProgress.total} document{docsProgress.total === 1 ? "" : "s"} still needed)
+          </>
+        ) : null}
+        , upload files, and update their profile.
+      </p>
+      {!workEmail ? (
+        <p className="text-xs text-amber-700">Add a work email on Profile before sending the link.</p>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+          disabled={onboardingLinkBusy || sendingWelcome || !workEmail}
+          onClick={() => void handleCopyOnboardingLink()}
+        >
+          {onboardingLinkBusy ? "Creating…" : "Copy onboarding link"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          icon={sendingWelcome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+          disabled={sendingWelcome || onboardingLinkBusy || !workEmail || !paymentMethod.trim()}
+          onClick={() => void handleSendOnboardingEmail()}
+        >
+          {sendingWelcome ? "Sending…" : "Email onboarding link"}
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <Drawer
       open={open}
@@ -1057,7 +1144,7 @@ export function WorkforcePersonDrawer({
       title={payeeName || person.payee_name || "Person"}
       subtitle={isEmployee ? "Internal team (employee)" : isContractor ? "Internal contractor" : "Workforce"}
       width="w-[min(100vw-1rem,560px)]"
-      className="bg-surface-hover/40"
+      className="bg-card"
       headerLeading={
         <Avatar name={payeeName || person.payee_name || "?"} size="lg" src={photoUrl ?? undefined} className="ring-2 ring-card" />
       }
@@ -1089,11 +1176,11 @@ export function WorkforcePersonDrawer({
         ) : undefined
       }
     >
-      <div className="px-4 sm:px-6 pt-1 pb-0 border-b border-border-light bg-surface sticky top-0 z-[1]">
+      <div className="px-4 sm:px-6 pt-1 pb-0 border-b border-border-light bg-card sticky top-0 z-[1]">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={(id) => setTab(id as TabId)} className="border-b-0" />
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+      <div className="flex-1 overflow-y-auto bg-card p-4 sm:p-6 space-y-5">
         {tab === "overview" && (
           <div className="space-y-5">
             {stage === "onboarding" && (
@@ -1214,6 +1301,8 @@ export function WorkforcePersonDrawer({
               </div>
             </div>
 
+            {onboardingInviteCard}
+
             {(isEmployee || isContractor) && (
               <div className={workforceSectionClass}>
                 <p className="text-sm font-semibold text-text-primary">Tax & identifiers</p>
@@ -1309,6 +1398,7 @@ export function WorkforcePersonDrawer({
 
         {tab === "documents" && (
           <div className="space-y-4">
+            {onboardingInviteCard}
             <p className="text-sm text-text-secondary">
               Required compliance documents. Same storage as Payroll — upload PDF or images.
             </p>
