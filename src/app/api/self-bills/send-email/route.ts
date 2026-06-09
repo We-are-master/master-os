@@ -18,80 +18,146 @@ import type { SelfBill } from "@/types/database";
 
 type Skipped = { id: string; reference?: string; reason: string };
 
-function escapeHtmlSimple(s: string): string {
+function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/**
- * Branded HTML body for the partner self-bill email — Fixfy navy header,
- * white card, summary table and footer. Replaces the earlier minimal body so
- * the partner sees the period, amount, payment date and jobs count at a
- * glance. The actual PDF is attached separately by Resend.
- */
+function fmtSbDate(ymd?: string | null): string {
+  const raw = ymd?.trim();
+  if (!raw) return "—";
+  const d = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Branded "Self-Bill Issued" partner email — mirrors the Fixfy statement
+ *  design (navy header, orange accent, reference bar, summary, HMRC notice).
+ *  The full job-by-job breakdown rides along as the attached PDF. */
 function buildSelfBillEmailHtml(
   sb: SelfBill,
   dueYmd: string | null,
-  args: { partnerName?: string | null; companyName?: string | null },
+  args?: { partnerName?: string | null; companyName?: string | null },
 ): string {
-  const week = sb.week_label ?? sb.period ?? "—";
-  const amount = formatCurrency(Number(sb.net_payout ?? 0));
-  const firstName = (args.partnerName?.trim() || "").split(/\s+/)[0] || "there";
-  const periodLine =
-    sb.week_start && sb.week_end
-      ? `${new Date(sb.week_start).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${new Date(
-          sb.week_end,
-        ).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
-      : week;
+  const firstName = esc((args?.partnerName?.trim() || sb.partner_name || "").split(/\s+/)[0] || "there");
+  const ref = esc(sb.reference || "");
+  const periodStart = sb.week_start ? fmtSbDate(sb.week_start) : null;
+  const periodEnd = sb.week_end ? fmtSbDate(sb.week_end) : null;
+  const periodText = periodStart && periodEnd ? `${periodStart} — ${periodEnd}` : esc(sb.week_label ?? sb.period ?? "—");
+  const issueDate = fmtSbDate(sb.created_at);
+  const payout = formatCurrency(Number(sb.net_payout ?? 0));
+  const labour = formatCurrency(Number(sb.job_value ?? 0));
+  const materials = formatCurrency(Number(sb.materials ?? 0));
+  const commission = Number(sb.commission ?? 0);
   const jobsCount = Number(sb.jobs_count ?? 0);
-  const jobsLine = jobsCount > 0 ? `${jobsCount} job${jobsCount === 1 ? "" : "s"} included` : "";
-  const dueLine = dueYmd ?? "—";
-  const company = args.companyName?.trim() || "Fixfy";
+  const paidAt = sb.paid_at?.trim() ? fmtSbDate(sb.paid_at) : null;
 
-  const row = (label: string, value: string) => `
-                <tr>
-                  <td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">${label}</td>
-                  <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040; font-weight:600;">${value}</td>
-                </tr>`;
+  // Banner adapts to whether the payout has actually been sent yet.
+  const banner = paidAt
+    ? `<tr><td bgcolor="#DCFCE7" style="background:#DCFCE7; padding:18px 40px; border-bottom:3px solid #22C55E;">
+         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#166534; text-transform:uppercase;">PAYOUT SENT</p>
+         <p style="margin:2px 0 0 0; font-size:14px; color:#166534;">${payout} transferred on ${paidAt}</p>
+       </td></tr>`
+    : `<tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:18px 40px; border-bottom:3px solid #020040;">
+         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">PAYOUT SCHEDULED</p>
+         <p style="margin:2px 0 0 0; font-size:14px; color:#020040;">${payout}${dueYmd ? ` · payment due ${fmtSbDate(dueYmd)}` : ""}</p>
+       </td></tr>`;
 
-  return `<!doctype html>
-<html><body style="margin:0;padding:0;background:#F2F0FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA;padding:24px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="background:#fff;border-radius:12px;overflow:hidden;max-width:560px;">
-        <tr><td bgcolor="#020040" style="background:#020040;padding:22px 32px;color:#fff;">
-          <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#A0A0CC;">Self-billing statement</p>
-          <p style="margin:6px 0 0 0;font-size:18px;font-weight:700;color:#fff;">${escapeHtmlSimple(sb.reference)}</p>
-        </td></tr>
-        <tr><td style="padding:28px 32px 8px 32px;">
-          <p style="margin:0 0 14px 0;font-size:15px;line-height:22px;">Hi ${escapeHtmlSimple(firstName)},</p>
-          <p style="margin:0 0 18px 0;font-size:14px;line-height:21px;color:#3A3A55;">
-            Your self-billing statement for ${escapeHtmlSimple(periodLine)} is attached as a PDF. The amount below is what we'll pay you for the work in that window.
-          </p>
-        </td></tr>
-        <tr><td style="padding:0 32px 24px 32px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA;border-radius:8px;">
-            <tr><td style="padding:14px 18px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                ${row("Period", escapeHtmlSimple(periodLine))}
-                ${row("Amount due", amount)}
-                ${row("Payment date", escapeHtmlSimple(dueLine))}
-                ${jobsLine ? row("Coverage", jobsLine) : ""}
-              </table>
-            </td></tr>
+  const commissionRow = commission > 0.01
+    ? `<tr><td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+           <td style="font-size:14px; color:#1A1A1A;">Commission</td>
+           <td align="right" style="font-size:14px; color:#020040; font-weight:600;">-${formatCurrency(commission)}</td>
+         </tr></table></td></tr>`
+    : "";
+
+  const dueRow = dueYmd
+    ? `<tr><td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Payment due</td>
+         <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040; font-weight:700;">${fmtSbDate(dueYmd)}</td></tr>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"></head>
+<body style="margin:0; padding:0; background:#F5F5F7; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="display:none; max-height:0; overflow:hidden; font-size:1px; line-height:1px; color:#F5F5F7;">Self-bill issued — ${payout} for jobs completed this period. PDF attached.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;"><tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(2,0,64,0.06);">
+
+      <tr><td align="center" bgcolor="#020040" style="background:#020040; padding:24px;">
+        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="100" height="auto" style="display:block; width:100px; height:auto;">
+      </td></tr>
+      <tr><td style="background:#ED4B00; line-height:5px; font-size:5px; height:5px;" height="5">&nbsp;</td></tr>
+
+      ${banner}
+
+      <tr><td style="padding:32px 40px 8px 40px;">
+        <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:3px; color:#ED4B00; text-transform:uppercase;">SELF-BILL ISSUED</p>
+      </td></tr>
+      <tr><td style="padding:0 40px 8px 40px;">
+        <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${firstName},</h1>
+      </td></tr>
+      <tr><td style="padding:0 40px 28px 40px;">
+        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">Your self-bill for the period is now available. No action required — this email is for your records, and the full job-by-job breakdown is attached as a PDF.</p>
+      </td></tr>
+
+      <tr><td style="padding:0 40px 24px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td valign="middle" style="font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Self-bill Ref</td>
+                <td valign="middle" align="right" style="font-size:14px; font-weight:700; color:#020040;">${ref}</td></tr>
+            <tr><td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Period</td>
+                <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">${periodText}</td></tr>
+            <tr><td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Issue date</td>
+                <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">${issueDate}</td></tr>
+            ${dueRow}
           </table>
-        </td></tr>
-        <tr><td style="padding:0 32px 24px 32px;">
-          <p style="margin:0;font-size:13px;line-height:19px;color:#3A3A55;">
-            Paid via bank transfer to the account on file. The PDF breaks down each job — keep it for your records.
-            If anything looks off, reply to this email before payment day and we'll sort it out.
-          </p>
-        </td></tr>
-        <tr><td bgcolor="#020040" style="background:#020040;padding:18px 32px;text-align:center;color:#A0A0CC;font-size:12px;">
-          ${escapeHtmlSimple(company)} &middot; <a href="mailto:support@getfixfy.com" style="color:#A0A0CC;text-decoration:none;">support@getfixfy.com</a>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+        </td></tr></table>
+      </td></tr>
+
+      <tr><td style="padding:0 40px 8px 40px;">
+        <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SUMMARY</p>
+      </td></tr>
+      <tr><td style="padding:0 40px 24px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;">
+          <tr><td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;"><table role="presentation" width="100%"><tr>
+            <td style="font-size:14px; color:#1A1A1A;">Jobs completed</td><td align="right" style="font-size:14px; color:#020040; font-weight:600;">${jobsCount}</td></tr></table></td></tr>
+          <tr><td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;"><table role="presentation" width="100%"><tr>
+            <td style="font-size:14px; color:#1A1A1A;">Labour</td><td align="right" style="font-size:14px; color:#020040; font-weight:600;">${labour}</td></tr></table></td></tr>
+          <tr><td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;"><table role="presentation" width="100%"><tr>
+            <td style="font-size:14px; color:#1A1A1A;">Materials reimbursed</td><td align="right" style="font-size:14px; color:#020040; font-weight:600;">${materials}</td></tr></table></td></tr>
+          ${commissionRow}
+          <tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:16px 20px;"><table role="presentation" width="100%"><tr>
+            <td style="font-size:13px; font-weight:700; color:#020040; letter-spacing:1px; text-transform:uppercase;">Total payout</td>
+            <td align="right" style="font-size:22px; font-weight:700; color:#020040;">${payout}</td></tr></table></td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:0 40px 28px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:6px;"><tr><td style="padding:12px 16px;">
+          <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">📎 The full self-bill with job-by-job breakdown is attached as a PDF (<strong style="color:#020040;">${ref}.pdf</strong>) for your accounting records.</p>
+        </td></tr></table>
+      </td></tr>
+
+      <tr><td style="padding:0 40px 28px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;"><tr><td style="padding:14px 18px;">
+          <p style="margin:0 0 4px 0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">ABOUT SELF-BILLING</p>
+          <p style="margin:0; font-size:13px; line-height:19px; color:#020040;">This is a self-billed invoice issued by Getfixfy Ltd on your behalf, as agreed in your Service Agreement. Please do not issue a separate invoice for these jobs.</p>
+        </td></tr></table>
+      </td></tr>
+
+      <tr><td style="padding:0 40px 32px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
+          <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Questions about your payout?</p>
+          <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">Reply to this email or contact <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a> &middot; <a href="tel:+442045384668" style="color:#020040; font-weight:600; text-decoration:none;">020 4538 4668</a></p>
+        </td></tr></table>
+      </td></tr>
+
+      <tr><td bgcolor="#020040" style="background:#020040; padding:24px 40px; text-align:center;">
+        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="70" height="auto" style="display:inline-block; width:70px; height:auto; margin-bottom:10px;">
+        <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">Getfixfy Ltd &middot; Co. No. 15406523<br>124 City Road, London EC1V 2NX, United Kingdom<br><a href="https://getfixfy.com" style="color:#AAAAD0; text-decoration:none;">getfixfy.com</a></p>
+      </td></tr>
+
+    </table>
+  </td></tr></table>
 </body></html>`;
 }
 

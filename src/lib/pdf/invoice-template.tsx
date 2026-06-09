@@ -28,172 +28,232 @@ export interface InvoicePdfData {
   requestPercent?: number;
 }
 
+/* Brand palette — mirrors the Statement of Charges email
+ * (src/lib/email-templates/invoice-client.html). */
+const NAVY = "#020040";
+const ORANGE = "#ED4B00";
+const LILAC = "#F2F0FA";
+const TEXT = "#1A1A1A";
+const MUTED = "#4A4A55";
+const LABEL = "#9A9AA8";
+const BORDER = "#E8E8EE";
+const HAIRLINE = "#F2F0FA";
+const PAD = 40;
+
 const styles = StyleSheet.create({
-  page: {
-    fontFamily: "Helvetica",
-    fontSize: 9,
-    paddingTop: 40,
-    paddingBottom: 50,
-    paddingHorizontal: 40,
-    color: "#020040",
-  },
-  eyebrow: { fontSize: 8, letterSpacing: 1.2, color: "#ED4B00", marginBottom: 4 },
-  title: { fontSize: 18, marginBottom: 16, fontWeight: "bold" },
-  banner: {
-    marginBottom: 16,
-    padding: 10,
-    borderRadius: 4,
-    backgroundColor: "#F2F0FA",
-  },
-  bannerPaid: { backgroundColor: "#E8F5EF" },
-  bannerText: { fontSize: 10, fontWeight: "bold" },
-  metaRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  metaLabel: { fontSize: 8, color: "#57534E", textTransform: "uppercase" },
-  metaValue: { fontSize: 10 },
-  section: { marginTop: 14, marginBottom: 8 },
-  sectionTitle: { fontSize: 10, fontWeight: "bold", marginBottom: 6 },
-  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: "#E7E5E4" },
-  totalBox: { marginTop: 12, padding: 12, backgroundColor: "#FAFAF9", borderRadius: 4 },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  totalLabel: { fontSize: 11, fontWeight: "bold" },
-  foot: { marginTop: 20, fontSize: 7, color: "#57534E", lineHeight: 1.45 },
+  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: 0 },
+
+  // Header
+  headerBand: { backgroundColor: NAVY, paddingVertical: 22, alignItems: "center" },
+  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 22, color: "#FFFFFF", letterSpacing: 0.5 },
+  accentBar: { backgroundColor: ORANGE, height: 5 },
+
+  body: { paddingHorizontal: PAD, paddingTop: 28 },
+
+  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 8 },
+  headline: { fontFamily: "Helvetica-Bold", fontSize: 22, color: NAVY, marginBottom: 8 },
+  intro: { fontSize: 11, lineHeight: 1.5, color: MUTED, marginBottom: 22 },
+
+  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 10 },
+
+  // Reference bar
+  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 16, marginBottom: 24 },
+  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 7 },
+  refRowLast: { flexDirection: "row", justifyContent: "space-between" },
+  refKey: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1, color: LABEL, textTransform: "uppercase" },
+  refVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
+  refValDue: { fontFamily: "Helvetica-Bold", fontSize: 11, color: ORANGE },
+
+  // Cards
+  card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 24 },
+  cardHead: { padding: 16, borderBottomWidth: 1, borderBottomColor: BORDER },
+  cardHeadText: { fontFamily: "Helvetica-Bold", fontSize: 14, color: NAVY },
+  infoRow: { flexDirection: "row", paddingHorizontal: 16, paddingVertical: 11 },
+  infoDivider: { borderTopWidth: 1, borderTopColor: HAIRLINE },
+  infoKey: { width: "35%", fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 0.8, color: LABEL, textTransform: "uppercase" },
+  infoVal: { flex: 1, fontSize: 11, color: TEXT, lineHeight: 1.4 },
+  infoValMuted: { color: MUTED },
+
+  // Breakdown
+  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
+  lineLabel: { fontSize: 11, color: TEXT },
+  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 16, paddingVertical: 14 },
+  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 11, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
+  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 20, color: NAVY },
+
+  // Notes
+  paidNote: { backgroundColor: "#E8F5EF", borderRadius: 8, padding: 14, marginBottom: 22 },
+  paidNoteText: { fontSize: 11, color: "#0F6B45", fontFamily: "Helvetica-Bold" },
+  vatNote: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 14, marginBottom: 24 },
+  vatEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 4 },
+  vatText: { fontSize: 10, lineHeight: 1.5, color: NAVY },
+
+  // Footer
+  footer: { backgroundColor: NAVY, paddingVertical: 22, paddingHorizontal: PAD, alignItems: "center", marginTop: 8 },
+  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 14, color: "#FFFFFF", marginBottom: 8 },
+  footerText: { fontSize: 8, lineHeight: 1.6, color: "#AAAAD0", textAlign: "center" },
 });
 
 function money(n: number): string {
   return formatGbpIncVat(n);
 }
 
+function firstNameOf(name: string): string {
+  const t = (name || "").trim().split(/\s+/)[0];
+  return t || "there";
+}
+
 export function InvoicePDF({ data }: { data: InvoicePdfData }) {
+  const isPaid = data.paid;
+  const eyebrow = isPaid ? "PAYMENT RECEIPT" : "STATEMENT OF CHARGES";
+  const intro = isPaid
+    ? "Thank you — your payment has been received. This statement is for your records."
+    : "Your job is complete. Below is your statement of charges. This statement PDF is for your records.";
+  // Partial-payment-request aware totals (a request can ask for less than the
+  // full balance — e.g. a deposit). Falls back to the full balance otherwise.
   const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
   const requestedDue =
-    !data.paid && data.amountDueNow != null && data.amountDueNow > 0
-      ? data.amountDueNow
-      : fullDue;
+    !isPaid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
   const isPartialRequest =
-    !data.paid &&
+    !isPaid &&
     data.amountDueNow != null &&
     data.amountDueNow > 0.02 &&
     Math.abs(data.amountDueNow - fullDue) > 0.02;
-  const totalLabel = data.paid
-    ? "Total paid"
+  const totalLabel = isPaid
+    ? "Amount paid"
     : isPartialRequest
       ? "Amount due now"
       : data.partial
         ? "Balance due"
-        : "Total due";
-  const totalAmount = data.paid ? data.amount : requestedDue;
+        : "Amount due";
+  const totalAmount = isPaid ? data.amount : requestedDue;
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.eyebrow}>{data.paid ? "PAYMENT RECEIPT" : "INVOICE"}</Text>
-        <Text style={styles.title}>{data.documentTitle}</Text>
+        {/* Header */}
+        <View style={styles.headerBand}>
+          <Text style={styles.wordmark}>Fixfy</Text>
+        </View>
+        <View style={styles.accentBar} />
 
-        <View style={data.paid ? [styles.banner, styles.bannerPaid] : styles.banner}>
-          <Text style={styles.bannerText}>
-            {data.paid
-              ? `Payment received — ${money(data.amount)}`
-              : data.partial
-                ? `Partial payment — ${money(data.paidAmount)} paid, ${money(data.balanceDue)} remaining`
-                : isPartialRequest
-                  ? `Payment request — ${money(totalAmount)} now (${data.requestPercent ?? 0}% of ${money(fullDue)}) by ${data.dueDate}`
-                  : `Amount due — ${money(totalAmount)} by ${data.dueDate}`}
+        <View style={styles.body}>
+          <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
+          <Text style={styles.intro}>{intro}</Text>
+
+          {isPaid ? (
+            <View style={styles.paidNote}>
+              <Text style={styles.paidNoteText}>
+                Payment received — {money(data.amount)}
+                {data.paymentDate ? ` on ${data.paymentDate}` : ""}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Reference bar */}
+          <View style={styles.refBar}>
+            <View style={styles.refRow}>
+              <Text style={styles.refKey}>{isPaid ? "Receipt Ref" : "Statement Ref"}</Text>
+              <Text style={styles.refVal}>{data.reference}</Text>
+            </View>
+            <View style={styles.refRow}>
+              <Text style={styles.refKey}>Issue date</Text>
+              <Text style={styles.refVal}>{data.issueDate}</Text>
+            </View>
+            {isPaid ? (
+              data.paymentDate ? (
+                <View style={data.quoteReference ? styles.refRow : styles.refRowLast}>
+                  <Text style={styles.refKey}>Payment date</Text>
+                  <Text style={styles.refVal}>{data.paymentDate}</Text>
+                </View>
+              ) : null
+            ) : (
+              <View style={data.quoteReference ? styles.refRow : styles.refRowLast}>
+                <Text style={styles.refKey}>Due date</Text>
+                <Text style={styles.refValDue}>{data.dueDate}</Text>
+              </View>
+            )}
+            {data.quoteReference ? (
+              <View style={styles.refRowLast}>
+                <Text style={styles.refKey}>Linked to</Text>
+                <Text style={styles.refVal}>{data.quoteReference}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Job completed */}
+          <Text style={styles.sectionLabel}>{isPaid ? "Job" : "Job completed"}</Text>
+          <View style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={styles.cardHeadText}>{data.jobTitle}</Text>
+            </View>
+            {data.serviceType ? (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoKey}>Service</Text>
+                <Text style={styles.infoVal}>{data.serviceType}</Text>
+              </View>
+            ) : null}
+            {data.propertyAddress ? (
+              <View style={[styles.infoRow, styles.infoDivider]}>
+                <Text style={styles.infoKey}>Site</Text>
+                <Text style={styles.infoVal}>{data.propertyAddress}</Text>
+              </View>
+            ) : null}
+            {data.completionDate ? (
+              <View style={[styles.infoRow, styles.infoDivider]}>
+                <Text style={styles.infoKey}>Completed on</Text>
+                <Text style={styles.infoVal}>{data.completionDate}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.infoRow, styles.infoDivider]}>
+              <Text style={styles.infoKey}>Job ref</Text>
+              <Text style={[styles.infoVal, styles.infoValMuted]}>{data.jobReference || "—"}</Text>
+            </View>
+          </View>
+
+          {/* Charges breakdown */}
+          <Text style={styles.sectionLabel}>Charges breakdown</Text>
+          <View style={styles.card}>
+            <View style={styles.lineRow}>
+              <Text style={styles.lineLabel}>Trade services</Text>
+              <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
+            </View>
+            <View style={styles.lineRow}>
+              <Text style={styles.lineLabel}>Fixfy platform fee</Text>
+              <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
+            </View>
+            {data.partial && !isPaid ? (
+              <View style={styles.lineRow}>
+                <Text style={styles.lineLabel}>Already paid</Text>
+                <Text style={styles.lineVal}>{money(data.paidAmount)}</Text>
+              </View>
+            ) : null}
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>{totalLabel}</Text>
+              <Text style={styles.totalVal}>{money(totalAmount)}</Text>
+            </View>
+          </View>
+
+          {/* VAT note */}
+          <View style={styles.vatNote}>
+            <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
+            <Text style={styles.vatText}>
+              Reply to your statement email or contact support@getfixfy.com and we&#39;ll send one across.
+            </Text>
+          </View>
+        </View>
+
+        {/* Footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerWordmark}>Fixfy</Text>
+          <Text style={styles.footerText}>
+            Getfixfy Ltd · Co. No. 15406523{"\n"}
+            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com{"\n"}
+            Fixfy operates as a disclosed platform connecting clients with independent trade providers.
           </Text>
         </View>
-
-        <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>Reference</Text>
-          <Text style={styles.metaValue}>{data.reference}</Text>
-        </View>
-        <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>Client</Text>
-          <Text style={styles.metaValue}>{data.clientName}</Text>
-        </View>
-        <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>Issue date</Text>
-          <Text style={styles.metaValue}>{data.issueDate}</Text>
-        </View>
-        {!data.paid ? (
-          <View style={styles.metaRow}>
-            <Text style={styles.metaLabel}>Due date</Text>
-            <Text style={styles.metaValue}>{data.dueDate}</Text>
-          </View>
-        ) : data.paymentDate ? (
-          <View style={styles.metaRow}>
-            <Text style={styles.metaLabel}>Payment date</Text>
-            <Text style={styles.metaValue}>{data.paymentDate}</Text>
-          </View>
-        ) : null}
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Work</Text>
-          <View style={styles.lineRow}>
-            <Text>Job</Text>
-            <Text>{data.jobTitle}</Text>
-          </View>
-          {data.jobReference ? (
-            <View style={styles.lineRow}>
-              <Text>Job ref</Text>
-              <Text>{data.jobReference}</Text>
-            </View>
-          ) : null}
-          {data.quoteReference ? (
-            <View style={styles.lineRow}>
-              <Text>Quote</Text>
-              <Text>{data.quoteReference}</Text>
-            </View>
-          ) : null}
-          {data.serviceType ? (
-            <View style={styles.lineRow}>
-              <Text>Type of work</Text>
-              <Text>{data.serviceType}</Text>
-            </View>
-          ) : null}
-          {data.propertyAddress ? (
-            <View style={styles.lineRow}>
-              <Text>Property</Text>
-              <Text>{data.propertyAddress}</Text>
-            </View>
-          ) : null}
-          {data.completionDate ? (
-            <View style={styles.lineRow}>
-              <Text>Completed</Text>
-              <Text>{data.completionDate}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Breakdown</Text>
-          <View style={styles.lineRow}>
-            <Text>Trade services</Text>
-            <Text>{money(data.tradeAmount)}</Text>
-          </View>
-          <View style={styles.lineRow}>
-            <Text>Fixfy platform fee</Text>
-            <Text>{money(data.feeAmount)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.totalBox}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>{totalLabel}</Text>
-            <Text style={styles.totalLabel}>{money(totalAmount)}</Text>
-          </View>
-          {data.partial ? (
-            <View style={styles.totalRow}>
-              <Text>Already paid</Text>
-              <Text>{money(data.paidAmount)}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <Text style={styles.foot}>
-          Fixfy operates as a disclosed platform connecting clients with independent trade providers.
-          {data.paid
-            ? " This receipt confirms your payment for the work listed above."
-            : " This invoice covers the work completed below."}
-        </Text>
       </Page>
     </Document>
   );
