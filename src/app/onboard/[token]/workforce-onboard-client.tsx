@@ -87,6 +87,7 @@ type SessionData = {
     companyName: string;
     primaryColor?: string;
   };
+  profilePhotoUrl?: string | null;
 };
 
 function OnboardBrand({ branding }: { branding: SessionData["branding"] }) {
@@ -214,6 +215,9 @@ export default function WorkforceOnboardClient() {
     });
     setSigned(!!data.contractSigned);
     setAgreeContract(!!data.contractSigned);
+    if (typeof data.profilePhotoUrl === "string" && data.profilePhotoUrl.trim()) {
+      setPhotoPreview(data.profilePhotoUrl);
+    }
   }, []);
 
   const load = useCallback(async () => {

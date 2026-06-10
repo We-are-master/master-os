@@ -7,8 +7,11 @@ import {
 } from "@/lib/payroll-doc-checklist";
 import { parseFrontendSetup, resolveWorkforceDocumentRules } from "@/lib/frontend-setup";
 import { resolveContractorAgreementHtml } from "@/lib/workforce-contractor-agreement-server";
+import { PROFILE_PHOTO_DOC_KEY } from "@/lib/payroll-doc-checklist";
 
 export const dynamic = "force-dynamic";
+
+const DOC_BUCKET = "payroll-internal-documents";
 
 async function loadSession(token: string) {
   const payload = verifyWorkforceOnboardingToken(token);
@@ -151,6 +154,22 @@ export async function GET(req: NextRequest) {
       }
     : null;
 
+  const admin = createServiceClient();
+  let profilePhotoUrl: string | null = null;
+  const files = (session.person.payroll_document_files ?? {}) as Record<
+    string,
+    { path?: string } | undefined
+  >;
+  const photoPath = files[PROFILE_PHOTO_DOC_KEY]?.path;
+  if (photoPath) {
+    const { data: signed } = await admin.storage
+      .from(DOC_BUCKET)
+      .createSignedUrl(photoPath, 3600, {
+        transform: { width: 256, height: 256, resize: "cover" },
+      });
+    profilePhotoUrl = signed?.signedUrl ?? null;
+  }
+
   return NextResponse.json({
     person: session.person,
     contract: contractOut,
@@ -158,6 +177,7 @@ export async function GET(req: NextRequest) {
     mandatoryDocKeys: session.mandatoryDocKeys,
     contractSigned: session.contractSigned,
     isProfileRefresh: session.isProfileRefresh,
+    profilePhotoUrl,
     branding: {
       companyName: branding?.company_name ?? "Fixfy",
       primaryColor: branding?.primary_color ?? "#ED4B00",
