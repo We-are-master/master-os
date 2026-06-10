@@ -2426,14 +2426,16 @@ export function InvoiceDetailDrawer({
             {invoice.job_reference ? (
               <>
                 <span aria-hidden>·</span>
-                <a
-                  href={`/schedule?job=${encodeURIComponent(invoice.job_reference)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-semibold text-primary"
-                >
-                  {invoice.job_reference} ↗
-                </a>
+                {linkedJob?.id ? (
+                  <a
+                    href={`/jobs/${linkedJob.id}`}
+                    className="font-semibold text-primary hover:underline"
+                  >
+                    {invoice.job_reference} ↗
+                  </a>
+                ) : (
+                  <span className="font-semibold text-text-secondary">{invoice.job_reference}</span>
+                )}
               </>
             ) : null}
             <button

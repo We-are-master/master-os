@@ -3,6 +3,7 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { displayBillingReference } from "@/lib/billing-reference";
 import type { InvoicePdfData } from "@/lib/pdf/invoice-template";
 import type { Invoice, Job } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -84,8 +85,8 @@ export async function loadInvoicePdfData(
   const { trade, fee } = splitTradeAndFee(invAmt, job);
 
   return {
-    reference: inv.reference,
-    documentTitle: paid ? "Payment Receipt" : "Invoice",
+    reference: displayBillingReference(inv.reference),
+    documentTitle: paid ? "Payment Receipt" : "Statement of Charges",
     clientName: billing?.displayName ?? inv.client_name,
     jobTitle: job?.title ?? inv.job_reference ?? "Job",
     jobReference: inv.job_reference?.trim() ?? job?.reference ?? "",

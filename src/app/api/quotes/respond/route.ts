@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
       ]);
       marks.push(["next_refs", performance.now() - tRefs]);
       const jobReference = (jobRefRow as string) ?? `JOB-${Date.now()}`;
-      const invoiceReference = (invRefRow as string) ?? `INV-${Date.now()}`;
+      const invoiceReference = (invRefRow as string) ?? `RCP-${Date.now()}`;
 
       const totalValue = Number(quote.total_value ?? 0);
       const finalBalance = Math.max(0, totalValue - depositRequired);
@@ -334,7 +334,7 @@ export async function POST(req: NextRequest) {
       const tWrites = performance.now();
       /** Final invoice ref RPC can run in parallel with the post-Stripe writes. */
       const finalRefPromise: Promise<string | null> = finalBalance > 0.01
-        ? Promise.resolve(supabase.rpc("next_invoice_ref")).then(({ data }) => (data as string | null) ?? `INV-F-${Date.now()}`)
+        ? Promise.resolve(supabase.rpc("next_invoice_ref")).then(({ data }) => (data as string | null) ?? `RCP-F-${Date.now()}`)
         : Promise.resolve(null);
 
       /** Three updates that touch different rows can all happen in parallel. */
@@ -430,7 +430,7 @@ export async function POST(req: NextRequest) {
     ]);
     marks.push(["next_refs", performance.now() - tRefsNoDep]);
     const jobReferenceNoDep = (jobRefRowNoDep as string) ?? `JOB-${Date.now()}`;
-    const invoiceReferenceNoDep = (invRefRowNoDep as string) ?? `INV-${Date.now()}`;
+    const invoiceReferenceNoDep = (invRefRowNoDep as string) ?? `RCP-${Date.now()}`;
 
     const nowNoDep = new Date().toISOString();
     const dueDateNoDep = new Date();

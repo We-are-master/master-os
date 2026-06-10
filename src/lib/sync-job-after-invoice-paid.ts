@@ -57,16 +57,16 @@ async function sumLinkedInvoicePayments(client: SupabaseClient, invoiceId: strin
  * When a customer invoice is marked paid (Stripe webhook or Finance UI), align job flags and job_payments.
  * Skips duplicate ledger rows if `source_invoice_id` already exists or job collections already satisfy billable.
  */
-export async function syncJobAfterInvoicePaidToLedger(
+export async function applyManualInvoicePaymentToJobLedger(
   client: SupabaseClient,
   invoiceId: string,
-  sourceLabel: "Stripe" | "Manual"
-): Promise<void> {
+  sourceLabel: "Stripe" | "Manual",
+): Promise<string | null> {
   const { data: inv, error: invErr } = await client.from("invoices").select("*").eq("id", invoiceId).maybeSingle();
-  if (invErr || !inv || inv.status !== "paid") return;
+  if (invErr || !inv || inv.status !== "paid") return null;
 
   const job = await loadJobForInvoice(client, inv as { job_reference?: string | null }, invoiceId);
-  if (!job) return;
+  if (!job) return null;
 
   // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
   let pays: { type: string; amount: number }[] | null = null;
@@ -111,8 +111,8 @@ export async function syncJobAfterInvoicePaidToLedger(
     }
   }
   if (existingSrcErr && !isSupabaseMissingColumnError(existingSrcErr, "source_invoice_id")) {
-    console.error("syncJobAfterInvoicePaidToLedger: existingSource query", existingSrcErr);
-    return;
+    console.error("applyManualInvoicePaymentToJobLedger: existingSource query", existingSrcErr);
+    return job.id;
   }
   const hasExistingSource = Boolean(existingSource) && !existingSrcErr;
 
@@ -153,13 +153,44 @@ export async function syncJobAfterInvoicePaidToLedger(
     }
 
     if (insErr && (insErr as { code?: string }).code !== "23505") {
-      console.error("syncJobAfterInvoicePaidToLedger: job_payments insert", insErr);
+      console.error("applyManualInvoicePaymentToJobLedger: job_payments insert", insErr);
     }
   }
 
-  await reconcileJobCustomerPaymentFlags(client, job.id);
-  await syncInvoicesFromJobCustomerPayments(client, job.id);
-  await maybeCompleteAwaitingPaymentJob(client, job.id);
+  return job.id;
+}
+
+export async function finalizeJobAfterInvoicePaid(client: SupabaseClient, jobId: string): Promise<void> {
+  await reconcileJobCustomerPaymentFlags(client, jobId);
+  await syncInvoicesFromJobCustomerPayments(client, jobId);
+  await maybeCompleteAwaitingPaymentJob(client, jobId);
+}
+
+export async function syncJobAfterInvoicePaidToLedger(
+  client: SupabaseClient,
+  invoiceId: string,
+  sourceLabel: "Stripe" | "Manual",
+): Promise<void> {
+  const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
+  if (!jobId) return;
+  await finalizeJobAfterInvoicePaid(client, jobId);
+}
+
+/** Bulk mark-paid: ledger rows in parallel, then one finalize pass per unique job. */
+export async function syncJobsAfterBulkInvoicesMarkedPaid(
+  client: SupabaseClient,
+  invoiceIds: string[],
+  sourceLabel: "Stripe" | "Manual" = "Manual",
+): Promise<void> {
+  if (invoiceIds.length === 0) return;
+  const jobIds = new Set<string>();
+  await Promise.all(
+    invoiceIds.map(async (invoiceId) => {
+      const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
+      if (jobId) jobIds.add(jobId);
+    }),
+  );
+  await Promise.all([...jobIds].map((jobId) => finalizeJobAfterInvoicePaid(client, jobId)));
 }
 
 /**

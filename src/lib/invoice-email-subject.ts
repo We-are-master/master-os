@@ -1,4 +1,5 @@
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
+import { displayBillingReference } from "@/lib/billing-reference";
 import type { Invoice } from "@/types/database";
 
 export function resolveInvoiceCcEmail(companyEmail?: string | null): string {
@@ -14,7 +15,7 @@ export function buildInvoiceEmailSubject(
   jobReference: string,
 ): string {
   if (isInvoicePaymentVerified(invoice)) {
-    return `Payment receipt — ${invoice.reference}`;
+    return `Payment receipt — ${displayBillingReference(invoice.reference)}`;
   }
   return `${jobReference} Your billing is ready`;
 }

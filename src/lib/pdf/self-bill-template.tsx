@@ -59,48 +59,50 @@ const MUTED = "#4A4A55";
 const LABEL = "#9A9AA8";
 const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
-const PAD = 40;
+const FOOTER_INFO = "#AAAAD0";
+const PAD = 32;
+const FOOTER_RESERVE = 68;
 
 const styles = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: 0 },
+  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: FOOTER_RESERVE },
 
-  headerBand: { backgroundColor: NAVY, paddingVertical: 22, alignItems: "center" },
-  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 22, color: "#FFFFFF", letterSpacing: 0.5 },
-  accentBar: { backgroundColor: ORANGE, height: 5 },
+  headerBand: { backgroundColor: NAVY, paddingVertical: 14, alignItems: "center" },
+  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 20, color: "#FFFFFF", letterSpacing: 0.5 },
+  accentBar: { backgroundColor: ORANGE, height: 4 },
 
-  body: { paddingHorizontal: PAD, paddingTop: 28 },
+  body: { paddingHorizontal: PAD, paddingTop: 18 },
 
-  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 8 },
-  headline: { fontFamily: "Helvetica-Bold", fontSize: 22, color: NAVY, marginBottom: 8 },
-  intro: { fontSize: 11, lineHeight: 1.5, color: MUTED, marginBottom: 22 },
+  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 6 },
+  headline: { fontFamily: "Helvetica-Bold", fontSize: 18, color: NAVY, marginBottom: 6 },
+  intro: { fontSize: 10.5, lineHeight: 1.45, color: MUTED, marginBottom: 12 },
 
-  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 10, marginTop: 4 },
+  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 8, marginTop: 2 },
 
   // Payout-sent banner
-  paidBanner: { backgroundColor: "#DCFCE7", borderLeftWidth: 4, borderLeftColor: "#22C55E", borderRadius: 4, padding: 14, marginBottom: 22 },
-  paidEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2, color: "#166534", textTransform: "uppercase", marginBottom: 3 },
-  paidText: { fontSize: 12, color: "#166534" },
+  paidBanner: { backgroundColor: "#DCFCE7", borderLeftWidth: 4, borderLeftColor: "#22C55E", borderRadius: 4, padding: 11, marginBottom: 12 },
+  paidEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2, color: "#166534", textTransform: "uppercase", marginBottom: 2 },
+  paidText: { fontSize: 11, color: "#166534" },
 
   // Reference bar
-  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 16, marginBottom: 24 },
-  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 7 },
+  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 12, marginBottom: 14 },
+  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 5 },
   refRowLast: { flexDirection: "row", justifyContent: "space-between" },
   refKey: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1, color: LABEL, textTransform: "uppercase" },
   refVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
 
   // Summary card
-  card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 24 },
-  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
-  lineLabel: { fontSize: 11, color: TEXT },
-  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 16, paddingVertical: 14 },
-  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 11, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
-  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 20, color: NAVY },
+  card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 14 },
+  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
+  lineLabel: { fontSize: 10.5, color: TEXT },
+  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 10.5, color: NAVY },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 12, paddingVertical: 11 },
+  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 10, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
+  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 17, color: NAVY },
 
   // Per-job breakdown table
-  tableHead: { flexDirection: "row", backgroundColor: NAVY, borderTopLeftRadius: 6, borderTopRightRadius: 6, paddingHorizontal: 12, paddingVertical: 8 },
+  tableHead: { flexDirection: "row", backgroundColor: NAVY, borderTopLeftRadius: 6, borderTopRightRadius: 6, paddingHorizontal: 10, paddingVertical: 7 },
   th: { fontFamily: "Helvetica-Bold", fontSize: 8, color: "#FFFFFF", letterSpacing: 0.4, textTransform: "uppercase" },
-  tableRow: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: HAIRLINE, borderLeftWidth: 1, borderRightWidth: 1, borderLeftColor: BORDER, borderRightColor: BORDER },
+  tableRow: { flexDirection: "row", paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: HAIRLINE, borderLeftWidth: 1, borderRightWidth: 1, borderLeftColor: BORDER, borderRightColor: BORDER },
   cellRef: { width: "20%" },
   cellTitle: { width: "30%" },
   cellAddr: { width: "30%" },
@@ -111,19 +113,28 @@ const styles = StyleSheet.create({
   lineId: { fontSize: 6, color: LABEL, marginTop: 1 },
 
   // Void box
-  voidBox: { backgroundColor: "#F5F5F4", borderRadius: 6, borderWidth: 1, borderColor: "#D6D3D1", padding: 12, marginBottom: 22 },
-  voidTitle: { fontSize: 11, fontFamily: "Helvetica-Bold", marginBottom: 6, color: "#44403C" },
-  voidRow: { fontSize: 9, marginBottom: 3, color: "#44403C" },
-  voidReason: { fontSize: 8, marginTop: 6, color: MUTED, lineHeight: 1.4 },
+  voidBox: { backgroundColor: "#F5F5F4", borderRadius: 6, borderWidth: 1, borderColor: "#D6D3D1", padding: 10, marginBottom: 12 },
+  voidTitle: { fontSize: 10.5, fontFamily: "Helvetica-Bold", marginBottom: 5, color: "#44403C" },
+  voidRow: { fontSize: 9, marginBottom: 2, color: "#44403C" },
+  voidReason: { fontSize: 8, marginTop: 4, color: MUTED, lineHeight: 1.35 },
 
   // HMRC notice
-  notice: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 14, marginTop: 8, marginBottom: 24 },
-  noticeEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 4 },
-  noticeText: { fontSize: 9, lineHeight: 1.5, color: NAVY },
+  notice: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 11, marginTop: 4, marginBottom: 12 },
+  noticeEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 3 },
+  noticeText: { fontSize: 8.5, lineHeight: 1.4, color: NAVY },
 
-  footer: { backgroundColor: NAVY, paddingVertical: 22, paddingHorizontal: PAD, alignItems: "center", marginTop: 8 },
-  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 14, color: "#FFFFFF", marginBottom: 8 },
-  footerText: { fontSize: 8, lineHeight: 1.6, color: "#AAAAD0", textAlign: "center" },
+  footer: {
+    position: "absolute" as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: NAVY,
+    paddingVertical: 14,
+    paddingHorizontal: PAD,
+    alignItems: "center",
+  },
+  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 13, color: "#FFFFFF", marginBottom: 6 },
+  footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
 
 function fmt(n: number): string {
@@ -136,7 +147,6 @@ function firstNameOf(name: string): string {
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
-  const isInternal = data.billOrigin === "internal";
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
   const originalAmt =
@@ -168,7 +178,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           </Text>
 
           {showPayoutBanner ? (
-            <View style={styles.paidBanner}>
+            <View style={styles.paidBanner} wrap={false}>
               <Text style={styles.paidEyebrow}>Payout</Text>
               <Text style={styles.paidText}>
                 {fmt(data.netPayout)} for {data.jobsCount} job{data.jobsCount === 1 ? "" : "s"} this period
@@ -178,7 +188,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           ) : null}
 
           {isVoided ? (
-            <View style={styles.voidBox}>
+            <View style={styles.voidBox} wrap={false}>
               <Text style={styles.voidTitle}>Payout adjustment (no longer due)</Text>
               <Text style={styles.voidRow}>Original amount: {fmt(originalAmt)}</Text>
               <Text style={styles.voidRow}>Payable amount: {fmt(data.netPayout)}</Text>
@@ -193,7 +203,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           ) : null}
 
           {/* Reference bar */}
-          <View style={styles.refBar}>
+          <View style={styles.refBar} wrap={false}>
             <View style={styles.refRow}>
               <Text style={styles.refKey}>Self-bill Ref</Text>
               <Text style={styles.refVal}>{data.reference}</Text>
@@ -212,7 +222,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
 
           {/* Summary */}
           <Text style={styles.sectionLabel}>Summary</Text>
-          <View style={styles.card}>
+          <View style={styles.card} wrap={false}>
             <View style={styles.lineRow}>
               <Text style={styles.lineLabel}>Jobs completed</Text>
               <Text style={styles.lineVal}>{data.jobsCount}</Text>
@@ -241,8 +251,8 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           {data.lines.length > 0 ? (
             <>
               <Text style={styles.sectionLabel}>Job-by-job breakdown</Text>
-              <View style={{ marginBottom: 24 }}>
-                <View style={styles.tableHead}>
+              <View style={{ marginBottom: 14 }}>
+                <View style={styles.tableHead} wrap={false}>
                   <Text style={[styles.th, styles.cellRef]}>Job</Text>
                   <Text style={[styles.th, styles.cellTitle]}>Title</Text>
                   <Text style={[styles.th, styles.cellAddr]}>Property</Text>
@@ -267,7 +277,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           ) : null}
 
           {/* HMRC self-billing notice */}
-          <View style={styles.notice}>
+          <View style={styles.notice} wrap={false}>
             <Text style={styles.noticeEyebrow}>About self-billing</Text>
             <Text style={styles.noticeText}>
               This document is issued under a self-billing arrangement in line with UK practice
@@ -279,8 +289,8 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           </View>
         </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
+        {/* Footer (navy, pinned) */}
+        <View style={styles.footer} fixed>
           <Text style={styles.footerWordmark}>Fixfy</Text>
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}

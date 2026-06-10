@@ -59,10 +59,16 @@ export async function verifyTradePartnerSession(userId: string): Promise<TradePa
   return (row as TradePartnerRow | null) ?? null;
 }
 
-export function resolveTradePortalRedirectUrl(): string {
+const PARTNER_TRADE_PORTAL_DEFAULT = "https://partners.getfixfy.com";
+
+/** Public base URL for Fixfy Trade (partners.getfixfy.com). Used in onboarding emails/links. */
+export function resolvePartnerTradePortalBaseUrl(): string {
   return (
     process.env.NEXT_PUBLIC_PARTNER_APP_URL?.trim().replace(/\/$/, "") ||
-    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "") ||
-    "/"
+    PARTNER_TRADE_PORTAL_DEFAULT
   );
+}
+
+export function resolveTradePortalRedirectUrl(): string {
+  return resolvePartnerTradePortalBaseUrl();
 }

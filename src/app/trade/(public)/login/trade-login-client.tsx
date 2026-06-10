@@ -21,7 +21,7 @@ export function TradeLoginClient() {
   const initialTab = params.get("tab") === "create" ? "create" : "signin";
 
   const [tab, setTab] = useState<AuthTab>(initialTab);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => params.get("email")?.trim().toLowerCase() ?? "");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);

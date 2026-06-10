@@ -135,12 +135,29 @@ export function isInvoiceOpen(inv: Invoice, todayYmd = invoiceFinanceListTodayYm
   return true;
 }
 
+/** Ready for Money In — issued, not draft/on_hold, linked job not on hold. */
+export function isInvoiceCollectible(
+  inv: Invoice,
+  jobsByRef?: Record<string, InvoiceListJobSnapshot>,
+  todayYmd = invoiceFinanceListTodayYmd(),
+): boolean {
+  if (inv.status === "draft" || inv.status === "on_hold") return false;
+  if (!isInvoiceOpen(inv, todayYmd)) return false;
+  const ref = inv.job_reference?.trim();
+  if (ref && jobsByRef?.[ref]?.status === "on_hold") return false;
+  return true;
+}
+
 export function invoiceDisplayStatus(
   inv: Invoice,
   todayYmd = invoiceFinanceListTodayYmd(),
-): "Overdue" | "Sent" | "Paid" | "Draft" | "Partial" | "Cancelled" {
+  jobsByRef?: Record<string, InvoiceListJobSnapshot>,
+): "Overdue" | "Sent" | "Paid" | "Draft" | "Partial" | "Cancelled" | "On hold" {
   if (inv.status === "paid") return "Paid";
   if (inv.status === "cancelled") return "Cancelled";
+  if (inv.status === "on_hold") return "On hold";
+  const ref = inv.job_reference?.trim();
+  if (ref && jobsByRef?.[ref]?.status === "on_hold") return "On hold";
   if (inv.status === "draft") return "Draft";
   if (inv.status === "partially_paid") return "Partial";
   if (invoiceIsDerivedOverdue(inv, todayYmd)) return "Overdue";

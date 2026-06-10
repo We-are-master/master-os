@@ -65,6 +65,23 @@ describe("buildAttentionAccountGroups", () => {
     assert.equal(groups[0]!.invoiceCount, 2);
     assert.equal(groups[0]!.rows[0]!.clientName, "Uly Lo");
   });
+
+  it("excludes draft and on_hold invoices from Money In groups", () => {
+    const groups = buildAttentionAccountGroups(
+      [
+        inv("1", { client_name: "A", status: "draft" }),
+        inv("2", { client_name: "B", status: "on_hold" }),
+        inv("3", { client_name: "C", status: "pending" }),
+      ],
+      {},
+      {},
+      {},
+      {},
+      {},
+    );
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0]!.invoiceCount, 1);
+  });
 });
 
 describe("buildInvoiceLedgerAccountGroups", () => {
@@ -72,7 +89,7 @@ describe("buildInvoiceLedgerAccountGroups", () => {
     const groups = buildInvoiceLedgerAccountGroups(
       [
         inv("1", { client_name: "A", source_account_id: "acc-ct", status: "draft" }),
-        inv("2", { client_name: "B", source_account_id: "acc-ct", status: "sent" }),
+        inv("2", { client_name: "B", source_account_id: "acc-ct", status: "awaiting_payment" }),
         inv("3", { client_name: "C", source_account_id: "acc-hk", status: "pending" }),
       ],
       { "acc-hk": "Housekeep", "acc-ct": "Checkatrade" },
@@ -109,7 +126,7 @@ describe("buildCashflowWeekly", () => {
           client_name: "Acme",
           due_date: "2026-06-12",
           amount: 2574.7,
-          status: "partial",
+          status: "partially_paid",
           amount_paid: 0,
         }),
       ],

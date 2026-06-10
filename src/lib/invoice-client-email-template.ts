@@ -7,6 +7,7 @@ import type { Job } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { displayBillingReference } from "@/lib/billing-reference";
 
 export type InvoiceClientEmailContext = {
   clientName: string;
@@ -33,7 +34,7 @@ export type InvoiceEmailOptions = {
 const PAID_INTRO =
   "We've received your payment for the work below. Thanks for choosing Fixfy.";
 const UNPAID_INTRO =
-  "Your job is complete. Please find your invoice below — payment details are included.";
+  "Your job is complete. Please find your statement of charges below — payment details are included.";
 const PARTIAL_INTRO =
   "We've received a partial payment. The remaining balance is shown below.";
 
@@ -232,7 +233,7 @@ function buildBankDetailsBlock(): string {
                     <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">Or pay by bank transfer</p>
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
                     </table>
-                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the invoice reference as the payment reference so we can match it automatically.</p>
+                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the statement reference as the payment reference so we can match it automatically.</p>
                   </td>
                 </tr>
               </table>
@@ -300,8 +301,7 @@ export function buildInvoiceClientEmailHTML(
   const quoteRef = context.quoteReference?.trim()
     ? refForTemplate(context.quoteReference, "QT")
     : "—";
-  const invRefShort = refForTemplate(invoice.reference, "INV");
-  const receiptRefShort = refForTemplate(invoice.reference, "RC");
+  const billingRefDisplay = displayBillingReference(invoice.reference);
   const issueDate = formatDisplayDate(invoice.created_at);
   const dueDate = formatDisplayDate(invoice.due_date);
   const paymentDate = formatDisplayDate(
@@ -328,10 +328,10 @@ export function buildInvoiceClientEmailHTML(
           </tr>`
       : "");
 
-  const documentEyebrow = paid ? "PAYMENT RECEIPT" : "INVOICE";
-  const pageTitle = paid ? "Payment Receipt" : "Invoice";
-  const refLabel = paid ? "Receipt Ref" : "Invoice Ref";
-  const refValue = paid ? `RC-${escapeHtml(receiptRefShort)}` : `INV-${escapeHtml(invRefShort)}`;
+  const documentEyebrow = paid ? "PAYMENT RECEIPT" : "STATEMENT OF CHARGES";
+  const pageTitle = paid ? "Payment Receipt" : "Statement of Charges";
+  const refLabel = paid ? "Receipt Ref" : "Statement Ref";
+  const refValue = escapeHtml(billingRefDisplay);
 
   const intro = options?.customMessage?.trim()
     ? escapeHtml(options.customMessage.trim())
@@ -384,13 +384,13 @@ export function buildInvoiceClientEmailHTML(
 
   const vatPrimary = paid
     ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
-    : "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This invoice covers the work completed below.";
+    : "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This statement covers the work completed below.";
 
   const preheader = paid
-    ? `Payment received — £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt RC-${receiptRefShort}.`
+    ? `Payment received — £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}.`
     : isPartialRequest
-      ? `Invoice INV-${invRefShort} — £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
-      : `Invoice INV-${invRefShort} — £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
+      ? `Statement ${billingRefDisplay} — £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
+      : `Statement ${billingRefDisplay} — £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
 
   html = replaceAll(html, "page_title", escapeHtml(pageTitle));
   html = replaceAll(html, "preheader", escapeHtml(preheader));

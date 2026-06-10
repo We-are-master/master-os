@@ -15,6 +15,7 @@ import {
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
+import { holdLinkedInvoicesForJob } from "@/lib/sync-invoices-on-job-hold";
 
 const NON_HOLDABLE = new Set(["completed", "cancelled", "deleted", "on_hold"]);
 const DEFAULT_PRESET_ID = "complaint";
@@ -144,6 +145,12 @@ export async function putJobOnHoldFromZendesk(
   if (upErr) {
     console.error("[zendesk-on-hold-webhook] update failed:", upErr);
     return { ok: false, status: 500, error: "Failed to put job on hold." };
+  }
+
+  try {
+    await holdLinkedInvoicesForJob(supabase, job.reference);
+  } catch (e) {
+    console.error("[zendesk-on-hold-webhook] hold linked invoices failed:", e);
   }
 
   await supabase.from("audit_logs").insert([

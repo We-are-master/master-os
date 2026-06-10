@@ -7,6 +7,7 @@ import {
 } from "@/lib/partner-required-docs";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
+import { resolvePartnerJoinInvite } from "@/lib/partner-join-invite";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +100,7 @@ export async function POST(req: NextRequest) {
   const website          = String(form.get("website")          ?? "").trim();
   const profilePhoto     = form.get("profile_photo");
   const profilePhotoFile = profilePhoto instanceof File && profilePhoto.size > 0 ? profilePhoto : null;
+  const inviteCode       = String(form.get("inviteCode") ?? "").trim();
 
   if (!email || !password || !fullName) {
     return NextResponse.json({ error: "Name, email and password are required." }, { status: 400 });
@@ -119,6 +121,21 @@ export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
   const docRules = await fetchPartnerDocumentRules(supabase);
   const DOC_DEFS = joinDocDefsFromRules(docRules);
+
+  let invitedPartnerId: string | null = null;
+  if (inviteCode) {
+    const invite = await resolvePartnerJoinInvite(supabase, inviteCode);
+    if (!invite) {
+      return NextResponse.json({ error: "This invite link has expired or is invalid." }, { status: 401 });
+    }
+    if (invite.email.toLowerCase() !== email) {
+      return NextResponse.json(
+        { error: "Use the same email address this invite was sent to." },
+        { status: 422 },
+      );
+    }
+    invitedPartnerId = invite.partnerId;
+  }
 
   // Validate all documents are present
   const missingDocs = DOC_DEFS.filter(({ key }) => {
@@ -231,32 +248,58 @@ export async function POST(req: NextRequest) {
     })
     .eq("id", userId);
 
-  // 3. Create partner directory row
-  const { data: partnerRow, error: partnerErr } = await supabase
-    .from("partners")
-    .insert({
-      company_name:    companyName || fullName,
-      contact_name:    fullName,
-      email,
-      phone:           phone || null,
-      partner_address: address || null,
-      trade:           trades[0] || "General",
-      trades:          trades.length > 0 ? trades : null,
-      status:          "onboarding",
-      location:        "UK",
-      auth_user_id:    userId,
-      utr:             utr || null,
-      verified:        false,
-    })
-    .select("id")
-    .single();
+  // 3. Create or claim partner directory row
+  let partnerId: string;
+  if (invitedPartnerId) {
+    const { data: updatedPartner, error: updateErr } = await supabase
+      .from("partners")
+      .update({
+        company_name: companyName || fullName,
+        contact_name: fullName,
+        email,
+        phone: phone || null,
+        partner_address: address || null,
+        trade: trades[0] || "General",
+        trades: trades.length > 0 ? trades : null,
+        status: "onboarding",
+        auth_user_id: userId,
+        utr: utr || null,
+      })
+      .eq("id", invitedPartnerId)
+      .select("id")
+      .single();
 
-  if (partnerErr || !partnerRow?.id) {
-    console.error("Partner insert error:", partnerErr);
-    return NextResponse.json({ error: "Failed to create partner record." }, { status: 500 });
+    if (updateErr || !updatedPartner?.id) {
+      console.error("Partner invite update error:", updateErr);
+      return NextResponse.json({ error: "Failed to link your account to the partner record." }, { status: 500 });
+    }
+    partnerId = updatedPartner.id as string;
+  } else {
+    const { data: partnerRow, error: partnerErr } = await supabase
+      .from("partners")
+      .insert({
+        company_name: companyName || fullName,
+        contact_name: fullName,
+        email,
+        phone: phone || null,
+        partner_address: address || null,
+        trade: trades[0] || "General",
+        trades: trades.length > 0 ? trades : null,
+        status: "onboarding",
+        location: "UK",
+        auth_user_id: userId,
+        utr: utr || null,
+        verified: false,
+      })
+      .select("id")
+      .single();
+
+    if (partnerErr || !partnerRow?.id) {
+      console.error("Partner insert error:", partnerErr);
+      return NextResponse.json({ error: "Failed to create partner record." }, { status: 500 });
+    }
+    partnerId = partnerRow.id as string;
   }
-
-  const partnerId = partnerRow.id as string;
 
   // Mirror the partner into Zendesk (Organisation + User) so future side
   // conversations on jobs target the partner's zendesk_user_id. Fire-and-

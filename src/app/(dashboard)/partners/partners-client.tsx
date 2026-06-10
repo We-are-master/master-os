@@ -24,7 +24,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus, Pencil,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus, Pencil, Loader2,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -137,6 +137,7 @@ import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
 import { displayPartnerRating, PARTNER_RATING_MAX } from "@/lib/partner-rating";
 import { refreshLegacyZeroPartnerRatings, refreshPartnerRating } from "@/services/partner-rating";
+import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 
 const PARTNERS_PAGE_SIZE = 10;
 const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
@@ -258,6 +259,11 @@ function PartnersDirectoryGridView({
   bulkActionsSlot,
   catalogServices,
   maxEarningsInView,
+  canSendPartnerLinks,
+  onboardingCopyBusyId,
+  onboardingSendBusyId,
+  onCopyOnboardingLink,
+  onSendOnboardingLink,
 }: {
   data: Partner[];
   loading: boolean;
@@ -273,6 +279,11 @@ function PartnersDirectoryGridView({
   bulkActionsSlot: ReactNode;
   catalogServices: readonly CatalogService[];
   maxEarningsInView: number;
+  canSendPartnerLinks: boolean;
+  onboardingCopyBusyId: string | null;
+  onboardingSendBusyId: string | null;
+  onCopyOnboardingLink: (p: Partner) => void;
+  onSendOnboardingLink: (p: Partner) => void;
 }) {
   const allIds = data.map((p) => p.id);
   const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
@@ -460,9 +471,55 @@ function PartnersDirectoryGridView({
                     </div>
                   </dl>
 
-                  <div className="flex items-center justify-end text-sm text-text-tertiary pt-1">
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-border-light/80">
+                    {canSendPartnerLinks ? (
+                      <div
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-[11px]"
+                          disabled={onboardingCopyBusyId === item.id || onboardingSendBusyId === item.id}
+                          onClick={() => onCopyOnboardingLink(item)}
+                          icon={
+                            onboardingCopyBusyId === item.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Link2 className="h-3.5 w-3.5" />
+                            )
+                          }
+                          title="Copy onboarding link"
+                        >
+                          Copy
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2 text-[11px]"
+                          disabled={onboardingCopyBusyId === item.id || onboardingSendBusyId === item.id}
+                          onClick={() => onSendOnboardingLink(item)}
+                          icon={
+                            onboardingSendBusyId === item.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Mail className="h-3.5 w-3.5" />
+                            )
+                          }
+                          title="Email onboarding link"
+                        >
+                          Send
+                        </Button>
+                      </div>
+                    ) : (
+                      <span />
+                    )}
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-text-secondary">
-                      Open partner
+                      Open
                       <ArrowRight className="h-4 w-4" aria-hidden />
                     </span>
                   </div>
@@ -929,6 +986,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
   const [listSortKey, setListSortKey] = useState<string | null>("total_earnings");
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
+  const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
+  const [onboardingSendBusyId, setOnboardingSendBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -952,6 +1011,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const isAdmin = profile?.role === "admin";
+  const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
   const router = useRouter();
 
   const [tradePickOptions, setTradePickOptions] = useState<readonly string[]>([]);
@@ -973,6 +1033,60 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     const ids = Array.from(selectedIds).join(",");
     router.push(`/outreach?partnerIds=${encodeURIComponent(ids)}`);
   }, [selectedIds, router]);
+
+  const openPartnerForEmailFix = useCallback((p: Partner) => {
+    setPartnerDrawerInitialTab("overview");
+    setSelectedPartner(p);
+  }, []);
+
+  const handleCopyPartnerOnboardingLink = useCallback(
+    async (p: Partner) => {
+      const email = p.email?.trim();
+      if (!email) {
+        toast.error("Add partner email on Profile first");
+        openPartnerForEmailFix(p);
+        return;
+      }
+      setOnboardingCopyBusyId(p.id);
+      try {
+        const { onboardingUrl, warning } = await requestPartnerOnboardingLink(p.id, { sendEmail: false });
+        await navigator.clipboard.writeText(onboardingUrl);
+        toast.success("Onboarding link copied");
+        if (warning) toast.warning(warning);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not generate link");
+      } finally {
+        setOnboardingCopyBusyId(null);
+      }
+    },
+    [openPartnerForEmailFix],
+  );
+
+  const handleSendPartnerOnboardingLink = useCallback(
+    async (p: Partner) => {
+      const email = p.email?.trim();
+      if (!email) {
+        toast.error("Add partner email on Profile first");
+        openPartnerForEmailFix(p);
+        return;
+      }
+      setOnboardingSendBusyId(p.id);
+      try {
+        const { sentTo, warning, emailError } = await requestPartnerOnboardingLink(p.id, { sendEmail: true });
+        if (emailError) {
+          toast.error(`Link created but email failed: ${emailError}`);
+        } else {
+          toast.success(`Onboarding link sent to ${sentTo ?? email}`);
+        }
+        if (warning) toast.warning(warning);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not send link");
+      } finally {
+        setOnboardingSendBusyId(null);
+      }
+    },
+    [openPartnerForEmailFix],
+  );
 
   const loadTeam = useCallback(() => {
     setTeamLoading(true);
@@ -1661,11 +1775,49 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "actions",
       label: "",
-      width: "48px",
+      width: "112px",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
-      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors mx-auto" />,
+      render: (item) => (
+        <div
+          className="flex items-center justify-center gap-0.5"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {canSendPartnerLinks ? (
+            <>
+              <button
+                type="button"
+                title="Copy onboarding link"
+                disabled={onboardingCopyBusyId === item.id || onboardingSendBusyId === item.id}
+                onClick={() => void handleCopyPartnerOnboardingLink(item)}
+                className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-text-tertiary hover:text-primary hover:bg-surface-hover disabled:opacity-40 transition-colors"
+              >
+                {onboardingCopyBusyId === item.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Link2 className="h-4 w-4" />
+                )}
+              </button>
+              <button
+                type="button"
+                title="Email onboarding link"
+                disabled={onboardingCopyBusyId === item.id || onboardingSendBusyId === item.id}
+                onClick={() => void handleSendPartnerOnboardingLink(item)}
+                className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-text-tertiary hover:text-primary hover:bg-surface-hover disabled:opacity-40 transition-colors"
+              >
+                {onboardingSendBusyId === item.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Mail className="h-4 w-4" />
+                )}
+              </button>
+            </>
+          ) : null}
+          <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto shrink-0" aria-hidden />
+        </div>
+      ),
     },
   ];
 
@@ -1950,6 +2102,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   </>
                 }
                 catalogServices={partnerCatalogServices}
+                canSendPartnerLinks={canSendPartnerLinks}
+                onboardingCopyBusyId={onboardingCopyBusyId}
+                onboardingSendBusyId={onboardingSendBusyId}
+                onCopyOnboardingLink={(p) => void handleCopyPartnerOnboardingLink(p)}
+                onSendOnboardingLink={(p) => void handleSendPartnerOnboardingLink(p)}
               />
             )}
           </div>
@@ -3379,6 +3536,7 @@ function PartnerDetailDrawer({
   const [newNote, setNewNote] = useState("");
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
+  const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
 
   const isAppUserMode = !!teamMember;
 
@@ -3402,18 +3560,6 @@ function PartnerDetailDrawer({
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
-  const [requestLinkOpen, setRequestLinkOpen] = useState(false);
-  const [requestLinkSubmitting, setRequestLinkSubmitting] = useState(false);
-  const [requestLinkDocTypes, setRequestLinkDocTypes] = useState<string[]>([]);
-  const [requestLinkMessage, setRequestLinkMessage] = useState("");
-  const [requestLinkResult, setRequestLinkResult] = useState<{
-    uploadUrl: string;
-    sentTo: string;
-    expiresAt: string;
-    emailSent: boolean;
-    emailError: string | null;
-  } | null>(null);
-  const [requestLinkError, setRequestLinkError] = useState<string | null>(null);
   const [docPreset, setDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [customCertName, setCustomCertName] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -3451,7 +3597,10 @@ function PartnerDetailDrawer({
   const [portalLinkModalOpen, setPortalLinkModalOpen] = useState(false);
   const [portalLinkSelectedIds, setPortalLinkSelectedIds] = useState<Set<string>>(() => new Set());
   const [portalLinkSubmitting, setPortalLinkSubmitting] = useState(false);
+  const [portalLinkSendEmail, setPortalLinkSendEmail] = useState(false);
   const [portalExpiresDays, setPortalExpiresDays] = useState(14);
+  const [onboardingLinkBusy, setOnboardingLinkBusy] = useState(false);
+  const [sendingOnboardingLink, setSendingOnboardingLink] = useState(false);
   const [portalLinkResult, setPortalLinkResult] = useState<{
     shortUrl: string;
     fullUrl?: string;
@@ -4080,52 +4229,75 @@ function PartnerDetailDrawer({
     }
     setPortalLinkSubmitting(true);
     try {
-      const res = await fetch("/api/admin/partner/portal-link", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          partnerId: partner.id,
-          expiresInDays: portalExpiresDays,
-          requestedDocIds: ids,
-        }),
+      const result = await requestPartnerOnboardingLink(partner.id, {
+        sendEmail: portalLinkSendEmail,
+        requestedDocIds: ids,
+        expiresInDays: portalExpiresDays,
       });
-      const data = (await res.json()) as {
-        error?: string;
-        url?: string;
-        shortUrl?: string;
-        expiresAt?: string;
-        message?: string;
-        emailSent?: boolean;
-        emailTo?: string;
-        emailNotice?: string;
-      };
-      if (!res.ok) throw new Error(data.error || "Failed");
-      const shortUrl = (data.shortUrl ?? data.url ?? "").trim();
-      const fullUrl = (data.url ?? "").trim();
-      if (!shortUrl) throw new Error("No URL returned.");
       setPortalLinkResult({
-        shortUrl,
-        fullUrl: fullUrl !== shortUrl ? fullUrl : undefined,
-        expiresAt: data.expiresAt ?? "",
+        shortUrl: result.onboardingUrl,
+        fullUrl: result.fullUrl,
+        expiresAt: result.expiresAt ?? "",
       });
-      if (data.emailSent) {
-        toast.success(
-          data.emailTo
-            ? `Link created and email sent to ${data.emailTo}.`
-            : "Link created and email sent to the partner.",
-        );
+      if (portalLinkSendEmail) {
+        if (result.emailError) {
+          toast.error(`Link created but email failed: ${result.emailError}`);
+        } else {
+          toast.success(result.sentTo ? `Link sent to ${result.sentTo}.` : "Link sent to the partner.");
+        }
       } else {
         toast.success("Link ready — copy or send manually.");
-        if (data.emailNotice) {
-          toast.info(data.emailNotice);
-        }
       }
+      if (result.warning) toast.warning(result.warning);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed");
     } finally {
       setPortalLinkSubmitting(false);
     }
-  }, [partner, portalLinkSelectedIds, portalExpiresDays]);
+  }, [partner, portalLinkSelectedIds, portalExpiresDays, portalLinkSendEmail]);
+
+  const handleCopyOnboardingLink = useCallback(async () => {
+    if (!partner) return;
+    const email = partner.email?.trim();
+    if (!email) {
+      toast.error("Add partner email on Profile first");
+      return;
+    }
+    setOnboardingLinkBusy(true);
+    try {
+      const { onboardingUrl, warning } = await requestPartnerOnboardingLink(partner.id, { sendEmail: false });
+      await navigator.clipboard.writeText(onboardingUrl);
+      toast.success("Onboarding link copied");
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create onboarding link");
+    } finally {
+      setOnboardingLinkBusy(false);
+    }
+  }, [partner]);
+
+  const handleSendOnboardingEmail = useCallback(async () => {
+    if (!partner) return;
+    const email = partner.email?.trim();
+    if (!email) {
+      toast.error("Add partner email on Profile first");
+      return;
+    }
+    setSendingOnboardingLink(true);
+    try {
+      const { sentTo, warning, emailError } = await requestPartnerOnboardingLink(partner.id, { sendEmail: true });
+      if (emailError) {
+        toast.error(`Link created but email failed: ${emailError}`);
+      } else {
+        toast.success(`Onboarding link sent to ${sentTo ?? email}`);
+      }
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send onboarding invite");
+    } finally {
+      setSendingOnboardingLink(false);
+    }
+  }, [partner]);
 
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -4458,6 +4630,39 @@ function PartnerDetailDrawer({
                       <p className={`text-xs ${a.level === "danger" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-300"}`}>{a.text}</p>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+            {canSendPartnerLinks && (
+              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
+                    partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
+                  </p>
+                  {!partner.email?.trim() ? (
+                    <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                    disabled={onboardingLinkBusy || sendingOnboardingLink || !partner.email?.trim()}
+                    onClick={() => void handleCopyOnboardingLink()}
+                  >
+                    {onboardingLinkBusy ? "Creating…" : "Copy link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon={sendingOnboardingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                    disabled={sendingOnboardingLink || onboardingLinkBusy || !partner.email?.trim()}
+                    onClick={() => void handleSendOnboardingEmail()}
+                  >
+                    {sendingOnboardingLink ? "Sending…" : "Send link"}
+                  </Button>
                 </div>
               </div>
             )}
@@ -5769,28 +5974,49 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            {isAdmin && (
+            {canSendPartnerLinks && (
               <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partner upload portal</p>
-                  <span
-                    title="Generate a secure link so this partner can upload only the documents you choose — public page, no login required"
-                    className="text-text-tertiary cursor-help"
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
+                    partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
+                  </p>
+                  {!partner.email?.trim() ? (
+                    <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
+                  ) : null}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon={<Link2 className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    setPortalLinkResult(null);
-                    setPortalLinkModalOpen(true);
-                  }}
-                >
-                  Generate upload link…
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                    disabled={onboardingLinkBusy || sendingOnboardingLink || !partner.email?.trim()}
+                    onClick={() => void handleCopyOnboardingLink()}
+                  >
+                    {onboardingLinkBusy ? "Creating…" : "Copy link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon={sendingOnboardingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                    disabled={sendingOnboardingLink || onboardingLinkBusy || !partner.email?.trim()}
+                    onClick={() => void handleSendOnboardingEmail()}
+                  >
+                    {sendingOnboardingLink ? "Sending…" : "Send link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Link2 className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setPortalLinkResult(null);
+                      setPortalLinkSendEmail(false);
+                      setPortalLinkModalOpen(true);
+                    }}
+                  >
+                    Request specific documents…
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -5934,6 +6160,7 @@ function PartnerDetailDrawer({
                     icon={<Send className="h-3.5 w-3.5" />}
                     onClick={() => {
                       setPortalLinkResult(null);
+                      setPortalLinkSendEmail(false);
                       setPortalLinkModalOpen(true);
                     }}
                   >
@@ -6224,194 +6451,6 @@ function PartnerDetailDrawer({
               initialName={docPreset?.name}
             />
             <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
-            <Modal
-              open={requestLinkOpen}
-              onClose={() => setRequestLinkOpen(false)}
-              title="Request documents from partner"
-              subtitle="Sends a secure link by email so the partner can upload documents and update their details without logging in."
-              size="md"
-            >
-              <div className="px-6 py-5 space-y-4">
-                {requestLinkResult ? (
-                  <div className="space-y-4">
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                      {requestLinkResult.emailSent
-                        ? `Link sent to ${requestLinkResult.sentTo}.`
-                        : `Link generated, but email failed${requestLinkResult.emailError ? `: ${requestLinkResult.emailError}` : ""}. Copy it manually below.`}
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Upload link</label>
-                      <div className="flex gap-2">
-                        <input
-                          readOnly
-                          value={requestLinkResult.uploadUrl}
-                          className="flex-1 h-9 px-3 rounded-lg border border-border bg-surface-tertiary text-xs font-mono"
-                          onFocus={(e) => e.currentTarget.select()}
-                        />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            void navigator.clipboard.writeText(requestLinkResult.uploadUrl);
-                            toast.success("Link copied");
-                          }}
-                        >
-                          Copy
-                        </Button>
-                      </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        <a
-                          href={`https://wa.me/?text=${encodeURIComponent(
-                            `Hi${partner?.contact_name ? ` ${partner.contact_name.split(" ")[0]}` : ""}, please upload your documents here: ${requestLinkResult.uploadUrl}`,
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
-                        >
-                          Share on WhatsApp
-                        </a>
-                        <a
-                          href={`sms:?body=${encodeURIComponent(
-                            `Please upload your documents: ${requestLinkResult.uploadUrl}`,
-                          )}`}
-                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-card text-xs font-medium text-text-primary hover:bg-surface-hover"
-                        >
-                          Share via SMS
-                        </a>
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-tertiary">
-                      Expires {new Date(requestLinkResult.expiresAt).toLocaleDateString()} (7 business days).
-                    </p>
-                    <div className="flex justify-end">
-                      <Button size="sm" variant="outline" onClick={() => setRequestLinkOpen(false)}>
-                        Close
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                        Documents to request (optional)
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {requiredDocuments.map((req) => {
-                          /** Use the required-doc id as the checkbox key — multiple items can share
-                           *  the same docType (e.g. trade certifications), so id keeps them distinct. */
-                          const checked = requestLinkDocTypes.includes(req.id);
-                          const opt = { value: req.id, label: req.name };
-                          return (
-                            <label
-                              key={opt.value}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border cursor-pointer hover:bg-surface-hover"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => {
-                                  setRequestLinkDocTypes((prev) =>
-                                    e.target.checked
-                                      ? [...prev, opt.value]
-                                      : prev.filter((v) => v !== opt.value),
-                                  );
-                                }}
-                                className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
-                              />
-                              <span className="text-sm text-text-primary">{opt.label}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <p className="text-[11px] text-text-tertiary mt-1.5">
-                        Leave all unchecked to ask for any updated documents.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                        Custom message (optional)
-                      </label>
-                      <textarea
-                        value={requestLinkMessage}
-                        onChange={(e) => setRequestLinkMessage(e.target.value)}
-                        rows={3}
-                        maxLength={2000}
-                        placeholder="e.g. Your insurance certificate expired last month — please upload the renewed copy."
-                        className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/15"
-                      />
-                    </div>
-                    {requestLinkError && (
-                      <p className="text-sm text-red-600">{requestLinkError}</p>
-                    )}
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setRequestLinkOpen(false)}
-                        disabled={requestLinkSubmitting}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={async () => {
-                          if (!partner) return;
-                          setRequestLinkSubmitting(true);
-                          setRequestLinkError(null);
-                          try {
-                            /** Build the structured payload the partner page renders into upload cards. */
-                            const selectedDocs = requiredDocuments
-                              .filter((r) => requestLinkDocTypes.includes(r.id))
-                              .map((r) => ({
-                                id: r.id,
-                                name: r.name,
-                                description: r.description,
-                                docType: r.docType,
-                              }));
-                            const selectedDocTypes = Array.from(
-                              new Set(selectedDocs.map((r) => r.docType)),
-                            );
-                            const selectedNames = selectedDocs.map((r) => r.name);
-                            const res = await fetch(
-                              `/api/partners/${partner.id}/request-documents`,
-                              {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  docTypes: selectedDocTypes,
-                                  docNames: selectedNames,
-                                  requestedDocs: selectedDocs,
-                                  customMessage: requestLinkMessage.trim() || undefined,
-                                }),
-                              },
-                            );
-                            const data = await res.json();
-                            if (!res.ok) {
-                              setRequestLinkError(data.error ?? "Failed to send request.");
-                              return;
-                            }
-                            setRequestLinkResult({
-                              uploadUrl: data.uploadUrl,
-                              sentTo: data.sentTo,
-                              expiresAt: data.expiresAt,
-                              emailSent: Boolean(data.emailSent),
-                              emailError: data.emailError ?? null,
-                            });
-                          } catch {
-                            setRequestLinkError("Network error. Please try again.");
-                          } finally {
-                            setRequestLinkSubmitting(false);
-                          }
-                        }}
-                        disabled={requestLinkSubmitting}
-                      >
-                        {requestLinkSubmitting ? "Sending..." : "Send link"}
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </Modal>
             {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
               <div className="py-12 text-center">
@@ -6715,6 +6754,15 @@ function PartnerDetailDrawer({
                   );
                 })}
               </div>
+              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-border"
+                  checked={portalLinkSendEmail}
+                  onChange={(e) => setPortalLinkSendEmail(e.target.checked)}
+                />
+                Send link by email now (via Resend)
+              </label>
               <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
                 <Button
                   variant="outline"

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_BILLING_STANDALONE_FILTER } from "@/lib/billing-standalone-filter";
+import { DEFAULT_BILLING_STANDALONE_FILTER, defaultBillingStandaloneFilter } from "@/lib/billing-standalone-filter";
 import { mergeInvoicesById, mergeSelfBillsById } from "@/lib/billing-standalone-fetch";
 import type { Invoice, SelfBill } from "@/types/database";
 
@@ -67,5 +67,11 @@ describe("mergeSelfBillsById", () => {
 describe("DEFAULT_BILLING_STANDALONE_FILTER", () => {
   it("defaults UI filter to All", () => {
     assert.equal(DEFAULT_BILLING_STANDALONE_FILTER.mode, "all");
+  });
+});
+
+describe("defaultBillingStandaloneFilter", () => {
+  it("returns All mode for initial UI state", () => {
+    assert.equal(defaultBillingStandaloneFilter().mode, "all");
   });
 });

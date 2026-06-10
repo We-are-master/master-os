@@ -24,7 +24,7 @@ import {
 import {
   effectiveInvoiceSourceAccountId,
   invoiceListBalanceDue,
-  isInvoiceOpen,
+  isInvoiceCollectible,
   type InvoiceListJobSnapshot,
 } from "@/lib/billing-invoice-list-data";
 import { computeSelfBillAmountDue, type SelfBillJobLine } from "@/lib/billing-selfbill-actions";
@@ -119,7 +119,7 @@ export function computeBillingKpis(args: {
   let oldestOverdueDays = 0;
 
   for (const inv of args.invoices) {
-    if (!isInvoiceOpen(inv, todayYmd)) continue;
+    if (!isInvoiceCollectible(inv, args.jobsByRef, todayYmd)) continue;
     const due = invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
     if (due <= 0.02) continue;
     toCollect += due;
@@ -152,7 +152,7 @@ export function computeBillingKpis(args: {
   let weekIn = 0;
   let weekOut = 0;
   for (const inv of args.invoices) {
-    if (!isInvoiceOpen(inv, todayYmd)) continue;
+    if (!isInvoiceCollectible(inv, args.jobsByRef, todayYmd)) continue;
     const dueYmd = invoiceDueYmd(inv);
     if (args.periodBounds) {
       if (!dueYmd || dueYmd < periodFrom || dueYmd > periodTo) continue;
@@ -220,7 +220,7 @@ export function computeAgingTotals(
 ): AgingTotals {
   const totals: AgingTotals = { current: 0, d1_7: 0, d8_30: 0, d30plus: 0 };
   for (const inv of invoices) {
-    if (!isInvoiceOpen(inv, todayYmd)) continue;
+    if (!isInvoiceCollectible(inv, jobsByRef, todayYmd)) continue;
     const dueYmd = invoiceDueYmd(inv) || todayYmd;
     if (periodBounds && !ymdInBounds(dueYmd, periodBounds)) continue;
     const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
@@ -331,7 +331,7 @@ function collectAttentionWorklistRows(
   const todayYmd = invoiceFinanceListTodayYmd();
   const rows: WorklistRow[] = [];
   for (const inv of invoices) {
-    if (!isInvoiceOpen(inv, todayYmd)) continue;
+    if (!isInvoiceCollectible(inv, jobsByRef, todayYmd)) continue;
     const balanceDue = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
     if (balanceDue <= 0.02) continue;
     const dueYmd = invoiceDueYmd(inv) || todayYmd;
@@ -485,7 +485,7 @@ export function buildCashflowWeekly(args: {
     let moneyIn = 0;
     let moneyOut = 0;
     for (const inv of args.invoices) {
-      if (!isInvoiceOpen(inv, todayYmd)) continue;
+      if (!isInvoiceCollectible(inv, args.jobsByRef, todayYmd)) continue;
       const dueYmd = (inv.due_date ?? "").slice(0, 10);
       if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
       moneyIn += invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
@@ -561,7 +561,7 @@ export function buildCustomerExposure(
       };
       map.set(accId, row);
     }
-    if (isInvoiceOpen(inv, todayYmd)) {
+    if (isInvoiceCollectible(inv, jobsByRef, todayYmd)) {
       const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
       if (due > 0.02) {
         row.outstanding += due;
