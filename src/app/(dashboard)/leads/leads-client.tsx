@@ -147,7 +147,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState(() => emptyLeadForm());
   const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
@@ -185,6 +185,32 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   useEffect(() => {
     loadCounts();
   }, [loadCounts, data.length, status]);
+
+  const handleDelete = useCallback(
+    async (lead: Lead) => {
+      const label = lead.reference?.trim() || lead.name?.trim() || "this lead";
+      if (
+        !confirm(
+          `Delete ${label}? It will be removed from Leads, Pulse, and the Trade Portal. The linked Fixfy client contact is kept.`,
+        )
+      ) {
+        return;
+      }
+      setDeletingId(lead.id);
+      try {
+        await deleteLead(lead.id, profile?.id);
+        toast.success("Lead deleted");
+        setSelectedLead((current) => (current?.id === lead.id ? null : current));
+        await refresh();
+        await loadCounts();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not delete lead");
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [loadCounts, profile?.id, refresh],
+  );
 
   useEffect(() => {
     if (!selectedLead) {
@@ -345,8 +371,35 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           </span>
         ),
       },
+      {
+        key: "actions",
+        label: "",
+        width: "2.75rem",
+        align: "right",
+        headerClassName: "w-11",
+        cellClassName: "w-11",
+        render: (item) => (
+          <button
+            type="button"
+            title="Delete lead"
+            aria-label={`Delete ${item.reference ?? item.name}`}
+            disabled={deletingId === item.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleDelete(item);
+            }}
+            className="rounded-lg p-1.5 text-text-tertiary hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors disabled:opacity-50"
+          >
+            {deletingId === item.id ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+        ),
+      },
     ],
-    [],
+    [deletingId, handleDelete],
   );
 
   const handleCreate = async () => {
@@ -455,30 +508,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error(err instanceof Error ? err.message : "Could not update publish state");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selectedLead) return;
-    const label = selectedLead.reference?.trim() || selectedLead.name?.trim() || "this lead";
-    if (
-      !confirm(
-        `Delete ${label}? It will be removed from Leads, Pulse, and the Trade Portal. The linked Fixfy client contact is kept.`,
-      )
-    ) {
-      return;
-    }
-    setDeleting(true);
-    try {
-      await deleteLead(selectedLead.id, profile?.id);
-      toast.success("Lead deleted");
-      setSelectedLead(null);
-      await refresh();
-      await loadCounts();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not delete lead");
-    } finally {
-      setDeleting(false);
     }
   };
 
@@ -815,9 +844,15 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 type="button"
                 variant="danger"
                 className="w-full sm:w-auto"
-                disabled={deleting || saving}
-                icon={deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                onClick={() => void handleDelete()}
+                disabled={deletingId === selectedLead.id || saving}
+                icon={
+                  deletingId === selectedLead.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )
+                }
+                onClick={() => void handleDelete(selectedLead)}
               >
                 Delete lead
               </Button>
