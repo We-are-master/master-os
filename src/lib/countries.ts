@@ -235,12 +235,14 @@ export function resolveCountrySelectValue(raw: string | null | undefined): strin
   return COUNTRY_BY_LOWER.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
-export const COUNTRY_SELECT_OPTIONS = [
+export type CountrySelectOption = { value: string; label: string; disabled?: boolean };
+
+export const COUNTRY_SELECT_OPTIONS: CountrySelectOption[] = [
   { value: "", label: "Select country", disabled: true },
   ...COUNTRIES.map((country) => ({ value: country, label: country })),
 ];
 
-export function countrySelectOptionsFor(value: string | null | undefined) {
+export function countrySelectOptionsFor(value: string | null | undefined): CountrySelectOption[] {
   const resolved = resolveCountrySelectValue(value);
   if (resolved && !COUNTRY_SELECT_OPTIONS.some((o) => o.value === resolved)) {
     return [...COUNTRY_SELECT_OPTIONS, { value: resolved, label: resolved }];

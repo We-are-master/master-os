@@ -851,7 +851,9 @@ export default function PeoplePage() {
                 {displayMode === "list" ? (
                   <div className="rounded-xl border border-border-light overflow-hidden -mx-1 sm:mx-0">
                     <div className="hidden sm:grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5.25rem_auto] gap-2 border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
-                      <span>Person</span>
+                      <span>
+                        {section === "contractors" ? "Contractor" : section === "internal" ? "Employee" : "Person"}
+                      </span>
                       <span>Status</span>
                       <span className="text-right">Pay</span>
                       <span className="text-right">Actions</span>

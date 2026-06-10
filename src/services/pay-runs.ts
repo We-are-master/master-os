@@ -200,13 +200,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   });
 
   for (const r of payrollFiltered) {
-    const row = r as {
-      id: string;
-      payee_name?: string | null;
-      description: string;
-      amount: number;
-      due_date: string;
-    };
+    const row = r as PayrollFetchRow & { due_date: string };
     const name = row.payee_name?.trim() || row.description || "Workforce";
     const ref = row.description?.trim() || "—";
     let payoutAmount = Number(row.amount) || 0;
