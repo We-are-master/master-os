@@ -165,13 +165,27 @@ export function selfBillWorkWeekInPeriod(
   return ymdRangesOverlap(work.from, work.to, periodBounds.from, periodBounds.to);
 }
 
-/** Biweekly pay-period work range from stored `due_date` (falls back to ISO week). */
-export function selfBillPayWorkPeriodBounds(sb: {
+type SelfBillPeriodRow = {
+  bill_origin?: string | null;
   week_start?: string | null;
   week_end?: string | null;
   week_label?: string | null;
   due_date?: string | null;
-}): YmdBounds | null {
+  status?: string | null;
+};
+
+const INTERNAL_ACCUMULATING_STATUSES = new Set(["accumulating", "draft", "needs_attention"]);
+
+/** Biweekly pay-period work range from stored `due_date` (falls back to ISO week). */
+export function selfBillPayWorkPeriodBounds(sb: SelfBillPeriodRow): YmdBounds | null {
+  if (sb.bill_origin === "internal") {
+    const from = sb.week_start?.trim().slice(0, 10) ?? "";
+    const to = sb.week_end?.trim().slice(0, 10) ?? "";
+    if (from && to) return { from, to };
+    const due = sb.due_date?.trim().slice(0, 10) ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(due)) return { from: due, to: due };
+    return null;
+  }
   const due = sb.due_date?.trim().slice(0, 10) ?? "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(due)) {
     const period = workPeriodBoundsForPayoutFriday(due);
@@ -180,15 +194,21 @@ export function selfBillPayWorkPeriodBounds(sb: {
   return selfBillWorkWeekBounds(sb);
 }
 
-export function selfBillPayWorkPeriodInPeriod(
-  sb: {
-    week_start?: string | null;
-    week_end?: string | null;
-    week_label?: string | null;
-    due_date?: string | null;
-  },
-  periodBounds: YmdBounds,
-): boolean {
+export function selfBillPayWorkPeriodInPeriod(sb: SelfBillPeriodRow, periodBounds: YmdBounds): boolean {
+  if (sb.bill_origin === "internal") {
+    const due = sb.due_date?.trim().slice(0, 10) ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(due) && ymdInBounds(due, periodBounds)) return true;
+    const work = selfBillWorkWeekBounds(sb);
+    if (work && ymdRangesOverlap(work.from, work.to, periodBounds.from, periodBounds.to)) return true;
+    if (
+      INTERNAL_ACCUMULATING_STATUSES.has(sb.status?.trim() ?? "") &&
+      /^\d{4}-\d{2}-\d{2}$/.test(due) &&
+      due >= periodBounds.from
+    ) {
+      return true;
+    }
+    return false;
+  }
   const work = selfBillPayWorkPeriodBounds(sb);
   if (!work) return false;
   return ymdRangesOverlap(work.from, work.to, periodBounds.from, periodBounds.to);

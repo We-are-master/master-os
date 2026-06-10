@@ -37,5 +37,27 @@ export async function POST(req: NextRequest) {
       .eq("id", person.id);
   }
 
+  const { data: activated } = await admin
+    .from("payroll_internal_costs")
+    .select("employment_type, lifecycle_stage")
+    .eq("id", person.id)
+    .maybeSingle();
+
+  if (activated?.employment_type === "self_employed") {
+    const { ensureWorkforceSelfBillForPeriod } = await import("@/services/workforce-self-bills");
+    await ensureWorkforceSelfBillForPeriod(person.id, new Date(), admin);
+  }
+
+  if (person.profile_id) {
+    await admin
+      .from("profiles")
+      .update({
+        workforce_refresh_required: false,
+        session_valid_after: null,
+        updated_at: now,
+      })
+      .eq("id", person.profile_id);
+  }
+
   return NextResponse.json({ ok: true });
 }

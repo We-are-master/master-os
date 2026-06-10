@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, Mail, X } from "lucide-react";
+import { Check, Loader2, Mail, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -8,10 +8,16 @@ type Props = {
   saving?: boolean;
   emailSending?: boolean;
   variant: "invoice" | "selfbill";
-  onMarkPaid: () => void;
+  /** When variant is selfbill — drives which bulk actions appear. */
+  selfbillMode?: "drafts" | "pending" | "approved";
+  onMarkPaid?: () => void;
   onClear: () => void;
   onEmail?: () => void;
   onCancel?: () => void;
+  onApprove?: () => void;
+  onApproveAndSend?: () => void;
+  onMarkReadyToPay?: () => void;
+  onUnapprove?: () => void;
 };
 
 export function BillingBulkBar({
@@ -19,10 +25,15 @@ export function BillingBulkBar({
   saving,
   emailSending,
   variant,
+  selfbillMode,
   onMarkPaid,
   onClear,
   onEmail,
   onCancel,
+  onApprove,
+  onApproveAndSend,
+  onMarkReadyToPay,
+  onUnapprove,
 }: Props) {
   if (count <= 0) return null;
   const busy = saving || emailSending;
@@ -30,25 +41,78 @@ export function BillingBulkBar({
     <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border-light bg-[#020040] px-5 py-3 shadow-xl">
       <span className="text-sm font-semibold tabular-nums text-white/80">{count} selected</span>
       <div className="h-4 w-px bg-white/20" />
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onMarkPaid}
-        className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
-      >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
-        Mark as paid
-      </button>
-      {variant === "selfbill" && onEmail ? (
+      {variant === "invoice" && onMarkPaid ? (
         <button
           type="button"
           disabled={busy}
-          onClick={onEmail}
-          className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+          onClick={onMarkPaid}
+          className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
         >
-          <Mail className="h-3.5 w-3.5" />
-          Email
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
+          Mark as paid
         </button>
+      ) : null}
+      {variant === "selfbill" && selfbillMode === "drafts" && onMarkReadyToPay ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onMarkReadyToPay}
+          className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
+          Ready to pay
+        </button>
+      ) : null}
+      {variant === "selfbill" && selfbillMode === "pending" ? (
+        <>
+          {onApprove ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onApprove}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
+              Approve
+            </button>
+          ) : null}
+          {onApproveAndSend ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onApproveAndSend}
+              className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+            >
+              Approve &amp; Send
+            </button>
+          ) : null}
+        </>
+      ) : null}
+      {variant === "selfbill" && selfbillMode === "approved" ? (
+        <>
+          {onUnapprove ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onUnapprove}
+              className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              Unapprove
+            </button>
+          ) : null}
+          {onEmail ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onEmail}
+              className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+            >
+              <Mail className="h-3.5 w-3.5" />
+              Email
+            </button>
+          ) : null}
+        </>
       ) : null}
       {variant === "selfbill" && onCancel ? (
         <button

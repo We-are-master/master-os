@@ -9,6 +9,7 @@ import { SearchInput } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { CountrySelect } from "@/components/ui/country-select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import { Plus, Loader2, Users, HardHat } from "lucide-react";
@@ -41,6 +42,7 @@ import {
 } from "@/components/people/workforce-ui";
 import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
 import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import {
   requestWorkforceOnboardingLink,
   WORKFORCE_COMMISSION_BASIS_OPTIONS,
@@ -50,6 +52,11 @@ import {
   computeWorkforceNextDueDate,
   WORKFORCE_MONTHLY_PAY_DAY,
 } from "@/lib/workforce-pay-schedule";
+import {
+  applyContractorTaxNumberToProfile,
+  contractorInviteFiscalComplete,
+  isUkWorkCountry,
+} from "@/lib/workforce-contractor-agreement";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
   if (!raw || typeof raw !== "object") return {};
@@ -85,9 +92,10 @@ function mapCostRows(
 }
 
 export default function PeoplePage() {
+  const { workforceDocumentRules } = useFrontendSetup();
   const [section, setSection] = useState<WorkforcePeopleTab>("all");
   const [displayMode, setDisplayMode] = useState<WorkforceDisplayMode>("grid");
-  const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("all");
+  const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("active");
   const [rows, setRows] = useState<PeopleRow[]>([]);
   const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,12 +126,17 @@ export default function PeoplePage() {
   const [formAccessEmail, setFormAccessEmail] = useState("");
   const [formAccessRole, setFormAccessRole] = useState<"admin" | "manager" | "operator">("operator");
   const [formAccessPassword, setFormAccessPassword] = useState("");
+  const [formContractorEntity, setFormContractorEntity] = useState<"individual" | "company">("individual");
+  const [formContractorCountry, setFormContractorCountry] = useState("");
+  const [formContractorTaxNumber, setFormContractorTaxNumber] = useState("");
+  const [formContractorAddress, setFormContractorAddress] = useState("");
 
   const [buModalOpen, setBuModalOpen] = useState(false);
   const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
   const [buSaving, setBuSaving] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
-  const [onboardingLinkBusyId, setOnboardingLinkBusyId] = useState<string | null>(null);
+  const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
+  const [onboardingSendBusyId, setOnboardingSendBusyId] = useState<string | null>(null);
 
   const resetInviteForm = () => {
     setFormPayee("");
@@ -144,19 +157,58 @@ export default function PeoplePage() {
     setFormAccessEmail("");
     setFormAccessPassword("");
     setFormAccessRole("operator");
+    setFormContractorEntity("individual");
+    setFormContractorCountry("");
+    setFormContractorTaxNumber("");
+    setFormContractorAddress("");
+  };
+
+  const rowWorkEmail = (row: PeopleRow) => {
+    const p = row.payroll_profile;
+    if (!p || typeof p !== "object" || !("email" in p)) return "";
+    return String((p as { email?: string }).email ?? "").trim();
   };
 
   const handleCopyOnboardingLink = async (row: PeopleRow) => {
-    setOnboardingLinkBusyId(row.id);
+    if (!rowWorkEmail(row)) {
+      toast.error("Add work email on Profile first");
+      openPerson(row, "overview");
+      return;
+    }
+    setOnboardingCopyBusyId(row.id);
     try {
       const { onboardingUrl, warning } = await requestWorkforceOnboardingLink(row.id, { sendEmail: false });
       await navigator.clipboard.writeText(onboardingUrl);
-      toast.success("Onboarding link copied to clipboard");
+      toast.success("Onboarding link copied");
       if (warning) toast.warning(warning);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not generate onboarding link");
+      toast.error(e instanceof Error ? e.message : "Could not generate link");
     } finally {
-      setOnboardingLinkBusyId(null);
+      setOnboardingCopyBusyId(null);
+    }
+  };
+
+  const handleSendOnboardingLink = async (row: PeopleRow) => {
+    const email = rowWorkEmail(row);
+    if (!email) {
+      toast.error("Add work email on Profile first");
+      openPerson(row, "overview");
+      return;
+    }
+    if (!row.payment_method?.trim()) {
+      toast.error("Set payment method in Finance before sending");
+      openPerson(row, "finance");
+      return;
+    }
+    setOnboardingSendBusyId(row.id);
+    try {
+      const { sentTo, warning } = await requestWorkforceOnboardingLink(row.id, { sendEmail: true });
+      toast.success(`Onboarding link sent to ${sentTo ?? email}`);
+      if (warning) toast.warning(warning);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send link");
+    } finally {
+      setOnboardingSendBusyId(null);
     }
   };
 
@@ -258,6 +310,11 @@ export default function PeoplePage() {
     }
     if (stageFilter === "all") {
       list = list.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
+    } else if (stageFilter === "active") {
+      list = list.filter((r) => {
+        const stage = r.lifecycle_stage ?? "active";
+        return stage === "active" || stage === "needs_attention";
+      });
     } else {
       list = list.filter((r) => (r.lifecycle_stage ?? "active") === stageFilter);
     }
@@ -305,6 +362,7 @@ export default function PeoplePage() {
         files,
         r.documents_on_file ?? null,
         r.has_equity ?? false,
+        workforceDocumentRules,
       );
       docsOutstanding += Math.max(0, total - done);
     }
@@ -327,7 +385,7 @@ export default function PeoplePage() {
       dueThisMonthCount: dueThisMonth.length,
       dueThisMonthTotal,
     };
-  }, [rosterRows]);
+  }, [rosterRows, workforceDocumentRules]);
 
   const selfBillSyncRef = useRef(false);
   useEffect(() => {
@@ -421,8 +479,26 @@ export default function PeoplePage() {
     const desc = buildPayLineDescription(formDept, formRoleTitle, formOtherDesc);
     const email = formEmail.trim().toLowerCase();
     if (!formPayee.trim() || !desc.trim()) {
-      toast.error("Name and department are required");
+      toast.error(
+        formEmployment === "self_employed"
+          ? "Company/display name and department are required"
+          : "Name and department are required",
+      );
       return;
+    }
+    if (formEmployment === "self_employed") {
+      const inviteProfile = applyContractorTaxNumberToProfile(
+        {
+          country_of_operation: formContractorCountry,
+          contractor_entity_type: formContractorEntity,
+          address: formContractorAddress,
+        },
+        formContractorTaxNumber,
+      );
+      if (!contractorInviteFiscalComplete(inviteProfile)) {
+        toast.error("Enter country and tax/registration number for the contractor");
+        return;
+      }
     }
     if (!email.includes("@")) {
       toast.error("Enter a valid email for the onboarding invite");
@@ -452,15 +528,40 @@ export default function PeoplePage() {
         return;
       }
     }
+    const shouldCreateAccess = formEmployment === "employee" || formCreateAccess;
+    if (shouldCreateAccess) {
+      const accessEmail = formAccessEmail.trim().toLowerCase() || email;
+      if (!accessEmail.includes("@")) {
+        toast.error("Enter a valid email for dashboard access");
+        return;
+      }
+      if (formAccessPassword.length < 8) {
+        toast.error("Temporary password must be at least 8 characters");
+        return;
+      }
+    }
     setSaving(true);
     const supabase = getSupabase();
     const now = new Date().toISOString();
     try {
       const startDate = formStartDate.trim().slice(0, 10) || format(new Date(), "yyyy-MM-dd");
+      const isContractorInvite = formEmployment === "self_employed";
+      const payrollProfile: Record<string, string> = { email, start_date: startDate };
+      if (isContractorInvite) {
+        const inviteProfile = applyContractorTaxNumberToProfile(
+          {
+            country_of_operation: formContractorCountry.trim(),
+            contractor_entity_type: formContractorEntity,
+            address: formContractorAddress.trim() || undefined,
+          },
+          formContractorTaxNumber,
+        );
+        Object.assign(payrollProfile, inviteProfile);
+      }
       const row = {
         description: desc.trim(),
         amount: amt,
-        category: formCategory.trim() || (formEmployment === "employee" ? "Salary" : "Contractor fee"),
+        category: formCategory.trim() || (formEmployment === "employee" ? "Salary" : "Contractor"),
         due_date: computeWorkforceNextDueDate(WORKFORCE_MONTHLY_PAY_DAY, new Date(startDate)),
         payee_name: formPayee.trim(),
         employment_type: formEmployment,
@@ -469,12 +570,13 @@ export default function PeoplePage() {
         payroll_document_files: {} as Record<string, PayrollDocumentFileMeta>,
         status: "pending" as InternalCostStatus,
         paid_at: null as string | null,
-        lifecycle_stage: "onboarding" as const,
+        lifecycle_stage: isContractorInvite ? ("onboarding" as const) : ("active" as const),
+        recurring_approved_at: isContractorInvite ? null : now,
         has_equity: false,
         equity_percent: null as number | null,
         equity_vesting_notes: null as string | null,
         equity_start_date: null as string | null,
-        payroll_profile: { email, start_date: startDate },
+        payroll_profile: payrollProfile,
         payment_method: formPaymentMethod,
         commission_enabled: formCommissionEnabled,
         commission_rate_percent: formCommissionEnabled && formCommissionRate.trim() ? Number(formCommissionRate) : null,
@@ -502,29 +604,33 @@ export default function PeoplePage() {
       if (!inserted) {
         throw new Error("Insert failed");
       }
-      toast.success("Team member created — sending onboarding invite…");
       const insertedId = (inserted as InternalCost).id;
 
-      try {
-        const { sentTo, warning } = await requestWorkforceOnboardingLink(insertedId, {
-          sendEmail: true,
-        });
-        toast.success(`Onboarding invite sent to ${sentTo ?? email}`);
-        if (warning) toast.warning(warning);
-      } catch (err) {
-        toast.warning(
-          err instanceof Error
-            ? `Person saved, but invite failed: ${err.message}`
-            : "Person saved, but invite email failed",
-        );
+      if (isContractorInvite) {
+        toast.success("Contractor created — sending onboarding invite…");
+        try {
+          const { sentTo, warning } = await requestWorkforceOnboardingLink(insertedId, {
+            sendEmail: true,
+          });
+          toast.success(`Onboarding invite sent to ${sentTo ?? email}`);
+          if (warning) toast.warning(warning);
+        } catch (err) {
+          toast.warning(
+            err instanceof Error
+              ? `Person saved, but invite failed: ${err.message}`
+              : "Person saved, but invite email failed",
+          );
+        }
+      } else {
+        toast.success("Employee added — active on payroll (no contractor onboarding).");
       }
 
-      setAddOpen(false);
-      resetInviteForm();
-      if (formCreateAccess && inserted) {
+      if (shouldCreateAccess && inserted) {
         const insertedId = (inserted as InternalCost).id;
         const accessEmail = formAccessEmail.trim().toLowerCase() || email;
         const accessPassword = formAccessPassword;
+        const accessRole = formAccessRole;
+        const accessName = formPayee.trim();
         try {
           if (!accessEmail.includes("@")) {
             throw new Error("Valid email is required for dashboard access");
@@ -537,8 +643,8 @@ export default function PeoplePage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               email: accessEmail,
-              full_name: formPayee.trim(),
-              role: formAccessRole,
+              full_name: accessName,
+              role: accessRole,
               password: accessPassword,
               payroll_internal_cost_id: insertedId,
             }),
@@ -554,14 +660,11 @@ export default function PeoplePage() {
               ? `Person saved, but access failed: ${err.message}`
               : "Person saved, but access failed",
           );
-        } finally {
-          setFormCreateAccess(false);
-          setFormAccessEmail("");
-          setFormAccessPassword("");
-          setFormAccessRole("operator");
         }
       }
 
+      setAddOpen(false);
+      resetInviteForm();
       await load();
       if (inserted) {
         const ic = inserted as InternalCost;
@@ -646,7 +749,9 @@ export default function PeoplePage() {
           <Button
             icon={<Plus className="h-4 w-4" />}
             onClick={() => {
-              setFormEmployment(inviteEmploymentType(section));
+              const emp = inviteEmploymentType(section);
+              setFormEmployment(emp);
+              setFormCreateAccess(emp === "employee");
               setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
               setAddOpen(true);
             }}
@@ -677,15 +782,15 @@ export default function PeoplePage() {
           />
         )}
 
-        <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden">
-          <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-border-light flex flex-col gap-3">
+        <div className="rounded-xl border border-border-light bg-card shadow-sm overflow-hidden">
+          <div className="px-3 sm:px-4 pt-3 pb-2 border-b border-border-light flex flex-col gap-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <WorkforceTypeSegment
                 value={section}
                 counts={rosterCounts}
                 onChange={(id) => {
                   setSection(id);
-                  setStageFilter("all");
+                  setStageFilter("active");
                 }}
               />
               <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
@@ -707,7 +812,7 @@ export default function PeoplePage() {
             <WorkforceStagePills value={stageFilter} onChange={setStageFilter} />
           </div>
 
-          <div className="p-4 sm:p-5">
+          <div className="p-2 sm:p-3">
             {loading ? (
               <div className="flex justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
@@ -745,36 +850,39 @@ export default function PeoplePage() {
                 )}
                 {displayMode === "list" ? (
                   <div className="rounded-xl border border-border-light overflow-hidden -mx-1 sm:mx-0">
-                    <div className="hidden sm:grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto_auto] gap-3 border-b border-border-light bg-surface-hover/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    <div className="hidden sm:grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5.25rem_auto] gap-2 border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
                       <span>Person</span>
                       <span>Status</span>
-                      <span className="text-right">Amount</span>
-                      <span className="text-right">Next due</span>
+                      <span className="text-right">Pay</span>
                       <span className="text-right">Actions</span>
                     </div>
-                    {filtered.map((r) => {
+                    {filtered.map((r, index) => {
                       const files = parsePayrollDocumentFiles(r.payroll_document_files);
                       const { done, total } = payrollDocsRowCompletion(
                         r.employment_type ?? null,
                         files,
                         r.documents_on_file ?? null,
                         r.has_equity ?? false,
+                        workforceDocumentRules,
                       );
                       return (
                         <WorkforcePersonListRow
                           key={r.id}
+                          rowIndex={index}
                           row={r}
                           photoUrl={photoUrlsById[r.id]}
                           employmentType={r.employment_type ?? "employee"}
                           docsDone={done}
                           docsTotal={total}
                           activating={activatingId === r.id}
-                          onboardingLinkBusy={onboardingLinkBusyId === r.id}
+                          onboardingCopyBusy={onboardingCopyBusyId === r.id}
+                          onboardingSendBusy={onboardingSendBusyId === r.id}
                           onOpen={() => openPerson(r)}
                           onOpenDocuments={() => openPerson(r, "documents")}
                           onOpenFinance={() => openPerson(r, "finance")}
                           onActivate={() => void handleActivatePerson(r)}
                           onCopyOnboardingLink={() => void handleCopyOnboardingLink(r)}
+                          onSendOnboardingLink={() => void handleSendOnboardingLink(r)}
                         />
                       );
                     })}
@@ -788,7 +896,7 @@ export default function PeoplePage() {
                     />
                   </div>
                 ) : (
-                  <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     {filtered.map((r) => {
                       const files = parsePayrollDocumentFiles(r.payroll_document_files);
                       const { done, total } = payrollDocsRowCompletion(
@@ -796,6 +904,7 @@ export default function PeoplePage() {
                         files,
                         r.documents_on_file ?? null,
                         r.has_equity ?? false,
+                        workforceDocumentRules,
                       );
                       return (
                         <motion.div key={r.id} variants={staggerItem} className="min-w-0">
@@ -806,12 +915,14 @@ export default function PeoplePage() {
                             docsDone={done}
                             docsTotal={total}
                             activating={activatingId === r.id}
-                            onboardingLinkBusy={onboardingLinkBusyId === r.id}
+                            onboardingCopyBusy={onboardingCopyBusyId === r.id}
+                            onboardingSendBusy={onboardingSendBusyId === r.id}
                             onOpen={() => openPerson(r)}
                             onOpenDocuments={() => openPerson(r, "documents")}
                             onOpenFinance={() => openPerson(r, "finance")}
                             onActivate={() => void handleActivatePerson(r)}
                             onCopyOnboardingLink={() => void handleCopyOnboardingLink(r)}
+                            onSendOnboardingLink={() => void handleSendOnboardingLink(r)}
                           />
                         </motion.div>
                       );
@@ -863,15 +974,26 @@ export default function PeoplePage() {
         title="Invite team"
         subtitle={
           section === "contractors"
-            ? "Send a contractor onboarding invite — profile, documents, contract and payment setup."
+            ? "Contractor onboarding — fiscal details, Independent Contractor Agreement, documents and payment."
             : section === "internal"
-              ? "Send an onboarding invite — profile, documents, contract and payment terms."
-              : "Send an onboarding invite — pick employment type below."
+              ? "Add an internal employee — PAYE payroll row and optional dashboard access."
+              : "Pick employment type — contractors get onboarding + contract; employees are added directly."
         }
         size="md"
         className="w-[min(100%,calc(100vw-1.5rem))] sm:max-w-lg"
       >
         <div className="space-y-3 px-4 py-4 sm:px-6 sm:py-5 min-w-0">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              {formEmployment === "self_employed" ? "Company or display name" : "Full name"}
+            </label>
+            <Input
+              value={formPayee}
+              onChange={(e) => setFormPayee(e.target.value)}
+              placeholder={formEmployment === "self_employed" ? "Trading name or legal entity" : "Full name"}
+              className="w-full min-w-0"
+            />
+          </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">Email</label>
             <Input
@@ -879,17 +1001,74 @@ export default function PeoplePage() {
               value={formEmail}
               onChange={(e) => {
                 setFormEmail(e.target.value);
-                if (formCreateAccess && !formAccessEmail.trim()) setFormAccessEmail(e.target.value);
+                const syncAccess = formEmployment === "employee" || formCreateAccess;
+                if (syncAccess && !formAccessEmail.trim()) setFormAccessEmail(e.target.value);
               }}
               placeholder="person@example.com"
               className="w-full min-w-0"
             />
-            <p className="text-[11px] text-text-tertiary mt-1">Onboarding link and contract invite go to this address.</p>
+            <p className="text-[11px] text-text-tertiary mt-1">
+              {formEmployment === "self_employed"
+                ? "Contractor onboarding link is emailed when you send the invite."
+                : "Used for payroll and dashboard access — no onboarding email for employees."}
+            </p>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Display name</label>
-            <Input value={formPayee} onChange={(e) => setFormPayee(e.target.value)} placeholder="Full name" className="w-full min-w-0" />
-          </div>
+          {formEmployment === "self_employed" ? (
+            <div className="rounded-xl border border-border-light p-3 space-y-3">
+              <p className="text-xs font-semibold text-text-primary">Fiscal details</p>
+              <Select
+                label="Entity type"
+                value={formContractorEntity}
+                onChange={(e) => setFormContractorEntity(e.target.value as "individual" | "company")}
+                options={[
+                  { value: "individual", label: "Self-employed / sole trader" },
+                  { value: "company", label: "Registered company" },
+                ]}
+                className="min-w-0"
+              />
+              <CountrySelect
+                label="Country *"
+                value={formContractorCountry}
+                onChange={setFormContractorCountry}
+                className="w-full min-w-0"
+                required
+              />
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  {isUkWorkCountry(formContractorCountry)
+                    ? formContractorEntity === "company"
+                      ? "Company registration or VAT"
+                      : "UTR"
+                    : "Tax / fiscal number"}{" "}
+                  <span className="text-coral">*</span>
+                </label>
+                <Input
+                  value={formContractorTaxNumber}
+                  onChange={(e) => setFormContractorTaxNumber(e.target.value)}
+                  placeholder={
+                    isUkWorkCountry(formContractorCountry)
+                      ? "UTR or Companies House / VAT"
+                      : "CNPJ, local tax ID, etc."
+                  }
+                  className="w-full min-w-0"
+                />
+                <p className="text-[11px] text-text-tertiary mt-1">
+                  {isUkWorkCountry(formContractorCountry)
+                    ? "UK: UTR for sole traders; company number or VAT for companies."
+                    : "Outside UK: one local fiscal number is enough — no UK VAT/UTR."}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Operating address (optional)</label>
+                <Input
+                  value={formContractorAddress}
+                  onChange={(e) => setFormContractorAddress(e.target.value)}
+                  placeholder="Can confirm in onboarding"
+                  className="w-full min-w-0"
+                />
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Department"
             value={formDept}
@@ -1015,7 +1194,19 @@ export default function PeoplePage() {
           <Select
             label="Employment type"
             value={formEmployment}
-            onChange={(e) => setFormEmployment(e.target.value as PayrollInternalEmploymentType)}
+            onChange={(e) => {
+              const next = e.target.value as PayrollInternalEmploymentType;
+              setFormEmployment(next);
+              if (next === "employee") {
+                setFormCreateAccess(true);
+                if (!formAccessEmail.trim() && formEmail.trim()) {
+                  setFormAccessEmail(formEmail.trim().toLowerCase());
+                }
+              } else {
+                setFormCreateAccess(false);
+                setFormCategory("Contractor");
+              }
+            }}
             options={[
               { value: "employee", label: "Employee (internal team)" },
               { value: "self_employed", label: "Self-employed (contractor)" },
@@ -1031,21 +1222,30 @@ export default function PeoplePage() {
           />
 
           <div className="rounded-xl border border-border-light p-3 space-y-3">
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formCreateAccess}
-                onChange={(e) => setFormCreateAccess(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
-              />
-              <div className="min-w-0 flex-1">
+            {formEmployment === "employee" ? (
+              <div className="min-w-0">
                 <p className="text-sm font-medium text-text-primary">Create dashboard access</p>
                 <p className="text-[11px] text-text-tertiary mt-0.5">
-                  Grant this person a Fixfy OS web login. You can also add this later from the Dashboard Access tab.
+                  Included for internal team — grants a Fixfy OS web login. You can adjust this later from Login Details.
                 </p>
               </div>
-            </label>
-            {formCreateAccess && (
+            ) : (
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formCreateAccess}
+                  onChange={(e) => setFormCreateAccess(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-text-primary">Create dashboard access</p>
+                  <p className="text-[11px] text-text-tertiary mt-0.5">
+                    Grant this person a Fixfy OS web login. You can also add this later from the Login Details tab.
+                  </p>
+                </div>
+              </label>
+            )}
+            {(formEmployment === "employee" || formCreateAccess) && (
               <div className="space-y-2.5 pt-1 pl-6">
                 <div>
                   <label className="block text-[11px] font-medium text-text-secondary mb-1">Login email</label>

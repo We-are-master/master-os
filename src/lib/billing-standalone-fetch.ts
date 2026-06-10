@@ -1,6 +1,7 @@
 import { getSupabase } from "@/services/base";
 import { fetchAllActiveInvoices } from "@/lib/billing-invoice-list-data";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import type { Invoice, SelfBill } from "@/types/database";
 
 const PAGE_SIZE = 500;
@@ -45,6 +46,22 @@ async function fetchInvoiceQueryPages(apply: (q: InvoiceQuery) => InvoiceQuery):
   return acc;
 }
 
+/** Skip optional invoice slices when a column is not in the hosted schema yet. */
+async function fetchInvoiceQueryPagesOptional(
+  apply: (q: InvoiceQuery) => InvoiceQuery,
+  label: string,
+): Promise<Invoice[]> {
+  try {
+    return await fetchInvoiceQueryPages(apply);
+  } catch (e) {
+    if (isSupabaseMissingColumnError(e)) {
+      console.warn(`billing invoices: skipped ${label} — apply migration for missing column`);
+      return [];
+    }
+    throw e;
+  }
+}
+
 export function mergeInvoicesById(rows: Invoice[]): Invoice[] {
   const byId = new Map<string, Invoice>();
   for (const row of rows) byId.set(row.id, row);
@@ -66,14 +83,18 @@ export async function fetchInvoicesForBilling(bounds: YmdBounds | null): Promise
     fetchInvoiceQueryPages((q) =>
       q.eq("status", "paid").gte("paid_date", bounds.from).lte("paid_date", bounds.to),
     ),
-    fetchInvoiceQueryPages((q) =>
-      q.eq("status", "paid").gte("last_payment_date", bounds.from).lte("last_payment_date", bounds.to),
+    fetchInvoiceQueryPagesOptional(
+      (q) =>
+        q.eq("status", "paid").gte("last_payment_date", bounds.from).lte("last_payment_date", bounds.to),
+      "paid by last_payment_date",
     ),
-    fetchInvoiceQueryPages((q) =>
-      q
-        .eq("status", "paid")
-        .gte("stripe_paid_at", `${bounds.from}T00:00:00`)
-        .lte("stripe_paid_at", `${bounds.to}T23:59:59`),
+    fetchInvoiceQueryPagesOptional(
+      (q) =>
+        q
+          .eq("status", "paid")
+          .gte("stripe_paid_at", `${bounds.from}T00:00:00`)
+          .lte("stripe_paid_at", `${bounds.to}T23:59:59`),
+      "paid by stripe_paid_at",
     ),
   ]);
 
@@ -100,6 +121,48 @@ async function fetchSelfBillQueryPages(apply: (q: SelfBillQuery) => SelfBillQuer
     if (rows.length < PAGE_SIZE) break;
   }
   return acc;
+}
+
+async function fetchSelfBillQueryPagesOptional(
+  apply: (q: SelfBillQuery) => SelfBillQuery,
+  label: string,
+): Promise<SelfBill[]> {
+  try {
+    return await fetchSelfBillQueryPages(apply);
+  } catch (e) {
+    if (isSupabaseMissingColumnError(e)) {
+      console.warn(`billing self-bills: skipped ${label} — apply migration for missing column`);
+      return [];
+    }
+    throw e;
+  }
+}
+
+const INTERNAL_LIVE_STATUSES = ["accumulating", "draft", "needs_attention"] as const;
+
+async function fetchInternalLiveSelfBills(bounds: YmdBounds): Promise<SelfBill[]> {
+  try {
+    return await fetchSelfBillQueryPages((q) =>
+      q
+        .eq("bill_origin", "internal")
+        .in("status", [...INTERNAL_LIVE_STATUSES])
+        .gte("due_date", bounds.from),
+    );
+  } catch (e) {
+    if (!isSupabaseMissingColumnError(e)) throw e;
+    try {
+      return await fetchSelfBillQueryPages((q) =>
+        q
+          .eq("bill_origin", "internal")
+          .in("status", [...INTERNAL_LIVE_STATUSES])
+          .lte("week_start", bounds.to)
+          .gte("week_end", bounds.from),
+      );
+    } catch (e2) {
+      if (isSupabaseMissingColumnError(e2, "bill_origin")) return [];
+      throw e2;
+    }
+  }
 }
 
 export function mergeSelfBillsById(rows: SelfBill[]): SelfBill[] {
@@ -131,11 +194,22 @@ export async function fetchSelfBillsForBilling(bounds: YmdBounds | null): Promis
     return acc;
   }
 
-  const [openRows, overlapRows, weekEndRows] = await Promise.all([
+  const [openRows, overlapRows, weekEndRows, dueDateRows, internalAccumulatingRows] = await Promise.all([
     fetchSelfBillQueryPages((q) => q.not("status", "in", CLOSED_SELF_BILL_LIST)),
     fetchSelfBillQueryPages((q) => q.lte("week_start", bounds.to).gte("week_end", bounds.from)),
     fetchSelfBillQueryPages((q) => q.gte("week_end", bounds.from).lte("week_end", bounds.to)),
+    fetchSelfBillQueryPagesOptional(
+      (q) => q.gte("due_date", bounds.from).lte("due_date", bounds.to),
+      "due_date in period",
+    ),
+    fetchInternalLiveSelfBills(bounds),
   ]);
 
-  return mergeSelfBillsById([...openRows, ...overlapRows, ...weekEndRows]);
+  return mergeSelfBillsById([
+    ...openRows,
+    ...overlapRows,
+    ...weekEndRows,
+    ...dueDateRows,
+    ...internalAccumulatingRows,
+  ]);
 }

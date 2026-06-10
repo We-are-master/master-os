@@ -1,19 +1,24 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  Calendar,
   CheckCircle2,
   FileText,
   LayoutGrid,
   LayoutList,
   Link2,
   Loader2,
+  Mail,
   Pencil,
   Plus,
+  Shield,
   Trash2,
+  User,
   UserPlus,
   Wallet,
 } from "lucide-react";
@@ -26,6 +31,78 @@ export const workforceFieldClass =
 
 export const workforceSectionClass =
   "rounded-2xl border border-border-light bg-card p-4 sm:p-5 shadow-sm space-y-4";
+
+/** Form sections — gray background so white inputs stand out. */
+export const workforceSectionFormClass =
+  "rounded-2xl border border-border-light bg-surface-tertiary dark:bg-surface-tertiary/80 p-4 sm:p-5 space-y-4";
+
+export const workforceSectionHeroClass =
+  "rounded-2xl border border-primary/20 bg-gradient-to-br from-[#020040]/[0.06] via-primary/[0.04] to-card p-4 sm:p-5 shadow-sm space-y-4";
+
+export function WorkforceSectionTitle({
+  children,
+  subtitle,
+}: {
+  children: ReactNode;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex gap-3">
+      <div className="w-1 shrink-0 rounded-full bg-primary min-h-[2rem]" aria-hidden />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-[#020040] dark:text-text-primary">{children}</p>
+        {subtitle ? <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+export function WorkforceDrawerTabs({
+  tabs,
+  activeTab,
+  onChange,
+}: {
+  tabs: { id: WorkforceDrawerTab; label: string; icon: ReactNode; contractorOnly?: boolean }[];
+  activeTab: WorkforceDrawerTab;
+  onChange: (id: WorkforceDrawerTab) => void;
+}) {
+  return (
+    <div className="flex gap-1 overflow-x-auto overscroll-x-contain scroll-smooth -mb-px">
+      {tabs.map((t) => {
+        const active = activeTab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onChange(t.id)}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap",
+              active
+                ? "border-primary text-[#020040] dark:text-text-primary"
+                : "border-transparent text-text-tertiary hover:text-text-secondary",
+            )}
+          >
+            <span className={cn("opacity-80", active && "text-primary opacity-100")}>{t.icon}</span>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export const WORKFORCE_DRAWER_TAB_CONFIG: {
+  id: WorkforceDrawerTab;
+  label: string;
+  icon: ReactNode;
+  contractorOnly?: boolean;
+}[] = [
+  { id: "overview", label: "Profile", icon: <User className="h-3.5 w-3.5" /> },
+  { id: "documents", label: "Documents", icon: <FileText className="h-3.5 w-3.5" /> },
+  { id: "schedule", label: "Schedule", icon: <Calendar className="h-3.5 w-3.5" />, contractorOnly: true },
+  { id: "finance", label: "Finance", icon: <Wallet className="h-3.5 w-3.5" /> },
+  { id: "access", label: "Login Details", icon: <Shield className="h-3.5 w-3.5" /> },
+];
 
 export function WorkforceKpiGrid({
   headcount,
@@ -47,30 +124,30 @@ export function WorkforceKpiGrid({
   dueThisMonthTotal: number;
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-      <div className="rounded-2xl border border-border-light bg-card px-4 py-3.5 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Headcount</p>
-        <p className="text-2xl font-bold tabular-nums text-text-primary mt-1">{headcount}</p>
-        <p className="text-xs text-text-secondary mt-0.5">
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+      <div className="rounded-xl border border-border-light bg-card px-3 py-2.5 shadow-sm">
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Headcount</p>
+        <p className="text-xl font-bold tabular-nums text-text-primary mt-0.5">{headcount}</p>
+        <p className="text-[11px] text-text-secondary mt-0.5">
           {active} active · {onboarding} onboarding
         </p>
       </div>
-      <div className="rounded-2xl border border-border-light bg-card px-4 py-3.5 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly payroll</p>
-        <p className="text-2xl font-bold tabular-nums text-primary mt-1">{formatCurrency(monthlyPayroll)}</p>
-        <p className="text-xs text-text-secondary mt-0.5">
+      <div className="rounded-xl border border-border-light bg-card px-3 py-2.5 shadow-sm">
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly payroll</p>
+        <p className="text-xl font-bold tabular-nums text-primary mt-0.5">{formatCurrency(monthlyPayroll)}</p>
+        <p className="text-[11px] text-text-secondary mt-0.5">
           across {payrollPeople} {payrollPeople === 1 ? "person" : "people"}
         </p>
       </div>
-      <div className="rounded-2xl border border-border-light bg-card px-4 py-3.5 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Docs outstanding</p>
-        <p className="text-2xl font-bold tabular-nums text-rose-600 dark:text-rose-400 mt-1">{docsOutstanding}</p>
-        <p className="text-xs text-text-secondary mt-0.5">needs attention</p>
+      <div className="rounded-xl border border-border-light bg-card px-3 py-2.5 shadow-sm">
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Docs outstanding</p>
+        <p className="text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400 mt-0.5">{docsOutstanding}</p>
+        <p className="text-[11px] text-text-secondary mt-0.5">needs attention</p>
       </div>
-      <div className="rounded-2xl border border-border-light bg-card px-4 py-3.5 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Due this month</p>
-        <p className="text-2xl font-bold tabular-nums text-text-primary mt-1">{dueThisMonthCount}</p>
-        <p className="text-xs text-text-secondary mt-0.5">{formatCurrency(dueThisMonthTotal)} total</p>
+      <div className="rounded-xl border border-border-light bg-card px-3 py-2.5 shadow-sm">
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Due this month</p>
+        <p className="text-xl font-bold tabular-nums text-text-primary mt-0.5">{dueThisMonthCount}</p>
+        <p className="text-[11px] text-text-secondary mt-0.5">{formatCurrency(dueThisMonthTotal)} total</p>
       </div>
     </div>
   );
@@ -323,12 +400,14 @@ export function WorkforcePersonCard({
   docsDone,
   docsTotal,
   activating,
-  onboardingLinkBusy,
+  onboardingCopyBusy,
+  onboardingSendBusy,
   onOpen,
   onOpenDocuments,
   onOpenFinance,
   onActivate,
   onCopyOnboardingLink,
+  onSendOnboardingLink,
 }: {
   row: WorkforcePeopleRow;
   photoUrl?: string;
@@ -336,24 +415,24 @@ export function WorkforcePersonCard({
   docsDone: number;
   docsTotal: number;
   activating: boolean;
-  onboardingLinkBusy?: boolean;
+  onboardingCopyBusy?: boolean;
+  onboardingSendBusy?: boolean;
   onOpen: () => void;
   onOpenDocuments: () => void;
   onOpenFinance: () => void;
   onActivate: () => void;
   onCopyOnboardingLink: () => void;
+  onSendOnboardingLink: () => void;
 }) {
   const stage = row.lifecycle_stage ?? "active";
-  const docsIncomplete = docsTotal > 0 && docsDone < docsTotal;
-  const showOnboardingLink = stage === "onboarding" || docsIncomplete;
   const emailLine =
     row.payroll_profile && typeof row.payroll_profile === "object" && "email" in (row.payroll_profile as object)
       ? String((row.payroll_profile as { email?: string }).email ?? "").trim()
       : "";
 
   return (
-    <article className="rounded-2xl border border-border-light bg-card shadow-sm hover:shadow-md hover:border-primary/20 transition-all flex flex-col overflow-hidden">
-      <button type="button" onClick={onOpen} className="text-left p-4 flex flex-col gap-3 flex-1 min-w-0">
+    <article className="rounded-xl border border-border-light bg-card shadow-sm hover:shadow-md hover:border-primary/20 transition-all flex flex-col overflow-hidden">
+      <button type="button" onClick={onOpen} className="text-left p-3 flex flex-col gap-2 flex-1 min-w-0">
         <div className="flex items-start gap-3 min-w-0">
           <Avatar name={row.payee_name ?? "?"} size="lg" src={photoUrl} className="shrink-0 ring-2 ring-card" />
           <div className="min-w-0 flex-1">
@@ -367,25 +446,6 @@ export function WorkforcePersonCard({
                 <Badge variant="info" size="sm" className="text-[10px] uppercase tracking-wide">
                   Contractor
                 </Badge>
-              ) : null}
-              {showOnboardingLink ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopyOnboardingLink();
-                  }}
-                  disabled={onboardingLinkBusy}
-                  className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                  title="Generate onboarding link (copied to clipboard)"
-                >
-                  {onboardingLinkBusy ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Link2 className="h-3 w-3" />
-                  )}
-                  Onboarding
-                </button>
               ) : null}
             </div>
           </div>
@@ -425,6 +485,42 @@ export function WorkforcePersonCard({
         >
           Finance
         </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full rounded-xl h-9 text-xs font-semibold"
+          icon={
+            onboardingCopyBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5" />
+            )
+          }
+          disabled={onboardingCopyBusy || onboardingSendBusy}
+          onClick={() => onCopyOnboardingLink()}
+          title="Copy profile update link"
+        >
+          Copy link
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full rounded-xl h-9 text-xs font-semibold"
+          icon={
+            onboardingSendBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Mail className="h-3.5 w-3.5" />
+            )
+          }
+          disabled={onboardingCopyBusy || onboardingSendBusy}
+          onClick={() => onSendOnboardingLink()}
+          title="Email profile update link via Resend"
+        >
+          Send link
+        </Button>
       </div>
       {stage === "onboarding" ? (
         <div className="px-3 pb-3">
@@ -449,48 +545,60 @@ export function WorkforcePersonCard({
 
 export function WorkforcePersonListRow({
   row,
+  rowIndex = 0,
   photoUrl,
   employmentType,
   docsDone,
   docsTotal,
   activating,
-  onboardingLinkBusy,
+  onboardingCopyBusy,
+  onboardingSendBusy,
   onOpen,
   onOpenDocuments,
   onOpenFinance,
   onActivate,
   onCopyOnboardingLink,
+  onSendOnboardingLink,
 }: {
   row: WorkforcePeopleRow;
+  rowIndex?: number;
   photoUrl?: string;
   employmentType: InternalCost["employment_type"];
   docsDone: number;
   docsTotal: number;
   activating: boolean;
-  onboardingLinkBusy?: boolean;
+  onboardingCopyBusy?: boolean;
+  onboardingSendBusy?: boolean;
   onOpen: () => void;
   onOpenDocuments: () => void;
   onOpenFinance: () => void;
   onActivate: () => void;
   onCopyOnboardingLink: () => void;
+  onSendOnboardingLink: () => void;
 }) {
   const stage = row.lifecycle_stage ?? "active";
-  const docsIncomplete = docsTotal > 0 && docsDone < docsTotal;
-  const showOnboardingLink = stage === "onboarding" || docsIncomplete;
   const emailLine =
     row.payroll_profile && typeof row.payroll_profile === "object" && "email" in (row.payroll_profile as object)
       ? String((row.payroll_profile as { email?: string }).email ?? "").trim()
       : "";
 
+  const striped = rowIndex % 2 === 1;
+
   return (
-    <div className="group flex flex-col gap-2 border-b border-border-light px-4 py-3 last:border-b-0 hover:bg-surface-hover/40 sm:grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-3">
-      <button type="button" onClick={onOpen} className="flex min-w-0 items-center gap-3 text-left">
-        <Avatar name={row.payee_name ?? "?"} size="md" src={photoUrl} className="shrink-0 ring-2 ring-card" />
+    <div
+      className={cn(
+        "group flex flex-col gap-1 border-b border-border-light/80 px-3 py-1.5 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5.25rem_auto] sm:items-center sm:gap-2 transition-colors",
+        striped ? "bg-surface-hover/35" : "bg-card",
+        "hover:bg-primary/[0.04]",
+      )}
+    >
+      <button type="button" onClick={onOpen} className="flex min-w-0 items-center gap-2.5 text-left">
+        <Avatar name={row.payee_name ?? "?"} size="sm" src={photoUrl} className="shrink-0 ring-1 ring-border-light" />
         <div className="min-w-0">
-          <p className="font-semibold text-text-primary truncate">{row.payee_name ?? "Unnamed"}</p>
-          {emailLine ? <p className="text-xs text-text-secondary truncate">{emailLine}</p> : null}
-          <p className="text-[11px] text-text-tertiary truncate">{row.description ?? "—"}</p>
-          <div className="flex flex-wrap gap-1.5 mt-1.5 sm:hidden">
+          <p className="text-sm font-semibold text-text-primary truncate leading-tight">{row.payee_name ?? "Unnamed"}</p>
+          {emailLine ? <p className="text-[11px] text-text-secondary truncate leading-tight">{emailLine}</p> : null}
+          <p className="text-[10px] text-text-tertiary truncate leading-tight">{row.description ?? "—"}</p>
+          <div className="flex flex-wrap gap-1 mt-1 sm:hidden">
             <LifecycleDotBadge stage={stage} />
             {employmentType === "self_employed" ? (
               <Badge variant="info" size="sm" className="text-[10px] uppercase tracking-wide">
@@ -516,45 +624,65 @@ export function WorkforcePersonListRow({
             Employee
           </Badge>
         )}
-        {showOnboardingLink ? (
-          <button
-            type="button"
-            onClick={() => onCopyOnboardingLink()}
-            disabled={onboardingLinkBusy}
-            className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-            title="Copy onboarding link"
-          >
-            {onboardingLinkBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
-            Onboarding
-          </button>
-        ) : null}
       </div>
-      <div className="hidden sm:block text-right">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Amount</p>
-        <p className="font-bold text-text-primary tabular-nums">{formatCurrency(Number(row.amount))}</p>
+      <div className="hidden sm:block text-right shrink-0 tabular-nums leading-none">
+        <p className="text-[11px] font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</p>
+        <p className="text-[10px] text-text-tertiary mt-0.5">{row.due_date ? formatDate(row.due_date) : "—"}</p>
       </div>
-      <div className="hidden sm:block text-right min-w-[5.5rem]">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next due</p>
-        <p className="font-semibold text-text-primary">{row.due_date ? formatDate(row.due_date) : "—"}</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-        <div className="flex gap-1 sm:hidden text-xs tabular-nums">
-          <span className="font-bold text-text-primary">{formatCurrency(Number(row.amount))}</span>
-          <span className="text-text-tertiary">·</span>
-          <span className="text-text-secondary">{row.due_date ? formatDate(row.due_date) : "—"}</span>
+      <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+        <div className="flex gap-1 sm:hidden text-[10px] tabular-nums text-text-tertiary">
+          <span className="font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</span>
+          <span>·</span>
+          <span>{row.due_date ? formatDate(row.due_date) : "—"}</span>
         </div>
-        <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => onOpenDocuments()}>
+        <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => onOpenDocuments()}>
           Docs
         </Button>
-        <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => onOpenFinance()}>
+        <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => onOpenFinance()}>
           Finance
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          disabled={onboardingCopyBusy || onboardingSendBusy}
+          onClick={() => onCopyOnboardingLink()}
+          title="Copy profile update link"
+          icon={
+            onboardingCopyBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5" />
+            )
+          }
+        >
+          Copy link
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          disabled={onboardingCopyBusy || onboardingSendBusy}
+          onClick={() => onSendOnboardingLink()}
+          title="Email profile update link"
+          icon={
+            onboardingSendBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Mail className="h-3.5 w-3.5" />
+            )
+          }
+        >
+          Send link
         </Button>
         {stage === "onboarding" ? (
           <Button
             type="button"
             size="sm"
             variant="primary"
-            className="h-8 text-xs"
+            className="h-7 px-2.5 text-[11px]"
             disabled={activating}
             onClick={() => onActivate()}
           >
@@ -571,7 +699,7 @@ export function WorkforceAddListRow({ label, onClick }: { label: string; onClick
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 border-t border-dashed border-border-light px-4 py-3 text-left hover:bg-primary/[0.03] transition-colors"
+      className="flex w-full items-center gap-2.5 border-t border-dashed border-border-light px-3 py-2 text-left hover:bg-primary/[0.03] transition-colors bg-card"
     >
       <span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-hover text-text-tertiary">
         <UserPlus className="h-4 w-4" />
@@ -606,4 +734,7 @@ export function WorkforceDrawerStatusBadge({ stage }: { stage: string }) {
   return <LifecycleDotBadge stage={stage} />;
 }
 
-export type WorkforceDrawerTab = "overview" | "documents" | "finance" | "access";
+export type WorkforceDrawerTab = "overview" | "documents" | "schedule" | "finance" | "access";
+
+/** Contractor-facing fee label (avoid "salary" for fiscal clarity). */
+export const WORKFORCE_CONTRACTOR_FEE_LABEL = "Service fee";

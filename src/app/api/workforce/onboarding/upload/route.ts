@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
+import { payrollOnboardingUploadKeysForRow, PROFILE_PHOTO_DOC_KEY } from "@/lib/payroll-doc-checklist";
+import { parseFrontendSetup, resolveWorkforceDocumentRules } from "@/lib/frontend-setup";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,27 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = createServiceClient();
+  const { data: personRow } = await admin
+    .from("payroll_internal_costs")
+    .select("employment_type, has_equity")
+    .eq("id", payload.payrollInternalCostId)
+    .maybeSingle();
+  const { data: settingsRow } = await admin.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
+  const workforceRules = resolveWorkforceDocumentRules(
+    parseFrontendSetup(settingsRow?.frontend_setup ?? null),
+  );
+  const allowed = [
+    ...payrollOnboardingUploadKeysForRow(
+      personRow?.employment_type ?? null,
+      personRow?.has_equity ?? false,
+      workforceRules,
+    ),
+    PROFILE_PHOTO_DOC_KEY,
+  ];
+  if (!allowed.includes(docKey)) {
+    return NextResponse.json({ error: "This document is not required for upload" }, { status: 400 });
+  }
+
   const path = `${payload.payrollInternalCostId}/${docKey}/${file.name.replace(/[^\w.\-]+/g, "_")}`;
   const { error: uploadErr } = await admin.storage.from(BUCKET).upload(path, file, {
     upsert: true,

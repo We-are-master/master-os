@@ -12,6 +12,7 @@ import {
   resolveAccessFees,
   resolveMarginThresholds,
   resolvePartnerDocumentRules,
+  resolveWorkforceDocumentRules,
   resolvePartnerPayoutReferenceYmd,
   resolvePartnerPayoutStandardTerms,
   type AccessFees,
@@ -47,6 +48,7 @@ export function useFrontendSetup() {
   const marginThresholds = useMemo<MarginThresholds>(() => resolveMarginThresholds(setup), [setup]);
   const accessFees = useMemo<AccessFees>(() => resolveAccessFees(setup), [setup]);
   const partnerDocumentRules = useMemo(() => resolvePartnerDocumentRules(setup), [setup]);
+  const workforceDocumentRules = useMemo(() => resolveWorkforceDocumentRules(setup), [setup]);
   const partnerPayoutStandardTerms = useMemo(() => resolvePartnerPayoutStandardTerms(setup), [setup]);
   const partnerPayoutReferenceYmd = useMemo(() => resolvePartnerPayoutReferenceYmd(setup), [setup]);
 
@@ -60,6 +62,7 @@ export function useFrontendSetup() {
     marginThresholds,
     accessFees,
     partnerDocumentRules,
+    workforceDocumentRules,
     partnerPayoutStandardTerms,
     partnerPayoutReferenceYmd,
     refetch: load,

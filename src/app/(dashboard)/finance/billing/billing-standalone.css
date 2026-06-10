@@ -126,3 +126,83 @@
 .bl-standalone .cf__day.is-today .cf__lbl b {
   color: #ed4b00;
 }
+
+/* Ledger rows — zebra + full-width trail */
+.bl-standalone .bl-ledger-row {
+  border-bottom: 1px solid rgba(2, 0, 64, 0.06);
+  transition: background-color 0.12s ease;
+}
+
+.bl-standalone .bl-ledger-row--alt {
+  background: rgba(2, 0, 64, 0.025);
+}
+
+.bl-standalone .bl-ledger-row:hover {
+  background: rgba(2, 0, 64, 0.045);
+}
+
+.bl-standalone .bl-ledger-week {
+  background: rgba(2, 0, 64, 0.04);
+  border-bottom: 1px solid rgba(2, 0, 64, 0.08);
+}
+
+.bl-standalone .bl-ledger-partner {
+  background: rgba(2, 0, 64, 0.02);
+  border-bottom: 1px solid rgba(2, 0, 64, 0.05);
+}
+
+.bl-standalone .bl-sb-row__trail {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) 1fr auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .bl-standalone .bl-sb-row__trail {
+    column-gap: 1.25rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .bl-standalone .bl-sb-row__trail {
+    column-gap: 2rem;
+  }
+}
+
+.bl-standalone .bl-sb-row__amount {
+  justify-self: start;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #020040;
+  white-space: nowrap;
+}
+
+.bl-standalone .bl-sb-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.bl-standalone .bl-sb-row__open {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.bl-standalone .bl-inv-row--alt {
+  background: rgba(2, 0, 64, 0.025);
+}
+
+.bl-standalone .bl-inv-row:hover {
+  background: rgba(2, 0, 64, 0.045);
+}

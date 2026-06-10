@@ -25,6 +25,7 @@ import {
   resolveBillingStandaloneFilterBounds,
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
+import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
 import type { Invoice, SelfBill } from "@/types/database";
 
@@ -245,6 +246,9 @@ export function useBillingStandaloneData() {
         setLoading(true);
       }
 
+      const shouldSyncWorkforce = !background && !hasLoadedOnceRef.current;
+      const workforceSyncPromise = shouldSyncWorkforce ? syncWorkforceSelfBillsForBilling(bounds) : null;
+
       let invRows: Invoice[] = [];
       let sbRows: SelfBill[] = [];
       let fetchHadErrors = false;
@@ -294,6 +298,17 @@ export function useBillingStandaloneData() {
       } finally {
         setLoading(false);
         setRefreshing(false);
+      }
+
+      if (workforceSyncPromise) {
+        void workforceSyncPromise
+          .then(() =>
+            loadData({
+              background: true,
+              bounds: fullHistoryLoadedRef.current ? null : bounds,
+            }),
+          )
+          .catch((e) => console.error("workforce self-bill sync failed", e));
       }
     },
     [applyEnrichment],

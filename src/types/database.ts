@@ -170,6 +170,10 @@ export interface Profile {
   custom_permissions?: UserPermissionOverride | null;
   /** True when admin created this user with a temporary password — forces change on first login. */
   must_change_password?: boolean | null;
+  /** Post-deploy gate: user must complete workforce onboarding wizard before dashboard access. */
+  workforce_refresh_required?: boolean | null;
+  /** Sessions from logins before this time are invalidated. */
+  session_valid_after?: string | null;
   /** Fixfy School — denormalized from fixfy_school_progress. */
   fixfy_school_xp?: number | null;
   fixfy_school_certified_phases?: string[] | null;
@@ -987,6 +991,15 @@ export type WorkforcePayoutBreakdown = {
   period_start: string;
   period_end: string;
   basis_total: number;
+  /** Effective start used for pro-rata (profile start_date or created_at). */
+  workforce_start_date?: string | null;
+  /** True when payroll_profile.start_date is not set — pro-rata may use created_at. */
+  start_date_missing?: boolean;
+  /** Calendar days counted for fixed pay in this period (after start_date and days off). */
+  payable_days?: number;
+  /** Days off dates applied within the work period. */
+  days_off_deducted?: number;
+  days_off_dates?: string[];
   jobs: {
     job_id: string;
     reference: string;
@@ -1016,8 +1029,16 @@ export type PayrollInternalProfile = {
   address?: string;
   vat_number?: string;
   vat_registered?: boolean;
+  /** Company registration / CNPJ / Companies House no. (contractors). */
+  company_registration?: string;
+  /** ISO country name for contractor fiscal & agreement. */
+  country_of_operation?: string;
+  /** Contractor only: sole trader vs registered company. */
+  contractor_entity_type?: "individual" | "company";
   /** First day on payroll — used to pro-rate fixed pay when joining mid-month. */
   start_date?: string;
+  /** Unpaid days off (YYYY-MM-DD) — deducted from monthly fixed pay accrual. */
+  days_off?: string[];
 };
 
 export interface PayrollInternalDocumentFile {

@@ -13,6 +13,10 @@ import {
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
 import {
+  mergeWorkforceDocumentRules,
+  type WorkforceDocumentRules,
+} from "@/lib/workforce-required-docs";
+import {
   normalizePartnerPayoutReferenceYmd,
   normalizePartnerPayoutStandardTerms,
   ORG_PARTNER_PAYOUT_STANDARD_TERMS,
@@ -110,6 +114,8 @@ export type FrontendSetup = {
    * Controls which docs are requested and which are mandatory for compliance.
    */
   partner_document_rules?: PartnerDocRuleRow[];
+  /** Workforce document rules — employee + contractor (Settings → Setup). */
+  workforce_document_rules?: WorkforceDocumentRules;
 
   /**
    * Org-wide default partner self-bill payout schedule (Settings → Setup).
@@ -407,6 +413,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
     base.working_days = [...DEFAULT_WORKING_DAYS];
     base.working_hours = { ...DEFAULT_WORKING_HOURS };
     base.partner_document_rules = mergePartnerDocumentRules(null);
+    base.workforce_document_rules = mergeWorkforceDocumentRules(null);
     return base;
   }
   const o = raw as Record<string, unknown>;
@@ -464,6 +471,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
+  base.workforce_document_rules = mergeWorkforceDocumentRules(o.workforce_document_rules);
   if (o.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(o.partner_payout_standard_terms);
   }
@@ -620,6 +628,9 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.partner_document_rules !== undefined) {
     base.partner_document_rules = mergePartnerDocumentRules(patch.partner_document_rules);
   }
+  if (patch.workforce_document_rules !== undefined) {
+    base.workforce_document_rules = mergeWorkforceDocumentRules(patch.workforce_document_rules);
+  }
   if (patch.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(patch.partner_payout_standard_terms);
   }
@@ -632,6 +643,10 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
 /** Resolved partner document rules from company setup (merged with code defaults). */
 export function resolvePartnerDocumentRules(setup?: FrontendSetup | null): PartnerDocRuleRow[] {
   return mergePartnerDocumentRules(setup?.partner_document_rules);
+}
+
+export function resolveWorkforceDocumentRules(setup?: FrontendSetup | null): WorkforceDocumentRules {
+  return mergeWorkforceDocumentRules(setup?.workforce_document_rules);
 }
 
 export type ResolvedSlaRules = {

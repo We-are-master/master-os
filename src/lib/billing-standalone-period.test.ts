@@ -66,4 +66,26 @@ describe("selfBillPayWorkPeriodInPeriod", () => {
       false,
     );
   });
+
+  it("includes internal workforce by due_date in period", () => {
+    const sb = {
+      bill_origin: "internal",
+      due_date: "2026-07-05",
+      week_start: "2026-06-01",
+      week_end: "2026-06-30",
+      status: "accumulating",
+    };
+    assert.equal(selfBillPayWorkPeriodInPeriod(sb, { from: "2026-07-01", to: "2026-07-10" }), true);
+  });
+
+  it("includes accumulating internal when due_date is after period end but on/after period start", () => {
+    const sb = {
+      bill_origin: "internal",
+      due_date: "2026-07-05",
+      week_start: "2026-06-01",
+      week_end: "2026-06-30",
+      status: "accumulating",
+    };
+    assert.equal(selfBillPayWorkPeriodInPeriod(sb, { from: "2026-06-15", to: "2026-06-20" }), true);
+  });
 });

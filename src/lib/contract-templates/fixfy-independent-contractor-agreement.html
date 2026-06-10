@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fixfy — Independent Contractor Framework Agreement</title>
+<style>
+  :root{
+    --navy:#020040;
+    --coral:#ED4B00;
+    --ink:#1a1a1a;
+    --grey:#555;
+    --light:#f2f2f5;
+    --line:#ccc;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    font-family:Arial,Helvetica,sans-serif;
+    color:var(--ink);
+    background:#e9e9ee;
+    margin:0;
+    line-height:1.5;
+    font-size:11pt;
+  }
+  .page{
+    background:#fff;
+    max-width:820px;
+    margin:24px auto;
+    padding:48px 56px 64px;
+    box-shadow:0 2px 16px rgba(0,0,0,.12);
+  }
+  header.brand{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    border-bottom:3px solid var(--coral);
+    padding-bottom:10px;
+    margin-bottom:6px;
+  }
+  header.brand .meta{font-size:8.5pt;color:var(--grey);}
+  @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap');
+  .sigscript{
+    font-family:'Caveat',cursive;
+    font-size:26pt;
+    font-weight:600;
+    color:var(--navy);
+    padding:2px 0 4px;
+    border-bottom:1.5px solid var(--navy);
+    min-height:34px;
+    line-height:1.1;
+  }
+  .sigfill{
+    font-size:10.5pt;
+    color:var(--navy);
+    padding:8px 0 4px;
+    border-bottom:1.5px solid var(--navy);
+    min-height:34px;
+    line-height:1.3;
+  }
+  h1.title{font-size:26pt;color:var(--navy);font-weight:800;margin:24px 0 0;line-height:1.05;}
+  h1.title .accent{color:var(--coral);display:block;}
+  .lead{text-align:justify;margin:14px 0;}
+  .party{font-weight:700;color:var(--navy);}
+  .andword{font-style:italic;}
+  h2.section{
+    font-size:13pt;color:var(--navy);font-weight:700;
+    margin:24px 0 8px;
+  }
+  p{text-align:justify;margin:8px 0;}
+  .sub{font-weight:700;color:var(--navy);}
+  ul.dash{list-style:none;margin:6px 0 10px;padding-left:24px;}
+  ul.dash li{position:relative;padding-left:18px;margin:3px 0;text-align:justify;}
+  ul.dash li::before{content:"\2013";color:var(--coral);position:absolute;left:0;font-weight:700;}
+  .label{font-size:9pt;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px;}
+  table.details{width:100%;border-collapse:collapse;margin:8px 0 4px;}
+  table.details td{border:1px solid var(--line);padding:8px 12px;font-size:10pt;vertical-align:top;}
+  table.details td.k{background:var(--light);font-weight:700;color:var(--navy);width:32%;}
+  table.details td.v{height:14px;}
+  .execution{page-break-before:always;}
+  h2.exec{font-size:18pt;color:var(--navy);font-weight:800;margin:8px 0 14px;}
+  .sigwrap{display:flex;gap:0;border:1px solid var(--line);}
+  .sigcell{flex:1;padding:16px;}
+  .sigcell + .sigcell{border-left:1px solid var(--line);}
+  .sigcell .h{font-weight:700;color:var(--navy);font-size:10.5pt;margin-bottom:4px;}
+  .sigcell .org{font-size:10pt;margin:2px 0;}
+  .sigline{border-bottom:1.5px solid var(--navy);height:34px;margin-top:14px;}
+  .sigcap{font-size:8.5pt;color:var(--grey);margin-top:2px;}
+  footer.foot{
+    border-top:1px solid var(--line);
+    margin-top:40px;padding-top:8px;
+    display:flex;justify-content:space-between;
+    font-size:8.5pt;color:var(--grey);
+  }
+  @media print{
+    body{background:#fff;}
+    .page{box-shadow:none;margin:0;max-width:100%;padding:0 12mm;}
+    @page{size:A4;margin:14mm 0;}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="brand">
+    {{contract_logo_html}}
+    <div class="meta">Getfixfy Ltd &middot; Co. No. 15406523</div>
+  </header>
+
+  <h1 class="title">INDEPENDENT CONTRACTOR<span class="accent">FRAMEWORK AGREEMENT</span></h1>
+
+  <p class="lead">This Independent Contractor Framework Agreement (the &ldquo;Agreement&rdquo;) is entered into on the date of last signature set out below by and between:</p>
+  <p class="lead"><span class="party">GETFIXFY LTD</span>, a company incorporated in England and Wales under company number 15406523, with its registered office at 124 City Road, London EC1V 2NX, United Kingdom (the &ldquo;Company&rdquo;);</p>
+  <p class="andword">and</p>
+  <p class="lead">the undersigned independent contractor identified in the signature block below (the &ldquo;Contractor&rdquo;).</p>
+
+  <div class="label">Contractor Details</div>
+  <table class="details">
+    <tr><td class="k">Full legal name / Trading name</td><td class="v"></td></tr>
+    <tr><td class="k">Registration / Tax ID (if any)</td><td class="v"></td></tr>
+    <tr><td class="k">Registered / Operating address</td><td class="v"></td></tr>
+    <tr><td class="k">Country of operation</td><td class="v"></td></tr>
+    <tr><td class="k">Email</td><td class="v"></td></tr>
+  </table>
+
+  <h2 class="section">1.&nbsp;&nbsp;Purpose</h2>
+  <p>This Agreement establishes the general framework governing the independent business-to-business relationship between the Company and the Contractor for the provision of operational, administrative, technical, customer support, maintenance coordination, sales, marketing or related professional services from time to time as agreed between the parties (the &ldquo;Services&rdquo;).</p>
+
+  <h2 class="section">2.&nbsp;&nbsp;Independent Contractor Relationship</h2>
+  <p><span class="sub">2.1</span>&nbsp;&nbsp;The parties expressly acknowledge and agree that this Agreement creates a strictly independent commercial relationship between two separate legal and economic entities.</p>
+  <p>2.2&nbsp;&nbsp;Nothing in this Agreement shall create or be interpreted as creating any:</p>
+  <ul class="dash">
+    <li>employment relationship;</li>
+    <li>partnership;</li>
+    <li>agency relationship;</li>
+    <li>joint venture;</li>
+    <li>fiduciary relationship; or</li>
+    <li>exclusivity obligation.</li>
+  </ul>
+  <p><span class="sub">2.3</span>&nbsp;&nbsp;The Contractor shall remain fully independent in the organisation and execution of its activities and shall not be subject to fixed working hours, attendance control, employment supervision or hierarchical employment structure.</p>
+  <p><span class="sub">2.4</span>&nbsp;&nbsp;The Contractor is free to determine the time, place and manner in which the Services are performed, provided that agreed operational deliverables, response obligations and service standards are reasonably met.</p>
+  <p><span class="sub">2.5</span>&nbsp;&nbsp;The Contractor acknowledges that the Company operates internationally, including under UK business hours and international client demand, and that operational coordination across different time zones may occasionally be required as part of a commercial contractor relationship.</p>
+
+  <h2 class="section">3.&nbsp;&nbsp;No Employment Rights</h2>
+  <p>3.1&nbsp;&nbsp;The Contractor operates as an independent business and is not an employee or worker of the Company. The Contractor expressly acknowledges that it is not entitled to any employment-related rights or benefits under the laws of the United Kingdom, Brazil or any other jurisdiction, including but not limited to:</p>
+  <ul class="dash">
+    <li>paid leave;</li>
+    <li>holiday pay;</li>
+    <li>sick pay;</li>
+    <li>overtime;</li>
+    <li>severance;</li>
+    <li>FGTS or other social fund contributions;</li>
+    <li>pension;</li>
+    <li>healthcare;</li>
+    <li>unemployment protection; or</li>
+    <li>any similar employment entitlement.</li>
+  </ul>
+  <p>3.2&nbsp;&nbsp;The Contractor shall be solely responsible for:</p>
+  <ul class="dash">
+    <li>taxes;</li>
+    <li>social security contributions;</li>
+    <li>accounting obligations;</li>
+    <li>invoicing obligations;</li>
+    <li>labour obligations relating to its own personnel; and</li>
+    <li>all legal and regulatory obligations applicable to its business activities in its country of operation.</li>
+  </ul>
+  <p><span class="sub">3.3</span>&nbsp;&nbsp;Where the Contractor operates from Brazil or any jurisdiction other than the United Kingdom, the Contractor warrants that it is duly registered to provide services as an independent business (including, where applicable, as a registered legal entity or self-employed professional) and that it issues valid invoices for the Services. The Contractor shall indemnify and hold the Company harmless against any tax, social security or labour claim arising from the Contractor&rsquo;s own legal status or failure to comply with the obligations applicable in its country of operation.</p>
+
+  <h2 class="section">4.&nbsp;&nbsp;Operational Structure</h2>
+  <p><span class="sub">4.1</span>&nbsp;&nbsp;The Contractor may perform the Services remotely from any location of its choosing unless otherwise agreed for specific onboarding, operational training or temporary collaboration purposes.</p>
+  <p><span class="sub">4.2</span>&nbsp;&nbsp;Any occasional use of third-party workspaces, operational hubs or temporary facilities shall not characterise employment, mandatory attendance or Company office presence.</p>
+  <p><span class="sub">4.3</span>&nbsp;&nbsp;The Contractor shall not be required to attend any Company premises on a permanent basis.</p>
+  <p><span class="sub">4.4</span>&nbsp;&nbsp;The Contractor acknowledges that operational meetings, onboarding sessions, workflow alignment, training sessions or coordination calls may occur from time to time as part of normal commercial collaboration.</p>
+
+  <h2 class="section">5.&nbsp;&nbsp;Equipment and Infrastructure</h2>
+  <p>5.1&nbsp;&nbsp;The Contractor shall provide, at its own cost and responsibility:</p>
+  <ul class="dash">
+    <li>computer equipment;</li>
+    <li>internet connection;</li>
+    <li>software;</li>
+    <li>electricity;</li>
+    <li>workspace;</li>
+    <li>communication tools; and</li>
+    <li>any other infrastructure necessary for the performance of the Services.</li>
+  </ul>
+  <p><span class="sub">5.2</span>&nbsp;&nbsp;The Company shall not be responsible for supplying equipment or reimbursing operational infrastructure costs unless expressly agreed separately in writing.</p>
+
+  <h2 class="section">6.&nbsp;&nbsp;Fees and Payment</h2>
+  <p><span class="sub">6.1</span>&nbsp;&nbsp;The fees payable for the Services, together with the scope of work, deliverables and any applicable rates, shall be set out in one or more written schedules, statements of work or order confirmations agreed between the parties from time to time (each a &ldquo;Schedule&rdquo;). Each Schedule, once agreed in writing (including by email), forms part of this Agreement.</p>
+  <p><span class="sub">6.2</span>&nbsp;&nbsp;Unless otherwise stated in the applicable Schedule, the Contractor shall invoice the Company monthly in arrears for Services effectively rendered, and the Company shall pay each valid, correctly addressed invoice within thirty (30) days of receipt.</p>
+  <p><span class="sub">6.3</span>&nbsp;&nbsp;All fees are stated exclusive of any applicable taxes. The Contractor is responsible for charging and accounting for any taxes due in its country of operation in accordance with clause 3.</p>
+  <p><span class="sub">6.4</span>&nbsp;&nbsp;The Company shall only be responsible for fees accrued for Services effectively rendered. No fee is payable for periods of inactivity, availability alone, or work not agreed in a Schedule.</p>
+
+  <h2 class="section">7.&nbsp;&nbsp;Deliverables and Service Levels</h2>
+  <p><span class="sub">7.1</span>&nbsp;&nbsp;The Contractor&rsquo;s obligations under this Agreement are based on operational outputs, deliverables, KPIs, response standards and service levels, and not on attendance or fixed hourly work.</p>
+  <p><span class="sub">7.2</span>&nbsp;&nbsp;The Company may establish operational expectations, response windows, quality standards, escalation procedures and workflow coordination requirements consistent with the Services being provided.</p>
+  <p>7.3&nbsp;&nbsp;Failure to deliver agreed operational outputs, KPIs or service standards may result in:</p>
+  <ul class="dash">
+    <li>reduction of allocated projects;</li>
+    <li>suspension of activities;</li>
+    <li>termination of engagement; or</li>
+    <li>recalculation of accrued fees for Services effectively rendered.</li>
+  </ul>
+
+  <h2 class="section">8.&nbsp;&nbsp;Non-Exclusivity</h2>
+  <p><span class="sub">8.1</span>&nbsp;&nbsp;Nothing in this Agreement prevents the Contractor from providing services to other clients, companies or businesses during the term of this Agreement.</p>
+  <p><span class="sub">8.2</span>&nbsp;&nbsp;The Contractor is not required to dedicate exclusive time or availability to the Company.</p>
+
+  <h2 class="section">9.&nbsp;&nbsp;Confidentiality</h2>
+  <p>9.1&nbsp;&nbsp;The Contractor shall keep strictly confidential all:</p>
+  <ul class="dash">
+    <li>operational information;</li>
+    <li>client data;</li>
+    <li>pricing;</li>
+    <li>systems;</li>
+    <li>workflows;</li>
+    <li>internal documentation;</li>
+    <li>credentials; and</li>
+    <li>commercial information relating to the Company.</li>
+  </ul>
+  <p><span class="sub">9.2</span>&nbsp;&nbsp;This obligation survives termination of this Agreement indefinitely.</p>
+
+  <h2 class="section">10.&nbsp;&nbsp;Intellectual Property</h2>
+  <p><span class="sub">10.1</span>&nbsp;&nbsp;Any work product, documentation, systems, workflows, operational materials or intellectual property created in connection with the Services shall belong exclusively to the Company unless otherwise agreed in writing. The Contractor hereby assigns to the Company, with full title guarantee, all such intellectual property rights and waives any moral rights therein to the fullest extent permitted by law.</p>
+
+  <h2 class="section">11.&nbsp;&nbsp;Term and Termination</h2>
+  <p><span class="sub">11.1</span>&nbsp;&nbsp;This Agreement shall remain in force until terminated by either party.</p>
+  <p><span class="sub">11.2</span>&nbsp;&nbsp;Either party may terminate this Agreement at any time upon written notice.</p>
+  <p>11.3&nbsp;&nbsp;Upon termination, the Contractor shall immediately:</p>
+  <ul class="dash">
+    <li>cease representing the Company;</li>
+    <li>return or delete Company data;</li>
+    <li>revoke access to Company systems; and</li>
+    <li>cooperate with reasonable transition requirements.</li>
+  </ul>
+  <p><span class="sub">11.4</span>&nbsp;&nbsp;The Company shall only be responsible for fees accrued for Services effectively rendered up to the termination date.</p>
+
+  <h2 class="section">12.&nbsp;&nbsp;Governing Law and Dispute Resolution</h2>
+  <p><span class="sub">12.1</span>&nbsp;&nbsp;This Agreement, and any dispute or claim arising out of or in connection with it, shall be governed by and construed in accordance with the laws of England and Wales.</p>
+  <p><span class="sub">12.2</span>&nbsp;&nbsp;Any dispute arising out of or relating to this Agreement shall be resolved through confidential arbitration in London under the Rules of the London Court of International Arbitration (LCIA), which Rules are deemed incorporated by reference into this clause. The seat of arbitration shall be London and the language shall be English.</p>
+  <p><span class="sub">12.3</span>&nbsp;&nbsp;The parties expressly acknowledge the international commercial nature of this Agreement and that the Contractor enters into it as an independent business.</p>
+
+  <h2 class="section">13.&nbsp;&nbsp;Entire Agreement</h2>
+  <p><span class="sub">13.1</span>&nbsp;&nbsp;This Agreement, together with any agreed Schedule, constitutes the entire understanding between the parties and supersedes all prior verbal or written discussions relating to the engagement.</p>
+  <p><span class="sub">13.2</span>&nbsp;&nbsp;Any amendment to this Agreement must be made in writing and signed by both parties.</p>
+
+  <h2 class="section">14.&nbsp;&nbsp;Nature of the Relationship &mdash; Acknowledgements</h2>
+  <p>The Contractor acknowledges that operational coordination requests, response windows, client-facing availability expectations or workflow alignment requirements shall not be interpreted as employment supervision, working-hour control or labour subordination.</p>
+  <p>No silence, operational practice, workflow coordination or day-to-day interaction between the parties shall modify the independent contractor nature of this Agreement unless expressly amended in writing signed by both parties.</p>
+
+  <div class="execution">
+    <h2 class="exec">EXECUTION</h2>
+    <p>The parties have executed this Agreement, intending it to take effect on the date of the last signature below.</p>
+    <div class="sigwrap">
+      <div class="sigcell">
+        <div class="h">For and on behalf of GETFIXFY LTD</div>
+        <div class="org">Getfixfy Ltd</div>
+        <div class="org">124 City Road, London EC1V 2NX</div>
+        <div class="org">Co. No. 15406523</div>
+        <div class="sigscript">{{company_signature}}</div><div class="sigcap">Signature</div>
+        <div class="sigfill">{{company_signatory_name}}</div><div class="sigcap">Name</div>
+        <div class="sigfill">{{agreement_date}}</div><div class="sigcap">Date</div>
+      </div>
+      <div class="sigcell">
+        <div class="h">THE CONTRACTOR</div>
+        <div class="org">{{contractor_name}}</div>
+        <div class="sigline"></div><div class="sigcap">Signature</div>
+        <div class="sigfill">{{contractor_name}}</div><div class="sigcap">Name</div>
+        <div class="sigfill">{{agreement_date}}</div><div class="sigcap">Date</div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Independent Contractor Framework Agreement &mdash; Confidential</span>
+    <span>Getfixfy Ltd</span>
+  </footer>
+
+</div>
+</body>
+</html>

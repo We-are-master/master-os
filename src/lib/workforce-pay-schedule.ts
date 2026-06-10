@@ -80,6 +80,118 @@ export function prorateMonthlyFixedPay(
   return Math.round(amount * (workedDays / daysInMonth) * 100) / 100;
 }
 
+function ymdToDayNumber(ymd: string): number {
+  return parseInt(ymd.slice(8, 10), 10);
+}
+
+function ymdToUtcMs(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+export function workforceAccrualEffectiveRange(
+  periodStartYmd: string,
+  periodEndYmd: string,
+  asOfYmd: string,
+  workforceStartYmd?: string | null,
+): { effectiveStart: string; effectiveEnd: string } | null {
+  const asOf = asOfYmd.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return null;
+
+  const effectiveEnd = asOf <= periodEndYmd ? asOf : periodEndYmd;
+  const start = workforceStartYmd?.trim().slice(0, 10);
+  const effectiveStart =
+    start && /^\d{4}-\d{2}-\d{2}$/.test(start)
+      ? start > periodStartYmd
+        ? start
+        : periodStartYmd
+      : periodStartYmd;
+
+  if (effectiveEnd < effectiveStart) return null;
+  return { effectiveStart, effectiveEnd };
+}
+
+/** Parse days_off from payroll_profile JSON. */
+export function parseWorkforceDaysOff(payrollProfile: unknown): string[] {
+  if (!payrollProfile || typeof payrollProfile !== "object") return [];
+  const raw = (payrollProfile as { days_off?: unknown }).days_off;
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const ymd = item.trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) out.add(ymd);
+  }
+  return [...out].sort();
+}
+
+export type WorkforcePayableDaysResult = {
+  payableDays: number;
+  daysOffInRange: string[];
+};
+
+/** Calendar days in range minus days off that fall within the range. */
+export function countWorkforceCalendarPayableDays(
+  periodStartYmd: string,
+  periodEndYmd: string,
+  asOfYmd: string,
+  workforceStartYmd?: string | null,
+  daysOffYmds: string[] = [],
+): WorkforcePayableDaysResult {
+  const range = workforceAccrualEffectiveRange(
+    periodStartYmd,
+    periodEndYmd,
+    asOfYmd,
+    workforceStartYmd,
+  );
+  if (!range) return { payableDays: 0, daysOffInRange: [] };
+
+  const offInRange = [
+    ...new Set(
+      daysOffYmds
+        .map((d) => d.trim().slice(0, 10))
+        .filter(
+          (d) =>
+            /^\d{4}-\d{2}-\d{2}$/.test(d) &&
+            d >= range.effectiveStart &&
+            d <= range.effectiveEnd,
+        ),
+    ),
+  ].sort();
+
+  const calendarDays =
+    Math.floor((ymdToUtcMs(range.effectiveEnd) - ymdToUtcMs(range.effectiveStart)) / 86400000) + 1;
+  const payableDays = Math.max(0, calendarDays - offInRange.length);
+  return { payableDays, daysOffInRange: offInRange };
+}
+
+/**
+ * Daily accrual of monthly fixed pay through `asOfYmd` (inclusive).
+ * Grows each day until month-end; days off in range reduce payable days.
+ */
+export function accrueMonthlyFixedPayToDate(
+  monthlyAmount: number,
+  periodStartYmd: string,
+  periodEndYmd: string,
+  asOfYmd: string,
+  workforceStartYmd?: string | null,
+  daysOffYmds?: string[] | null,
+): number {
+  const amount = Math.max(0, Number(monthlyAmount) || 0);
+  const periodEnd = parseISO(periodEndYmd.length === 10 ? `${periodEndYmd}T12:00:00` : periodEndYmd);
+  const daysInMonth = parseInt(format(endOfMonth(periodEnd), "d"), 10);
+  if (daysInMonth < 1) return Math.round(amount * 100) / 100;
+
+  const { payableDays } = countWorkforceCalendarPayableDays(
+    periodStartYmd,
+    periodEndYmd,
+    asOfYmd,
+    workforceStartYmd,
+    daysOffYmds ?? [],
+  );
+  return Math.round(amount * (payableDays / daysInMonth) * 100) / 100;
+}
+
 export function effectiveWorkforcePeriodStart(
   periodStartYmd: string,
   workforceStartYmd?: string | null,

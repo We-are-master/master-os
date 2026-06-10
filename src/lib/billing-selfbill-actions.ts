@@ -180,23 +180,33 @@ export async function payWithWise(
 
 export async function bulkSendSelfBillEmails(
   ids: string[],
-  opts?: { cycleKind?: "standard" | "off_cycle" | "auto" },
+  opts?: { cycleKind?: "standard" | "off_cycle" | "auto"; bundleByPartner?: boolean },
 ): Promise<{
   sent: number;
+  emailsSent: number;
   skipped: { id: string; reference?: string; reason: string }[];
 }> {
   const res = await fetch("/api/self-bills/send-email", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selfBillIds: ids, paymentRunHint: opts?.cycleKind ?? "auto" }),
+    body: JSON.stringify({
+      selfBillIds: ids,
+      paymentRunHint: opts?.cycleKind ?? "auto",
+      bundleByPartner: opts?.bundleByPartner === true,
+    }),
   });
   const data = (await res.json()) as {
     sent?: number;
+    emailsSent?: number;
     skipped?: { id: string; reference?: string; reason: string }[];
     error?: string;
   };
   if (!res.ok) throw new Error(data.error ?? "Failed to send emails");
-  return { sent: data.sent ?? 0, skipped: data.skipped ?? [] };
+  return {
+    sent: data.sent ?? 0,
+    emailsSent: data.emailsSent ?? data.sent ?? 0,
+    skipped: data.skipped ?? [],
+  };
 }
 
 export function getBulkEligibleSelfBillIds(

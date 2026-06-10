@@ -3,7 +3,10 @@ import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
-import { buildWorkforceWelcomeEmailHTML } from "@/lib/workforce-welcome-email-template";
+import {
+  buildWorkforceWelcomeEmailHTML,
+  formatWorkforceWelcomeRole,
+} from "@/lib/workforce-welcome-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 
 const DEFAULT_FROM = "Fixfy <support@getfixfy.com>";
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const admin = createServiceClient();
   const { data: person, error: personErr } = await admin
     .from("payroll_internal_costs")
-    .select("id, payee_name, amount, pay_frequency, payroll_profile, payment_method, commission_enabled, commission_rate_percent, commission_basis")
+    .select("id, payee_name, amount, pay_frequency, payroll_profile, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, description")
     .eq("id", id)
     .maybeSingle();
 
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     );
   }
 
-  const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const { data: requestRow, error: insErr } = await admin
     .from("workforce_onboarding_requests")
     .insert({
@@ -87,10 +90,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     tagline: (brandingRow as { tagline?: string } | null)?.tagline ?? undefined,
   };
 
+  const role = formatWorkforceWelcomeRole(person.employment_type, person.description);
+
   const html = buildWorkforceWelcomeEmailHTML(branding, {
     personName: person.payee_name?.trim() || "there",
+    workEmail: email,
+    role,
     onboardingUrl,
-    expiresAt,
     customMessage,
   });
 

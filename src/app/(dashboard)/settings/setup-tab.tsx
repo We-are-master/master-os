@@ -87,9 +87,15 @@ import {
   buildDefaultPartnerDocumentRules,
   getPartnerDocumentCatalogForSetup,
   mergePartnerDocumentRules,
-  type PartnerDocCatalogEntry,
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
+import { DocRulesGroup } from "@/components/settings/doc-rules-group";
+import {
+  getContractorDocumentCatalogForSetup,
+  getEmployeeDocumentCatalogForSetup,
+  mergeWorkforceDocumentRules,
+  type WorkforceDocRuleRow,
+} from "@/lib/workforce-required-docs";
 
 const WEEKDAY_LABELS: { id: number; short: string; full: string }[] = [
   { id: 1, short: "Mon", full: "Monday" },
@@ -172,6 +178,12 @@ export function SetupTab() {
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
   const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
     buildDefaultPartnerDocumentRules(),
+  );
+  const [employeeDocRules, setEmployeeDocRules] = useState<WorkforceDocRuleRow[]>(
+    () => mergeWorkforceDocumentRules(null).employee,
+  );
+  const [contractorDocRules, setContractorDocRules] = useState<WorkforceDocRuleRow[]>(
+    () => mergeWorkforceDocumentRules(null).contractor,
   );
   const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
   const [partnerPayoutStandard, setPartnerPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
@@ -334,6 +346,9 @@ export function SetupTab() {
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
+      const workforceRules = mergeWorkforceDocumentRules(parsed.workforce_document_rules);
+      setEmployeeDocRules(workforceRules.employee);
+      setContractorDocRules(workforceRules.contractor);
       const payoutStd = resolvePartnerPayoutStandardTerms(parsed);
       const payoutRef =
         resolvePartnerPayoutReferenceYmd(parsed) ??
@@ -537,6 +552,10 @@ export function SetupTab() {
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
         partner_document_rules: partnerDocRules,
+        workforce_document_rules: {
+          employee: employeeDocRules,
+          contractor: contractorDocRules,
+        },
         partner_payout_standard_terms: partnerPayoutStandard,
         partner_payout_reference_ymd: partnerPayoutReferenceYmd.trim() || null,
       });
@@ -604,6 +623,9 @@ export function SetupTab() {
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
       setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
+      const workforceRules = mergeWorkforceDocumentRules(next.workforce_document_rules);
+      setEmployeeDocRules(workforceRules.employee);
+      setContractorDocRules(workforceRules.contractor);
       const payoutStd = resolvePartnerPayoutStandardTerms(next);
       const payoutRef =
         resolvePartnerPayoutReferenceYmd(next) ??
@@ -1505,7 +1527,7 @@ export function SetupTab() {
           </p>
         </CardHeader>
         <div className="px-6 pb-6 space-y-5">
-          <PartnerDocRulesGroup
+          <DocRulesGroup
             title="Core & legal"
             entries={getPartnerDocumentCatalogForSetup().filter((e) =>
               ["core", "utr", "agreement"].includes(e.group),
@@ -1583,7 +1605,7 @@ export function SetupTab() {
                     All optional
                   </Button>
                 </div>
-                <PartnerDocRulesGroup
+                <DocRulesGroup
                   title=""
                   entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "trade_cert")}
                   rules={partnerDocRules}
@@ -1605,13 +1627,74 @@ export function SetupTab() {
               </div>
             ) : null}
           </div>
-          <PartnerDocRulesGroup
+          <DocRulesGroup
             title="Optional extras"
             entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "extra")}
             rules={partnerDocRules}
             canEdit={canEditConfig}
             onPatch={(id, patch) => {
               setPartnerDocRules((prev) =>
+                prev.map((r) => {
+                  if (r.id !== id) return r;
+                  const enabled = patch.enabled ?? r.enabled;
+                  return {
+                    ...r,
+                    enabled,
+                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
+                  };
+                }),
+              );
+            }}
+          />
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!canEditConfig || saving}
+            icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+          >
+            {saving ? "Saving…" : "Save setup"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Workforce documents</CardTitle>
+            <FixfyHintIcon text="Choose which documents employees and contractors must upload. Request shows the doc in the drawer and onboarding link; Mandatory blocks activation and counts toward the Missing badge." />
+          </div>
+          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+            Contracts and self-bill agreements are signed digitally on onboarding — configure compliance uploads here.
+          </p>
+        </CardHeader>
+        <div className="px-6 pb-6 space-y-5">
+          <DocRulesGroup
+            title="Employee documents"
+            entries={getEmployeeDocumentCatalogForSetup()}
+            rules={employeeDocRules}
+            canEdit={canEditConfig}
+            onPatch={(id, patch) => {
+              setEmployeeDocRules((prev) =>
+                prev.map((r) => {
+                  if (r.id !== id) return r;
+                  const enabled = patch.enabled ?? r.enabled;
+                  return {
+                    ...r,
+                    enabled,
+                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
+                  };
+                }),
+              );
+            }}
+          />
+          <DocRulesGroup
+            title="Contractor documents"
+            entries={getContractorDocumentCatalogForSetup()}
+            rules={contractorDocRules}
+            canEdit={canEditConfig}
+            onPatch={(id, patch) => {
+              setContractorDocRules((prev) =>
                 prev.map((r) => {
                   if (r.id !== id) return r;
                   const enabled = patch.enabled ?? r.enabled;
@@ -1760,72 +1843,6 @@ export function SetupTab() {
         </div>
       </Card>
       </section>
-    </div>
-  );
-}
-
-function PartnerDocRulesGroup({
-  title,
-  entries,
-  rules,
-  canEdit,
-  onPatch,
-}: {
-  title: string;
-  entries: PartnerDocCatalogEntry[];
-  rules: PartnerDocRuleRow[];
-  canEdit: boolean;
-  onPatch: (id: string, patch: Partial<Pick<PartnerDocRuleRow, "enabled" | "mandatory">>) => void;
-}) {
-  const ruleById = new Map(rules.map((r) => [r.id, r]));
-  if (entries.length === 0) return null;
-  return (
-    <div className="space-y-2">
-      {title ? <MicroLabel>{title}</MicroLabel> : null}
-      <div className="rounded-lg border border-border-light overflow-hidden divide-y divide-border-light">
-        <div className="hidden sm:grid sm:grid-cols-[1fr_5.5rem_5.5rem] gap-2 px-3 py-2 bg-surface-hover/60 text-[10px] font-mono uppercase tracking-[0.1em] text-text-tertiary">
-          <span>Document</span>
-          <span className="text-center">Request</span>
-          <span className="text-center">Mandatory</span>
-        </div>
-        {entries.map((entry) => {
-          const rule = ruleById.get(entry.id) ?? { id: entry.id, enabled: true, mandatory: true };
-          return (
-            <div
-              key={entry.id}
-              className="grid grid-cols-1 sm:grid-cols-[1fr_5.5rem_5.5rem] gap-2 px-3 py-2.5 items-start sm:items-center"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-text-primary">{entry.name}</p>
-                <p className="text-[11px] text-text-tertiary leading-snug">
-                  {entry.description}
-                  {entry.trade ? ` · ${entry.trade}` : ""}
-                </p>
-              </div>
-              <label className="flex items-center justify-start sm:justify-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
-                  checked={rule.enabled}
-                  disabled={!canEdit}
-                  onChange={(e) => onPatch(entry.id, { enabled: e.target.checked })}
-                />
-                <span className="sm:hidden">Request</span>
-              </label>
-              <label className="flex items-center justify-start sm:justify-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
-                  checked={rule.mandatory}
-                  disabled={!canEdit || !rule.enabled}
-                  onChange={(e) => onPatch(entry.id, { mandatory: e.target.checked })}
-                />
-                <span className="sm:hidden">Mandatory</span>
-              </label>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
