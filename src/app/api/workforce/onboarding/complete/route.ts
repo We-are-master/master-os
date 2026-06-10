@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
+import { ensureWorkforceDashboardAccess } from "@/lib/workforce-onboarding-access";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,14 @@ export async function POST(req: NextRequest) {
 
   const payload = verifyWorkforceOnboardingToken(token);
   if (!payload) return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+
+  let password: string | undefined;
+  try {
+    const body = await req.json();
+    if (typeof body?.password === "string") password = body.password.trim();
+  } catch {
+    /* optional body */
+  }
 
   const admin = createServiceClient();
   const now = new Date().toISOString();
@@ -48,7 +57,22 @@ export async function POST(req: NextRequest) {
     await ensureWorkforceSelfBillForPeriod(person.id, new Date(), admin);
   }
 
-  if (person.profile_id) {
+  let loginEmail: string | null = null;
+  if (password) {
+    try {
+      const access = await ensureWorkforceDashboardAccess(admin, {
+        payrollInternalCostId: person.id,
+        profileId: person.profile_id ?? null,
+        payeeName: person.payee_name ?? null,
+        payrollProfile: (person.payroll_profile ?? null) as Record<string, unknown> | null,
+        password,
+      });
+      loginEmail = access.email;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not create platform access";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+  } else if (person.profile_id) {
     await admin
       .from("profiles")
       .update({
@@ -59,5 +83,9 @@ export async function POST(req: NextRequest) {
       .eq("id", person.profile_id);
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    autoLoginReady: !!loginEmail,
+    email: loginEmail,
+  });
 }

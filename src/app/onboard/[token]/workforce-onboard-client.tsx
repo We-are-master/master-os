@@ -49,6 +49,8 @@ import { FixfyHeaderLogo } from "@/components/brand/fixfy-header-logo";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { COUNTRY_WORK_HINT } from "@/components/ui/country-select";
 import { countrySelectOptionsFor, resolveCountrySelectValue } from "@/lib/countries";
+import { signIn } from "@/services/auth";
+import { getSupabase } from "@/services/base";
 import type { PayrollInternalProfile } from "@/types/database";
 
 const WORKFORCE_CONTRACTOR_FEE_LABEL = "Service fee";
@@ -58,6 +60,7 @@ type PayrollDocumentFiles = Record<string, { path?: string; file_name?: string }
 type SessionData = {
   person: {
     id: string;
+    profile_id?: string | null;
     payee_name?: string | null;
     description?: string | null;
     amount: number;
@@ -129,7 +132,7 @@ function buildSteps(session: SessionData): StepDef[] {
   if (session.contract) {
     steps.push({ id: "contract", label: "Contract", cta: "Continue" });
   }
-  steps.push({ id: "photo", label: "Photo", cta: "Finish onboarding" });
+  steps.push({ id: "photo", label: "Photo", cta: "Finish & access platform" });
   steps.push({ id: "done", label: "Done", cta: "" });
   return steps;
 }
@@ -169,6 +172,11 @@ export default function WorkforceOnboardClient() {
   const [introSlide, setIntroSlide] = useState(0);
   const [stepIndex, setStepIndex] = useState(0);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [platformPassword, setPlatformPassword] = useState("");
+  const [platformPasswordConfirm, setPlatformPasswordConfirm] = useState("");
+  const [enteringPlatform, setEnteringPlatform] = useState(false);
+  const [loginReady, setLoginReady] = useState(false);
+  const savedPasswordRef = useRef("");
   const [contractorTaxNumber, setContractorTaxNumber] = useState("");
   const signaturePadRef = useRef<WorkforceSignaturePadHandle>(null);
   const contractRef = useRef<HTMLDivElement>(null);
@@ -327,17 +335,61 @@ export default function WorkforceOnboardClient() {
       toast.error("Enter the account holder name");
       return;
     }
+    if (!isUpdateMode) {
+      if (platformPassword.length < 8) {
+        toast.error("Choose a password with at least 8 characters");
+        return;
+      }
+      if (platformPassword !== platformPasswordConfirm) {
+        toast.error("Passwords do not match");
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       await saveProfile();
       if (session?.contract && !signed) await signContract();
       const res = await fetch(`/api/workforce/onboarding/complete?token=${encodeURIComponent(token)}`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          !isUpdateMode && platformPassword ? { password: platformPassword } : {},
+        ),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? "Complete failed");
       }
+      const data = (await res.json()) as {
+        autoLoginReady?: boolean;
+        email?: string | null;
+      };
+
+      savedPasswordRef.current = platformPassword;
+      setLoginReady(true);
+
+      const loginEmail = data.email?.trim() || profile.email.trim().toLowerCase();
+      const loginPassword = platformPassword || savedPasswordRef.current;
+
+      if (data.autoLoginReady && loginEmail && loginPassword) {
+        try {
+          await signIn(loginEmail, loginPassword);
+          window.location.assign("/");
+          return;
+        } catch {
+          toast.error("Onboarding saved — use Access the platform to sign in");
+        }
+      }
+
+      if (isUpdateMode) {
+        const supabase = getSupabase();
+        const { data: authData } = await supabase.auth.getUser();
+        if (authData.user) {
+          window.location.assign("/");
+          return;
+        }
+      }
+
       const doneIdx = steps.findIndex((s) => s.id === "done");
       if (doneIdx >= 0) setStepIndex(doneIdx);
     } catch (e) {
@@ -346,6 +398,39 @@ export default function WorkforceOnboardClient() {
       setSubmitting(false);
     }
   };
+
+  const enterPlatform = useCallback(async () => {
+    setEnteringPlatform(true);
+    try {
+      const supabase = getSupabase();
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData.user) {
+        window.location.assign("/");
+        return;
+      }
+      const email = profile.email.trim().toLowerCase();
+      const password = savedPasswordRef.current || platformPassword;
+      if (email && password) {
+        await signIn(email, password);
+        window.location.assign("/");
+        return;
+      }
+      window.location.assign("/login");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not sign in");
+      window.location.assign("/login");
+    } finally {
+      setEnteringPlatform(false);
+    }
+  }, [platformPassword, profile.email]);
+
+  useEffect(() => {
+    if (currentStep !== "done" || !loginReady || enteringPlatform) return;
+    const t = window.setTimeout(() => {
+      void enterPlatform();
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [currentStep, loginReady, enteringPlatform, enterPlatform]);
 
   const contractorProfile: PayrollInternalProfile = applyContractorTaxNumberToProfile(
     {
@@ -1133,6 +1218,47 @@ export default function WorkforceOnboardClient() {
                     />
                   </div>
                 </div>
+                {!isUpdateMode ? (
+                  <div className="ob-card" style={{ marginTop: 16 }}>
+                    <div className="ob-card__h">
+                      <span className="ob-card__ic">
+                        <Lock className="h-[18px] w-[18px]" />
+                      </span>
+                      <div>
+                        <div className="ob-card__t">Platform access</div>
+                        <div className="ob-card__s">Create the password you&apos;ll use to sign in to Fixfy OS</div>
+                      </div>
+                    </div>
+                    <div className="ob-card__b">
+                      <div className="ob-field">
+                        <label>
+                          Password <span className="req">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          className={`ob-inp${platformPassword.length >= 8 ? " ob-inp--filled" : ""}`}
+                          value={platformPassword}
+                          onChange={(e) => setPlatformPassword(e.target.value)}
+                          placeholder="At least 8 characters"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div className="ob-field" style={{ marginBottom: 0 }}>
+                        <label>
+                          Confirm password <span className="req">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          className={`ob-inp${platformPasswordConfirm.length >= 8 ? " ob-inp--filled" : ""}`}
+                          value={platformPasswordConfirm}
+                          onChange={(e) => setPlatformPasswordConfirm(e.target.value)}
+                          placeholder="Repeat your password"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
@@ -1178,10 +1304,25 @@ export default function WorkforceOnboardClient() {
                   {hasProfilePhoto ? "Profile photo set" : "Profile photo skipped"}
                 </div>
               </div>
-              <a href="/login" className="btn btn--p btn--lg" style={{ marginTop: 28 }}>
-                <LogIn className="h-4 w-4" />
+              <button
+                type="button"
+                className="btn btn--p btn--lg"
+                style={{ marginTop: 28 }}
+                disabled={enteringPlatform}
+                onClick={() => void enterPlatform()}
+              >
+                {enteringPlatform ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4" />
+                )}
                 Access the platform
-              </a>
+              </button>
+              {loginReady ? (
+                <p className="ob-sub" style={{ marginTop: 12, fontSize: 13 }}>
+                  Your account is ready — we&apos;ll sign you in when you continue.
+                </p>
+              ) : null}
             </div>
           </section>
         ) : null}

@@ -31,7 +31,7 @@ async function loadSession(token: string) {
   const { data: person, error: personErr } = await admin
     .from("payroll_internal_costs")
     .select(
-      "id, payee_name, description, amount, pay_frequency, payment_day_of_month, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, has_equity, lifecycle_stage, payroll_profile, payroll_document_files, payout_bank_sort_code, payout_bank_account_number, payout_bank_account_holder, business_units(name)",
+      "id, payee_name, description, amount, pay_frequency, payment_day_of_month, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, has_equity, lifecycle_stage, profile_id, payroll_profile, payroll_document_files, payout_bank_sort_code, payout_bank_account_number, payout_bank_account_holder, business_units(name)",
     )
     .eq("id", payload.payrollInternalCostId)
     .maybeSingle();
