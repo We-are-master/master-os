@@ -1,3 +1,6 @@
+import type { WorkforceDocumentRules } from "@/lib/workforce-required-docs";
+import { enabledWorkforceUploadKeys, mandatoryWorkforceUploadKeys } from "@/lib/workforce-required-docs";
+
 /** Required upload slots per employment type (keys in `payroll_document_files`). */
 
 export const EMPLOYEE_PAYROLL_UPLOAD_KEYS = [
@@ -32,15 +35,31 @@ export const PAYROLL_UPLOAD_LABELS: Record<string, string> = {
 
 export const EQUITY_AGREEMENT_KEY = "equity_agreement" as const;
 
-/** Required upload keys including optional equity agreement. */
+/** Required upload keys including optional equity agreement. Uses Settings rules when provided. */
 export function payrollUploadKeysForRow(
   employmentType: PayrollEmploymentType | null | undefined,
   hasEquity: boolean,
+  workforceRules?: WorkforceDocumentRules | null,
 ): readonly string[] {
+  if (workforceRules) {
+    return enabledWorkforceUploadKeys(workforceRules, employmentType, hasEquity);
+  }
   const base = payrollUploadKeysForType(employmentType);
   if (!hasEquity) return base;
   if (base.length === 0) return [EQUITY_AGREEMENT_KEY];
   return [...base, EQUITY_AGREEMENT_KEY];
+}
+
+/** Keys that count toward mandatory completion / alerts. */
+export function payrollMandatoryUploadKeysForRow(
+  employmentType: PayrollEmploymentType | null | undefined,
+  hasEquity: boolean,
+  workforceRules?: WorkforceDocumentRules | null,
+): readonly string[] {
+  if (workforceRules) {
+    return mandatoryWorkforceUploadKeys(workforceRules, employmentType, hasEquity);
+  }
+  return payrollUploadKeysForRow(employmentType, hasEquity);
 }
 
 export type PayrollEmploymentType = "employee" | "self_employed";
@@ -68,6 +87,24 @@ export function payrollUploadKeysForType(t: PayrollEmploymentType | null | undef
   return [];
 }
 
+/** Signed digitally on the onboarding page — not manual file uploads. */
+export const PAYROLL_ONBOARDING_CONTRACT_UPLOAD_KEYS = new Set([
+  "employment_contract",
+  "service_agreement",
+  "self_bill_agreement",
+]);
+
+/** Compliance uploads only (contracts excluded; contractor has no RTW / PAYE). */
+export function payrollOnboardingUploadKeysForRow(
+  employmentType: PayrollEmploymentType | null | undefined,
+  hasEquity: boolean,
+  workforceRules?: WorkforceDocumentRules | null,
+): readonly string[] {
+  return payrollUploadKeysForRow(employmentType, hasEquity, workforceRules).filter(
+    (k) => !PAYROLL_ONBOARDING_CONTRACT_UPLOAD_KEYS.has(k),
+  );
+}
+
 function hasUploaded(meta: unknown): boolean {
   if (!meta || typeof meta !== "object") return false;
   const p = (meta as PayrollDocumentFileMeta).path;
@@ -79,8 +116,9 @@ export function payrollDocsUploadCompletion(
   employmentType: PayrollEmploymentType | null | undefined,
   files: Record<string, PayrollDocumentFileMeta | null | undefined> | null | undefined,
   hasEquity = false,
+  workforceRules?: WorkforceDocumentRules | null,
 ): { done: number; total: number } {
-  const keys = payrollUploadKeysForRow(employmentType, hasEquity);
+  const keys = payrollMandatoryUploadKeysForRow(employmentType, hasEquity, workforceRules);
   if (keys.length === 0) return { done: 0, total: 0 };
   const m = files ?? {};
   let done = 0;
@@ -96,8 +134,9 @@ export function payrollDocsRowCompletion(
   payroll_document_files: Record<string, PayrollDocumentFileMeta | null | undefined> | null | undefined,
   documents_on_file_legacy?: Record<string, boolean> | null,
   hasEquity = false,
+  workforceRules?: WorkforceDocumentRules | null,
 ): { done: number; total: number } {
-  const keys = payrollUploadKeysForRow(employmentType, hasEquity);
+  const keys = payrollMandatoryUploadKeysForRow(employmentType, hasEquity, workforceRules);
   if (keys.length === 0) return { done: 0, total: 0 };
   const leg = documents_on_file_legacy ?? {};
   let done = 0;

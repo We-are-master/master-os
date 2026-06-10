@@ -1788,24 +1788,41 @@ export function SelfBillDetailDrawer({
         : `Due ${formatDate(dueYmd)}`
     : `Created ${formatDate(sb.created_at)}`;
 
+  const footerBtnClass =
+    "min-h-9 flex-1 min-w-[6.5rem] max-w-[11rem] !flex-nowrap items-center justify-center text-center leading-none";
+
   const footer = tab === "details" ? (
-    <div className="px-4 pb-3 pt-2 space-y-2">
-      <div className="flex gap-2">
+    <div className="px-4 pb-3 pt-2.5 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-center gap-2 w-full">
         {isPaid ? (
-          <Button variant="outline" size="sm" className="flex-1" onClick={onReopen}>
-            <span className="inline-flex items-center gap-1.5">
-              <RotateCcw className="h-3.5 w-3.5 shrink-0" /> Reopen self-bill
-            </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className={footerBtnClass}
+            icon={<RotateCcw className="h-3.5 w-3.5 shrink-0" />}
+            onClick={onReopen}
+          >
+            Reopen self-bill
           </Button>
         ) : isRejected ? null : isDraft ? (
-          <div className="flex w-full flex-col gap-2">
-            <Button variant="success" size="sm" className="w-full flex-1" onClick={onMarkReadyToPay}>
-              <span className="inline-flex items-center gap-1.5">
-                <Check className="h-3.5 w-3.5 shrink-0" /> Mark Ready to Pay
-              </span>
+          <div className="flex w-full max-w-sm mx-auto flex-col items-center gap-2">
+            <Button
+              variant="success"
+              size="sm"
+              className="w-full min-h-9 !flex-nowrap items-center justify-center text-center leading-none"
+              icon={<Check className="h-3.5 w-3.5 shrink-0" />}
+              onClick={onMarkReadyToPay}
+            >
+              Mark Ready to Pay
             </Button>
             {showRecordPartnerPayment && jobs.length > 0 ? (
-              <Button variant="outline" size="sm" className="w-full flex-1" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full min-h-9 !flex-nowrap items-center justify-center text-center leading-none"
+                icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                onClick={openRecordPartnerPayModal}
+              >
                 Partner payment — partial / advance
               </Button>
             ) : null}
@@ -1813,37 +1830,54 @@ export function SelfBillDetailDrawer({
         ) : isReady ? (
           <>
             {showRecordPartnerPayment && jobs.length > 0 ? (
-              <Button variant="outline" size="sm" className="flex-1 min-w-[7rem]" icon={<Plus className="h-3.5 w-3.5 shrink-0" />} onClick={openRecordPartnerPayModal}>
+              <Button
+                variant="outline"
+                size="sm"
+                className={footerBtnClass}
+                icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                onClick={openRecordPartnerPayModal}
+              >
                 Partner payment
               </Button>
             ) : null}
-            {overdue && (
-              <Button variant="danger" size="sm" onClick={() => toast.error("Escalate flow — coming soon.")}>
-                <span className="inline-flex items-center gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Escalate
-                </span>
+            {overdue ? (
+              <Button
+                variant="danger"
+                size="sm"
+                className={footerBtnClass}
+                icon={<AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+                onClick={() => toast.error("Escalate flow — coming soon.")}
+              >
+                Escalate
               </Button>
-            )}
-            <Button variant="success" size="sm" className="flex-1" onClick={onMarkPaid}>
-              <span className="inline-flex items-center gap-1.5">
-                <Check className="h-3.5 w-3.5 shrink-0" /> Mark as paid
-              </span>
+            ) : null}
+            <Button
+              variant="success"
+              size="sm"
+              className={footerBtnClass}
+              icon={<Check className="h-3.5 w-3.5 shrink-0" />}
+              onClick={onMarkPaid}
+            >
+              Mark as paid
             </Button>
           </>
         ) : null}
       </div>
-      {canTransition && (
-        <div className="flex items-center gap-2">
+      {canTransition ? (
+        <div className="flex items-center justify-center">
           <button
             type="button"
-            onClick={() => { setCancelReason(""); setCancelModalOpen(true); }}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
+            onClick={() => {
+              setCancelReason("");
+              setCancelModalOpen(true);
+            }}
+            className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 px-5 py-2 text-[11px] font-medium leading-none text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
             title="Cancel self-bill (does not affect job or invoice)"
           >
             <Ban className="h-3.5 w-3.5 shrink-0" /> Cancel
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   ) : undefined;
 

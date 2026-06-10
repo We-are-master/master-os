@@ -57,6 +57,7 @@ import {
 } from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
+import { refreshWorkforceSelfBillsForJobIds } from "@/services/workforce-self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { computeOfficeTimerElapsedSeconds, formatOfficeTimer, statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
@@ -1625,7 +1626,10 @@ function JobsPageContent() {
         if (upErr) throw upErr;
       }
 
-      await refreshSelfBillPayoutStatesForJobIds(ids);
+      await Promise.all([
+        refreshSelfBillPayoutStatesForJobIds(ids),
+        refreshWorkforceSelfBillsForJobIds(ids),
+      ]);
 
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${ids.length} jobs updated`);
@@ -1676,7 +1680,10 @@ function JobsPageContent() {
         }
         if (upErr) throw upErr;
       }
-      await refreshSelfBillPayoutStatesForJobIds(ids);
+      await Promise.all([
+        refreshSelfBillPayoutStatesForJobIds(ids),
+        refreshWorkforceSelfBillsForJobIds(ids),
+      ]);
       await logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name);
       toast.success(`${ids.length} job(s) moved to In progress`);
       setSelectedIds(new Set());
@@ -1771,7 +1778,10 @@ function JobsPageContent() {
           }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
         ),
       );
-      await refreshSelfBillPayoutStatesForJobIds(ids);
+      await Promise.all([
+        refreshSelfBillPayoutStatesForJobIds(ids),
+        refreshWorkforceSelfBillsForJobIds(ids),
+      ]);
       await logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name);
       toast.success(`${updatedCount} job(s) cancelled`);
       setSelectedIds(new Set());
@@ -1832,7 +1842,10 @@ function JobsPageContent() {
             .eq("id", j.id),
         ),
       );
-      await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
+      await Promise.all([
+        ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
+        refreshWorkforceSelfBillsForJobIds(eligible.map((j) => j.id)),
+      ]);
       await logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name);
       toast.success(`${eligible.length} job(s) moved to Deleted`);
       setSelectedIds(new Set());
@@ -1881,7 +1894,10 @@ function JobsPageContent() {
             .eq("id", j.id);
         }),
       );
-      await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
+      await Promise.all([
+        ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
+        refreshWorkforceSelfBillsForJobIds(rows.map((j) => j.id)),
+      ]);
       await logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name);
       toast.success(`${rows.length} job(s) recovered`, {
         description: "Linked invoices stay cancelled—adjust in Finance if needed.",

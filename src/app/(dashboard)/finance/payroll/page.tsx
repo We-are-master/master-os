@@ -44,6 +44,7 @@ import { getSupabase } from "@/services/base";
 import { createCommissionRun, listCommissionRuns, getCommissionRunWithItems, updateCommissionRunItem, approveCommissionRun } from "@/services/commission-runs";
 import type { CommissionRun, CommissionRunItem } from "@/types/database";
 import { useProfile } from "@/hooks/use-profile";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import {
@@ -116,6 +117,7 @@ function parsePayrollProfile(raw: unknown): PayrollInternalProfile {
 
 export default function PayrollPage() {
   const { profile } = useProfile();
+  const { workforceDocumentRules } = useFrontendSetup();
   const [section, setSection] = useState<"internal" | "recurring" | "commission">("internal");
   const [internalCosts, setInternalCosts] = useState<InternalCost[]>([]);
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
@@ -254,6 +256,7 @@ export default function PayrollPage() {
           files,
           c.documents_on_file ?? null,
           c.has_equity ?? false,
+          workforceDocumentRules,
         );
         return total > 0 && done < total;
       });
@@ -278,7 +281,7 @@ export default function PayrollPage() {
       );
     }
     return list;
-  }, [internalByStaffTab, showArchivedOffboard, staffSubTab, internalFilter, search]);
+  }, [internalByStaffTab, showArchivedOffboard, staffSubTab, internalFilter, search, workforceDocumentRules]);
 
   const filteredRecurring = useMemo(() => {
     let list = scopedRecurring;
@@ -565,6 +568,7 @@ export default function PayrollPage() {
         files,
         row.documents_on_file ?? null,
         row.has_equity ?? false,
+        workforceDocumentRules,
       );
       if (total > 0 && done < total) {
         toast.error("Upload all required documents before approving recurring pay");
@@ -576,7 +580,7 @@ export default function PayrollPage() {
       });
       if (ok) toast.success("Approved once — recurring until offboard. Included in Pay Run when due in the week.");
     },
-    [patchInternalLifecycle],
+    [patchInternalLifecycle, workforceDocumentRules],
   );
 
   const handleConfirmOffboard = useCallback(async () => {
@@ -676,6 +680,7 @@ export default function PayrollPage() {
           files,
           r.documents_on_file ?? null,
           r.has_equity ?? false,
+          workforceDocumentRules,
         );
         if (!total) return <span className="text-sm text-text-tertiary">—</span>;
         const complete = done === total;
@@ -1182,6 +1187,7 @@ function InternalCostModal({
   onSave: (form: Partial<InternalCost>, extra?: { pendingFiles: Record<string, File> }) => Promise<void>;
   saving: boolean;
 }) {
+  const { workforceDocumentRules } = useFrontendSetup();
   const [payeeName, setPayeeName] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -1239,7 +1245,7 @@ function InternalCostModal({
   }, [open, initial]);
 
   const isOffboard = initial?.lifecycle_stage === "offboard";
-  const docKeys = payrollUploadKeysForRow(employmentType || null, hasEquity);
+  const docKeys = payrollUploadKeysForRow(employmentType || null, hasEquity, workforceDocumentRules);
 
   const openSigned = async (path: string) => {
     try {

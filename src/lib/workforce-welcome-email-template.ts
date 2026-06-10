@@ -1,10 +1,28 @@
+import "server-only";
+import { readFileSync } from "fs";
+import { join } from "path";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
+
+const DEFAULT_LOGO_URL = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
+const DEFAULT_SUPPORT_EMAIL = "support@getfixfy.com";
 
 export interface WorkforceWelcomeEmailOptions {
   personName: string;
+  workEmail: string;
+  role: string;
   onboardingUrl: string;
-  expiresAt: Date;
   customMessage?: string;
+}
+
+let cachedTemplate: string | null = null;
+
+function loadWelcomeTeamMemberTemplate(): string {
+  if (cachedTemplate) return cachedTemplate;
+  cachedTemplate = readFileSync(
+    join(process.cwd(), "src/lib/email-templates/welcome-team-member.html"),
+    "utf8",
+  );
+  return cachedTemplate;
 }
 
 function escapeHtml(s: string): string {
@@ -16,39 +34,50 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#039;");
 }
 
-function formatDate(d: Date): string {
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+function firstName(fullName: string): string {
+  const t = fullName.trim();
+  if (!t) return "there";
+  return t.split(/\s+/)[0] ?? t;
+}
+
+export function formatWorkforceWelcomeRole(
+  employmentType: string | null | undefined,
+  description: string | null | undefined,
+): string {
+  const base = employmentType === "self_employed" ? "Contractor" : "Employee";
+  const desc = description?.trim();
+  if (desc) return `${base} · ${desc}`;
+  return base;
+}
+
+function replaceAll(template: string, key: string, value: string): string {
+  return template.split(`{{${key}}}`).join(value);
 }
 
 export function buildWorkforceWelcomeEmailHTML(
   branding: CompanyBranding,
   options: WorkforceWelcomeEmailOptions,
 ): string {
-  const color = branding.primaryColor ?? "#ED4B00";
-  const { personName, onboardingUrl, expiresAt, customMessage } = options;
+  const companyName = branding.companyName?.trim() || "Fixfy";
+  const supportEmail = branding.email?.trim() || DEFAULT_SUPPORT_EMAIL;
+  const logoUrl = branding.logoUrl?.trim() || DEFAULT_LOGO_URL;
+  const fullName = options.personName.trim() || "there";
 
-  const messageBlock =
-    customMessage && customMessage.trim()
-      ? `<p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">${escapeHtml(customMessage.trim())}</p>`
+  const customMessageBlock =
+    options.customMessage && options.customMessage.trim()
+      ? `<p style="margin:16px 0 0;padding:0;font-size:14px;color:#4A4A55;line-height:24px;">${escapeHtml(options.customMessage.trim())}</p>`
       : "";
 
-  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#F5F5F4;font-family:system-ui,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;"><tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #E7E5E4;">
-<tr><td style="background:${color};padding:24px;text-align:center;">
-<h1 style="margin:0;color:#fff;font-size:20px;">Welcome to ${escapeHtml(branding.companyName)}</h1>
-</td></tr>
-<tr><td style="padding:28px 24px;">
-<p style="margin:0 0 12px;font-size:15px;color:#1C1917;">Hi ${escapeHtml(personName)},</p>
-<p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">
-  Complete your onboarding to confirm your profile, upload documents, and review your payment terms (fixed pay and commission, if applicable).
-</p>
-${messageBlock}
-<p style="margin:0 0 20px;text-align:center;">
-<a href="${escapeHtml(onboardingUrl)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 24px;border-radius:8px;">Complete onboarding</a>
-</p>
-<p style="margin:0;font-size:12px;color:#78716C;">Link expires ${formatDate(expiresAt)}.</p>
-</td></tr>
-</table>
-</td></tr></table></body></html>`;
+  let html = loadWelcomeTeamMemberTemplate();
+  html = replaceAll(html, "company_name", escapeHtml(companyName));
+  html = replaceAll(html, "first_name", escapeHtml(firstName(fullName)));
+  html = replaceAll(html, "full_name", escapeHtml(fullName));
+  html = replaceAll(html, "email", escapeHtml(options.workEmail));
+  html = replaceAll(html, "role", escapeHtml(options.role));
+  html = replaceAll(html, "setup_url", escapeHtml(options.onboardingUrl));
+  html = replaceAll(html, "logo_url", escapeHtml(logoUrl));
+  html = replaceAll(html, "support_email", escapeHtml(supportEmail));
+  html = replaceAll(html, "custom_message_block", customMessageBlock);
+
+  return html;
 }

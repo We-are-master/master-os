@@ -27,10 +27,12 @@ interface AddressAutocompleteProps {
   className?: string;
   /** Merged onto the text field (dashboard default styling). */
   fieldClassName?: string;
-  country?: string;
+  /** ISO country code (e.g. gb). Omit or pass null for worldwide search. */
+  country?: string | null;
   label?: string;
-  /** Dashboard (default) vs dark partner portal / public pages */
-  variant?: "default" | "dark";
+  /** Dashboard (default) vs dark partner portal / onboarding */
+  variant?: "default" | "dark" | "onboarding";
+  showMapPin?: boolean;
   /** Multi-line field (e.g. full address block); still uses Mapbox forward geocoding while typing */
   multiline?: boolean;
 }
@@ -77,6 +79,7 @@ export function AddressAutocomplete({
   label,
   variant = "default",
   multiline = false,
+  showMapPin = true,
 }: AddressAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [results, setResults] = useState<GeoFeature[]>([]);
@@ -88,6 +91,7 @@ export function AddressAutocomplete({
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isDark = variant === "dark";
+  const isOnboarding = variant === "onboarding";
 
   useEffect(() => { setQuery(value); }, [value]);
 
@@ -117,7 +121,8 @@ export function AddressAutocomplete({
     setLoading(true);
     try {
       const types = "address,postcode,place,locality";
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&types=${types}&country=${country}&limit=5&language=en`;
+      const countryFilter = country?.trim() ? `&country=${encodeURIComponent(country.trim())}` : "";
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&types=${types}${countryFilter}&limit=5&language=en`;
       const res = await fetch(url);
       const data = await res.json();
       setResults(data.features ?? []);
@@ -162,11 +167,17 @@ export function AddressAutocomplete({
     multiline ? "top-3" : "top-1/2 -translate-y-1/2",
   );
   const fieldClass = cn(
-    "w-full rounded-xl border pl-9 pr-9 text-sm transition-all",
-    multiline ? "min-h-[5.5rem] py-2.5 resize-y leading-relaxed" : "h-10",
-    isDark
-      ? "border-zinc-700 bg-zinc-950 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#e93701]/35"
-      : "border-border bg-card text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary",
+    "w-full text-sm transition-all",
+    showMapPin ? "pl-9 pr-9" : "px-3 pr-9",
+    multiline ? "min-h-[5.5rem] py-2.5 resize-y leading-relaxed" : isOnboarding ? "" : "h-10",
+    isOnboarding
+      ? "ob-inp"
+      : cn(
+          "rounded-xl border",
+          isDark
+            ? "border-zinc-700 bg-zinc-950 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#e93701]/35"
+            : "border-border bg-card text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary",
+        ),
     fieldClassName,
   );
 
@@ -183,7 +194,7 @@ export function AddressAutocomplete({
         </label>
       )}
       <div className="relative">
-        <MapPin className={controlIconPin} />
+        {showMapPin ? <MapPin className={controlIconPin} /> : null}
         {multiline ? (
           <textarea
             ref={textareaRef}
@@ -238,9 +249,11 @@ export function AddressAutocomplete({
             data-address-dropdown
             className={cn(
               "fixed z-[9999] mt-1 rounded-xl shadow-lg overflow-hidden max-h-60 overflow-y-auto",
-              isDark
-                ? "bg-[#121212] border border-zinc-700"
-                : "bg-card border border-border",
+              isOnboarding
+                ? "bg-[var(--white)] border border-[var(--line-2)]"
+                : isDark
+                  ? "bg-[#121212] border border-zinc-700"
+                  : "bg-card border border-border",
             )}
             style={{ top: dropdownRect.top + 4, left: dropdownRect.left, width: dropdownRect.width }}
           >
@@ -251,16 +264,30 @@ export function AddressAutocomplete({
                 onClick={() => handleSelect(feature)}
                 className={cn(
                   "w-full flex items-start gap-2.5 px-3 py-2.5 transition-colors text-left",
-                  isDark ? "hover:bg-zinc-800/90" : "hover:bg-surface-hover",
+                  isOnboarding
+                    ? "hover:bg-[var(--paper)]"
+                    : isDark
+                      ? "hover:bg-zinc-800/90"
+                      : "hover:bg-surface-hover",
                 )}
               >
                 <MapPin className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", isDark ? "text-[#e93701]" : "text-primary")} />
                 <div className="min-w-0">
-                  <p className={cn("text-sm truncate", isDark ? "text-zinc-100" : "text-text-primary")}>
+                  <p
+                    className={cn(
+                      "text-sm truncate",
+                      isOnboarding ? "text-[var(--ink)]" : isDark ? "text-zinc-100" : "text-text-primary",
+                    )}
+                  >
                     {feature.text}
                     {feature.address ? `, ${feature.address}` : ""}
                   </p>
-                  <p className={cn("text-[11px] truncate", isDark ? "text-zinc-500" : "text-text-tertiary")}>
+                  <p
+                    className={cn(
+                      "text-[11px] truncate",
+                      isOnboarding ? "text-[var(--mute)]" : isDark ? "text-zinc-500" : "text-text-tertiary",
+                    )}
+                  >
                     {feature.place_name}
                   </p>
                 </div>

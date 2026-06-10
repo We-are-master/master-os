@@ -13,6 +13,7 @@
     "verify:zendesk-schema": "node scripts/verify-zendesk-schema.mjs",
     "sync:zendesk-catalog": "npx tsx scripts/run-zendesk-catalog-sync.mts",
     "build:school-data": "npx tsx scripts/build-fixfy-school-data.mts",
+    "generate:school-pricing-pdf": "npx tsx scripts/generate-school-services-pricing-pdf.mts",
     "apply:zendesk-migrations": "node supabase/scripts/apply-zendesk-pricing-migrations.mjs"
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
+    "react-signature-canvas": "^1.1.0-alpha.2",
     "recharts": "^3.8.0",
     "resend": "^6.9.3",
     "sonner": "^2.0.7",
@@ -48,6 +50,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/react-signature-canvas": "^1.0.7",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "pg": "^8.21.0",

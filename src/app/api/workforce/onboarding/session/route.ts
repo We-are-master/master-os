@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
-import { payrollUploadKeysForRow } from "@/lib/payroll-doc-checklist";
+import {
+  payrollMandatoryUploadKeysForRow,
+  payrollOnboardingUploadKeysForRow,
+} from "@/lib/payroll-doc-checklist";
+import { parseFrontendSetup, resolveWorkforceDocumentRules } from "@/lib/frontend-setup";
+import { resolveContractorAgreementHtml } from "@/lib/workforce-contractor-agreement-server";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +24,6 @@ async function loadSession(token: string) {
 
   if (reqErr || !reqRow) return { error: "Request not found", status: 404 as const };
   if (reqRow.revoked_at) return { error: "Link revoked", status: 410 as const };
-  if (reqRow.completed_at) return { error: "Already completed", status: 410 as const };
   if (new Date(reqRow.expires_at).getTime() < Date.now()) {
     return { error: "Link expired", status: 410 as const };
   }
@@ -27,12 +31,19 @@ async function loadSession(token: string) {
   const { data: person, error: personErr } = await admin
     .from("payroll_internal_costs")
     .select(
-      "id, payee_name, amount, pay_frequency, payment_day_of_month, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, has_equity, payroll_profile, payroll_document_files",
+      "id, payee_name, description, amount, pay_frequency, payment_day_of_month, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, has_equity, lifecycle_stage, payroll_profile, payroll_document_files, payout_bank_sort_code, payout_bank_account_number, payout_bank_account_holder, business_units(name)",
     )
     .eq("id", payload.payrollInternalCostId)
     .maybeSingle();
 
   if (personErr || !person) return { error: "Person not found", status: 404 as const };
+
+  if (person.employment_type === "employee") {
+    return {
+      error: "Onboarding is for contractors only. Employees use dashboard access — contact your admin.",
+      status: 403 as const,
+    };
+  }
 
   const now = new Date().toISOString();
   await admin
@@ -44,19 +55,68 @@ async function loadSession(token: string) {
     })
     .eq("id", reqRow.id);
 
-  const { data: contract } = await admin
-    .from("contract_versions")
-    .select("id, contract_type, version, title, body_html")
-    .eq(
-      "contract_type",
-      person.employment_type === "employee" ? "workforce_employment_contract" : "workforce_service_agreement",
-    )
-    .eq("is_active", true)
-    .maybeSingle();
+  let contract: {
+    id: string;
+    contract_type: string;
+    version: string;
+    title: string;
+    body_html: string;
+  } | null = null;
 
-  const docKeys = payrollUploadKeysForRow(person.employment_type ?? null, person.has_equity ?? false);
+  if (person.employment_type === "self_employed") {
+    const { data: contractRow } = await admin
+      .from("contract_versions")
+      .select("id, contract_type, version, title, body_html")
+      .eq("contract_type", "workforce_service_agreement")
+      .eq("is_active", true)
+      .maybeSingle();
+    if (contractRow) {
+      contract = {
+        ...contractRow,
+        title: contractRow.title || "Independent Contractor Framework Agreement",
+        body_html: resolveContractorAgreementHtml({
+          payee_name: person.payee_name,
+          payroll_profile: (person.payroll_profile ?? {}) as Record<string, unknown>,
+        }),
+      };
+    }
+  }
 
-  return { person, contract, docKeys, requestId: reqRow.id };
+  const { data: settingsRow } = await admin.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
+  const workforceRules = resolveWorkforceDocumentRules(
+    parseFrontendSetup(settingsRow?.frontend_setup ?? null),
+  );
+  const employmentType = person.employment_type ?? null;
+  const hasEquity = person.has_equity ?? false;
+  const docKeys = payrollOnboardingUploadKeysForRow(employmentType, hasEquity, workforceRules);
+  const mandatoryDocKeys = payrollMandatoryUploadKeysForRow(employmentType, hasEquity, workforceRules).filter(
+    (k) => docKeys.includes(k),
+  );
+
+  const purpose = (reqRow as { purpose?: string }).purpose ?? "invite";
+  const isProfileRefresh = purpose === "profile_refresh";
+
+  let contractSigned = false;
+  if (contract?.id && !isProfileRefresh) {
+    const { data: sig } = await admin
+      .from("workforce_contract_signatures")
+      .select("id")
+      .eq("payroll_internal_cost_id", payload.payrollInternalCostId)
+      .eq("contract_version_id", contract.id)
+      .maybeSingle();
+    contractSigned = !!sig;
+  }
+
+  return {
+    person,
+    contract,
+    docKeys,
+    mandatoryDocKeys,
+    contractSigned,
+    requestId: reqRow.id,
+    purpose,
+    isProfileRefresh,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -68,15 +128,39 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: session.error }, { status: session.status });
   }
 
-  const { data: brandingRow } = await createServiceClient().from("company_settings").select("company_name, logo_url").maybeSingle();
+  const { data: brandingRow } = await createServiceClient()
+    .from("company_settings")
+    .select("company_name, primary_color")
+    .maybeSingle();
+
+  const branding = brandingRow as {
+    company_name?: string;
+    primary_color?: string | null;
+  } | null;
+
+  const contractOut = session.contract
+    ? {
+        ...session.contract,
+        body_html:
+          session.person.employment_type === "self_employed"
+            ? resolveContractorAgreementHtml({
+                payee_name: session.person.payee_name,
+                payroll_profile: (session.person.payroll_profile ?? {}) as Record<string, unknown>,
+              })
+            : session.contract.body_html,
+      }
+    : null;
 
   return NextResponse.json({
     person: session.person,
-    contract: session.contract,
+    contract: contractOut,
     docKeys: session.docKeys,
+    mandatoryDocKeys: session.mandatoryDocKeys,
+    contractSigned: session.contractSigned,
+    isProfileRefresh: session.isProfileRefresh,
     branding: {
-      companyName: (brandingRow as { company_name?: string } | null)?.company_name ?? "Fixfy",
-      logoUrl: (brandingRow as { logo_url?: string } | null)?.logo_url ?? null,
+      companyName: branding?.company_name ?? "Fixfy",
+      primaryColor: branding?.primary_color ?? "#ED4B00",
     },
   });
 }
@@ -107,12 +191,36 @@ export async function PATCH(req: NextRequest) {
     tax_code: typeof body.tax_code === "string" ? body.tax_code.trim() : prev.tax_code,
     utr: typeof body.utr === "string" ? body.utr.trim() : prev.utr,
     position: typeof body.position === "string" ? body.position.trim() : prev.position,
+    vat_number: typeof body.vat_number === "string" ? body.vat_number.trim() : prev.vat_number,
+    company_registration:
+      typeof body.company_registration === "string" ? body.company_registration.trim() : prev.company_registration,
+    country_of_operation:
+      typeof body.country_of_operation === "string" ? body.country_of_operation.trim() : prev.country_of_operation,
+    contractor_entity_type:
+      body.contractor_entity_type === "company" || body.contractor_entity_type === "individual"
+        ? body.contractor_entity_type
+        : prev.contractor_entity_type,
   };
+
+  const payoutUpdates: Record<string, string | null> = {};
+  if (typeof body.payout_bank_account_holder === "string") {
+    payoutUpdates.payout_bank_account_holder = body.payout_bank_account_holder.trim() || null;
+  }
+  if (typeof body.payout_bank_sort_code === "string") {
+    payoutUpdates.payout_bank_sort_code = body.payout_bank_sort_code.trim() || null;
+  }
+  if (typeof body.payout_bank_account_number === "string") {
+    payoutUpdates.payout_bank_account_number = body.payout_bank_account_number.trim() || null;
+  }
 
   const admin = createServiceClient();
   const { error } = await admin
     .from("payroll_internal_costs")
-    .update({ payroll_profile: nextProfile, updated_at: new Date().toISOString() })
+    .update({
+      payroll_profile: nextProfile,
+      ...payoutUpdates,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", session.person.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

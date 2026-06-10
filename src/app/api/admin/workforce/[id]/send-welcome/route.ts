@@ -3,7 +3,10 @@ import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
-import { buildWorkforceWelcomeEmailHTML } from "@/lib/workforce-welcome-email-template";
+import {
+  buildWorkforceWelcomeEmailHTML,
+  formatWorkforceWelcomeRole,
+} from "@/lib/workforce-welcome-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 
 const DEFAULT_FROM = "Fixfy <support@getfixfy.com>";
@@ -18,9 +21,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   let customMessage = "";
+  let sendEmail = true;
   try {
     const body = await req.json();
     if (typeof body?.customMessage === "string") customMessage = body.customMessage;
+    if (body?.sendEmail === false) sendEmail = false;
   } catch {
     /* optional body */
   }
@@ -28,7 +33,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const admin = createServiceClient();
   const { data: person, error: personErr } = await admin
     .from("payroll_internal_costs")
-    .select("id, payee_name, amount, pay_frequency, payroll_profile, payment_method, commission_enabled, commission_rate_percent, commission_basis")
+    .select("id, payee_name, amount, pay_frequency, payroll_profile, payment_method, commission_enabled, commission_rate_percent, commission_basis, employment_type, description")
     .eq("id", id)
     .maybeSingle();
 
@@ -36,17 +41,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "Workforce person not found" }, { status: 404 });
   }
 
-  if (!person.payment_method) {
-    return NextResponse.json({ error: "Set payment method before sending welcome email" }, { status: 400 });
-  }
-
   const profile = (person.payroll_profile ?? {}) as { email?: string };
   const email = profile.email?.trim();
   if (!email) {
-    return NextResponse.json({ error: "Set email on the person profile first" }, { status: 400 });
+    return NextResponse.json({ error: "Set work email on the person profile first" }, { status: 400 });
   }
 
-  const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  if (sendEmail && !person.payment_method) {
+    return NextResponse.json(
+      { error: "Set payment method in Finance before emailing the welcome invite" },
+      { status: 400 },
+    );
+  }
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const { data: requestRow, error: insErr } = await admin
     .from("workforce_onboarding_requests")
     .insert({
@@ -82,20 +90,24 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     tagline: (brandingRow as { tagline?: string } | null)?.tagline ?? undefined,
   };
 
+  const role = formatWorkforceWelcomeRole(person.employment_type, person.description);
+
   const html = buildWorkforceWelcomeEmailHTML(branding, {
     personName: person.payee_name?.trim() || "there",
+    workEmail: email,
+    role,
     onboardingUrl,
-    expiresAt,
     customMessage,
   });
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!resendKey) {
+  if (!sendEmail || !resendKey) {
     return NextResponse.json({
       ok: true,
       onboardingUrl,
       requestId: requestRow.id,
-      warning: "RESEND_API_KEY not set — email not sent",
+      sentTo: sendEmail ? undefined : email,
+      warning: sendEmail && !resendKey ? "RESEND_API_KEY not set — email not sent" : undefined,
     });
   }
 

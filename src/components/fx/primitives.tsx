@@ -112,6 +112,8 @@ export function KpiCard({
   label,
   hint,
   value,
+  countAbove,
+  countBesideHint,
   sub,
   trend,
   trendDirection,
@@ -124,6 +126,10 @@ export function KpiCard({
   /** Optional hint shown as a subtle "!" icon next to the label with a hover popover. */
   hint?: string;
   value: React.ReactNode;
+  /** Smaller count/metric rendered above the main value (e.g. job count above £ total). */
+  countAbove?: React.ReactNode;
+  /** Count shown in orange next to the hint icon (instead of countAbove). */
+  countBesideHint?: React.ReactNode;
   sub?: React.ReactNode;
   trend?: React.ReactNode;
   trendDirection?: "up" | "down" | "neutral";
@@ -148,6 +154,11 @@ export function KpiCard({
         <span className="fx-kk inline-flex items-center gap-1.5">
           {label}
           {hint && <FixfyHintIcon text={hint} placement="top-start" />}
+          {countBesideHint != null && countBesideHint !== "" ? (
+            <span className="font-mono text-[11.5px] font-semibold tabular-nums text-fx-coral-p leading-none">
+              {countBesideHint}
+            </span>
+          ) : null}
           {onShowDetails && (
             <button
               type="button"
@@ -162,9 +173,13 @@ export function KpiCard({
         </span>
         {topRight}
       </div>
+      {countAbove != null && countAbove !== "" && countBesideHint == null ? (
+        <div className="mt-2 font-mono text-[11.5px] text-fx-mute tabular-nums leading-none">{countAbove}</div>
+      ) : null}
       <div
         className={cn(
-          "mt-2 font-medium tabular-nums tracking-[-0.02em] leading-[1.1] text-[24px]",
+          "font-medium tabular-nums tracking-[-0.02em] leading-[1.1] text-[24px]",
+          countAbove != null && countAbove !== "" && countBesideHint == null ? "mt-1" : "mt-2",
           variant === "coral" && "text-fx-coral-p",
           variant === "alert" && "text-fx-red",
           variant === "default" && "text-text-primary",

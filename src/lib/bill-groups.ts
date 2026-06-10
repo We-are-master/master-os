@@ -16,6 +16,8 @@ export type BillDisplayItem =
 
 function billMatchesStatusFilter(b: Bill, statusFilter: string): boolean {
   if (statusFilter === "all" || statusFilter === "archived") return true;
+  if (statusFilter === "unpaid") return b.status !== "paid";
+  if (statusFilter === "paid") return b.status === "paid";
   return b.status === statusFilter;
 }
 

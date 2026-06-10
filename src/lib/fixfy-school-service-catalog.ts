@@ -117,17 +117,11 @@ function mapView(view: ServicePricingView): SchoolCatalogServiceRow {
   };
 }
 
-/** Active catalog rows grouped by category — same structure as Services → Overview. */
-export async function buildSchoolServiceCatalogPayload(): Promise<SchoolServiceCatalogPayload> {
-  const { data } = await listCatalogServices({
-    page: 1,
-    pageSize: 500,
-    status: "active",
-    sortBy: "sort_order",
-    sortDir: "asc",
-  });
-
-  const views = buildAllServicePricingViews(data as CatalogService[]).filter((v) => v.isActive);
+/** Build payload from in-memory catalog rows (scripts, tests). */
+export async function buildSchoolServiceCatalogPayloadFromRows(
+  rows: CatalogService[],
+): Promise<SchoolServiceCatalogPayload> {
+  const views = buildAllServicePricingViews(rows).filter((v) => v.isActive);
   const grouped = groupViewsByCategory(views);
 
   const categories: SchoolCatalogCategorySection[] = CATALOG_CATEGORY_ORDER.map((id) => ({
@@ -141,4 +135,17 @@ export async function buildSchoolServiceCatalogPayload(): Promise<SchoolServiceC
     totalActive: views.length,
     categories,
   };
+}
+
+/** Active catalog rows grouped by category — same structure as Services → Overview. */
+export async function buildSchoolServiceCatalogPayload(): Promise<SchoolServiceCatalogPayload> {
+  const { data } = await listCatalogServices({
+    page: 1,
+    pageSize: 500,
+    status: "active",
+    sortBy: "sort_order",
+    sortDir: "asc",
+  });
+
+  return buildSchoolServiceCatalogPayloadFromRows(data as CatalogService[]);
 }

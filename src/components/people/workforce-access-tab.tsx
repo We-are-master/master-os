@@ -7,8 +7,10 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, KeyRound, Shield, UserX, UserCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { InternalCost, Profile } from "@/types/database";
+import { workforceFieldClass, workforceSectionFormClass } from "./workforce-ui";
 
 interface WorkforceAccessTabProps {
   person: InternalCost;
@@ -279,7 +281,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className={workforceSectionFormClass}>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
               Email
@@ -290,6 +292,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
               onChange={(e) => setEmail(e.target.value)}
               placeholder="person@example.com"
               autoComplete="off"
+              className={workforceFieldClass}
             />
           </div>
           <div>
@@ -310,6 +313,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
               autoComplete="new-password"
+              className={workforceFieldClass}
             />
             <p className="text-[11px] text-text-tertiary mt-1">
               The user will be required to change this on first login.
@@ -339,7 +343,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
   return (
     <div className="space-y-5">
       {/* Identity card */}
-      <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-2">
+      <div className={workforceSectionFormClass}>
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-sm font-semibold text-text-primary">{profile.full_name}</p>
@@ -358,7 +362,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
       </div>
 
       {/* Login email */}
-      <div className="space-y-2 rounded-xl border border-border-light p-4">
+      <div className={workforceSectionFormClass}>
         <p className="text-xs font-semibold text-text-secondary">Login email</p>
         <p className="text-[11px] text-text-tertiary">
           The address the user types to sign in. Changes here update <code className="font-mono text-[10px]">auth.users</code> AND <code className="font-mono text-[10px]">profiles</code> together — the old email stops working immediately.
@@ -369,6 +373,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           onChange={(e) => setEditEmail(e.target.value)}
           placeholder="user@example.com"
           autoComplete="email"
+          className={workforceFieldClass}
         />
         {editEmail.trim().toLowerCase() !== (profile.email ?? "").toLowerCase() && (
           <div className="flex items-center gap-2">
@@ -388,7 +393,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
       </div>
 
       {/* Role */}
-      <div className="space-y-2">
+      <div className={workforceSectionFormClass}>
         <Select
           label="Role"
           value={editRole}
@@ -403,7 +408,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
       </div>
 
       {/* Reset password */}
-      <div className="space-y-2 rounded-xl border border-border-light p-4">
+      <div className={workforceSectionFormClass}>
         <p className="text-xs font-semibold text-text-secondary flex items-center gap-1.5">
           <KeyRound className="h-3.5 w-3.5" />
           Reset password
@@ -417,6 +422,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           onChange={(e) => setNewPassword(e.target.value)}
           placeholder="New temporary password"
           autoComplete="new-password"
+          className={workforceFieldClass}
         />
         <Button
           size="sm"
@@ -429,7 +435,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
       </div>
 
       {/* Deactivate / reactivate */}
-      <div className="flex flex-col gap-2 rounded-xl border border-border-light p-4">
+      <div className={cn(workforceSectionFormClass, "flex flex-col gap-2")}>
         <p className="text-xs font-semibold text-text-secondary">Account status</p>
         <p className="text-[11px] text-text-tertiary">
           {active

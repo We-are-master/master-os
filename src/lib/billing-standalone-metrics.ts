@@ -7,6 +7,10 @@ import {
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import {
+  computeWorkforcePayDueDate,
+  WORKFORCE_MONTHLY_PAY_DAY,
+} from "@/lib/workforce-pay-schedule";
+import {
   addDaysYmd,
   daysBetweenYmd,
   invoiceDueYmd,
@@ -35,9 +39,18 @@ export type AgingBucket = "current" | "d1_7" | "d8_30" | "d30plus";
 const READY_SB = new Set(["ready_to_pay", "pending_review", "awaiting_payment", "audit_required"]);
 
 export function selfBillDueYmd(
-  sb: Pick<SelfBill, "week_end" | "due_date" | "partner_id">,
+  sb: Pick<SelfBill, "week_end" | "due_date" | "partner_id" | "bill_origin">,
   dueCtx: SelfBillDueResolveContext,
 ): string {
+  if (sb.bill_origin === "internal") {
+    const stored = sb.due_date?.trim().slice(0, 10) ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+    const we = sb.week_end?.trim().slice(0, 10) ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(we)) {
+      return computeWorkforcePayDueDate(we, WORKFORCE_MONTHLY_PAY_DAY);
+    }
+    return "";
+  }
   return resolveSelfBillDueYmd(sb, dueCtx);
 }
 

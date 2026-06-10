@@ -1751,13 +1751,13 @@ function SystemTab() {
 
         <Card padding="none" className="lg:col-span-2">
           <CardHeader className="px-6 pt-6">
-            <CardTitle>Partner documents</CardTitle>
+            <CardTitle>Document requirements</CardTitle>
             <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
-              Document requirements and mandatory rules are configured in{" "}
+              Partner, employee, and contractor document rules are configured in{" "}
               <Link href="/settings?tab=setup" className="text-primary font-medium hover:underline">
-                Settings → Setup → Partner documents
+                Settings → Setup
               </Link>
-              . Use Request / Mandatory toggles there to control upload links, join registration, and compliance scoring.
+              {" "}(Partner documents and Workforce documents sections). Use Request / Mandatory toggles to control upload links, onboarding, and compliance scoring.
             </p>
           </CardHeader>
         </Card>

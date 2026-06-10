@@ -640,12 +640,25 @@ export async function cancelSelfBillsByIds(ids: string[]): Promise<void> {
 }
 
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
-  if (!job.self_bill_id) return;
-  try {
-    await refreshSelfBillPayoutState(job.self_bill_id);
-  } catch (e) {
-    console.error("syncSelfBillAfterJobChange failed:", e);
+  const tasks: Promise<void>[] = [];
+  if (job.self_bill_id) {
+    tasks.push(
+      refreshSelfBillPayoutState(job.self_bill_id).catch((e) => {
+        console.error("syncSelfBillAfterJobChange partner refresh failed:", e);
+      }),
+    );
   }
+  if (job.id) {
+    tasks.push(
+      import("./workforce-self-bills")
+        .then(({ refreshWorkforceSelfBillsForJobIds }) => refreshWorkforceSelfBillsForJobIds([job.id]))
+        .catch((e) => {
+          console.error("syncSelfBillAfterJobChange workforce refresh failed:", e);
+        }),
+    );
+  }
+  if (tasks.length === 0) return;
+  await Promise.all(tasks);
 }
 
 /** After bulk job updates that bypass `updateJob`, refresh every linked weekly self-bill. */

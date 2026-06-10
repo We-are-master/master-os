@@ -1,4 +1,7 @@
+import { format } from "date-fns";
 import { getSupabase } from "./base";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getPayPeriodBounds } from "@/lib/workforce-pay-schedule";
 import type {
   InternalCost,
   WorkforceCommissionBasis,
@@ -27,6 +30,15 @@ function jobRevenue(row: { client_price?: number | null; extras_amount?: number 
   return clampMoney(Number(row.client_price ?? 0) + Number(row.extras_amount ?? 0));
 }
 
+export function ownerJobEligibleForWorkforceCommission(row: {
+  status?: string | null;
+  deleted_at?: string | null;
+}): boolean {
+  if (row.deleted_at) return false;
+  if (row.status === "cancelled" || row.status === "deleted") return false;
+  return true;
+}
+
 function jobGrossProfit(row: {
   client_price?: number | null;
   extras_amount?: number | null;
@@ -42,20 +54,25 @@ function jobGrossProfit(row: {
   return clampMoney(Math.max(0, revenue - costs));
 }
 
-export async function calculateOwnerJobCommission(input: {
-  profileId: string;
-  periodStart: string;
-  periodEnd: string;
-  commissionRatePercent: number;
-  commissionBasis: WorkforceCommissionBasis;
-}): Promise<CommissionCalcResult> {
+export async function calculateOwnerJobCommission(
+  input: {
+    profileId: string;
+    periodStart: string;
+    periodEnd: string;
+    commissionRatePercent: number;
+    commissionBasis: WorkforceCommissionBasis;
+  },
+  supabase: SupabaseClient = getSupabase(),
+): Promise<CommissionCalcResult> {
   const rate = Math.max(0, Math.min(100, Number(input.commissionRatePercent) || 0)) / 100;
-  const { data, error } = await getSupabase()
+  const { data, error } = await supabase
     .from("jobs")
     .select(
-      "id, reference, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, completed_date",
+      "id, reference, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, completed_date, status, deleted_at",
     )
     .eq("owner_id", input.profileId)
+    .is("deleted_at", null)
+    .not("status", "in", '("cancelled","deleted")')
     .not("completed_date", "is", null)
     .gte("completed_date", input.periodStart)
     .lte("completed_date", input.periodEnd);
@@ -63,6 +80,7 @@ export async function calculateOwnerJobCommission(input: {
 
   const jobs: OwnerJobCommissionRow[] = [];
   for (const row of data ?? []) {
+    if (!ownerJobEligibleForWorkforceCommission(row)) continue;
     const revenue = jobRevenue(row);
     const grossProfit = jobGrossProfit(row);
     const basis = input.commissionBasis === "revenue" ? revenue : grossProfit;
@@ -88,12 +106,13 @@ export async function previewWorkforceCommission(
 ): Promise<CommissionCalcResult | null> {
   if (!person.commission_enabled || !person.profile_id) return null;
   if (person.commission_rate_percent == null || !person.commission_basis) return null;
-  const { getPayPeriodBounds } = await import("@/lib/workforce-pay-schedule");
   const period = getPayPeriodBounds(person.pay_frequency, anchorDate);
+  const todayYmd = format(anchorDate, "yyyy-MM-dd");
+  const commissionPeriodEnd = todayYmd < period.periodEnd ? todayYmd : period.periodEnd;
   return calculateOwnerJobCommission({
     profileId: person.profile_id,
     periodStart: period.periodStart,
-    periodEnd: period.periodEnd,
+    periodEnd: commissionPeriodEnd,
     commissionRatePercent: person.commission_rate_percent,
     commissionBasis: person.commission_basis,
   });

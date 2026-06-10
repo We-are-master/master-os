@@ -2,7 +2,7 @@ import { getSupabase } from "./base";
 import type { PayRun, PayRunItem } from "@/types/database";
 import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
-import { isWorkforceCostActive } from "@/lib/workforce-lifecycle";
+import { isWorkforceCostActive, isWorkforceSelfBillEligible } from "@/lib/workforce-lifecycle";
 import { parseISO } from "date-fns";
 
 /** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
@@ -142,7 +142,8 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     });
   }
 
-  const payrollSelectFull = "id, payee_name, description, amount, due_date, status, lifecycle_stage";
+  const payrollSelectFull =
+    "id, payee_name, description, amount, due_date, status, lifecycle_stage, employment_type";
   const payrollSelectBase = "id, description, amount, due_date, status, lifecycle_stage";
 
   type PayrollFetchRow = {
@@ -151,6 +152,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     description: string;
     amount: number;
     due_date: string | null;
+    employment_type?: string | null;
   };
 
   let internalRows: PayrollFetchRow[] | null = null;
@@ -198,22 +200,18 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   });
 
   for (const r of payrollFiltered) {
-    const row = r as {
-      id: string;
-      payee_name?: string | null;
-      description: string;
-      amount: number;
-      due_date: string;
-    };
+    const row = r as PayrollFetchRow & { due_date: string };
     const name = row.payee_name?.trim() || row.description || "Workforce";
     const ref = row.description?.trim() || "—";
     let payoutAmount = Number(row.amount) || 0;
-    try {
-      const { ensureWorkforceSelfBillForPeriod } = await import("./workforce-self-bills");
-      const bill = await ensureWorkforceSelfBillForPeriod(row.id, parseISO(weekEnd));
-      if (bill && Number(bill.net_payout) > 0) payoutAmount = Number(bill.net_payout);
-    } catch {
-      /* use payroll fixed amount */
+    if (isWorkforceSelfBillEligible(row.employment_type)) {
+      try {
+        const { ensureWorkforceSelfBillForPeriod } = await import("./workforce-self-bills");
+        const bill = await ensureWorkforceSelfBillForPeriod(row.id, parseISO(weekEnd));
+        if (bill && Number(bill.net_payout) > 0) payoutAmount = Number(bill.net_payout);
+      } catch {
+        /* use payroll fixed amount */
+      }
     }
     out.push({
       item_type: "internal_cost",
@@ -235,7 +233,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   const rBill1 = await supabase
     .from("bills")
     .select("id, description, amount, due_date, archived_at")
-    .eq("status", "approved")
+    .in("status", ["approved", "submitted"])
     .is("archived_at", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd)
@@ -247,7 +245,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     const rBill2 = await supabase
       .from("bills")
       .select("id, description, amount, due_date")
-      .eq("status", "approved")
+      .in("status", ["approved", "submitted"])
       .gte("due_date", weekStart)
       .lte("due_date", weekEnd)
       .gt("amount", 0);
@@ -258,7 +256,7 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     const rBill3 = await supabase
       .from("bills")
       .select("id, description, amount, due_date")
-      .eq("status", "approved")
+      .in("status", ["approved", "submitted"])
       .gte("due_date", weekStart)
       .lte("due_date", weekEnd);
     billsErr = rBill3.error;
