@@ -1,4 +1,8 @@
-import type { Invoice } from "@/types/database";
+import {
+  invoiceIsDerivedOverdueWithPlan,
+  invoiceEffectiveDueYmd,
+} from "@/lib/invoice-payment-plan";
+import type { Invoice, InvoicePaymentInstallment } from "@/types/database";
 
 /** Finance Invoices list tabs (UI). Filtering is by invoice row status only. */
 export const INVOICE_FINANCE_TAB_ORDER = [
@@ -40,10 +44,26 @@ export function isInvoicePastExpectedDate(inv: Invoice, todayYmd: string): boole
  * Overdue on the list: DB `overdue`, or awaiting-collection statuses with expected date in the past.
  * (No new backend status — derived in UI.)
  */
-export function invoiceIsDerivedOverdue(inv: Invoice, todayYmd: string): boolean {
+export function invoiceIsDerivedOverdue(
+  inv: Invoice,
+  todayYmd: string,
+  installments?: InvoicePaymentInstallment[] | null,
+): boolean {
+  if (installments?.length) {
+    return invoiceIsDerivedOverdueWithPlan(inv, installments, todayYmd);
+  }
   if (inv.status === "overdue") return true;
   if (!AWAITING_STATUSES.has(inv.status)) return false;
   return isInvoicePastExpectedDate(inv, todayYmd);
+}
+
+/** Effective due date for display — next open installment when plan active. */
+export function invoiceDisplayDueYmd(
+  inv: Invoice,
+  installments?: InvoicePaymentInstallment[] | null,
+): string {
+  if (installments?.length) return invoiceEffectiveDueYmd(inv, installments);
+  return invoiceExpectedDateYmd(inv);
 }
 
 export function invoiceMatchesFinanceTab(inv: Invoice, tab: InvoiceFinanceTab): boolean {
@@ -75,8 +95,11 @@ export function isAwaitingPaymentInvoiceStatus(status: Invoice["status"]): boole
  * even if the DB status is still `"pending"` / `"partially_paid"` / `"audit_required"`.
  * Does not persist — for UI display and filtering only.
  */
-export function getEffectiveStatus(inv: Invoice): Invoice["status"] {
+export function getEffectiveStatus(
+  inv: Invoice,
+  installments?: InvoicePaymentInstallment[] | null,
+): Invoice["status"] {
   const todayYmd = invoiceFinanceListTodayYmd();
-  if (invoiceIsDerivedOverdue(inv, todayYmd)) return "overdue";
+  if (invoiceIsDerivedOverdue(inv, todayYmd, installments)) return "overdue";
   return inv.status;
 }

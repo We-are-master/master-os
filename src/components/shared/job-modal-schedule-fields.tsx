@@ -17,11 +17,32 @@ import {
   seriesPreview,
   type RecurrencePresetId,
 } from "@/lib/job-recurrence";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import {
+  PaymentPlanEditor,
+  type PaymentPlanEditorRow,
+} from "@/components/finance/payment-plan-editor";
+import type { AccountPaymentOrgContext } from "@/lib/account-payment-due-date";
 import type {
   JobKind,
   JobRecurrenceByday,
   JobRecurrencePattern,
 } from "@/types/database";
+
+export type JobModalPaymentPlanProps = {
+  enabled: boolean;
+  onEnabledChange: (v: boolean) => void;
+  rows: PaymentPlanEditorRow[];
+  onRowsChange: (rows: PaymentPlanEditorRow[]) => void;
+  totalAmount: number;
+  accountPaymentTerms?: string | null;
+  orgCtx?: AccountPaymentOrgContext | null;
+};
+
+const RECURRING_PAYMENT_PLAN_HINT =
+  "Optional: split the contract invoice into installments (amount + due date). " +
+  "A draft invoice is created on the first visit; when an installment is paid, the due date moves to the next one. " +
+  "Extras added later go to the nearest upcoming installment. You can still pay the full balance at any time.";
 
 export type JobModalScheduleFieldKey =
   | "scheduled_date"
@@ -50,6 +71,8 @@ type Props = {
   requiredFieldClassName?: string;
   /** When true, the one-off form skips the arrival-slot picker — the caller is rendering it elsewhere (e.g. inline with Type of Work in the Rate Type section). */
   hideArrivalSlot?: boolean;
+  /** Recurring only — invoice payment plan (Create Job modal). */
+  paymentPlan?: JobModalPaymentPlanProps;
 };
 
 /**
@@ -81,6 +104,7 @@ export function JobModalScheduleFields({
   startDateRequired,
   requiredFieldClassName,
   hideArrivalSlot = false,
+  paymentPlan,
 }: Props) {
   const isOneOff = jobKind === "one_off";
   const isMultiDay = jobKind === "multi_day";
@@ -178,54 +202,58 @@ export function JobModalScheduleFields({
         </>
       ) : isMultiDay ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Start Date *
-              </label>
-              <Input
-                type="date"
-                value={scheduledDate}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  onChange("scheduled_date", v);
-                  if (v && endDate && endDate < v) onChange("end_date", v);
-                }}
-                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
-              />
-              {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
-            </div>
-            <TimeSelect
-              label="Start Time *"
-              value={arrivalFrom}
-              onChange={(v) => onChange("arrival_from", v)}
-              className={requiredFieldClassName}
-            />
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                End Date *
-              </label>
-              <Input
-                type="date"
-                value={endDate}
-                min={scheduledDate.trim() || undefined}
-                disabled={!scheduledDate.trim()}
-                title={scheduledDate.trim() ? `On or after ${scheduledDate.trim()}` : "Set the start date first"}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const min = scheduledDate.trim();
-                  if (min && v && v < min) return;
-                  onChange("end_date", v);
-                }}
-                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Start Date *
+                </label>
+                <Input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onChange("scheduled_date", v);
+                    if (v && endDate && endDate < v) onChange("end_date", v);
+                  }}
+                  className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+                />
+                {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
+              </div>
+              <TimeSelect
+                label="Start Time *"
+                value={arrivalFrom}
+                onChange={(v) => onChange("arrival_from", v)}
+                className={requiredFieldClassName}
               />
             </div>
-            <TimeSelect
-              label="End Time *"
-              value={endTime}
-              onChange={(v) => onChange("end_time", v)}
-              className={requiredFieldClassName}
-            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  End Date *
+                </label>
+                <Input
+                  type="date"
+                  value={endDate}
+                  min={scheduledDate.trim() || undefined}
+                  disabled={!scheduledDate.trim()}
+                  title={scheduledDate.trim() ? `On or after ${scheduledDate.trim()}` : "Set the start date first"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const min = scheduledDate.trim();
+                    if (min && v && v < min) return;
+                    onChange("end_date", v);
+                  }}
+                  className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+                />
+              </div>
+              <TimeSelect
+                label="End Time *"
+                value={endTime}
+                onChange={(v) => onChange("end_time", v)}
+                className={requiredFieldClassName}
+              />
+            </div>
           </div>
           <p className="text-[10px] text-text-tertiary -mt-1">
             Multi-day jobs render as a continuous bar in the calendar. Start time = arrival on day one;
@@ -241,6 +269,7 @@ export function JobModalScheduleFields({
           onRecurrenceChange={onRecurrenceChange}
           startDateFooter={startDateFooter}
           requiredFieldClassName={requiredFieldClassName}
+          paymentPlan={paymentPlan}
         />
       )}
     </>
@@ -254,6 +283,7 @@ function RecurringFormFields({
   onRecurrenceChange,
   startDateFooter,
   requiredFieldClassName,
+  paymentPlan,
 }: {
   scheduledDate: string;
   recurrence?: RecurrenceFormState;
@@ -261,6 +291,7 @@ function RecurringFormFields({
   onRecurrenceChange?: (patch: Partial<RecurrenceFormState>) => void;
   startDateFooter?: ReactNode;
   requiredFieldClassName?: string;
+  paymentPlan?: JobModalPaymentPlanProps;
 }) {
   if (!recurrence || !onRecurrenceChange) {
     return (
@@ -287,48 +318,58 @@ function RecurringFormFields({
       })
     : "Pick a start date to preview the series.";
 
+  const presetLabel =
+    RECURRENCE_PRESET_OPTIONS.find((p) => p.id === presetId)?.label ?? "—";
+
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Start Date *
-          </label>
-          <Input
-            type="date"
-            value={scheduledDate}
-            onChange={(e) => {
-              const v = e.target.value;
-              onChange("scheduled_date", v);
-              if (
-                v &&
-                recurrence.end_mode === "until" &&
-                recurrence.end_date.trim() &&
-                recurrence.end_date < v
-              ) {
-                onRecurrenceChange({ end_date: v });
-              }
-            }}
-            className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
-          />
-          {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
+      <div className="space-y-3 min-w-0">
+        {/* Row 1 — when it starts + how often */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="min-w-0">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              Start Date *
+            </label>
+            <Input
+              type="date"
+              value={scheduledDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange("scheduled_date", v);
+                if (
+                  v &&
+                  recurrence.end_mode === "until" &&
+                  recurrence.end_date.trim() &&
+                  recurrence.end_date < v
+                ) {
+                  onRecurrenceChange({ end_date: v });
+                }
+              }}
+              className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+            />
+            {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
+          </div>
+          <div className="min-w-0">
+            <Select
+              label="Repeats"
+              value={presetId}
+              onChange={(e) => {
+                const id = e.target.value as RecurrencePresetId;
+                if (id === "custom") {
+                  onRecurrenceChange({ pattern: recurrence.pattern, interval: recurrence.interval });
+                  return;
+                }
+                const { pattern, interval } = ruleFromRecurrencePreset(id);
+                onRecurrenceChange({ pattern, interval });
+              }}
+              options={RECURRENCE_PRESET_OPTIONS.map((p) => ({ value: p.id, label: p.label }))}
+            />
+          </div>
         </div>
-        <Select
-          label="Repeats"
-          value={presetId}
-          onChange={(e) => {
-            const id = e.target.value as RecurrencePresetId;
-            if (id === "custom") {
-              onRecurrenceChange({ pattern: recurrence.pattern, interval: recurrence.interval });
-              return;
-            }
-            const { pattern, interval } = ruleFromRecurrencePreset(id);
-            onRecurrenceChange({ pattern, interval });
-          }}
-          options={RECURRENCE_PRESET_OPTIONS.map((p) => ({ value: p.id, label: p.label }))}
-        />
+
+        {/* Custom interval — inline under frequency */}
         {isCustomInterval ? (
-          <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-surface-hover/20 px-3 py-2.5">
             <Select
               label="Unit"
               value={recurrence.pattern}
@@ -345,7 +386,7 @@ function RecurringFormFields({
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Every
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex h-10 items-center gap-2">
                 <Input
                   type="number"
                   min={1}
@@ -355,7 +396,7 @@ function RecurringFormFields({
                     const n = Math.max(1, Number(e.target.value) || 1);
                     onRecurrenceChange({ interval: n });
                   }}
-                  className={`h-10 w-20 ${requiredFieldClassName ?? ""}`.trim()}
+                  className={`h-10 w-20 shrink-0 ${requiredFieldClassName ?? ""}`.trim()}
                 />
                 <span className="text-xs text-text-secondary">
                   {recurrence.pattern === "daily" && (recurrence.interval === 1 ? "day" : "days")}
@@ -364,23 +405,35 @@ function RecurringFormFields({
                 </span>
               </div>
             </div>
-          </>
-        ) : (
-          <div className="md:col-span-2">
-            <p className="text-[11px] text-text-tertiary rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2">
-              Repeats{" "}
-              <span className="font-medium text-text-secondary">
-                {RECURRENCE_PRESET_OPTIONS.find((p) => p.id === presetId)?.label ?? "—"}
-              </span>
-              . Choose <span className="font-medium">Custom interval…</span> for any frequency (e.g. every 4 weeks or 6
-              months).
-            </p>
           </div>
+        ) : (
+          <p className="text-[11px] text-text-tertiary rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2">
+            Repeats <span className="font-medium text-text-secondary">{presetLabel}</span>. Pick{" "}
+            <span className="font-medium">Custom interval…</span> for other cadences (e.g. every 4 weeks).
+          </p>
         )}
+
+        {/* Row 2 — visit window (always paired) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <TimeSelect
+            label="Start Time *"
+            value={recurrence.start_time}
+            onChange={(v) => onRecurrenceChange({ start_time: v })}
+            className={requiredFieldClassName}
+          />
+          <TimeSelect
+            label="End Time *"
+            value={recurrence.end_time}
+            onChange={(v) => onRecurrenceChange({ end_time: v })}
+            className={requiredFieldClassName}
+          />
+        </div>
+
+        {/* Weekdays — full width when weekly */}
         {recurrence.pattern === "weekly" ? (
-          <div>
+          <div className="rounded-lg border border-border-light bg-surface-hover/20 px-3 py-2.5">
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              On These Weekdays
+              On these weekdays
             </label>
             <div className="flex flex-wrap gap-1.5">
               {BYDAY_ORDER.map((day) => {
@@ -409,39 +462,33 @@ function RecurringFormFields({
                 );
               })}
             </div>
-            <p className="mt-1 text-[10px] text-text-tertiary">
+            <p className="mt-1.5 text-[10px] text-text-tertiary">
               Leave empty to repeat on the same weekday as the start date.
             </p>
           </div>
-        ) : (
-          <div />
-        )}
-        <TimeSelect
-          label="Start Time *"
-          value={recurrence.start_time}
-          onChange={(v) => onRecurrenceChange({ start_time: v })}
-          className={requiredFieldClassName}
-        />
-        <TimeSelect
-          label="End Time *"
-          value={recurrence.end_time}
-          onChange={(v) => onRecurrenceChange({ end_time: v })}
-          className={requiredFieldClassName}
-        />
+        ) : null}
       </div>
 
-      {/* End condition */}
-      <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3">
-        <p className="mb-2 text-xs font-medium text-text-secondary">Ends</p>
-        <div className="flex flex-col gap-2">
-          <label className="flex items-center gap-2 cursor-pointer">
+      {/* End condition — two options side by side */}
+      <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3 space-y-2">
+        <p className="text-xs font-medium text-text-secondary">Ends</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors",
+              recurrence.end_mode === "count"
+                ? "border-primary/50 bg-primary/5"
+                : "border-border-light bg-card hover:border-primary/30",
+            )}
+          >
             <input
               type="radio"
               name="recurrence_end_mode"
               checked={recurrence.end_mode === "count"}
               onChange={() => onRecurrenceChange({ end_mode: "count" })}
+              className="shrink-0"
             />
-            <span className="text-xs">After</span>
+            <span className="text-xs text-text-secondary shrink-0">After</span>
             <Input
               type="number"
               min={1}
@@ -449,18 +496,27 @@ function RecurringFormFields({
               value={recurrence.max_occurrences}
               onChange={(e) => onRecurrenceChange({ max_occurrences: e.target.value })}
               disabled={recurrence.end_mode !== "count"}
-              className="h-8 w-20"
+              onClick={() => onRecurrenceChange({ end_mode: "count" })}
+              className="h-9 w-16 shrink-0"
             />
-            <span className="text-xs">visits</span>
+            <span className="text-xs text-text-secondary">visits</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors min-w-0",
+              recurrence.end_mode === "until"
+                ? "border-primary/50 bg-primary/5"
+                : "border-border-light bg-card hover:border-primary/30",
+            )}
+          >
             <input
               type="radio"
               name="recurrence_end_mode"
               checked={recurrence.end_mode === "until"}
               onChange={() => onRecurrenceChange({ end_mode: "until" })}
+              className="shrink-0"
             />
-            <span className="text-xs">Until</span>
+            <span className="text-xs text-text-secondary shrink-0">Until</span>
             <Input
               type="date"
               value={recurrence.end_date}
@@ -473,17 +529,36 @@ function RecurringFormFields({
                     ? `On or after ${scheduledDate.trim()}`
                     : "Set the start date first"
               }
+              onClick={() => onRecurrenceChange({ end_mode: "until" })}
               onChange={(e) => {
                 const v = e.target.value;
                 const min = scheduledDate.trim();
                 if (min && v && v < min) return;
-                onRecurrenceChange({ end_date: v });
+                onRecurrenceChange({ end_date: v, end_mode: "until" });
               }}
-              className="h-8"
+              className="h-9 min-w-0 flex-1"
             />
           </label>
         </div>
       </div>
+
+      {paymentPlan ? (
+        <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-medium text-text-secondary">Payment plan</p>
+            <FixfyHintIcon text={RECURRING_PAYMENT_PLAN_HINT} placement="bottom-end" />
+          </div>
+          <PaymentPlanEditor
+            enabled={paymentPlan.enabled}
+            onEnabledChange={paymentPlan.onEnabledChange}
+            rows={paymentPlan.rows}
+            onRowsChange={paymentPlan.onRowsChange}
+            totalAmount={paymentPlan.totalAmount}
+            accountPaymentTerms={paymentPlan.accountPaymentTerms}
+            orgCtx={paymentPlan.orgCtx}
+          />
+        </div>
+      ) : null}
 
       {/* Live preview */}
       <div className="rounded-lg border border-blue-300/40 bg-blue-50/60 px-3 py-2 dark:border-blue-700/40 dark:bg-blue-950/20">

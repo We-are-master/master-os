@@ -57,6 +57,7 @@ import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
 import { AccountServiceRatesTabSection } from "./service-rates-tab";
+import { PartnerAvatarCropModal } from "@/components/partners/partner-avatar-crop-modal";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -266,6 +267,7 @@ export default function AccountsPage() {
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
 
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -292,6 +294,12 @@ export default function AccountsPage() {
 
   useEffect(() => {
     void listActiveAssignableUsers().then(setAccountOwnerDirectory).catch(() => setAccountOwnerDirectory([]));
+  }, []);
+
+  useEffect(() => {
+    void listCatalogServicesForPicker()
+      .then(setCatalogServices)
+      .catch(() => setCatalogServices([]));
   }, []);
 
   useEffect(() => {
@@ -464,7 +472,8 @@ export default function AccountsPage() {
   const accountsTableCell = "px-4 py-3";
   const accountsTableHeader = "px-4 py-3";
 
-  const columns: Column<Account>[] = [
+  const columns: Column<Account>[] = useMemo(
+    () => [
     {
       key: "company_name",
       label: "Account",
@@ -473,7 +482,8 @@ export default function AccountsPage() {
       cellClassName: accountsTableCell,
       render: (item) => {
         const isActive = item.status === "active";
-        const meta = item.industry?.trim() || "—";
+        const serviceLabels = catalogServiceLabelsForIds(item.catalog_service_ids, catalogServices);
+        const industry = item.industry?.trim();
         return (
           <div className="flex items-center gap-3 min-w-0">
             <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
@@ -488,9 +498,17 @@ export default function AccountsPage() {
                   title={statusConfig[item.status]?.label ?? item.status}
                 />
               </div>
-              {meta ? (
+              {serviceLabels.length > 0 ? (
+                <div className="mt-1 min-w-0">
+                  <PartnerTradesIconStrip
+                    trades={serviceLabels}
+                    catalogServices={catalogServices}
+                    maxVisible={5}
+                  />
+                </div>
+              ) : industry ? (
                 <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary truncate mt-0.5">
-                  {meta}
+                  {industry}
                 </p>
               ) : (
                 <p className="text-[11px] text-text-tertiary truncate">{item.contact_name}</p>
@@ -591,7 +609,9 @@ export default function AccountsPage() {
       cellClassName: accountsTableCell,
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto" aria-hidden />,
     },
-  ];
+  ],
+    [accountsTableCell, accountsTableHeader, catalogServices, maxRevenueInView, paymentOrgCtx],
+  );
 
 
   return (
@@ -760,6 +780,7 @@ export default function AccountsPage() {
               selectedDetailId={selectedAccount?.id}
               onOpenAccount={openAccountDetail}
               accountOwnerDirectory={accountOwnerDirectory}
+              catalogServices={catalogServices}
               paymentOrgCtx={paymentOrgCtx}
               bulkActionButtons={
                 <>
@@ -1016,6 +1037,7 @@ function AccountsGridView({
   selectedDetailId,
   onOpenAccount,
   accountOwnerDirectory,
+  catalogServices,
   paymentOrgCtx,
   bulkActionButtons,
   embedded = false,
@@ -1031,6 +1053,7 @@ function AccountsGridView({
   selectedDetailId?: string | null;
   onOpenAccount: (a: Account) => void;
   accountOwnerDirectory: AssignableUser[];
+  catalogServices: CatalogService[];
   paymentOrgCtx: AccountPaymentOrgContext;
   bulkActionButtons: ReactNode;
   embedded?: boolean;
@@ -1125,6 +1148,8 @@ function AccountsGridView({
             const cfg = statusConfig[item.status] ?? statusConfig.inactive;
             const termsLabel = shortenPaymentTerms(item.payment_terms);
             const statusAccent = ACCOUNT_STATUS_ACCENT[item.status] ?? ACCOUNT_STATUS_ACCENT.inactive;
+            const serviceLabels = catalogServiceLabelsForIds(item.catalog_service_ids, catalogServices);
+            const industry = item.industry?.trim();
             return (
               <div
                 key={id}
@@ -1168,9 +1193,24 @@ function AccountsGridView({
                     <div className="min-w-0 flex-1 pr-1">
                       <p className="text-sm font-semibold text-text-primary leading-snug truncate">{item.company_name}</p>
                       <p className="text-[11px] text-text-tertiary truncate mt-0.5">{item.contact_name}</p>
-                      <p className="text-[10px] text-text-tertiary truncate mt-1">{item.industry}</p>
+                      {serviceLabels.length === 0 && industry ? (
+                        <p className="text-[10px] text-text-tertiary truncate mt-1">{industry}</p>
+                      ) : null}
                     </div>
                   </div>
+
+                  {serviceLabels.length > 0 ? (
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">
+                        Services
+                      </p>
+                      <PartnerTradesIconStrip
+                        trades={serviceLabels}
+                        catalogServices={catalogServices}
+                        maxVisible={6}
+                      />
+                    </div>
+                  ) : null}
 
                   <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border-light/80 pt-4">
                     <div>
@@ -1298,6 +1338,8 @@ function AccountDetailDrawer({
   const [saving, setSaving] = useState(false);
   const [syncingAccount, setSyncingAccount] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoCropOpen, setLogoCropOpen] = useState(false);
+  const [logoCropFile, setLogoCropFile] = useState<File | null>(null);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
@@ -1607,7 +1649,7 @@ function AccountDetailDrawer({
             className="max-w-full min-w-0"
           />
         ) : (
-          <p className="text-xs text-text-tertiary">No services selected — choose them in Overview.</p>
+          <p className="text-xs text-text-tertiary">No services selected — choose them in Trades &amp; Skills.</p>
         )
       }
       width="w-[min(580px,calc(100vw-1rem))]"
@@ -1646,7 +1688,7 @@ function AccountDetailDrawer({
           onChange={setTab}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "trades", label: "Trades & Skills" },
+            { id: "trades", label: "Services" },
             { id: "rates", label: "Rates" },
             { id: "jobs", label: "Jobs", count: jobs.length || undefined },
             { id: "clients", label: "Clients", count: clientsTotal || undefined },
@@ -1857,9 +1899,17 @@ function AccountDetailDrawer({
                   <p className="text-[10px] text-text-tertiary mt-1.5">PDF · DOC · DOCX · max 10MB</p>
                 </div>
 
-                {/* Logo */}
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">Logo</label>
+                {/* Logo — centered like partner avatar */}
+                <div className="flex flex-col items-center text-center">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
+                    Logo
+                  </label>
+                  <Avatar
+                    name={account.company_name}
+                    size="lg"
+                    src={(edit.logo_url.trim() || account.logo_url) ?? undefined}
+                    className="shrink-0"
+                  />
                   <input
                     ref={logoFileRef}
                     type="file"
@@ -1867,33 +1917,33 @@ function AccountDetailDrawer({
                     className="hidden"
                     onChange={(ev) => void handleLogoUpload(ev)}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full justify-center"
-                    disabled={uploadingLogo || saving}
-                    onClick={() => logoFileRef.current?.click()}
-                    icon={uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  >
-                    {uploadingLogo ? "Uploading…" : "Upload logo"}
-                  </Button>
-                  {(edit.logo_url.trim() || account.logo_url) && (
-                    <div className="mt-2 flex items-center gap-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={(edit.logo_url.trim() || account.logo_url) ?? ""}
-                        alt=""
-                        className="h-10 w-10 object-contain rounded-lg border border-border-light bg-card p-0.5 shrink-0"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                      />
-                      <Button type="button" variant="outline" size="sm" disabled={uploadingLogo}
+                  <div className="mt-2 flex flex-col items-center gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-[10px] h-7 px-3"
+                      disabled={uploadingLogo || saving}
+                      onClick={() => logoFileRef.current?.click()}
+                    >
+                      {uploadingLogo
+                        ? "Uploading…"
+                        : (edit.logo_url.trim() || account.logo_url)
+                          ? "Change"
+                          : "Upload logo"}
+                    </Button>
+                    {(edit.logo_url.trim() || account.logo_url) ? (
+                      <button
+                        type="button"
+                        disabled={uploadingLogo}
                         onClick={() => void handleRemoveLogo()}
-                        icon={<Trash2 className="h-3.5 w-3.5" />}>
+                        className="inline-flex items-center gap-1 text-[10px] font-medium text-text-tertiary transition-colors hover:text-red-600 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3 w-3" />
                         Remove
-                      </Button>
-                    </div>
-                  )}
+                      </button>
+                    ) : null}
+                  </div>
                   <p className="text-[10px] text-text-tertiary mt-1.5">PNG · SVG · max 5MB</p>
                 </div>
               </div>

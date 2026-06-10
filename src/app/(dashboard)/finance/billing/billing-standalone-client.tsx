@@ -76,7 +76,8 @@ import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-ba
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { createInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { logAudit } from "@/services/audit";
-import type { Invoice, SelfBill } from "@/types/database";
+import { selfBillIsInstallmentDueForWisePay } from "@/lib/self-bill-payment-plan";
+import type { Invoice, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 import "./billing-standalone.css";
 
 const InvoiceDetailDrawer = dynamic(
@@ -645,6 +646,7 @@ function BillingStandaloneInner() {
         data.jobRefToAccountId,
         data.clientNameToAccountId,
         periodBounds ?? undefined,
+        data.installmentsByInvoiceId,
       ),
     [
       data.invoices,
@@ -653,6 +655,7 @@ function BillingStandaloneInner() {
       data.accountNameById,
       data.jobRefToAccountId,
       data.clientNameToAccountId,
+      data.installmentsByInvoiceId,
       periodBounds,
     ],
   );
@@ -722,6 +725,8 @@ function BillingStandaloneInner() {
         invoices: data.invoices,
         selfBills: data.selfBills,
         bills: data.bills,
+        installmentsByInvoiceId: data.installmentsByInvoiceId,
+        installmentsBySelfBillId: data.installmentsBySelfBillId,
         jobsByRef: data.jobsByRef,
         customerPaidByJobId: data.customerPaidByJobId,
         jobsBySelfBillId: data.jobsBySelfBillId,
@@ -735,6 +740,8 @@ function BillingStandaloneInner() {
       data.invoices,
       data.selfBills,
       data.bills,
+      data.installmentsByInvoiceId,
+      data.installmentsBySelfBillId,
       data.jobsByRef,
       data.customerPaidByJobId,
       data.jobsBySelfBillId,
@@ -756,6 +763,8 @@ function BillingStandaloneInner() {
       invoices: data.invoices,
       selfBills: data.selfBills,
       bills: data.bills,
+      installmentsByInvoiceId: data.installmentsByInvoiceId,
+      installmentsBySelfBillId: data.installmentsBySelfBillId,
       jobsByRef: data.jobsByRef,
       customerPaidByJobId: data.customerPaidByJobId,
       jobsBySelfBillId: data.jobsBySelfBillId,
@@ -766,6 +775,8 @@ function BillingStandaloneInner() {
       data.invoices,
       data.selfBills,
       data.bills,
+      data.installmentsByInvoiceId,
+      data.installmentsBySelfBillId,
       data.jobsByRef,
       data.customerPaidByJobId,
       data.jobsBySelfBillId,
@@ -818,10 +829,15 @@ function BillingStandaloneInner() {
     () =>
       periodSelfBills.filter((sb) => {
         if (!selfBillCountsAsReady(sb) || isSelfBillPayoutVoided(sb)) return false;
-        const amt = computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId);
+        const amt = computeSelfBillAmountDue(
+          sb,
+          data.jobsBySelfBillId[sb.id],
+          data.partnerPaidByJobId,
+          data.installmentsBySelfBillId[sb.id],
+        );
         return amt > 0.02;
       }),
-    [periodSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId],
+    [periodSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
   );
 
   /** Draft / accumulating — not yet ready for approval. */
@@ -856,6 +872,7 @@ function BillingStandaloneInner() {
         data.dueCtx,
         data.jobsBySelfBillId,
         data.partnerPaidByJobId,
+        data.installmentsBySelfBillId,
       ),
     [
       inactivePeriodSelfBills,
@@ -865,6 +882,7 @@ function BillingStandaloneInner() {
       data.dueCtx,
       data.jobsBySelfBillId,
       data.partnerPaidByJobId,
+      data.installmentsBySelfBillId,
     ],
   );
   const inactiveSelfBillLedgerSections = selfBillLedgerSectionMap.inactive;
@@ -875,10 +893,17 @@ function BillingStandaloneInner() {
   const sumDue = useCallback(
     (rows: SelfBill[]) =>
       rows.reduce(
-        (sum, sb) => sum + computeSelfBillAmountDue(sb, data.jobsBySelfBillId[sb.id], data.partnerPaidByJobId),
+        (sum, sb) =>
+          sum +
+          computeSelfBillAmountDue(
+            sb,
+            data.jobsBySelfBillId[sb.id],
+            data.partnerPaidByJobId,
+            data.installmentsBySelfBillId[sb.id],
+          ),
         0,
       ),
-    [data.jobsBySelfBillId, data.partnerPaidByJobId],
+    [data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
   );
   const ledgerSbDraftTotal = useMemo(
     () =>
@@ -1327,7 +1352,11 @@ function BillingStandaloneInner() {
                                     </p>
                                   </div>
                                   <span className={cn("text-xs font-medium", row.daysLate > 0 ? "text-red-600" : "text-text-secondary")}>
-                                    {row.daysLate > 0 ? `${row.daysLate}d late` : "Due soon"}
+                                    {row.paymentPlanLabel
+                                      ? row.paymentPlanLabel
+                                      : row.daysLate > 0
+                                        ? `${row.daysLate}d late`
+                                        : "Due soon"}
                                   </span>
                                   <span className="text-sm font-semibold tabular-nums">{formatCurrency(row.balanceDue)}</span>
                                   <div className="flex gap-1">
@@ -1366,7 +1395,17 @@ function BillingStandaloneInner() {
                 </div>
                 {(() => {
                   const eligiblePayIds = goingOutApprovedSelfBills
-                    .filter((sb) => !!sb.approved_at && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb))
+                    .filter(
+                      (sb) =>
+                        !!sb.approved_at &&
+                        !sb.wise_paid_at &&
+                        !isSelfBillPayoutVoided(sb) &&
+                        selfBillIsInstallmentDueForWisePay(
+                          sb,
+                          data.installmentsBySelfBillId[sb.id],
+                          todayYmd,
+                        ),
+                    )
                     .map((sb) => sb.id);
                   const selectedPayInTab = eligiblePayIds.filter((id) => moneyOutSelectedIds.has(id));
                   const hasSelection = selectedPayInTab.length > 0;
@@ -2001,10 +2040,17 @@ function buildSelfBillLedgerSectionMap<K extends string>(
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
   partnerPaidByJobId: Record<string, number>,
+  installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): Record<K, SelfBillLedgerSections> {
   const out = {} as Record<K, SelfBillLedgerSections>;
   for (const key of Object.keys(buckets) as K[]) {
-    out[key] = buildSelfBillLedgerSections(buckets[key]!, dueCtx, jobsBySelfBillId, partnerPaidByJobId);
+    out[key] = buildSelfBillLedgerSections(
+      buckets[key]!,
+      dueCtx,
+      jobsBySelfBillId,
+      partnerPaidByJobId,
+      installmentsBySelfBillId,
+    );
   }
   return out;
 }
@@ -2014,6 +2060,7 @@ function buildSelfBillLedgerSections(
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
   partnerPaidByJobId: Record<string, number>,
+  installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): SelfBillLedgerSections {
   const workforceBills = selfBills.filter((sb) => sb.bill_origin === "internal");
   const partnerBills = selfBills.filter((sb) => sb.bill_origin !== "internal");
@@ -2023,6 +2070,7 @@ function buildSelfBillLedgerSections(
       dueCtx,
       jobsBySelfBillId,
       partnerPaidByJobId,
+      installmentsBySelfBillId,
     ).map((week) => ({
       ...week,
       weekTitle: week.weekTitle.startsWith("Workforce") ? week.weekTitle : `Workforce · ${week.weekTitle}`,
@@ -2032,6 +2080,7 @@ function buildSelfBillLedgerSections(
       dueCtx,
       jobsBySelfBillId,
       partnerPaidByJobId,
+      installmentsBySelfBillId,
     ),
   };
 }
@@ -2041,6 +2090,7 @@ function buildSelfBillWeekPartnerGroups(
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
   partnerPaidByJobId: Record<string, number>,
+  installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): SelfBillWeekPartnerGroup[] {
   const weekMap = new Map<string, SelfBillWeekPartnerGroup>();
   for (const sb of selfBills) {
@@ -2057,7 +2107,12 @@ function buildSelfBillWeekPartnerGroups(
       week.partners.push(partner);
     }
     partner.rows.push(sb);
-    const amt = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+    const amt = computeSelfBillAmountDue(
+      sb,
+      jobsBySelfBillId[sb.id],
+      partnerPaidByJobId,
+      installmentsBySelfBillId[sb.id],
+    );
     partner.partnerTotal = Math.round((partner.partnerTotal + amt) * 100) / 100;
     week.weekTotal = Math.round((week.weekTotal + amt) * 100) / 100;
   }

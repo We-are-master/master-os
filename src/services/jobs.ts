@@ -679,6 +679,94 @@ export async function getJobByQuoteId(quoteId: string): Promise<Job | null> {
   return data as Job | null;
 }
 
+export type EnsureDraftInvoiceOptions = {
+  invoiceRef?: string | null;
+  dueDate?: string;
+  clientLabel?: string;
+};
+
+/**
+ * Create a draft invoice for a job that already has a reference (e.g. recurring anchor).
+ * Links `jobs.invoice_id` when missing.
+ */
+export async function ensureDraftInvoiceForJob(
+  job: Job,
+  opts?: EnsureDraftInvoiceOptions,
+): Promise<{ invoiceId: string | null; invoice: import("@/types/database").Invoice | null }> {
+  const supabase = getSupabase();
+  if (job.invoice_id) {
+    const { data } = await supabase.from("invoices").select("*").eq("id", job.invoice_id).maybeSingle();
+    return { invoiceId: job.invoice_id, invoice: (data as import("@/types/database").Invoice) ?? null };
+  }
+
+  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
+  const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
+
+  let invoiceClientLabel = opts?.clientLabel?.trim() || job.client_name?.trim() || "Client";
+  if (!opts?.clientLabel) {
+    try {
+      const billing = await resolveNominalBillingParty(supabase, {
+        clientId: job.client_id?.trim() ?? "",
+        fallbackName: job.client_name,
+        fallbackEmail: null,
+      });
+      invoiceClientLabel = billing.displayName;
+    } catch {
+      /* keep fallback */
+    }
+  }
+
+  let dueDateStr = opts?.dueDate;
+  if (!dueDateStr) {
+    dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null).catch(
+      () => new Date().toISOString().slice(0, 10),
+    );
+  }
+
+  let invoiceRef = opts?.invoiceRef;
+  if (!invoiceRef?.trim()) {
+    const { data: r, error: refErr } = await supabase.rpc("next_invoice_ref");
+    if (refErr) throw refErr;
+    invoiceRef = r as string;
+  }
+
+  try {
+    const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
+    const inv = await createInvoice(
+      {
+        client_name: invoiceClientLabel,
+        job_reference: job.reference,
+        amount: invoiceTotal,
+        status: "draft",
+        due_date: dueDateStr,
+        invoice_kind: "combined",
+        collection_stage: hasDeposit ? "awaiting_deposit" : "awaiting_final",
+      },
+      { reference: invoiceRef },
+    );
+    const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+    if (linkErr) console.error("ensureDraftInvoiceForJob link failed:", linkErr);
+    return { invoiceId: inv.id, invoice: inv };
+  } catch (e) {
+    console.error("ensureDraftInvoiceForJob failed:", e);
+    try {
+      const inv = await createOrAppendJobInvoice(job, {
+        client_name: invoiceClientLabel,
+        amount: invoiceTotal,
+        status: "draft",
+        invoice_kind: "final",
+      });
+      const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+      if (linkErr) console.error("ensureDraftInvoiceForJob fallback link failed:", linkErr);
+      return { invoiceId: inv.id, invoice: inv };
+    } catch (fallbackErr) {
+      console.error("ensureDraftInvoiceForJob fallback failed:", fallbackErr);
+      return { invoiceId: null, invoice: null };
+    }
+  }
+}
+
 export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {

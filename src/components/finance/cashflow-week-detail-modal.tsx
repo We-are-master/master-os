@@ -97,11 +97,11 @@ export function CashflowWeekDetailModal({ open, onClose, breakdown }: Props) {
             emptyLabel="No receivables due this week."
           />
           <BreakdownSection
-            title="Approved pay + expenses due"
+            title="Payouts + expenses due"
             total={breakdown.moneyOut}
             lines={breakdown.outLines}
             tone="out"
-            emptyLabel="No approved payouts or expenses due this week."
+            emptyLabel="No self-bills or expenses due this week."
           />
         </div>
       ) : null}

@@ -21,6 +21,13 @@ import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
+import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
+import {
+  JobCreateModalSection,
+  JobCreateModalPricingControl,
+  JOB_CREATE_MODAL_STEPS,
+  JOB_CREATE_MODAL_SECTION_IDS,
+} from "@/components/jobs/job-create-modal-sections";
 import { Input, SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
@@ -6926,6 +6933,7 @@ function CreateJobFromQuoteModal({
   const [form, setForm] = useState({
     title: "",
     partner_id: "",
+    catalog_service_id: "",
     client_price: "",
     partner_cost: "",
     materials_cost: "",
@@ -6962,6 +6970,7 @@ function CreateJobFromQuoteModal({
   /** Deposit override fields — only relevant when coming from "Create Job" and deposit_required > 0. */
   const [depositOverrideReason, setDepositOverrideReason] = useState<string>("");
   const [depositOverrideAgreed, setDepositOverrideAgreed] = useState<boolean>(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- one-shot form bootstrap when modal opens (parent uses key=quote.id) */
   useEffect(() => {
@@ -6975,6 +6984,7 @@ function CreateJobFromQuoteModal({
     setForm({
       title: typeOfWorkInitial,
       partner_id: quote.partner_id ?? "",
+      catalog_service_id: quote.catalog_service_id ?? "",
       client_price: String(quote.total_value ?? 0),
       partner_cost: String(quote.partner_cost ?? 0),
       materials_cost: "0",
@@ -7095,6 +7105,7 @@ function CreateJobFromQuoteModal({
     setManualPropertyAddress(quote.property_address ?? "");
     setDepositOverrideReason("");
     setDepositOverrideAgreed(false);
+    setPricingOpen(false);
     return () => {
       cancelled = true;
     };
@@ -7110,6 +7121,20 @@ function CreateJobFromQuoteModal({
     }
     return [{ value: "", label: "No partner" }, ...base];
   }, [partners, form.partner_id, partnerFromQuote]);
+
+  const estimatedMarginPct = useMemo(() => {
+    const client = Number(form.client_price) || 0;
+    const partner = Number(form.partner_cost) || 0;
+    const materials = Number(form.materials_cost) || 0;
+    if (client <= 0) return 0;
+    return Math.round(((client - partner - materials) / client) * 1000) / 10;
+  }, [form.client_price, form.partner_cost, form.materials_cost]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeSection = useModalScrollSpy([...JOB_CREATE_MODAL_SECTION_IDS], scrollRef, !!quote);
+  const scrollToSection = (id: string) => {
+    scrollRef.current?.querySelector<HTMLElement>(`[data-modal-section="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -7257,9 +7282,47 @@ function CreateJobFromQuoteModal({
       onClose={onClose}
       title={markDepositAsPaid ? "Mark as paid & create job" : "Create Job from Quote"}
       subtitle={`${quote.reference} — ${markDepositAsPaid ? "record deposit paid & create job" : "create job"}`}
-      size="lg"
+      size="compact"
+      layout="wizard"
+      topSteps={JOB_CREATE_MODAL_STEPS}
+      activeStep={activeSection}
+      onStepClick={scrollToSection}
+      footer={
+        <FixfyModalFooter
+          leading={
+            <>
+              Estimated margin:{" "}
+              <span
+                className={cn(
+                  "font-semibold",
+                  estimatedMarginPct >= 20
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {estimatedMarginPct}%
+              </span>
+            </>
+          }
+        >
+          <Button variant="outline" size="sm" onClick={onClose} type="button" disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" form="create-job-from-quote-form" size="sm" disabled={submitting}>
+            {submitting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Creating job…
+              </>
+            ) : (
+              "Create Job"
+            )}
+          </Button>
+        </FixfyModalFooter>
+      }
     >
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      <form id="create-job-from-quote-form" onSubmit={handleSubmit} className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5 space-y-6">
         {markDepositAsPaid && depositForBanner > 0.02 ? (
           <div className="rounded-lg border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
             <p className="font-semibold">Deposit will be recorded as paid</p>
@@ -7268,6 +7331,53 @@ function CreateJobFromQuoteModal({
             </p>
           </div>
         ) : null}
+
+          <JobCreateModalSection id="work" title="Work & rate" badge="required">
+        <p className="text-[11px] font-medium text-text-secondary">Type of work *</p>
+        <TypeOfWorkPicker
+          hideLabel
+          label="Type of work *"
+          catalog={towCatalog}
+          value={form.title}
+          currentFallback={form.title}
+          onChange={(name, { catalogServiceId }) => {
+            update("title", name);
+            if (catalogServiceId) {
+              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
+            }
+          }}
+        />
+        <Select
+          label="Job type"
+          value={form.job_type}
+          onChange={(e) => update("job_type", e.target.value)}
+          options={[
+            { value: "fixed", label: pricingModeLabel("fixed") },
+            { value: "hourly", label: pricingModeLabel("hourly") },
+          ]}
+        />
+        <JobCreateModalPricingControl
+          form={{
+            ...form,
+            billed_hours: "2",
+            hourly_client_rate: "",
+            hourly_partner_rate: "",
+          }}
+          update={update}
+          pricing={null}
+          pricingResolving={false}
+          isStackablePricing={false}
+          stackableLinePricing={null}
+          stackablePricingLoading={false}
+          hourlyPreview={{ clientTotal: 0, partnerTotal: 0 }}
+          accessSurchargePreview={0}
+          estimatedMarginPct={estimatedMarginPct}
+          open={pricingOpen}
+          onOpenChange={setPricingOpen}
+        />
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="client" title="Client & schedule" badge="required">
         <div className="rounded-xl border border-border bg-surface/60 p-3 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -7368,40 +7478,6 @@ function CreateJobFromQuoteModal({
             </>
           )}
         </div>
-        <TypeOfWorkPicker
-          label="Type of work *"
-          catalog={towCatalog}
-          value={form.title}
-          currentFallback={form.title}
-          onChange={(name, { catalogServiceId }) => {
-            update("title", name);
-            if (catalogServiceId) {
-              setForm((f) => ({ ...f, catalog_service_id: catalogServiceId }));
-            }
-          }}
-        />
-        <Select
-          label="Job type"
-          value={form.job_type}
-          onChange={(e) => update("job_type", e.target.value)}
-          options={[
-            { value: "fixed", label: pricingModeLabel("fixed") },
-            { value: "hourly", label: pricingModeLabel("hourly") },
-          ]}
-        />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
-          <textarea
-            value={form.scope}
-            onChange={(e) => update("scope", e.target.value)}
-            placeholder="Describe scope, inclusions and exclusions for the job (required when assigning a partner)."
-            rows={4}
-            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">
-            Pre-filled from the quote when available. Required if you assign a partner.
-          </p>
-        </div>
         <JobModalScheduleFields
           jobKind={form.job_kind}
           scheduledDate={form.scheduled_date}
@@ -7419,12 +7495,26 @@ function CreateJobFromQuoteModal({
             </p>
           }
         />
-        <Select label="Partner" options={partnerSelectOptions} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
-        <div className="grid grid-cols-3 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min={0} step="0.01" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min={0} step="0.01" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min={0} step="0.01" /></div>
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="scope" title="Scope" badge="required">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
+          <textarea
+            value={form.scope}
+            onChange={(e) => update("scope", e.target.value)}
+            placeholder="Describe scope, inclusions and exclusions for the job (required when assigning a partner)."
+            rows={4}
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">
+            Pre-filled from the quote when available. Required if you assign a partner.
+          </p>
         </div>
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="partner" title="Partner allocation" badge="optional">
+        <Select label="Partner" options={partnerSelectOptions} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         {showDepositOverride ? (
           <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 p-3 space-y-2 dark:border-amber-500/30 dark:bg-amber-950/20">
             <div>
@@ -7469,18 +7559,7 @@ function CreateJobFromQuoteModal({
             ) : null}
           </div>
         ) : null}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={onClose} type="button" disabled={submitting}>Cancel</Button>
-          <Button type="submit" size="sm" disabled={submitting}>
-            {submitting ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Creating job…
-              </>
-            ) : (
-              "Create Job"
-            )}
-          </Button>
+          </JobCreateModalSection>
         </div>
       </form>
       {submitting ? (

@@ -13,6 +13,13 @@ import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
+import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
+import {
+  JobCreateModalSection,
+  JobCreateModalPricingControl,
+  JOB_CREATE_MODAL_STEPS,
+  JOB_CREATE_MODAL_SECTION_IDS,
+} from "@/components/jobs/job-create-modal-sections";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion, AnimatePresence } from "framer-motion";
@@ -76,7 +83,6 @@ import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState, type JobScheduleV2SeriesPayload } from "@/lib/job-modal-schedule";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
-import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
@@ -2752,6 +2758,7 @@ function ConvertToJobModal({
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   useEffect(() => {
     if (!request) {
@@ -2784,6 +2791,7 @@ function ConvertToJobModal({
         toast.error("Could not load partners");
         setPartners([]);
       });
+    setPricingOpen(false);
   }, [request?.id, loadPartners]);
 
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -3022,15 +3030,72 @@ function ConvertToJobModal({
   const hourlyMarginPct = hourlyPreview.clientTotal > 0
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
+  const estimatedMarginPct =
+    form.job_type === "hourly"
+      ? hourlyMarginPct
+      : (() => {
+          const clientTotal = (Number(form.client_price) || 0) + accessSurchargePreview;
+          if (clientTotal <= 0) return 0;
+          const partnerTotal = Number(form.partner_cost) || 0;
+          return Math.round(((clientTotal - partnerTotal) / clientTotal) * 1000) / 10;
+        })();
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeSection = useModalScrollSpy([...JOB_CREATE_MODAL_SECTION_IDS], scrollRef, !!request);
+  const scrollToSection = (id: string) => {
+    const root = scrollRef.current;
+    if (!root) return;
+    root.querySelector<HTMLElement>(`[data-modal-section="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const labelNavy = "flex items-center gap-[6px] text-[10px] font-medium uppercase";
   const labelStyle = { color: "#020040", letterSpacing: "0.6px" } as const;
 
   return (
-    <Modal open={!!request} onClose={onClose} title="Create job" subtitle={`${request.reference} · Direct creation`} size="lg">
-      <form onSubmit={handleSubmit} className="flex flex-col">
-        <div className="px-5 sm:px-6 pt-5 pb-4 space-y-[14px]">
-          {/* Job type */}
+    <Modal
+      open={!!request}
+      onClose={onClose}
+      title="Create job"
+      subtitle={`${request.reference} · Direct creation`}
+      size="compact"
+      layout="wizard"
+      topSteps={JOB_CREATE_MODAL_STEPS}
+      activeStep={activeSection}
+      onStepClick={scrollToSection}
+      footer={
+        <FixfyModalFooter
+          leading={
+            <>
+              Estimated margin:{" "}
+              <span
+                className={cn(
+                  "font-semibold",
+                  estimatedMarginPct >= 20
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {estimatedMarginPct}%
+              </span>
+            </>
+          }
+        >
+          <Button variant="outline" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="convert-to-job-form"
+            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+          >
+            <Briefcase className="h-3.5 w-3.5" /> Create job
+          </Button>
+        </FixfyModalFooter>
+      }
+    >
+      <form id="convert-to-job-form" onSubmit={handleSubmit} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-5 space-y-6">
+          <JobCreateModalSection id="work" title="Work & rate" badge="required">
           <div>
             <label className={labelNavy} style={labelStyle}>Job type</label>
             <Select
@@ -3055,7 +3120,7 @@ function ConvertToJobModal({
             <div>
               <label className={labelNavy} style={labelStyle}>
                 Call-out type <span style={{ color: "#ED4B00" }}>*</span>
-                <FixfyHintIcon text="Loads default hours, client rate and partner rate from the Services catalog. You can still tweak the partner rate and billed hours below." />
+                <FixfyHintIcon text="Loads default hours, client rate and partner rate from the Services catalog. Use the pencil to tweak rates and billed hours." />
               </label>
               <ServiceCatalogSelect
                 emptyOptionLabel="Select from Services…"
@@ -3119,18 +3184,24 @@ function ConvertToJobModal({
             </div>
           )}
 
-          {/* Client & address */}
-          <div
-            className="rounded-[10px] p-[14px]"
-            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-          >
-            <p className={labelNavy + " mb-[8px]"} style={labelStyle}>
-              Client &amp; address <span style={{ color: "#ED4B00" }}>*</span>
-            </p>
-            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
-          </div>
+            <JobCreateModalPricingControl
+              form={form}
+              update={update}
+              pricing={pricing}
+              pricingResolving={false}
+              isStackablePricing={false}
+              stackableLinePricing={null}
+              stackablePricingLoading={false}
+              hourlyPreview={hourlyPreview}
+              accessSurchargePreview={accessSurchargePreview}
+              estimatedMarginPct={estimatedMarginPct}
+              open={pricingOpen}
+              onOpenChange={setPricingOpen}
+            />
+          </JobCreateModalSection>
 
-          {/* Schedule */}
+          <JobCreateModalSection id="client" title="Client & schedule" badge="required">
+            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
           <JobModalScheduleFields
             jobKind={form.job_kind}
             scheduledDate={form.scheduled_date}
@@ -3144,8 +3215,9 @@ function ConvertToJobModal({
             startDateRequired={form.job_kind !== "one_off" || (form.assignment_mode === "manual" && !!form.partner_id)}
             requiredFieldClassName={requiredFieldClass}
           />
+          </JobCreateModalSection>
 
-          {/* Scope */}
+          <JobCreateModalSection id="scope" title="Scope" badge="required">
           <div>
             <label className={labelNavy} style={labelStyle}>
               Scope of work
@@ -3169,12 +3241,11 @@ function ConvertToJobModal({
               }}
             />
           </div>
+          </JobCreateModalSection>
 
-          {request.request_kind === "work" && (
-            <div
-              className="rounded-[10px] p-[14px] space-y-[10px]"
-              style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-            >
+          {request.request_kind === "work" ? (
+          <JobCreateModalSection id="access" title="Access & charges" badge="optional">
+            <div className="space-y-[10px]">
               <p className={labelNavy} style={labelStyle}>
                 Access &amp; parking
                 <FixfyHintIcon text="CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available." />
@@ -3220,14 +3291,10 @@ function ConvertToJobModal({
                 </span>
               </p>
             </div>
-          )}
+          </JobCreateModalSection>
+          ) : null}
 
-          {/* Partner allocation */}
-          <div
-            className="rounded-[10px] p-[14px] space-y-[10px]"
-            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-          >
-            <p className={labelNavy} style={labelStyle}>Partner allocation</p>
+          <JobCreateModalSection id="partner" title="Partner allocation" badge="optional">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
               <button
                 type="button"
@@ -3332,94 +3399,8 @@ function ConvertToJobModal({
                 </div>
               </div>
             )}
-          </div>
+          </JobCreateModalSection>
 
-          {/* Pricing */}
-          {form.job_type === "hourly" ? (
-            <div className="space-y-[10px]">
-              <div className="grid grid-cols-3 gap-[10px]">
-                <div
-                  className="rounded-[8px] px-3 py-2 bg-white"
-                  style={{ border: "0.5px solid #E4E4E8" }}
-                >
-                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Price</p>
-                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
-                    {formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}
-                  </p>
-                </div>
-                <div
-                  className="rounded-[8px] px-3 py-2 bg-white"
-                  style={{ border: "0.5px solid #E4E4E8" }}
-                >
-                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Cost</p>
-                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
-                    {formatCurrency(hourlyPreview.partnerTotal)}
-                  </p>
-                </div>
-                <div
-                  className="rounded-[8px] px-3 py-2 bg-white"
-                  style={{ border: "0.5px solid #E4E4E8" }}
-                >
-                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Margin</p>
-                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>{hourlyMarginPct}%</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className={labelNavy} style={labelStyle}>
-                    Client hourly rate
-                    {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.client.hourly_rate_source} /></span> : null}
-                    <FixfyHintIcon
-                      text="Prefilled from the call-out; you can override. Totals above update as you type."
-                    />
-                  </label>
-                  <Input
-                    className="mt-[6px]"
-                    type="number"
-                    value={form.hourly_client_rate}
-                    onChange={(e) => update("hourly_client_rate", e.target.value)}
-                    min="0"
-                    step="0.01"
-                  />
-                </div>
-                <div>
-                  <label className={labelNavy} style={labelStyle}>
-                    Partner hourly rate
-                    {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.partner.hourly_partner_rate_source} /></span> : null}
-                    <FixfyHintIcon text="Prefilled from the call-out; you can override. Billing: 1h minimum, then 30-min increments from timer logs." />
-                  </label>
-                  <Input className="mt-[6px]" type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
-                </div>
-                <div>
-                  <label className={labelNavy} style={labelStyle}>Initial billed hours</label>
-                  <Input className="mt-[6px]" type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className={labelNavy} style={labelStyle}>
-                  Client price
-                  {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.client.fixed_price_source} /></span> : null}
-                </label>
-                <Input className="mt-[6px]" type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
-              </div>
-              <div>
-                <label className={labelNavy} style={labelStyle}>
-                  Partner cost
-                  {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.partner.fixed_partner_cost_source} /></span> : null}
-                </label>
-                <Input className="mt-[6px]" type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-              </div>
-              <div>
-                <label className={labelNavy} style={labelStyle}>Materials cost</label>
-                <Input className="mt-[6px]" type="number" value="0" disabled />
-              </div>
-            </div>
-          )}
-
-          {/* Internal notes */}
           <div>
             <label className={labelNavy} style={labelStyle}>Internal notes</label>
             <textarea
@@ -3437,31 +3418,6 @@ function ConvertToJobModal({
               }}
             />
           </div>
-        </div>
-
-        <div
-          className="flex justify-end gap-[10px] px-6 py-[14px]"
-          style={{ borderTop: "0.5px solid #E4E4E8", background: "#FFFFFF" }}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-8 items-center justify-center rounded-[6px] px-[14px] text-[12px] font-medium cursor-pointer bg-white"
-            style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="inline-flex h-8 items-center justify-center gap-[6px] text-white border-none rounded-[6px] px-4 text-[12px] font-medium cursor-pointer"
-            style={{ background: "#ED4B00" }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#d84300")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
-          >
-            <Briefcase className="h-3.5 w-3.5" /> Create job
-          </button>
         </div>
       </form>
     </Modal>

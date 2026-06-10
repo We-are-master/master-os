@@ -28,30 +28,21 @@ import { WorkforceProfilePhoto } from "@/components/settings/workforce-profile-p
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import {
-  listCommissionTiers,
-  listCommissionPoolShares,
-  updateCommissionTier,
-  updateCommissionPoolShare,
-  getCurrentMonthRevenue,
-  createCommissionTier,
-  ensureCommissionConfigDefaults,
-} from "@/services/tiers";
-import {
   getDashboardSalesGoalMonthlyOverrideGbp,
   setDashboardSalesGoalMonthlyOverrideGbp,
 } from "@/lib/dashboard-sales-goal-preference";
-import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
-import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
+import { setAppCurrencyCode } from "@/lib/utils";
+import type { Profile } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
+import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
 const settingsAdminTabs = [
-  { id: "tiers", label: "Dashboard" },
   { id: "ai-briefs", label: "AI & Daily brief" },
-  { id: "setup", label: "Setup" },
+  { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
@@ -73,8 +64,16 @@ function SettingsPageInner() {
   const isAdmin = profile?.role === "admin";
 
   const visibleTabs = useMemo(() => {
-    const tabs: { id: string; label: string }[] = [{ id: "profile", label: "My Profile" }];
-    if (isAdmin) tabs.push(...settingsAdminTabs.map((t) => ({ id: t.id, label: t.label })));
+    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My Profile" }];
+    if (isAdmin) {
+      tabs.push(
+        ...settingsAdminTabs.map((t) => ({
+          id: t.id,
+          label: t.label,
+          count: "count" in t ? t.count : undefined,
+        })),
+      );
+    }
     return tabs;
   }, [isAdmin]);
 
@@ -84,6 +83,10 @@ function SettingsPageInner() {
   useEffect(() => {
     if (tabFromUrl === "service-catalog") {
       router.replace("/services");
+      return;
+    }
+    if (tabFromUrl === "tiers") {
+      router.replace("/settings");
       return;
     }
     if (configLoading || visibleTabs.length === 0) return;
@@ -103,6 +106,7 @@ function SettingsPageInner() {
     const params = new URLSearchParams(searchParams.toString());
     if (id === "profile") params.delete("tab");
     else params.set("tab", id);
+    if (id !== "setup") params.delete("section");
     const q = params.toString();
     router.replace(q ? `/settings?${q}` : "/settings", { scroll: false });
   };
@@ -126,7 +130,6 @@ function SettingsPageInner() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
-          {activeTab === "tiers" && isAdmin && <DashboardTab />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
           {activeTab === "setup" && isAdmin && <SetupTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
@@ -822,336 +825,6 @@ function UserPermissionsModal({
   );
 }
 
-function DashboardTab() {
-  const [tiers, setTiers] = useState<CommissionTier[]>([]);
-  const [poolShares, setPoolShares] = useState<CommissionPoolShare[]>([]);
-  const [revenue, setRevenue] = useState<number>(0);
-  const [dashboardMonthlyOverrideGbp, setDashboardMonthlyOverrideGbp] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [t, p, r] = await Promise.all([
-        listCommissionTiers(),
-        listCommissionPoolShares(),
-        getCurrentMonthRevenue(),
-      ]);
-      setTiers(t);
-      setPoolShares(p);
-      setRevenue(r);
-      const o = getDashboardSalesGoalMonthlyOverrideGbp();
-      setDashboardMonthlyOverrideGbp(o != null ? String(o) : "");
-    } catch {
-      toast.error("Failed to load tiers");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const handleSaveTier = async (
-    id: string,
-    breakeven_amount: number,
-    rate_percent: number,
-    sales_goal_monthly: number | null,
-  ) => {
-    setSavingId(id);
-    try {
-      await updateCommissionTier(id, { breakeven_amount, rate_percent, sales_goal_monthly });
-      setTiers((prev) =>
-        prev.map((x) => (x.id === id ? { ...x, breakeven_amount, rate_percent, sales_goal_monthly } : x)),
-      );
-      toast.success("Tier updated");
-      window.dispatchEvent(new Event("master-os-company-settings"));
-    } catch {
-      toast.error("Failed to update tier");
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const restoreMonthlyOverrideFieldFromStorage = () => {
-    const o = getDashboardSalesGoalMonthlyOverrideGbp();
-    setDashboardMonthlyOverrideGbp(o != null ? String(o) : "");
-  };
-
-  const handleBlurDashboardMonthlyOverride = () => {
-    const raw = dashboardMonthlyOverrideGbp.trim();
-    if (!raw) {
-      setDashboardSalesGoalMonthlyOverrideGbp(null);
-      window.dispatchEvent(new Event("master-os-company-settings"));
-      toast.success("Cleared browser monthly override");
-      return;
-    }
-    const num = Number(raw);
-    if (!Number.isFinite(num) || num <= 0) {
-      toast.error("Enter a positive amount, or leave empty.");
-      restoreMonthlyOverrideFieldFromStorage();
-      return;
-    }
-    setDashboardSalesGoalMonthlyOverrideGbp(num);
-    window.dispatchEvent(new Event("master-os-company-settings"));
-    toast.success("Saved — this £/month overrides company monthly goal on Overview (this device only).");
-  };
-
-  const handleSavePool = async (id: string, share_percent: number) => {
-    setSavingId(id);
-    try {
-      await updateCommissionPoolShare(id, { share_percent });
-      setPoolShares((prev) => prev.map((x) => (x.id === id ? { ...x, share_percent } : x)));
-      toast.success("Pool share updated");
-    } catch {
-      toast.error("Failed to update pool share");
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const handleAddTier = async () => {
-    const nextTier = (tiers.reduce((m, t) => Math.max(m, Number(t.tier_number) || 0), 0) || 0) + 1;
-    const nextBreakeven =
-      tiers.length > 0 ? Math.max(...tiers.map((t) => Number(t.breakeven_amount) || 0)) + 5000 : 0;
-    setSavingId("new-tier");
-    try {
-      const created = await createCommissionTier({
-        tier_number: nextTier,
-        breakeven_amount: nextBreakeven,
-        rate_percent: 0,
-        sort_order: nextTier,
-      });
-      setTiers((prev) =>
-        [...prev, created].sort(
-          (a, b) => (Number(a.sort_order) - Number(b.sort_order)) || (Number(a.tier_number) - Number(b.tier_number)),
-        ),
-      );
-      toast.success(`Tier ${nextTier} added`);
-    } catch {
-      toast.error("Failed to add tier");
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const handleInitializeDefaults = async () => {
-    setSavingId("init-defaults");
-    try {
-      await ensureCommissionConfigDefaults();
-      await load();
-      toast.success("Commission tiers defaults created");
-    } catch {
-      toast.error("Failed to initialize commission defaults");
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const roleLabel: Record<string, string> = { head_ops: "Head Ops", am: "Account Managers", biz_dev: "Biz Dev" };
-  const currentTier = tiers.slice().sort((a, b) => b.breakeven_amount - a.breakeven_amount).find((t) => revenue >= t.breakeven_amount) ?? tiers[0];
-
-  if (loading && tiers.length === 0) {
-    return (
-      <div className="p-8 text-center text-text-tertiary">
-        <Cog className="h-8 w-8 animate-spin mx-auto mb-2" />
-        Loading tiers...
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold text-text-primary">Dashboard</h3>
-        <p className="text-sm text-text-tertiary">Dashboard controls and commission setup.</p>
-      </div>
-
-      <Card padding="md">
-        <h4 className="text-sm font-semibold text-text-primary mb-2">Current month revenue vs tiers</h4>
-        <p className="text-2xl font-bold text-primary">{formatCurrency(revenue)}</p>
-        <p className="text-xs text-text-tertiary mt-1">
-          Current tier: Tier {currentTier?.tier_number ?? "-"} ({currentTier?.rate_percent ?? 0}% on excess above {formatCurrency(currentTier?.breakeven_amount ?? 0)})
-        </p>
-      </Card>
-
-      <Card padding="md">
-        <h4 className="text-sm font-semibold text-text-primary mb-1">Overview dashboard — sales goal</h4>
-        <p className="text-xs text-text-tertiary mb-3">
-          All of this is <strong>only in this browser</strong> — no extra Supabase column. Priority:{" "}
-          <strong>Custom monthly £</strong> → <strong>System monthly goal</strong> → env.
-        </p>
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="min-w-[180px]">
-            <label className="block text-xs font-medium text-text-secondary mb-1">Custom monthly goal (£) — optional</label>
-            <Input
-              type="number"
-              min={1}
-              step={100}
-              value={dashboardMonthlyOverrideGbp}
-              onChange={(e) => setDashboardMonthlyOverrideGbp(e.target.value)}
-              onBlur={handleBlurDashboardMonthlyOverride}
-              placeholder="e.g. 30000"
-              className="h-10 max-w-[160px]"
-            />
-            <p className="text-[10px] text-text-tertiary mt-1">Use this if you want a fixed £/month target without editing System settings.</p>
-          </div>
-        </div>
-      </Card>
-
-      <Card padding="md">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <h4 className="text-sm font-semibold text-text-primary">Commission tiers (Payroll)</h4>
-          <Button
-            size="sm"
-            variant="outline"
-            icon={savingId === "new-tier" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            disabled={savingId === "new-tier" || savingId === "init-defaults"}
-            onClick={handleAddTier}
-          >
-            Add tier
-          </Button>
-        </div>
-        {tiers.length === 0 ? (
-          <div className="rounded-lg border border-border-light bg-surface-hover p-3 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-text-tertiary">No tiers configured yet. Create defaults first, then edit values.</p>
-            <Button
-              size="sm"
-              icon={savingId === "init-defaults" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              disabled={savingId === "new-tier" || savingId === "init-defaults"}
-              onClick={handleInitializeDefaults}
-            >
-              Initialize defaults
-            </Button>
-          </div>
-        ) : null}
-        <div className="space-y-2">
-          {tiers.map((t) => (
-            <TierRow
-              key={t.id}
-              tier={t}
-              onSave={handleSaveTier}
-              saving={savingId === t.id}
-            />
-          ))}
-        </div>
-      </Card>
-
-      <Card padding="md">
-        <h4 className="text-sm font-semibold text-text-primary mb-3">Pool distribution</h4>
-        <p className="text-xs text-text-tertiary mb-3">Share of commission pool by role (must total 100%).</p>
-        <div className="space-y-2">
-          {poolShares.map((p) => (
-            <PoolRow
-              key={p.id}
-              share={p}
-              label={roleLabel[p.role] ?? p.role}
-              onSave={handleSavePool}
-              saving={savingId === p.id}
-            />
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function TierRow({
-  tier,
-  onSave,
-  saving,
-}: {
-  tier: CommissionTier;
-  onSave: (id: string, breakeven_amount: number, rate_percent: number, sales_goal_monthly: number | null) => void;
-  saving: boolean;
-}) {
-  const [breakeven, setBreakeven] = useState(String(tier.breakeven_amount));
-  const [rate, setRate] = useState(String(tier.rate_percent));
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      setBreakeven(String(tier.breakeven_amount));
-      setRate(String(tier.rate_percent));
-    });
-  }, [tier.id, tier.breakeven_amount, tier.rate_percent]);
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-surface-hover">
-      <span className="text-sm font-medium text-text-primary w-20">Tier {tier.tier_number}</span>
-      <Input
-        type="number"
-        value={breakeven}
-        onChange={(e) => setBreakeven(e.target.value)}
-        placeholder="Breakeven"
-        className="w-28"
-      />
-      <Input
-        type="number"
-        value={rate}
-        onChange={(e) => setRate(e.target.value)}
-        placeholder="Rate %"
-        className="w-20"
-      />
-      <Button
-        size="sm"
-        disabled={saving}
-        icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-        onClick={() => {
-          onSave(
-            tier.id,
-            parseFloat(breakeven) || 0,
-            parseFloat(rate) || 0,
-            tier.sales_goal_monthly ?? null,
-          );
-        }}
-      >
-        Save
-      </Button>
-    </div>
-  );
-}
-
-function PoolRow({
-  share,
-  label,
-  onSave,
-  saving,
-}: {
-  share: CommissionPoolShare;
-  label: string;
-  onSave: (id: string, share_percent: number) => void;
-  saving: boolean;
-}) {
-  const [val, setVal] = useState(String(share.share_percent));
-
-  useEffect(() => {
-    queueMicrotask(() => setVal(String(share.share_percent)));
-  }, [share.id, share.share_percent]);
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-surface-hover">
-      <span className="text-sm font-medium text-text-primary w-32">{label}</span>
-      <Input
-        type="number"
-        value={val}
-        onChange={(e) => setVal(e.target.value)}
-        placeholder="%"
-        className="w-20"
-      />
-      <Button
-        size="sm"
-        disabled={saving}
-        icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-        onClick={() => onSave(share.id, parseFloat(val) || 0)}
-      >
-        Save
-      </Button>
-    </div>
-  );
-}
-
 function NavigationTab() {
   const { navigation, setNavigation, loading, canEditConfig } = useAdminConfig();
   const [localNav, setLocalNav] = useState<NavGroup[]>([]);
@@ -1765,8 +1438,8 @@ function SystemTab() {
             <CardTitle>Document requirements</CardTitle>
             <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
               Partner, employee, and contractor document rules are configured in{" "}
-              <Link href="/settings?tab=setup" className="text-primary font-medium hover:underline">
-                Settings → Setup
+              <Link href="/settings?tab=setup&section=partners" className="text-primary font-medium hover:underline">
+                Settings → Setup → Partners
               </Link>
               {" "}(Partner documents and Workforce documents sections). Use Request / Mandatory toggles to control upload links, onboarding, and compliance scoring.
             </p>

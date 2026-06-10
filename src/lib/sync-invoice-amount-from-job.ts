@@ -4,6 +4,8 @@ import { inferInvoiceKind } from "@/lib/invoice-collection";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getSupabase } from "@/services/base";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { allocateInvoiceExtraToInstallment } from "@/services/invoice-payment-plan";
+import { todayYmdForPaymentPlan } from "@/lib/invoice-payment-plan";
 
 const EPS = 0.02;
 
@@ -49,8 +51,12 @@ export async function bumpLinkedInvoiceAmountsToJobSchedule(job: Job): Promise<v
     if (target == null) continue;
     const prev = Number(inv.amount ?? 0);
     if (Math.abs(prev - target) <= EPS) continue;
+    const delta = Math.round((target - prev) * 100) / 100;
     try {
       await updateInvoice(inv.id, { amount: target });
+      if (delta > EPS && inv.payment_plan_active) {
+        await allocateInvoiceExtraToInstallment(inv.id, delta, todayYmdForPaymentPlan());
+      }
     } catch (e) {
       console.error("bumpLinkedInvoiceAmountsToJobSchedule", inv.id, e);
     }

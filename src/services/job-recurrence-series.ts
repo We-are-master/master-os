@@ -20,7 +20,7 @@ import {
   type SeriesPayload,
 } from "@/lib/job-recurrence";
 import { applyOfficeRescheduleStatus } from "@/lib/job-phases";
-import type { Job, JobRecurrenceSeries } from "@/types/database";
+import type { Job, JobRecurrenceSeries, PaymentPlanTemplate } from "@/types/database";
 
 export interface CreateSeriesInput {
   /** Anchor job to insert. Must include all the fields createJob expects. */
@@ -29,6 +29,8 @@ export interface CreateSeriesInput {
   series: SeriesPayload & { start_time: string; end_time: string };
   /** Caller (current user) — used for created_by audit on the series, optional. */
   createdBy?: string | null;
+  /** Optional payment plan template from Create Job modal (mig 234). */
+  paymentPlanTemplate?: PaymentPlanTemplate | null;
 }
 
 export interface CreateSeriesResult {
@@ -118,7 +120,7 @@ export async function createJobOrSeries(
 
   // 1) Insert the series row first, with generated_through = start_date - 1
   //    so the expansion loop below treats start_date as the first occurrence.
-  const seriesInsertPayload = {
+  const seriesInsertPayload: Record<string, unknown> = {
     rule: input.series.rule,
     start_time: input.series.start_time,
     end_time: input.series.end_time,
@@ -128,6 +130,9 @@ export async function createJobOrSeries(
     generated_through: null,
     status: "active",
   };
+  if (input.paymentPlanTemplate != null) {
+    seriesInsertPayload.payment_plan_template = input.paymentPlanTemplate;
+  }
 
   const { data: seriesRow, error: seriesErr } = await supabase
     .from("job_recurrence_series")

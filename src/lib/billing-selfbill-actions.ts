@@ -6,7 +6,8 @@ import {
   jobContributesToSelfBillPayout,
   listJobsLinkedToSelfBillIds,
 } from "@/services/self-bills";
-import type { Job, SelfBill } from "@/types/database";
+import { selfBillWisePayAmount } from "@/lib/self-bill-payment-plan";
+import type { Job, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 const JOB_PAYMENTS_IN_CHUNK = 80;
 
@@ -73,23 +74,28 @@ export function computeSelfBillAmountDue(
   sb: SelfBill,
   jobs: SelfBillJobLine[] | undefined,
   partnerPaidByJobId: Record<string, number>,
+  installments?: SelfBillPaymentInstallment[] | null,
 ): number {
   if (isSelfBillPayoutVoided(sb)) return 0;
+  let base = 0;
   if (sb.bill_origin === "internal") {
-    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+    base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  } else {
+    const list = jobs ?? [];
+    if (list.length === 0) {
+      base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+    } else {
+      let due = 0;
+      for (const j of list) {
+        if (!jobContributesToSelfBillPayout(j)) continue;
+        const cap = jobLinePartnerGross(j);
+        const paid = partnerPaidByJobId[j.id] ?? 0;
+        due += Math.max(0, cap - paid);
+      }
+      base = Math.round(due * 100) / 100;
+    }
   }
-  const list = jobs ?? [];
-  if (list.length === 0) {
-    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
-  }
-  let due = 0;
-  for (const j of list) {
-    if (!jobContributesToSelfBillPayout(j)) continue;
-    const cap = jobLinePartnerGross(j);
-    const paid = partnerPaidByJobId[j.id] ?? 0;
-    due += Math.max(0, cap - paid);
-  }
-  return Math.round(due * 100) / 100;
+  return selfBillWisePayAmount(sb, installments, base);
 }
 
 export async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{
