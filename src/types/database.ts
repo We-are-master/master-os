@@ -914,7 +914,7 @@ export interface Invoice {
   amount_paid?: number;
   status: InvoiceStatus;
   due_date: string;
-  paid_date?: string;
+  paid_date?: string | null;
   /** Last customer payment date (partial or full); set from job ledger sync. */
   last_payment_date?: string | null;
   created_at: string;

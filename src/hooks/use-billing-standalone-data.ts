@@ -249,6 +249,15 @@ export function useBillingStandaloneData() {
       if (!background && !hasLoadedOnceRef.current) setBills([]);
     }
 
+    if (billResult.status === "fulfilled") {
+      billRows = billResult.value;
+      setBills(billRows);
+    } else {
+      fetchHadErrors = true;
+      console.error("billing bills fetch failed", billResult.reason);
+      if (!background && !hasLoadedOnceRef.current) setBills([]);
+    }
+
     if (bounds === null) fullHistoryLoadedRef.current = true;
 
     billingPerfMark("billing:fetch:end");

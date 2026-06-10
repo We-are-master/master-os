@@ -1607,11 +1607,8 @@ export function SelfBillDetailDrawer({
   const [markingInstallmentId, setMarkingInstallmentId] = useState<string | null>(null);
   const [payingFullPayout, setPayingFullPayout] = useState(false);
   const [partnerPaymentTerms, setPartnerPaymentTerms] = useState<string | null>(null);
-  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
-  const paymentOrgCtx = useMemo(
-    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
-    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
-  );
+  const { setup, partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(() => orgCtxFromSetup(setup), [setup]);
 
   const openRecordPartnerPayModal = () => {
     const first =

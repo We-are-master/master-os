@@ -678,7 +678,7 @@ export function InvoicesFinanceClient() {
         userName: profile?.full_name,
       });
       toast.success(`Invoice marked as ${newStatus}`);
-      let paidDate: string | undefined;
+      let paidDate: string | null | undefined;
       if (newStatus === "paid") {
         paidDate = new Date().toISOString().split("T")[0];
       } else if (invoice.status === "paid") {
@@ -1880,11 +1880,8 @@ export function InvoiceDetailDrawer({
   const [markingInstallmentId, setMarkingInstallmentId] = useState<string | null>(null);
   const [payingFullBalance, setPayingFullBalance] = useState(false);
   const [accountPaymentTerms, setAccountPaymentTerms] = useState<string | null>(null);
-  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
-  const paymentOrgCtx = useMemo(
-    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
-    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
-  );
+  const { setup } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(() => orgCtxFromSetup(setup), [setup]);
 
   const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
   onInvoiceUpdatedRef.current = onInvoiceUpdated;
@@ -2319,7 +2316,7 @@ export function InvoiceDetailDrawer({
   };
 
   const balanceDueForPlan = invoice
-    ? invoiceBalanceDueWithJobCustomerPaid(invoice, jobCustomerPaidSum)
+    ? invoiceBalanceDueWithJobCustomerPaid(invoice, jobCustomerPaidSum ?? undefined)
     : 0;
 
   const handleOpenPaymentPlanEditor = () => {

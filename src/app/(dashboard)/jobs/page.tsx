@@ -3085,11 +3085,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
     },
   ) => void;
 }) {
-  const { accessFees, partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
-  const paymentOrgCtx = useMemo(
-    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
-    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
-  );
+  const { setup, accessFees, partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(() => orgCtxFromSetup(setup), [setup]);
   const requiredFieldClass = "border-[#d9d5cf] focus:border-[#b8b2aa] focus:ring-[#ede9e3] hover:border-[#cfcac3]";
   const [form, setForm] = useState({
     title: "",
