@@ -15,7 +15,9 @@ import {
 } from "@/lib/billing-standalone-enrich";
 import {
   fetchBillsForBilling,
+  fetchInstallmentsForBilling,
   fetchInvoicesForBilling,
+  fetchSelfBillInstallmentsForBilling,
   fetchSelfBillsForBilling,
   mergeBillsById,
   mergeInvoicesById,
@@ -28,7 +30,7 @@ import {
 } from "@/lib/billing-standalone-filter";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
-import type { Bill, Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 export type BillingRepairAccountLabel = {
   id: string;
@@ -42,6 +44,12 @@ export function useBillingStandaloneData() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [installmentsByInvoiceId, setInstallmentsByInvoiceId] = useState<
+    Record<string, InvoicePaymentInstallment[]>
+  >({});
+  const [installmentsBySelfBillId, setInstallmentsBySelfBillId] = useState<
+    Record<string, SelfBillPaymentInstallment[]>
+  >({});
   const [enrichment, setEnrichment] = useState<BillingEnrichmentState>(EMPTY_BILLING_ENRICHMENT);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -197,19 +205,39 @@ export function useBillingStandaloneData() {
     if (invResult.status === "fulfilled") {
       invRows = invResult.value;
       setInvoices(invRows);
+      try {
+        const instMap = await fetchInstallmentsForBilling(invRows);
+        setInstallmentsByInvoiceId(instMap);
+      } catch (e) {
+        console.error("billing installments fetch failed", e);
+        setInstallmentsByInvoiceId({});
+      }
     } else {
       fetchHadErrors = true;
       console.error("billing invoices fetch failed", invResult.reason);
-      if (!background && !hasLoadedOnceRef.current) setInvoices([]);
+      if (!background && !hasLoadedOnceRef.current) {
+        setInvoices([]);
+        setInstallmentsByInvoiceId({});
+      }
     }
 
     if (sbResult.status === "fulfilled") {
       sbRows = sbResult.value;
       setSelfBills(sbRows);
+      try {
+        const sbInstMap = await fetchSelfBillInstallmentsForBilling(sbRows);
+        setInstallmentsBySelfBillId(sbInstMap);
+      } catch (e) {
+        console.error("billing self-bill installments fetch failed", e);
+        setInstallmentsBySelfBillId({});
+      }
     } else {
       fetchHadErrors = true;
       console.error("billing self-bills fetch failed", sbResult.reason);
-      if (!background && !hasLoadedOnceRef.current) setSelfBills([]);
+      if (!background && !hasLoadedOnceRef.current) {
+        setSelfBills([]);
+        setInstallmentsBySelfBillId({});
+      }
     }
 
     if (billResult.status === "fulfilled") {
@@ -375,6 +403,8 @@ export function useBillingStandaloneData() {
       invoices,
       selfBills,
       bills,
+      installmentsByInvoiceId,
+      installmentsBySelfBillId,
       jobsByRef,
       customerPaidByJobId,
       jobsBySelfBillId,
@@ -403,6 +433,8 @@ export function useBillingStandaloneData() {
       invoices,
       selfBills,
       bills,
+      installmentsByInvoiceId,
+      installmentsBySelfBillId,
       jobsByRef,
       customerPaidByJobId,
       jobsBySelfBillId,

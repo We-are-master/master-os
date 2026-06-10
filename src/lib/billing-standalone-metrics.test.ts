@@ -7,7 +7,7 @@ import {
   buildCashflowWeekBreakdown,
   buildInvoiceLedgerAccountGroups,
 } from "@/lib/billing-standalone-metrics";
-import type { Bill, Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill } from "@/types/database";
 
 function inv(
   id: string,
@@ -173,12 +173,13 @@ describe("buildCashflowWeekly", () => {
     assert.equal(weeks[0]!.moneyOut, 0);
   });
 
-  it("counts only approved self-bills in moneyOut, not pending ready rows", () => {
+  it("includes approved, ready, and draft self-bills in cashflow moneyOut forecast", () => {
     const weeks = buildCashflowWeekly({
       invoices: [],
       selfBills: [
-        sb("pending", { net_payout: 8000, due_date: "2026-06-10", approved_at: null }),
+        sb("ready", { net_payout: 8000, due_date: "2026-06-10", approved_at: null }),
         sb("approved", { net_payout: 500, due_date: "2026-06-10", approved_at: "2026-06-01T10:00:00Z" }),
+        sb("draft", { status: "draft", net_payout: 300, due_date: "2026-06-10" }),
       ],
       jobsByRef: {},
       customerPaidByJobId: {},
@@ -190,7 +191,26 @@ describe("buildCashflowWeekly", () => {
     });
 
     assert.equal(weeks.length, 1);
-    assert.equal(weeks[0]!.moneyOut, 500);
+    assert.equal(weeks[0]!.moneyOut, 8800);
+  });
+
+  it("buildCashflowWeekBreakdown labels self-bill tier in detail", () => {
+    const breakdown = buildCashflowWeekBreakdown("2026-06-08", {
+      invoices: [],
+      selfBills: [
+        sb("ready", { net_payout: 200, due_date: "2026-06-10", approved_at: null, reference: "SB-R" }),
+        sb("draft", { status: "draft", net_payout: 100, due_date: "2026-06-10", reference: "SB-D" }),
+      ],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+    });
+
+    assert.equal(breakdown.outLines.length, 2);
+    assert.match(breakdown.outLines[0]!.detail ?? "", /Ready/);
+    assert.match(breakdown.outLines[1]!.detail ?? "", /Draft/);
   });
 
   it("includes open bills with due_date in the week in moneyOut", () => {
@@ -247,5 +267,51 @@ describe("buildCashflowWeekly", () => {
     assert.equal(breakdown.outLines.length, 2);
     assert.equal(breakdown.moneyIn, 1000);
     assert.equal(breakdown.moneyOut, 580);
+  });
+
+  it("buildCashflowWeekly buckets money in by installment due_date when plan active", () => {
+    const invoice = inv("plan", {
+      client_name: "Stylesmiths",
+      amount: 8446,
+      due_date: "2026-06-12",
+      status: "pending",
+      payment_plan_active: true,
+    });
+    const installments: InvoicePaymentInstallment[] = [
+      {
+        id: "i1",
+        invoice_id: "plan",
+        sequence: 1,
+        amount: 2111,
+        due_date: "2026-06-12",
+        status: "pending",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "i2",
+        invoice_id: "plan",
+        sequence: 2,
+        amount: 2111,
+        due_date: "2026-07-12",
+        status: "pending",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const weeks = buildCashflowWeekly({
+      invoices: [invoice],
+      selfBills: [],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      installmentsByInvoiceId: { plan: installments },
+      startYmd: "2026-06-08",
+      endYmd: "2026-07-18",
+    });
+    const june = weeks.find((w) => w.weekStart === "2026-06-08");
+    const july = weeks.find((w) => w.weekStart === "2026-07-06");
+    assert.equal(june?.moneyIn, 2111);
+    assert.equal(july?.moneyIn, 2111);
   });
 });

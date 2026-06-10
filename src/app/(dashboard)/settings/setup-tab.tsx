@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { endOfMonth, format, startOfMonth } from "date-fns";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,6 +94,13 @@ import {
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
 import { DocRulesGroup } from "@/components/settings/doc-rules-group";
+import { SettingsSectionLayout } from "@/components/settings/settings-section-layout";
+import {
+  SETUP_SECTIONS,
+  parseSetupSectionFromUrl,
+  setupSectionMeta,
+  type SetupSectionId,
+} from "@/lib/settings-setup-sections";
 import {
   getContractorDocumentCatalogForSetup,
   getEmployeeDocumentCatalogForSetup,
@@ -798,6 +806,35 @@ export function SetupTab() {
     }
   };
 
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sectionFromUrl = searchParams.get("section");
+  const [activeSection, setActiveSection] = useState<SetupSectionId>(() =>
+    parseSetupSectionFromUrl(sectionFromUrl),
+  );
+
+  useEffect(() => {
+    setActiveSection(parseSetupSectionFromUrl(sectionFromUrl));
+  }, [sectionFromUrl]);
+
+  const handleSectionChange = (id: string) => {
+    const section = parseSetupSectionFromUrl(id);
+    setActiveSection(section);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "setup");
+    if (section === "working-calendar") params.delete("section");
+    else params.set("section", section);
+    router.replace(`/settings?${params.toString()}`, { scroll: false });
+  };
+
+  const sectionMeta = setupSectionMeta(activeSection);
+  const navItems = SETUP_SECTIONS.map((s) => ({
+    id: s.id,
+    label: s.label,
+    icon: s.icon,
+    count: s.count,
+  }));
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -807,14 +844,14 @@ export function SetupTab() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h3 className="text-lg font-semibold text-text-primary">Setup</h3>
-        <p className="text-sm text-text-tertiary">Office defaults and labels.</p>
-      </div>
-
-      <section className="space-y-3">
-        <MicroLabel>Working Calendar</MicroLabel>
+    <SettingsSectionLayout
+      items={navItems}
+      activeId={activeSection}
+      onSectionChange={handleSectionChange}
+      title={sectionMeta.label}
+      description={sectionMeta.description}
+    >
+      {activeSection === "working-calendar" ? (
         <Card padding="none">
           <CardHeader className="px-6 pt-6">
             <div className="flex items-center gap-2">
@@ -889,11 +926,10 @@ export function SetupTab() {
           </div>
         </div>
       </Card>
-      </section>
+      ) : null}
 
-      <section className="space-y-3">
-        <MicroLabel>Operations</MicroLabel>
-
+      {activeSection === "operations" ? (
+        <>
         <Card padding="none">
           <CardHeader className="px-6 pt-6">
             <div className="flex items-center gap-2">
@@ -1054,174 +1090,6 @@ export function SetupTab() {
               <span>·</span>
               <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-fx-red" /> &lt; {lowMarginPctStr || DEFAULT_PULSE_LOW_MARGIN_PCT}%</span>
             </div>
-          </div>
-        </Card>
-
-        <Card padding="none">
-          <CardHeader className="px-6 pt-6">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-text-tertiary" />
-              <CardTitle>Pulse · Revenue goal</CardTitle>
-              <FixfyHintIcon text="Monthly revenue target for Pulse. Breakeven covers fixed costs at your target gross margin; Healthy leaves your chosen net margin after fixed costs. The period goal prorates by working days from Setup." />
-            </div>
-          </CardHeader>
-          <div className="space-y-4 px-6 pb-6">
-            <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-text-secondary">
-              <MicroLabel className="mb-2">Fixed costs snapshot (this month)</MicroLabel>
-              {fixedCostsLoading ? (
-                <p className="text-text-tertiary">Loading…</p>
-              ) : fixedCostsSnapshot ? (
-                <p className="tabular-nums">
-                  Workforce {formatSetupGbp(fixedCostsSnapshot.workforce)} + Bills{" "}
-                  {formatSetupGbp(fixedCostsSnapshot.bills)} ={" "}
-                  <span className="font-medium text-text-primary">
-                    {formatSetupGbp(fixedCostsSnapshot.total)}/mo
-                  </span>
-                </p>
-              ) : (
-                <p className="text-text-tertiary">Could not load fixed costs.</p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
-              <div className="rounded-lg border border-border px-3 py-2.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">Breakeven</p>
-                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
-                  {pulseGoalSuggestions.breakevenMonthly != null
-                    ? `${formatSetupGbp(pulseGoalSuggestions.breakevenMonthly)}/mo`
-                    : "—"}
-                  {pulseGoalSuggestions.breakevenDaily != null && (
-                    <span className="text-text-tertiary font-normal">
-                      {" "}
-                      · {formatSetupGbp(pulseGoalSuggestions.breakevenDaily)}/working day
-                    </span>
-                  )}
-                </p>
-                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin ≈ 0 after fixed costs.</p>
-              </div>
-              <div className="rounded-lg border border-border px-3 py-2.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
-                  Healthy ({pulseHealthyNetMarginPctStr || DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}% net)
-                </p>
-                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
-                  {pulseGoalSuggestions.healthyMonthly != null
-                    ? `${formatSetupGbp(pulseGoalSuggestions.healthyMonthly)}/mo`
-                    : "—"}
-                  {pulseGoalSuggestions.healthyDaily != null && (
-                    <span className="text-text-tertiary font-normal">
-                      {" "}
-                      · {formatSetupGbp(pulseGoalSuggestions.healthyDaily)}/working day
-                    </span>
-                  )}
-                </p>
-                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin after fixed costs.</p>
-              </div>
-            </div>
-            {pulseGoalSuggestions.error && (
-              <p className="text-xs text-fx-amber">{pulseGoalSuggestions.error}</p>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
-              <div>
-                <label
-                  htmlFor="pulse-revenue-goal-mode"
-                  className="block text-xs font-medium text-text-secondary mb-1.5"
-                >
-                  Goal based on
-                </label>
-                <select
-                  id="pulse-revenue-goal-mode"
-                  disabled={!canEditConfig}
-                  value={pulseRevenueGoalMode}
-                  onChange={(e) => setPulseRevenueGoalMode(e.target.value as PulseRevenueGoalMode)}
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
-                >
-                  <option value="manual">Manual</option>
-                  <option value="breakeven">Breakeven</option>
-                  <option value="healthy">Healthy</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
-                  Healthy net margin (%)
-                  <FixfyHintIcon text="Target net margin after fixed costs — used in the Healthy suggestion and when mode is Healthy." />
-                </label>
-                <Input
-                  type="number"
-                  min={MIN_PULSE_HEALTHY_NET_MARGIN_PCT}
-                  max={MAX_PULSE_HEALTHY_NET_MARGIN_PCT}
-                  step={1}
-                  value={pulseHealthyNetMarginPctStr}
-                  onChange={(e) => setPulseHealthyNetMarginPctStr(e.target.value)}
-                  disabled={!canEditConfig}
-                />
-                <p className="mt-1 text-[10px] text-text-tertiary">
-                  Default {DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}%.
-                </p>
-              </div>
-            </div>
-
-            {pulseRevenueGoalMode === "manual" ? (
-              <div className="max-w-xs">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Monthly revenue goal (£)
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  step={100}
-                  value={pulseRevenueGoalMonthlyStr}
-                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
-                  disabled={!canEditConfig}
-                  placeholder="e.g. 100000"
-                />
-              </div>
-            ) : (
-              <div className="max-w-xs">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Optional override (£/month)
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  step={100}
-                  value={pulseRevenueGoalMonthlyStr}
-                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
-                  disabled={!canEditConfig}
-                  placeholder="Leave blank to use calculated value"
-                />
-              </div>
-            )}
-
-            <div className="rounded-lg border border-fx-line bg-fx-paper/40 px-4 py-3 text-xs text-text-secondary">
-              <span className="font-medium text-text-primary">Active goal: </span>
-              {activeMonthlyGoal.monthlyGoal != null ? (
-                <>
-                  {formatSetupGbp(activeMonthlyGoal.monthlyGoal)}/mo
-                  {activeDailyGoal != null && (
-                    <> · {formatSetupGbp(activeDailyGoal)}/working day</>
-                  )}
-                  <span className="text-text-tertiary">
-                    {" "}
-                    ({pulseRevenueGoalDraftSetup.working_days?.length ?? DEFAULT_WORKING_DAYS.length} working
-                    days/week · ~{monthlyWorkingDaysCount.toFixed(1)} days/month)
-                  </span>
-                </>
-              ) : (
-                <span className="text-text-tertiary">
-                  {activeMonthlyGoal.error ?? "Configure margin targets and fixed costs to set a goal."}
-                </span>
-              )}
-            </div>
-
-            <Button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={!canEditConfig || saving}
-              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-            >
-              {saving ? "Saving…" : "Save Setup"}
-            </Button>
           </div>
         </Card>
 
@@ -1440,7 +1308,181 @@ export function SetupTab() {
           </p>
         </div>
       </Card>
+        </>
+      ) : null}
 
+      {activeSection === "finance" ? (
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Pulse · Revenue goal</CardTitle>
+              <FixfyHintIcon text="Monthly revenue target for Pulse. Breakeven covers fixed costs at your target gross margin; Healthy leaves your chosen net margin after fixed costs. The period goal prorates by working days from Setup." />
+            </div>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-text-secondary">
+              <MicroLabel className="mb-2">Fixed costs snapshot (this month)</MicroLabel>
+              {fixedCostsLoading ? (
+                <p className="text-text-tertiary">Loading…</p>
+              ) : fixedCostsSnapshot ? (
+                <p className="tabular-nums">
+                  Workforce {formatSetupGbp(fixedCostsSnapshot.workforce)} + Bills{" "}
+                  {formatSetupGbp(fixedCostsSnapshot.bills)} ={" "}
+                  <span className="font-medium text-text-primary">
+                    {formatSetupGbp(fixedCostsSnapshot.total)}/mo
+                  </span>
+                </p>
+              ) : (
+                <p className="text-text-tertiary">Could not load fixed costs.</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
+              <div className="rounded-lg border border-border px-3 py-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">Breakeven</p>
+                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
+                  {pulseGoalSuggestions.breakevenMonthly != null
+                    ? `${formatSetupGbp(pulseGoalSuggestions.breakevenMonthly)}/mo`
+                    : "—"}
+                  {pulseGoalSuggestions.breakevenDaily != null && (
+                    <span className="text-text-tertiary font-normal">
+                      {" "}
+                      · {formatSetupGbp(pulseGoalSuggestions.breakevenDaily)}/working day
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin ≈ 0 after fixed costs.</p>
+              </div>
+              <div className="rounded-lg border border-border px-3 py-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                  Healthy ({pulseHealthyNetMarginPctStr || DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}% net)
+                </p>
+                <p className="mt-1 text-sm font-medium tabular-nums text-text-primary">
+                  {pulseGoalSuggestions.healthyMonthly != null
+                    ? `${formatSetupGbp(pulseGoalSuggestions.healthyMonthly)}/mo`
+                    : "—"}
+                  {pulseGoalSuggestions.healthyDaily != null && (
+                    <span className="text-text-tertiary font-normal">
+                      {" "}
+                      · {formatSetupGbp(pulseGoalSuggestions.healthyDaily)}/working day
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 text-[10px] text-text-tertiary">Net margin after fixed costs.</p>
+              </div>
+            </div>
+            {pulseGoalSuggestions.error && (
+              <p className="text-xs text-fx-amber">{pulseGoalSuggestions.error}</p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+              <div>
+                <label
+                  htmlFor="pulse-revenue-goal-mode"
+                  className="block text-xs font-medium text-text-secondary mb-1.5"
+                >
+                  Goal based on
+                </label>
+                <select
+                  id="pulse-revenue-goal-mode"
+                  disabled={!canEditConfig}
+                  value={pulseRevenueGoalMode}
+                  onChange={(e) => setPulseRevenueGoalMode(e.target.value as PulseRevenueGoalMode)}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                >
+                  <option value="manual">Manual</option>
+                  <option value="breakeven">Breakeven</option>
+                  <option value="healthy">Healthy</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                  Healthy net margin (%)
+                  <FixfyHintIcon text="Target net margin after fixed costs — used in the Healthy suggestion and when mode is Healthy." />
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_PULSE_HEALTHY_NET_MARGIN_PCT}
+                  max={MAX_PULSE_HEALTHY_NET_MARGIN_PCT}
+                  step={1}
+                  value={pulseHealthyNetMarginPctStr}
+                  onChange={(e) => setPulseHealthyNetMarginPctStr(e.target.value)}
+                  disabled={!canEditConfig}
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">
+                  Default {DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT}%.
+                </p>
+              </div>
+            </div>
+
+            {pulseRevenueGoalMode === "manual" ? (
+              <div className="max-w-xs">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Monthly revenue goal (£)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={100}
+                  value={pulseRevenueGoalMonthlyStr}
+                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
+                  disabled={!canEditConfig}
+                  placeholder="e.g. 100000"
+                />
+              </div>
+            ) : (
+              <div className="max-w-xs">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Optional override (£/month)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={100}
+                  value={pulseRevenueGoalMonthlyStr}
+                  onChange={(e) => setPulseRevenueGoalMonthlyStr(e.target.value)}
+                  disabled={!canEditConfig}
+                  placeholder="Leave blank to use calculated value"
+                />
+              </div>
+            )}
+
+            <div className="rounded-lg border border-fx-line bg-fx-paper/40 px-4 py-3 text-xs text-text-secondary">
+              <span className="font-medium text-text-primary">Active goal: </span>
+              {activeMonthlyGoal.monthlyGoal != null ? (
+                <>
+                  {formatSetupGbp(activeMonthlyGoal.monthlyGoal)}/mo
+                  {activeDailyGoal != null && (
+                    <> · {formatSetupGbp(activeDailyGoal)}/working day</>
+                  )}
+                  <span className="text-text-tertiary">
+                    {" "}
+                    ({pulseRevenueGoalDraftSetup.working_days?.length ?? DEFAULT_WORKING_DAYS.length} working
+                    days/week · ~{monthlyWorkingDaysCount.toFixed(1)} days/month)
+                  </span>
+                </>
+              ) : (
+                <span className="text-text-tertiary">
+                  {activeMonthlyGoal.error ?? "Configure margin targets and fixed costs to set a goal."}
+                </span>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canEditConfig || saving}
+              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+            >
+              {saving ? "Saving…" : "Save Setup"}
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
+      {activeSection === "partners" ? (
+        <>
       <Card padding="none">
         <CardHeader className="px-6 pt-6">
           <div className="flex items-center gap-2">
@@ -1851,7 +1893,10 @@ export function SetupTab() {
           </Button>
         </div>
       </Card>
+        </>
+      ) : null}
 
+      {activeSection === "workforce" ? (
       <Card padding="none">
         <CardHeader className="px-6 pt-6">
           <div className="flex items-center gap-2">
@@ -1912,132 +1957,7 @@ export function SetupTab() {
           </Button>
         </div>
       </Card>
-
-      <Card padding="none">
-        <CardHeader className="px-6 pt-6">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
-            <CardTitle>Integrations · Zendesk</CardTitle>
-            <FixfyHintIcon text="Zendesk subdomain + complaint ticket field ids. Field ids can also be set via env vars (see docs). Dropdown options sync from On Hold Reasons when you save." />
-          </div>
-        </CardHeader>
-        <div className="space-y-4 px-6 pb-6">
-          <div className="flex flex-wrap items-end gap-3 max-w-2xl">
-            <div className="flex-1 min-w-[260px]">
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Subdomain
-              </label>
-              <div className="flex items-center gap-1.5">
-                <Input
-                  value={zendeskSubdomain}
-                  onChange={(e) => setZendeskSubdomain(e.target.value)}
-                  placeholder="e.g. yourcompany or yourcompany.zendesk.com"
-                  className="flex-1"
-                />
-                <span className="text-[11px] text-fx-mute font-mono">.zendesk.com</span>
-              </div>
-              <p className="mt-1 text-[10px] text-text-tertiary">
-                Accepts plain subdomain, full domain, or full URL — we normalize on save.
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-4xl">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Cancellation reason field id
-              </label>
-              <Input
-                value={zendeskCancellationReasonFieldId}
-                onChange={(e) => setZendeskCancellationReasonFieldId(e.target.value.replace(/\D/g, ""))}
-                placeholder="5834334215583"
-                inputMode="numeric"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Cancellation notes field id
-              </label>
-              <Input
-                value={zendeskCancellationNotesFieldId}
-                onChange={(e) => setZendeskCancellationNotesFieldId(e.target.value.replace(/\D/g, ""))}
-                placeholder="5834293455647"
-                inputMode="numeric"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                On-hold reason field id
-              </label>
-              <Input
-                value={zendeskOnHoldReasonFieldId}
-                onChange={(e) => setZendeskOnHoldReasonFieldId(e.target.value.replace(/\D/g, ""))}
-                placeholder="Zendesk dropdown field id"
-                inputMode="numeric"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Complaint description field id
-              </label>
-              <Input
-                value={zendeskComplaintDescriptionFieldId}
-                onChange={(e) => setZendeskComplaintDescriptionFieldId(e.target.value.replace(/\D/g, ""))}
-                placeholder="Multiline field id"
-                inputMode="numeric"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Partner solution field id
-              </label>
-              <Input
-                value={zendeskComplaintSolutionFieldId}
-                onChange={(e) => setZendeskComplaintSolutionFieldId(e.target.value.replace(/\D/g, ""))}
-                placeholder="Multiline field id"
-                inputMode="numeric"
-              />
-            </div>
-          </div>
-          <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
-            In Zendesk Admin → Ticket fields, open each field and copy the numeric id from the URL
-            (e.g. <code className="text-[11px]">.../ticket_fields/1234567890123</code>). Map the complaint form fields to the same ids.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={!canEditConfig || saving}
-              icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-            >
-              {saving ? "Saving…" : "Save Setup"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!canEditConfig || onHoldZendeskSyncing || !holdReasonZendeskConfigured}
-              loading={onHoldZendeskSyncing}
-              onClick={() => void syncOnHoldReasonsToZendesk()}
-            >
-              Sync on-hold reasons → Zendesk
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!canEditConfig || cancelZendeskSyncing || !cancelReasonZendeskConfigured}
-              loading={cancelZendeskSyncing}
-              onClick={() => void syncCancellationReasonsToZendesk()}
-            >
-              Sync cancellation reasons → Zendesk
-            </Button>
-          </div>
-          <p className="text-[10px] text-text-tertiary max-w-3xl leading-snug">
-            Webhook (Zendesk → OS): <code className="text-[11px]">POST /api/cancellations</code> with header{" "}
-            <code className="text-[11px]">x-api-key</code> — body must include{" "}
-            <code className="text-[11px]">lost_value_gbp</code>. See docs/API_CURL.md.
-          </p>
-        </div>
-      </Card>
-      </section>
-    </div>
+      ) : null}
+    </SettingsSectionLayout>
   );
 }

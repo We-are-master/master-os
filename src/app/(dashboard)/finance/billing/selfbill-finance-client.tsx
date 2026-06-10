@@ -38,6 +38,7 @@ import {
   Receipt,
   Plus,
   Mail,
+  Loader2,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -46,7 +47,27 @@ import { getJob } from "@/services/jobs";
 import { listJobPayments } from "@/services/job-payments";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { partnerPayLedgerBypassesPartnerCap, PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
-import type { Job, JobPaymentMethod, SelfBill } from "@/types/database";
+import type { Job, JobPaymentMethod, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
+import {
+  PaymentPlanEditor,
+  emptyPaymentPlanRow,
+  type PaymentPlanEditorRow,
+} from "@/components/finance/payment-plan-editor";
+import {
+  defaultSelfBillPayoutPlanRows,
+  nextOpenSelfBillInstallment,
+  selfBillEffectiveDueYmd,
+  selfBillPaymentPlanProgressLabel,
+} from "@/lib/self-bill-payment-plan";
+import {
+  cancelSelfBillPaymentPlan,
+  createSelfBillPaymentPlan,
+  listInstallmentsForSelfBill,
+  markAllSelfBillInstallmentsPaid,
+  markSelfBillInstallmentPaid,
+  syncSelfBillPaymentPlanFromPartnerPaid,
+} from "@/services/self-bill-payment-plan";
+import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import { getSupabase } from "@/services/base";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import {
@@ -1578,6 +1599,19 @@ export function SelfBillDetailDrawer({
   const [recordPayMethod, setRecordPayMethod] = useState<JobPaymentMethod>("bank_transfer");
   const [recordPayLedger, setRecordPayLedger] = useState("");
   const [recordPayNote, setRecordPayNote] = useState("");
+  const [installments, setInstallments] = useState<SelfBillPaymentInstallment[]>([]);
+  const [loadingInstallments, setLoadingInstallments] = useState(false);
+  const [payoutPlanEditorOpen, setPayoutPlanEditorOpen] = useState(false);
+  const [payoutPlanRows, setPayoutPlanRows] = useState<PaymentPlanEditorRow[]>([]);
+  const [savingPayoutPlan, setSavingPayoutPlan] = useState(false);
+  const [markingInstallmentId, setMarkingInstallmentId] = useState<string | null>(null);
+  const [payingFullPayout, setPayingFullPayout] = useState(false);
+  const [partnerPaymentTerms, setPartnerPaymentTerms] = useState<string | null>(null);
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(
+    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
+    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
+  );
 
   const openRecordPartnerPayModal = () => {
     const first =
@@ -1635,6 +1669,13 @@ export function SelfBillDetailDrawer({
       toast.success("Partner payment recorded — it appears on the job and in Paid to date.");
       setRecordPartnerPayOpen(false);
       await onPartnerPaymentsRecorded?.();
+      if (sb.payment_plan_active) {
+        const paidTotal =
+          jobs.reduce((sum, j) => sum + Number(partnerPaidByJobId[j.id] ?? 0), 0) + Math.round(amount * 100) / 100;
+        await syncSelfBillPaymentPlanFromPartnerPaid(sb.id, paidTotal);
+        const refreshed = await listInstallmentsForSelfBill(sb.id);
+        setInstallments(refreshed);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to record payment");
     } finally {
@@ -1652,9 +1693,125 @@ export function SelfBillDetailDrawer({
       setDueDateModalOpen(false);
       setJobsExpanded(false);
       setRecordPartnerPayOpen(false);
+      setInstallments([]);
+      setPayoutPlanEditorOpen(false);
+      setPayoutPlanRows([]);
       prevSbId.current = sb.id;
     }
   }, [sb]);
+
+  useEffect(() => {
+    if (!sb) return;
+    let cancelled = false;
+    setLoadingInstallments(true);
+    const paidTotal = jobs.reduce((sum, j) => sum + Number(partnerPaidByJobId[j.id] ?? 0), 0);
+    void listInstallmentsForSelfBill(sb.id)
+      .then(async (rows) => {
+        if (cancelled) return;
+        setInstallments(rows);
+        if (paidTotal > 0.02) {
+          await syncSelfBillPaymentPlanFromPartnerPaid(sb.id, paidTotal);
+          if (!cancelled) {
+            const refreshed = await listInstallmentsForSelfBill(sb.id);
+            setInstallments(refreshed);
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) setInstallments([]); })
+      .finally(() => { if (!cancelled) setLoadingInstallments(false); });
+
+    const pid = sb.partner_id?.trim();
+    if (pid) {
+      void getSupabase()
+        .from("partners")
+        .select("payment_terms")
+        .eq("id", pid)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (!cancelled) {
+            setPartnerPaymentTerms((data as { payment_terms?: string | null } | null)?.payment_terms ?? null);
+          }
+        });
+    } else {
+      setPartnerPaymentTerms(null);
+    }
+  }, [sb?.id, jobs, partnerPaidByJobId]);
+
+  const handleOpenPayoutPlanEditor = () => {
+    if (!sb) return;
+    const total = Math.max(0, Number(sb.net_payout ?? 0));
+    const drafts = defaultSelfBillPayoutPlanRows(total, 4, {
+      partnerTerms: partnerPaymentTerms,
+      orgStandardTerms: partnerPayoutStandardTerms,
+      orgReferenceYmd: partnerPayoutReferenceYmd,
+    });
+    setPayoutPlanRows(
+      drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })),
+    );
+    setPayoutPlanEditorOpen(true);
+  };
+
+  const handleSavePayoutPlan = async () => {
+    if (!sb) return;
+    setSavingPayoutPlan(true);
+    try {
+      const rows = await createSelfBillPaymentPlan(
+        sb.id,
+        Number(sb.net_payout ?? 0),
+        payoutPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
+      );
+      setInstallments(rows);
+      setPayoutPlanEditorOpen(false);
+      toast.success("Payout plan saved");
+      if (onRefresh) await onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save payout plan");
+    } finally {
+      setSavingPayoutPlan(false);
+    }
+  };
+
+  const handleCancelPayoutPlan = async () => {
+    if (!sb) return;
+    try {
+      await cancelSelfBillPaymentPlan(sb.id);
+      setInstallments([]);
+      toast.success("Payout plan removed");
+      if (onRefresh) await onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove plan");
+    }
+  };
+
+  const handleMarkPayoutInstallmentPaid = async (installmentId: string) => {
+    if (!sb) return;
+    setMarkingInstallmentId(installmentId);
+    try {
+      const { installments: updated } = await markSelfBillInstallmentPaid(installmentId, sb);
+      setInstallments(updated);
+      toast.success("Installment marked paid");
+      if (onRefresh) await onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to mark installment paid");
+    } finally {
+      setMarkingInstallmentId(null);
+    }
+  };
+
+  const handlePayFullPayoutPlan = async () => {
+    if (!sb) return;
+    setPayingFullPayout(true);
+    try {
+      const { installments: updated } = await markAllSelfBillInstallmentsPaid(sb);
+      setInstallments(updated);
+      toast.success("All installments marked paid");
+      if (onRefresh) await onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to pay full balance");
+    } finally {
+      setPayingFullPayout(false);
+    }
+  };
 
   // Fetch linked invoices whenever jobs change
   useEffect(() => {
@@ -1722,7 +1879,9 @@ export function SelfBillDetailDrawer({
 
   const voided = isSelfBillPayoutVoided(sb);
   const origSnap = sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
-  const dueYmd = !voided ? selfBillDueYmd(sb) : "";
+  const dueYmd = !voided
+    ? selfBillEffectiveDueYmd(sb, installments, dueCtxForPartner(sb.partner_id))
+    : "";
   const overdue = !voided && isSelfBillOverdue(sb, todayYmd);
   const disp = getSelfBillDisplayStatus(sb, todayYmd);
   const totalPaidToDate = jobs.reduce((sum, j) => sum + Number(partnerPaidByJobId[j.id] ?? 0), 0);
@@ -2292,6 +2451,98 @@ export function SelfBillDetailDrawer({
                 </p>
               ) : null}
             </div>
+
+            {!voided && sb.bill_origin !== "internal" ? (
+              <div className="rounded-[10px] border border-border bg-card p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                    Payout plan
+                  </p>
+                  {selfBillPaymentPlanProgressLabel(installments) ? (
+                    <span className="text-[11px] font-medium text-text-secondary">
+                      {selfBillPaymentPlanProgressLabel(installments)}
+                    </span>
+                  ) : null}
+                </div>
+                {loadingInstallments ? (
+                  <p className="text-xs text-text-tertiary flex items-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading installments…
+                  </p>
+                ) : null}
+                {payoutPlanEditorOpen ? (
+                  <div className="space-y-2">
+                    <PaymentPlanEditor
+                      enabled
+                      onEnabledChange={() => {}}
+                      rows={payoutPlanRows}
+                      onRowsChange={setPayoutPlanRows}
+                      totalAmount={Number(sb.net_payout ?? 0)}
+                      accountPaymentTerms={partnerPaymentTerms}
+                      orgCtx={paymentOrgCtx}
+                    />
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" onClick={() => void handleSavePayoutPlan()} disabled={savingPayoutPlan}>
+                        {savingPayoutPlan ? "Saving…" : "Save plan"}
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setPayoutPlanEditorOpen(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : installments.length > 0 ? (
+                  <>
+                    {!isPaid && nextOpenSelfBillInstallment(installments) ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={payingFullPayout}
+                        onClick={() => void handlePayFullPayoutPlan()}
+                      >
+                        {payingFullPayout ? "Paying…" : `Pay full balance (${formatCurrency(sheetDue)})`}
+                      </Button>
+                    ) : null}
+                    <div className="divide-y divide-border rounded-lg border border-border-light overflow-hidden">
+                      {installments.map((inst) => (
+                        <div key={inst.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                          <span className="w-5 tabular-nums text-text-tertiary">{inst.sequence}</span>
+                          <span className="font-medium tabular-nums">{formatCurrency(inst.amount)}</span>
+                          <span className="text-text-secondary">{formatDate(inst.due_date)}</span>
+                          <Badge variant={inst.status === "paid" ? "success" : inst.status === "pending" ? "warning" : "default"}>
+                            {inst.status}
+                          </Badge>
+                          {inst.status === "pending" && !isPaid ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={markingInstallmentId === inst.id}
+                              onClick={() => void handleMarkPayoutInstallmentPaid(inst.id)}
+                            >
+                              {markingInstallmentId === inst.id ? "…" : "This installment"}
+                            </Button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : !isPaid ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={handleOpenPayoutPlanEditor}>
+                    Create payout plan
+                  </Button>
+                ) : null}
+                {installments.length > 0 && !isPaid && !installments.some((i) => i.status === "paid") ? (
+                  <button
+                    type="button"
+                    className="text-[11px] text-text-tertiary hover:text-red-600"
+                    onClick={() => void handleCancelPayoutPlan()}
+                  >
+                    Remove plan
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
             {showRecordPartnerPayment && jobs.length > 0 ? (
               <div className="rounded-[10px] border border-border bg-card p-4 space-y-3">
                 <p className="text-[12px] text-text-secondary leading-snug">

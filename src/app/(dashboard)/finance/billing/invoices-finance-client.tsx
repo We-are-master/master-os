@@ -21,7 +21,22 @@ import {
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Invoice, InvoiceStatus, Job, JobStatus } from "@/types/database";
+import type { Invoice, InvoicePaymentInstallment, InvoiceStatus, Job, JobStatus } from "@/types/database";
+import {
+  PaymentPlanEditor,
+  defaultPaymentPlanRows,
+  type PaymentPlanEditorRow,
+} from "@/components/finance/payment-plan-editor";
+import {
+  cancelPaymentPlan,
+  createPaymentPlan,
+  listInstallmentsForInvoice,
+  markAllInstallmentsPaid,
+  markInstallmentPaid,
+} from "@/services/invoice-payment-plan";
+import { nextOpenInstallment, paymentPlanProgressLabel, validateInstallmentsSum } from "@/lib/invoice-payment-plan";
+import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { updateJob } from "@/services/jobs";
 import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
@@ -625,6 +640,25 @@ export function InvoicesFinanceClient() {
         updates.cancellation_reason = null;
       }
       if (newStatus === "paid") {
+        if (invoice.payment_plan_active) {
+          const installments = await listInstallmentsForInvoice(invoice.id);
+          if (nextOpenInstallment(installments)) {
+            const result = await markAllInstallmentsPaid(invoice);
+            await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
+            toast.success("Full balance paid — all installments closed");
+            setSelectedInvoice(result.invoice);
+            if (invoice.job_reference?.trim()) {
+              const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
+              const jid = (jobRow as { id?: string } | null)?.id;
+              if (jid) {
+                await syncInvoicesFromJobCustomerPayments(supabase, jid);
+                await maybeCompleteAwaitingPaymentJob(supabase, jid);
+              }
+            }
+            void loadPageData();
+            return;
+          }
+        }
         updates.paid_date = new Date().toISOString().split("T")[0];
         updates.collection_stage = "completed";
         updates.amount_paid = Number(invoice.amount);
@@ -703,8 +737,18 @@ export function InvoicesFinanceClient() {
       if (newStatus === "paid") {
         const today = new Date().toISOString().split("T")[0];
         for (const id of ids) {
-          const { data: inv } = await supabase.from("invoices").select("amount").eq("id", id).maybeSingle();
-          const amt = Number((inv as { amount?: number } | null)?.amount ?? 0);
+          const { data: invRow } = await supabase.from("invoices").select("*").eq("id", id).maybeSingle();
+          const inv = invRow as Invoice | null;
+          if (!inv) continue;
+          if (inv.payment_plan_active) {
+            const installments = await listInstallmentsForInvoice(id);
+            if (nextOpenInstallment(installments)) {
+              await markAllInstallmentsPaid(inv);
+              await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
+              continue;
+            }
+          }
+          const amt = Number(inv.amount ?? 0);
           await updateInvoice(id, {
             status: "paid",
             paid_date: today,
@@ -1828,6 +1872,19 @@ export function InvoiceDetailDrawer({
   const [jobLinkedInvoices, setJobLinkedInvoices] = useState<Invoice[]>([]);
   /** Manual header-button sync spinner (separate from silent sync on drawer open). */
   const [manualSyncing, setManualSyncing] = useState(false);
+  const [installments, setInstallments] = useState<InvoicePaymentInstallment[]>([]);
+  const [loadingInstallments, setLoadingInstallments] = useState(false);
+  const [paymentPlanEditorOpen, setPaymentPlanEditorOpen] = useState(false);
+  const [paymentPlanRows, setPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
+  const [savingPaymentPlan, setSavingPaymentPlan] = useState(false);
+  const [markingInstallmentId, setMarkingInstallmentId] = useState<string | null>(null);
+  const [payingFullBalance, setPayingFullBalance] = useState(false);
+  const [accountPaymentTerms, setAccountPaymentTerms] = useState<string | null>(null);
+  const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(
+    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
+    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
+  );
 
   const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
   onInvoiceUpdatedRef.current = onInvoiceUpdated;
@@ -1871,8 +1928,17 @@ export function InvoiceDetailDrawer({
     setCancelModalOpen(false);
     setCancelReason("");
     setCancelWithJob(true);
+    setInstallments([]);
+    setPaymentPlanEditorOpen(false);
+    setPaymentPlanRows([]);
 
     const supabase = getSupabase();
+
+    setLoadingInstallments(true);
+    void listInstallmentsForInvoice(invoice.id)
+      .then((rows) => { if (!cancelled) setInstallments(rows); })
+      .catch(() => { if (!cancelled) setInstallments([]); })
+      .finally(() => { if (!cancelled) setLoadingInstallments(false); });
 
     if (invoice.job_reference?.trim()) {
       setLoadingJob(true);
@@ -1960,14 +2026,18 @@ export function InvoiceDetailDrawer({
     if (invoice.source_account_id?.trim()) {
       void supabase
         .from("accounts")
-        .select("full_name")
+        .select("full_name, payment_terms")
         .eq("id", invoice.source_account_id.trim())
         .maybeSingle()
         .then(({ data }) => {
           if (!cancelled) {
-            setAccountName((data as { full_name?: string | null } | null)?.full_name?.trim() || "");
+            const row = data as { full_name?: string | null; payment_terms?: string | null } | null;
+            setAccountName(row?.full_name?.trim() || "");
+            setAccountPaymentTerms(row?.payment_terms?.trim() ?? null);
           }
         });
+    } else {
+      setAccountPaymentTerms(null);
     }
 
     setLoadingRelated(true);
@@ -2163,6 +2233,12 @@ export function InvoiceDetailDrawer({
       return;
     }
 
+    if (invoice.payment_plan_active && nextOpenInstallment(installments)) {
+      await handlePayFullBalance();
+      setPaymentModalOpen(false);
+      return;
+    }
+
     onStatusChange(invoice, "paid");
     setPaymentModalOpen(false);
     toast.success(`Recorded ${formatCurrency(amountToRecord)} via ${paymentMethod.replace("_", " ")}.`);
@@ -2240,6 +2316,96 @@ export function InvoiceDetailDrawer({
       setEditingBreakdown(false);
     } catch { toast.error("Failed to update partner cost"); }
     finally { setSavingBreakdown(false); }
+  };
+
+  const balanceDueForPlan = invoice
+    ? invoiceBalanceDueWithJobCustomerPaid(invoice, jobCustomerPaidSum)
+    : 0;
+
+  const handleOpenPaymentPlanEditor = () => {
+    if (!invoice) return;
+    const total = Number(invoice.amount ?? 0);
+    setPaymentPlanRows(defaultPaymentPlanRows(total, 4));
+    setPaymentPlanEditorOpen(true);
+  };
+
+  const handleSavePaymentPlan = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    const total = Number(invoice.amount ?? 0);
+    if (!validateInstallmentsSum(total, paymentPlanRows)) {
+      toast.error("Installment amounts must sum to invoice total.");
+      return;
+    }
+    setSavingPaymentPlan(true);
+    try {
+      const rows = await createPaymentPlan(
+        invoice.id,
+        total,
+        paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
+      );
+      setInstallments(rows);
+      const { data: fresh } = await getSupabase().from("invoices").select("*").eq("id", invoice.id).maybeSingle();
+      if (fresh) onInvoiceUpdated(fresh as Invoice);
+      setPaymentPlanEditorOpen(false);
+      toast.success("Payment plan created");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create payment plan");
+    } finally {
+      setSavingPaymentPlan(false);
+    }
+  };
+
+  const handleMarkInstallmentPaid = async (installmentId: string) => {
+    if (!invoice || !onInvoiceUpdated) return;
+    setMarkingInstallmentId(installmentId);
+    try {
+      const result = await markInstallmentPaid(installmentId, invoice);
+      setInstallments(result.installments);
+      onInvoiceUpdated(result.invoice);
+      toast.success("Installment marked paid — due date advanced");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to mark installment paid");
+    } finally {
+      setMarkingInstallmentId(null);
+    }
+  };
+
+  const handlePayFullBalance = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    setPayingFullBalance(true);
+    const supabase = getSupabase();
+    try {
+      const result = await markAllInstallmentsPaid(invoice);
+      await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
+      if (invoice.job_reference?.trim()) {
+        const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
+        const jid = (jobRow as { id?: string } | null)?.id;
+        if (jid) {
+          await syncInvoicesFromJobCustomerPayments(supabase, jid);
+          await maybeCompleteAwaitingPaymentJob(supabase, jid);
+        }
+      }
+      setInstallments(result.installments);
+      onInvoiceUpdated(result.invoice);
+      toast.success("Full balance paid");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to pay full balance");
+    } finally {
+      setPayingFullBalance(false);
+    }
+  };
+
+  const handleCancelPaymentPlan = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    try {
+      await cancelPaymentPlan(invoice.id);
+      setInstallments([]);
+      const { data: fresh } = await getSupabase().from("invoices").select("*").eq("id", invoice.id).maybeSingle();
+      if (fresh) onInvoiceUpdated(fresh as Invoice);
+      toast.success("Payment plan removed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to cancel payment plan");
+    }
   };
 
   const handleReopen = async () => {
@@ -2678,6 +2844,97 @@ export function InvoiceDetailDrawer({
                     </div>
                   </div>
                 </div>
+
+                {(installments.length > 0 || paymentPlanEditorOpen || (canEditFields && balanceDueForPlan > 0.02)) ? (
+                  <div className="rounded-[10px] border border-border bg-card p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Payment plan
+                      </p>
+                      {paymentPlanProgressLabel(installments) ? (
+                        <span className="text-[11px] font-medium text-text-secondary">
+                          {paymentPlanProgressLabel(installments)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {loadingInstallments ? (
+                      <p className="text-xs text-text-tertiary flex items-center gap-1.5">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading installments…
+                      </p>
+                    ) : null}
+                    {paymentPlanEditorOpen ? (
+                      <div className="space-y-2">
+                        <PaymentPlanEditor
+                          enabled
+                          onEnabledChange={() => {}}
+                          rows={paymentPlanRows}
+                          onRowsChange={setPaymentPlanRows}
+                          totalAmount={Number(invoice.amount ?? 0)}
+                          accountPaymentTerms={accountPaymentTerms}
+                          orgCtx={paymentOrgCtx}
+                        />
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" onClick={() => void handleSavePaymentPlan()} disabled={savingPaymentPlan}>
+                            {savingPaymentPlan ? "Saving…" : "Save plan"}
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setPaymentPlanEditorOpen(false)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : installments.length > 0 ? (
+                      <>
+                      {canEditFields && nextOpenInstallment(installments) ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={payingFullBalance}
+                          onClick={() => void handlePayFullBalance()}
+                        >
+                          {payingFullBalance ? "Paying…" : `Pay full balance (${formatCurrency(balanceDueForPlan)})`}
+                        </Button>
+                      ) : null}
+                      <div className="divide-y divide-border rounded-lg border border-border-light overflow-hidden">
+                        {installments.map((inst) => (
+                          <div key={inst.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                            <span className="w-5 tabular-nums text-text-tertiary">{inst.sequence}</span>
+                            <span className="font-medium tabular-nums">{formatCurrency(inst.amount)}</span>
+                            <span className="text-text-secondary">{formatDate(inst.due_date)}</span>
+                            <Badge variant={inst.status === "paid" ? "success" : inst.status === "pending" ? "warning" : "default"}>
+                              {inst.status}
+                            </Badge>
+                            {inst.status === "pending" && canEditFields ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={markingInstallmentId === inst.id}
+                                onClick={() => void handleMarkInstallmentPaid(inst.id)}
+                              >
+                                {markingInstallmentId === inst.id ? "…" : "This installment"}
+                              </Button>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                      </>
+                    ) : canEditFields ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={handleOpenPaymentPlanEditor}>
+                        Create payment plan
+                      </Button>
+                    ) : null}
+                    {installments.length > 0 && canEditFields && !installments.some((i) => i.status === "paid") ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-text-tertiary hover:text-red-600"
+                        onClick={() => void handleCancelPaymentPlan()}
+                      >
+                        Remove plan
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <div>
                   <div className="rounded-t-[10px] border border-border border-b-0 bg-card">

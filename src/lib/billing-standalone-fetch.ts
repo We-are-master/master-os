@@ -2,7 +2,7 @@ import { getSupabase } from "@/services/base";
 import { fetchAllActiveInvoices } from "@/lib/billing-invoice-list-data";
 import { addDaysYmd, type YmdBounds } from "@/lib/billing-standalone-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
-import type { Bill, Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
@@ -300,4 +300,68 @@ export async function fetchBillsForBilling(bounds: YmdBounds | null): Promise<Bi
   ]);
 
   return mergeBillsById([...openRows, ...dueRows]);
+}
+
+/** Partner payout plan installments for open self-bills (mig 235). */
+export async function fetchSelfBillInstallmentsForBilling(
+  selfBills: SelfBill[],
+): Promise<Record<string, SelfBillPaymentInstallment[]>> {
+  const ids = selfBills
+    .filter((sb) => sb.payment_plan_active || sb.status !== "paid")
+    .map((sb) => sb.id)
+    .filter(Boolean);
+  if (ids.length === 0) return {};
+
+  const out: Record<string, SelfBillPaymentInstallment[]> = {};
+  const chunk = 200;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const { data, error } = await getSupabase()
+      .from("self_bill_payment_installments")
+      .select("*")
+      .in("self_bill_id", slice)
+      .order("sequence", { ascending: true });
+    if (error) {
+      if (isSupabaseMissingColumnError(error)) return {};
+      throw error;
+    }
+    for (const row of (data ?? []) as SelfBillPaymentInstallment[]) {
+      const list = out[row.self_bill_id] ?? [];
+      list.push(row);
+      out[row.self_bill_id] = list;
+    }
+  }
+  return out;
+}
+
+/** Payment plan installments for open invoices (mig 234). */
+export async function fetchInstallmentsForBilling(
+  invoices: Invoice[],
+): Promise<Record<string, InvoicePaymentInstallment[]>> {
+  const ids = invoices
+    .filter((inv) => inv.payment_plan_active || inv.status !== "paid")
+    .map((inv) => inv.id)
+    .filter(Boolean);
+  if (ids.length === 0) return {};
+
+  const out: Record<string, InvoicePaymentInstallment[]> = {};
+  const chunk = 200;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const { data, error } = await getSupabase()
+      .from("invoice_payment_installments")
+      .select("*")
+      .in("invoice_id", slice)
+      .order("sequence", { ascending: true });
+    if (error) {
+      if (isSupabaseMissingColumnError(error)) return {};
+      throw error;
+    }
+    for (const row of (data ?? []) as InvoicePaymentInstallment[]) {
+      const list = out[row.invoice_id] ?? [];
+      list.push(row);
+      out[row.invoice_id] = list;
+    }
+  }
+  return out;
 }

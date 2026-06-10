@@ -11,6 +11,15 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
+import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
+import {
+  JobCreateModalSection,
+  JobCreateModalPricingControl,
+  JobCreateModalExtraPayment,
+  JOB_CREATE_MODAL_STEPS,
+  JOB_CREATE_MODAL_SECTION_IDS,
+} from "@/components/jobs/job-create-modal-sections";
+import { createJobPayment } from "@/services/job-payments";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
@@ -29,6 +38,7 @@ import { useBuFilter } from "@/hooks/use-bu-filter";
 import {
   listJobs,
   createJob,
+  ensureDraftInvoiceForJob,
   updateJob,
   getJob,
   fetchAllJobsFinancialKpiRows,
@@ -104,8 +114,15 @@ import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
+import { createPaymentPlan } from "@/services/invoice-payment-plan";
+import {
+  defaultPaymentPlanRows,
+  type PaymentPlanEditorRow,
+} from "@/components/finance/payment-plan-editor";
+import { templateFromDrafts, validateInstallmentsSum } from "@/lib/invoice-payment-plan";
+import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
+import type { PaymentPlanTemplate } from "@/types/database";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
-import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import type { AccountServicePrice, Job, JobKind } from "@/types/database";
 import { TimeSelect } from "@/components/ui/time-select";
 import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
@@ -1226,6 +1243,8 @@ function JobsPageContent() {
     opts?: {
       series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
       pendingSitePhotos?: File[];
+      paymentPlanTemplate?: PaymentPlanTemplate | null;
+      recordExtraPaymentReceived?: { amount: number; note?: string };
     },
   ) => {
     // ─── Zendesk: open a new ticket when the modal asked us to ──────────
@@ -1321,6 +1340,12 @@ function JobsPageContent() {
           cczFeeGbp: accessFees.cczFeeGbp,
           parkingFeeGbp: accessFees.parkingFeeGbp,
         });
+    const extras_amount = formData.extras_amount ?? accessSurcharge;
+    const scheduledDeposit = Math.max(0, Number(formData.customer_deposit) || 0);
+    const scheduledFinal =
+      formData.customer_final_payment != null
+        ? Math.max(0, Number(formData.customer_final_payment) || 0)
+        : Math.max(0, Math.round((cp + extras_amount - scheduledDeposit) * 100) / 100);
     try {
       const dupJobs = await findDuplicateJobs({
         clientId: formData.client_id,
@@ -1353,7 +1378,7 @@ function JobsPageContent() {
           current_phase: 0,
           total_phases: normalizeTotalPhases(formData.total_phases),
           client_price: cp,
-          extras_amount: accessSurcharge,
+          extras_amount,
           partner_cost: pc,
           materials_cost: mc,
           margin_percent: margin,
@@ -1364,7 +1389,7 @@ function JobsPageContent() {
           in_ccz: housekeepFromPayload ? false : inCczEff,
           has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
-          partner_agreed_value: 0, finance_status: "unpaid" as const, service_value: cp + accessSurcharge,
+          partner_agreed_value: 0, finance_status: "unpaid" as const, service_value: cp + extras_amount,
           report_submitted: false,
           report_1_uploaded: false, report_1_approved: false,
           report_2_uploaded: false, report_2_approved: false,
@@ -1372,8 +1397,10 @@ function JobsPageContent() {
           partner_payment_1: 0, partner_payment_1_paid: false,
           partner_payment_2: 0, partner_payment_2_paid: false,
           partner_payment_3: 0, partner_payment_3_paid: false,
-          customer_deposit: 0, customer_deposit_paid: false,
-          customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
+          customer_deposit: scheduledDeposit,
+          customer_deposit_paid: false,
+          customer_final_payment: scheduledFinal,
+          customer_final_paid: false,
           scope: formData.scope?.trim() || undefined,
           additional_notes: formData.additional_notes?.trim() || undefined,
           report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
@@ -1382,6 +1409,7 @@ function JobsPageContent() {
           external_ref:    formData.external_ref    ?? null,
         } as Omit<Job, "id" | "reference" | "created_at" | "updated_at">;
 
+        const paymentPlanTemplate = opts.paymentPlanTemplate ?? null;
         const seriesResult = await createJobOrSeries({
           anchorJobRow: anchor,
           series: {
@@ -1392,8 +1420,30 @@ function JobsPageContent() {
             end_date: opts.series.end_date ?? null,
             max_occurrences: opts.series.max_occurrences ?? null,
           },
+          paymentPlanTemplate,
         });
         const firstJob = seriesResult.jobs[0];
+        if (firstJob) {
+          try {
+            const { invoice } = await ensureDraftInvoiceForJob(firstJob);
+            if (
+              invoice &&
+              paymentPlanTemplate?.enabled &&
+              paymentPlanTemplate.installments.length > 0
+            ) {
+              await createPaymentPlan(
+                invoice.id,
+                Number(invoice.amount ?? 0),
+                paymentPlanTemplate.installments,
+              );
+            }
+          } catch (invErr) {
+            console.error("recurring series invoice/plan setup failed", invErr);
+            toast.error(
+              getErrorMessage(invErr, "Series created but invoice or payment plan could not be set up."),
+            );
+          }
+        }
         if (firstJob && opts.pendingSitePhotos?.length) {
           try {
             await attachSitePhotosToJob(firstJob.id, opts.pendingSitePhotos);
@@ -1402,6 +1452,24 @@ function JobsPageContent() {
               getErrorMessage(photoErr, "Series created but photos could not be uploaded — add them from the job page."),
             );
           }
+        }
+        if (
+          firstJob &&
+          opts.recordExtraPaymentReceived &&
+          opts.recordExtraPaymentReceived.amount > 0.02
+        ) {
+          void createJobPayment({
+            job_id: firstJob.id,
+            type: "customer_deposit",
+            amount: opts.recordExtraPaymentReceived.amount,
+            payment_date: new Date().toISOString().slice(0, 10),
+            payment_method: "bank_transfer",
+            note: opts.recordExtraPaymentReceived.note ?? "Extra charge received at job creation",
+            created_by: profile?.id,
+          }).catch((err) => {
+            console.error("Failed to record extra payment on new series job:", err);
+            toast.error("Series created, but failed to record the extra payment as received. Add it manually from the job.");
+          });
         }
         setCreateOpen(false);
         toast.success(`Series created with ${seriesResult.jobs.length} occurrences`);
@@ -1444,7 +1512,7 @@ function JobsPageContent() {
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
         client_price: cp,
-        extras_amount: accessSurcharge,
+        extras_amount,
         partner_cost: pc,
         materials_cost: mc,
         margin_percent: margin,
@@ -1459,7 +1527,7 @@ function JobsPageContent() {
         in_ccz: housekeepFromPayload ? false : inCczEff,
         has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
-        partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + accessSurcharge,
+        partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + extras_amount,
         report_submitted: false,
         report_1_uploaded: false, report_1_approved: false,
         report_2_uploaded: false, report_2_approved: false,
@@ -1467,8 +1535,10 @@ function JobsPageContent() {
         partner_payment_1: 0, partner_payment_1_paid: false,
         partner_payment_2: 0, partner_payment_2_paid: false,
         partner_payment_3: 0, partner_payment_3_paid: false,
-        customer_deposit: 0, customer_deposit_paid: false,
-        customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
+        customer_deposit: scheduledDeposit,
+        customer_deposit_paid: false,
+        customer_final_payment: scheduledFinal,
+        customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
         additional_notes: formData.additional_notes?.trim() || undefined,
         report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
@@ -1484,6 +1554,20 @@ function JobsPageContent() {
             getErrorMessage(photoErr, "Job created but photos could not be uploaded — add them from the job page."),
           );
         }
+      }
+      if (opts?.recordExtraPaymentReceived && opts.recordExtraPaymentReceived.amount > 0.02) {
+        void createJobPayment({
+          job_id: result.id,
+          type: "customer_deposit",
+          amount: opts.recordExtraPaymentReceived.amount,
+          payment_date: new Date().toISOString().slice(0, 10),
+          payment_method: "bank_transfer",
+          note: opts.recordExtraPaymentReceived.note ?? "Extra charge received at job creation",
+          created_by: profile?.id,
+        }).catch((err) => {
+          console.error("Failed to record extra payment on new job:", err);
+          toast.error("Job created, but failed to record the extra payment as received. Add it manually from the job.");
+        });
       }
       setCreateOpen(false);
       toast.success("Job created");
@@ -2995,10 +3079,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
     opts?: {
       series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
       pendingSitePhotos?: File[];
+      paymentPlanTemplate?: PaymentPlanTemplate | null;
+      /** Smart pricing: record extra charge as deposit received after job is created. */
+      recordExtraPaymentReceived?: { amount: number; note?: string };
     },
   ) => void;
 }) {
-  const { accessFees } = useFrontendSetup();
+  const { accessFees, partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
+  const paymentOrgCtx = useMemo(
+    () => orgCtxFromSetup({ partnerPayoutStandardTerms, partnerPayoutReferenceYmd }),
+    [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
+  );
   const requiredFieldClass = "border-[#d9d5cf] focus:border-[#b8b2aa] focus:ring-[#ede9e3] hover:border-[#cfcac3]";
   const [form, setForm] = useState({
     title: "",
@@ -3022,6 +3113,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
     hourly_client_rate: "",
     hourly_partner_rate: "",
     billed_hours: "2",
+    extra_payment: "",
+    extra_payment_received: false,
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -3034,6 +3127,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
+  const [paymentPlanEnabled, setPaymentPlanEnabled] = useState(false);
+  const [paymentPlanRows, setPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
+  const [accountPaymentTerms, setAccountPaymentTerms] = useState<string | null>(null);
+  const [pricingOpen, setPricingOpen] = useState(false);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   /** When fixed-price partner cost still matches the last auto-filled value, keep syncing to ~40% margin as inputs change. */
   const lastAutoPartnerCost = useRef<string | null>(null);
@@ -3062,6 +3159,26 @@ function CreateJobModal({ open, onClose, onCreate }: {
     return () => { cancelled = true; };
   }, [clientAddress.client_id]);
 
+  useEffect(() => {
+    const aid = effectiveAccountId?.trim();
+    if (!aid) {
+      queueMicrotask(() => setAccountPaymentTerms(null));
+      return;
+    }
+    let cancelled = false;
+    getSupabase()
+      .from("accounts")
+      .select("payment_terms")
+      .eq("id", aid)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const terms = (data as { payment_terms?: string | null } | null)?.payment_terms?.trim() ?? null;
+        setAccountPaymentTerms(terms);
+      });
+    return () => { cancelled = true; };
+  }, [effectiveAccountId]);
+
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const serviceHasStackableAddons = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
   /** Opt-in toggle: in Custom Price, the package/additionals UI is hidden by default; user clicks "Add additionals" to reveal it. Smart Pricing always shows. */
@@ -3070,6 +3187,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
   useEffect(() => {
     setPackagePricingOpen(false);
   }, [form.catalog_service_id, form.job_type, open]);
+
+  useEffect(() => {
+    if (!open) setPricingOpen(false);
+  }, [open]);
 
   /** When true, the stackable package UI is active: auto-fill prices, lock inputs, enforce preset/account validation. */
   const isStackablePricing = serviceHasStackableAddons && packagePricingOpen;
@@ -3358,8 +3479,41 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: inCczOut, hasFreeParking: form.has_free_parking });
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
+    const manualExtra = isHourly ? Math.max(0, Number(form.extra_payment) || 0) : 0;
+    const extrasTotal = Math.round((accessSurcharge + manualExtra) * 100) / 100;
+    const jobInvoiceTotal = Math.round((clientPriceOut + extrasTotal) * 100) / 100;
+    const extraAlreadyReceived = isHourly && form.extra_payment_received && manualExtra > 0.02;
+    const scheduledDeposit = extraAlreadyReceived ? manualExtra : 0;
+    const scheduledFinal = Math.max(0, Math.round((jobInvoiceTotal - scheduledDeposit) * 100) / 100);
+
+    if (form.job_kind === "recurring" && paymentPlanEnabled) {
+      if (paymentPlanRows.length < 1) {
+        toast.error("Add at least one installment to the payment plan.");
+        return;
+      }
+      if (!validateInstallmentsSum(jobInvoiceTotal, paymentPlanRows)) {
+        toast.error("Installment amounts must sum to the job total.");
+        return;
+      }
+      if (paymentPlanRows.some((r) => !r.due_date?.trim())) {
+        toast.error("Set a due date for each installment.");
+        return;
+      }
+    }
+
+    const paymentPlanTemplate =
+      form.job_kind === "recurring" && paymentPlanEnabled
+        ? templateFromDrafts(
+            true,
+            paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
+          )
+        : null;
 
     const pendingSitePhotos = sitePhotoFiles.length > 0 ? [...sitePhotoFiles] : undefined;
+    const recordExtraPaymentReceived =
+      extraAlreadyReceived
+        ? { amount: manualExtra, note: "Extra charge received at job creation (smart pricing)" }
+        : undefined;
 
     onCreate({
       // Zendesk linkage: either paste an existing ticket id, or signal to the
@@ -3392,8 +3546,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
       has_free_parking: isHousekeepJob ? true : form.has_free_parking,
       client_price: clientPriceOut,
       partner_cost: partnerCostOut,
-      extras_amount: accessSurcharge,
+      extras_amount: extrasTotal,
       materials_cost: Number(form.materials_cost) || 0,
+      customer_deposit: scheduledDeposit,
+      customer_deposit_paid: false,
+      customer_final_payment: scheduledFinal,
+      customer_final_paid: false,
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
@@ -3404,11 +3562,19 @@ function CreateJobModal({ open, onClose, onCreate }: {
       scope: form.scope.trim() || undefined,
       report_link: form.report_link.trim() || undefined,
     }, schedV2.series
-      ? { series: schedV2.series, pendingSitePhotos }
-      : pendingSitePhotos
-        ? { pendingSitePhotos }
-        : undefined);
+      ? {
+          series: schedV2.series,
+          pendingSitePhotos,
+          paymentPlanTemplate,
+          recordExtraPaymentReceived,
+        }
+      : {
+          pendingSitePhotos,
+          recordExtraPaymentReceived,
+        });
     setSitePhotoFiles([]);
+    setPaymentPlanEnabled(false);
+    setPaymentPlanRows([]);
     setRecurrence(DEFAULT_RECURRENCE_FORM);
     lastAutoPartnerCost.current = null;
     setForm({
@@ -3433,6 +3599,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       hourly_client_rate: "",
       hourly_partner_rate: "",
       billed_hours: "2",
+      extra_payment: "",
+      extra_payment_received: false,
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -3460,10 +3628,25 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const hourlyMarginPct = hourlyPreview.clientTotal > 0
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
+  const invoiceTotalPreview = useMemo(() => {
+    const client =
+      form.job_type === "hourly"
+        ? hourlyPreview.clientTotal
+        : Number(form.client_price) || 0;
+    const extra = form.job_type === "hourly" ? Math.max(0, Number(form.extra_payment) || 0) : 0;
+    return Math.round((client + accessSurchargePreview + extra) * 100) / 100;
+  }, [form.job_type, form.client_price, form.extra_payment, hourlyPreview.clientTotal, accessSurchargePreview]);
+
+  useEffect(() => {
+    if (form.job_kind !== "recurring" || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
+    queueMicrotask(() => setPaymentPlanRows(defaultPaymentPlanRows(invoiceTotalPreview, 4)));
+  }, [form.job_kind, invoiceTotalPreview, paymentPlanRows.length]);
+
   const estimatedMarginPct = useMemo(() => {
+    const extra = form.job_type === "hourly" ? Math.max(0, Number(form.extra_payment) || 0) : 0;
     const clientTotal =
       form.job_type === "hourly"
-        ? hourlyPreview.clientTotal + accessSurchargePreview
+        ? hourlyPreview.clientTotal + accessSurchargePreview + extra
         : (Number(form.client_price) || 0) + accessSurchargePreview;
     if (clientTotal <= 0) return 0;
     const partnerTotal = form.job_type === "hourly" ? hourlyPreview.partnerTotal : (Number(form.partner_cost) || 0);
@@ -3477,6 +3660,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     hourlyPreview.clientTotal,
     hourlyPreview.partnerTotal,
     accessSurchargePreview,
+    form.extra_payment,
   ]);
 
   useEffect(() => {
@@ -3519,23 +3703,68 @@ function CreateJobModal({ open, onClose, onCreate }: {
     });
   };
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeSection = useModalScrollSpy([...JOB_CREATE_MODAL_SECTION_IDS], scrollRef, open);
+  const scrollToSection = (id: string) => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const el = root.querySelector<HTMLElement>(`[data-modal-section="${id}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="New Job"
       subtitle="Create a new job"
-      size="lg"
-      scrollBody={false}
-      className="max-w-[min(100%,36rem)]"
+      size="compact"
+      layout="wizard"
+      topSteps={JOB_CREATE_MODAL_STEPS}
+      activeStep={activeSection}
+      onStepClick={scrollToSection}
+      footer={
+        <FixfyModalFooter
+          leading={
+            <>
+              Estimated margin:{" "}
+              <span
+                className={cn(
+                  "font-semibold",
+                  estimatedMarginPct >= 20
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {estimatedMarginPct}%
+              </span>
+            </>
+          }
+        >
+          <Button variant="outline" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="create-job-form"
+            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+          >
+            Create Job
+          </Button>
+        </FixfyModalFooter>
+      }
     >
       <form
+        id="create-job-form"
         onSubmit={handleSubmit}
-        className="@container grid h-full min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] overflow-hidden"
+        className="@container flex h-full min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 @sm:px-5 space-y-2.5 min-w-0">
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2">
-            <p className="text-[11px] font-semibold text-text-tertiary">Rate Type</p>
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-5 @sm:px-5 space-y-6 min-w-0"
+        >
+          <JobCreateModalSection id="work" title="Work & rate" badge="required">
+            <p className="text-[11px] font-semibold text-text-tertiary -mt-1">Rate Type</p>
             <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
               <button
                 type="button"
@@ -3621,7 +3850,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </>
                 ) : (
                   <>
+                    <p className="text-[11px] font-medium text-text-secondary">Type of Work *</p>
                     <TypeOfWorkPicker
+                      hideLabel
                       label="Type of Work *"
                       catalog={catalogServices}
                       value={form.title}
@@ -3667,7 +3898,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </div>
               ) : null}
             </div>
-          </section>
 
           {serviceHasStackableAddons && !packagePricingOpen ? (
             <section className="rounded-xl border border-dashed border-border-light bg-surface-hover/10 p-2.5">
@@ -3772,8 +4002,33 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </section>
           ) : null}
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2.5 min-w-0">
-            <p className="text-[11px] font-semibold text-text-tertiary">Client & Schedule</p>
+            <JobCreateModalPricingControl
+              form={form}
+              update={update}
+              pricing={pricing}
+              pricingResolving={pricingResolving}
+              isStackablePricing={isStackablePricing}
+              stackableLinePricing={stackableLinePricing}
+              stackablePricingLoading={stackablePricingLoading}
+              hourlyPreview={hourlyPreview}
+              accessSurchargePreview={accessSurchargePreview}
+              estimatedMarginPct={estimatedMarginPct}
+              open={pricingOpen}
+              onOpenChange={setPricingOpen}
+            />
+            {form.job_type === "hourly" ? (
+              <JobCreateModalExtraPayment
+                extraPayment={form.extra_payment}
+                extraPaymentReceived={form.extra_payment_received}
+                onExtraPaymentChange={(v) => update("extra_payment", v)}
+                onExtraPaymentReceivedChange={(v) =>
+                  setForm((p) => ({ ...p, extra_payment_received: v }))
+                }
+              />
+            ) : null}
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="client" title="Client & schedule" badge="required">
             <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
             <ZendeskTicketField value={zendesk} onChange={setZendesk} />
             <JobModalScheduleFields
@@ -3788,11 +4043,23 @@ function CreateJobModal({ open, onClose, onCreate }: {
               onChange={(field, value) => update(field, value)}
               startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
               requiredFieldClassName={requiredFieldClass}
+              paymentPlan={
+                form.job_kind === "recurring"
+                  ? {
+                      enabled: paymentPlanEnabled,
+                      onEnabledChange: setPaymentPlanEnabled,
+                      rows: paymentPlanRows,
+                      onRowsChange: setPaymentPlanRows,
+                      totalAmount: invoiceTotalPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                    }
+                  : undefined
+              }
             />
-          </section>
+          </JobCreateModalSection>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
-            <p className="text-[11px] font-semibold text-text-tertiary">Access & Charges</p>
+          <JobCreateModalSection id="access" title="Access & charges" badge="optional">
             <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
               <button
                 type="button"
@@ -3850,14 +4117,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <p className="text-[10px] text-text-tertiary leading-snug">
               Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
             </p>
-          </section>
+          </JobCreateModalSection>
 
-          <details className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 min-w-0" open>
-            <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-primary">
-              Scope
-              <span className="text-[11px] font-normal text-text-tertiary">required ▾</span>
-            </summary>
-            <div className="mt-2.5 space-y-2.5 min-w-0">
+          <JobCreateModalSection id="scope" title="Scope" badge="required">
+            <div className="space-y-2.5 min-w-0">
               <div>
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
                 <textarea
@@ -3935,129 +4198,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 ) : null}
               </div>
             </div>
-          </details>
+          </JobCreateModalSection>
 
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] font-semibold text-text-tertiary">Pricing</p>
-              <span className="text-[10px] font-medium text-text-tertiary shrink-0">
-                {stackablePricingLoading || pricingResolving
-                  ? "Loading…"
-                  : isStackablePricing
-                    ? "Auto from package"
-                    : form.job_type === "hourly"
-                      ? "Auto from rates × hours"
-                      : form.catalog_service_id
-                        ? "Client from catalogue · partner manual"
-                        : "Manual entry"}
-              </span>
-            </div>
-            {isStackablePricing && stackableLinePricing ? (
-              <div className="rounded-lg border border-border-light bg-card p-2 space-y-1 text-[11px]">
-                {stackableLinePricing.lines.map((line) => (
-                  <div key={line.id} className="flex justify-between gap-2 tabular-nums">
-                    <span className="text-text-secondary truncate">
-                      {line.kind === "base" ? "Base" : "+"} {line.label}
-                    </span>
-                    <span className="text-text-primary shrink-0">
-                      {formatCurrency(line.clientAmount)} / {formatCurrency(line.partnerAmount)}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex justify-between gap-2 border-t border-border-light pt-1 font-semibold tabular-nums">
-                  <span>Total</span>
-                  <span>
-                    {formatCurrency(stackableLinePricing.clientTotal)} / {formatCurrency(stackableLinePricing.partnerTotal)}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2 min-w-0">
-              <div className="min-w-0">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Client Price £
-                  {!isStackablePricing && pricing ? (
-                    <span className="ml-1.5">
-                      <PricingSourceChip
-                        source={form.job_type === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
-                      />
-                    </span>
-                  ) : null}
-                </label>
-                <Input
-                  type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.clientTotal + accessSurchargePreview) : form.client_price}
-                  onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("client_price", e.target.value)}
-                  readOnly={form.job_type === "hourly" || isStackablePricing}
-                  className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              <div className="min-w-0">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Partner Cost £
-                  {form.job_type === "hourly" && !isStackablePricing && pricing ? (
-                    <span className="ml-1.5">
-                      <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
-                    </span>
-                  ) : null}
-                </label>
-                <Input
-                  type="number"
-                  value={form.job_type === "hourly" ? String(hourlyPreview.partnerTotal) : form.partner_cost}
-                  onChange={form.job_type === "hourly" || isStackablePricing ? undefined : (e) => update("partner_cost", e.target.value)}
-                  readOnly={form.job_type === "hourly" || isStackablePricing}
-                  className={cn((form.job_type === "hourly" || isStackablePricing) && "bg-surface-hover/40 cursor-not-allowed")}
-                  min="0"
-                  step="0.01"
-                />
-                {form.job_type === "fixed" ? (
-                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Margin:{" "}
-                    <span
-                      className={cn(
-                        "font-medium tabular-nums",
-                        estimatedMarginPct >= 20
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-amber-600 dark:text-amber-400",
-                      )}
-                    >
-                      {(Number(form.client_price) || 0) + accessSurchargePreview > 0
-                        ? `${estimatedMarginPct}%`
-                        : "—"}
-                    </span>
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            {/* Rate + hours row only for Smart Pricing — drives the totals above. */}
-            {form.job_type === "hourly" ? (
-              <>
-                <div className="grid grid-cols-2 @lg:grid-cols-3 gap-2 pt-1 border-t border-border-light/50 min-w-0">
-                  <div className="min-w-0">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
-                  </div>
-                  <div className="min-w-0">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
-                    <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
-                  </div>
-                  <div className="col-span-2 @lg:col-span-1 min-w-0 max-w-full @lg:max-w-[10rem]">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label>
-                    <Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
-                  </div>
-                </div>
-                <p className="text-[10px] text-text-tertiary leading-snug">
-                  Rates prefilled from the call-out — edit to override. Billing: up to 1h = 1h minimum, then 30-min increments from timer logs.
-                </p>
-              </>
-            ) : null}
-          </section>
-
-
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 space-y-2 min-w-0">
-            <p className="text-[11px] font-semibold text-text-tertiary">Partner Allocation</p>
+          <JobCreateModalSection id="partner" title="Partner allocation" badge="optional">
             {!form.catalog_service_id ? (
               <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
                 Select type of work above first — partner-specific prices load in Pricing above.
@@ -4168,19 +4311,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </div>
               </div>
             )}
-          </section>
-
-
-        </div>
-
-        <div className="z-10 flex shrink-0 flex-col gap-2 border-t border-border-light bg-card px-3 py-2.5 shadow-[0_-8px_24px_-8px_rgba(2,0,64,0.12)] @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
-          <p className="text-xs text-text-secondary shrink-0">
-            Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
-          </p>
-          <div className="flex items-center justify-end gap-2 min-w-0">
-            <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]">Create Job</Button>
-          </div>
+          </JobCreateModalSection>
         </div>
       </form>
     </Modal>

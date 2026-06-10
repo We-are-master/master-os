@@ -121,10 +121,43 @@ export interface JobRecurrenceSeries {
   generated_through?: string | null;
   status: "active" | "paused" | "cancelled";
   notes?: string | null;
+  /** Payment plan defined at series create (mig 234). */
+  payment_plan_template?: PaymentPlanTemplate | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
 }
+
+/** Recurring series payment plan template (mig 234). */
+export type PaymentPlanTemplate = {
+  enabled: boolean;
+  installments: { amount: number; due_date: string }[];
+};
+
+/** Receivable installment row (mig 234). */
+export interface InvoicePaymentInstallment {
+  id: string;
+  invoice_id: string;
+  sequence: number;
+  amount: number;
+  due_date: string;
+  status: "pending" | "paid" | "cancelled";
+  paid_at?: string | null;
+  created_at: string;
+}
+
+/** Partner payout installment row (mig 235). */
+export interface SelfBillPaymentInstallment {
+  id: string;
+  self_bill_id: string;
+  sequence: number;
+  amount: number;
+  due_date: string;
+  status: "pending" | "paid" | "cancelled";
+  paid_at?: string | null;
+  created_at: string;
+}
+
 /** Directory lifecycle: only `active` partners are eligible for invites / job assignment. */
 export type PartnerStatus =
   | "active"
@@ -900,6 +933,8 @@ export interface Invoice {
   on_hold_previous_status?: string | null;
   /** Set when cancelled (e.g. job cancel mirrors jobs.cancellation_reason). */
   cancellation_reason?: string | null;
+  /** True when invoice_payment_installments define the collection schedule (mig 234). */
+  payment_plan_active?: boolean;
 }
 
 export type SelfBillStatus =
@@ -959,6 +994,8 @@ export interface SelfBill {
   partner_status_label?: string | null;
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
+  /** True when self_bill_payment_installments define payout schedule (mig 235). */
+  payment_plan_active?: boolean;
   /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
   email_sent_at?: string | null;
   /** Zendesk master ticket id for the last send. Mirrors self_bill_payment_runs.zendesk_ticket_id. */

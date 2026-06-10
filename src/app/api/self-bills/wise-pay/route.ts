@@ -9,7 +9,16 @@ import {
   createTransfer,
   fundTransfer,
 } from "@/lib/wise-business";
+import {
+  nextOpenSelfBillInstallment,
+  selfBillIsInstallmentDueForWisePay,
+  selfBillWisePayAmount,
+} from "@/lib/self-bill-payment-plan";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
+import {
+  applySelfBillWiseInstallmentPayment,
+  listInstallmentsForSelfBillIds,
+} from "@/services/self-bill-payment-plan";
 import type { SelfBill, Partner } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -89,10 +98,34 @@ export async function POST(req: NextRequest) {
   }
   const partner = partnerRow as Partner;
 
+  const installmentMap =
+    sb.payment_plan_active && scope === "full"
+      ? await listInstallmentsForSelfBillIds([sb.id], admin)
+      : {};
+  const installments = installmentMap[sb.id] ?? [];
+  const nextInstallment =
+    scope === "full" && sb.payment_plan_active
+      ? nextOpenSelfBillInstallment(installments)
+      : null;
+
+  if (scope === "full" && sb.payment_plan_active && nextInstallment) {
+    const todayYmd = new Date().toISOString().slice(0, 10);
+    if (!selfBillIsInstallmentDueForWisePay(sb, installments, todayYmd)) {
+      const dueFmt = nextInstallment.due_date?.slice(0, 10) ?? "";
+      return NextResponse.json(
+        { error: `Next installment is not due until ${dueFmt}` },
+        { status: 400 },
+      );
+    }
+  }
+
   // Compute payout amount (pence not used — Wise accepts decimal targetAmount in GBP).
   let amount: number;
+  let installmentId: string | null = null;
   if (scope === "full") {
-    amount = Number(sb.net_payout ?? 0);
+    const fallback = Number(sb.net_payout ?? 0);
+    amount = selfBillWisePayAmount(sb, installments, fallback);
+    installmentId = nextInstallment?.id ?? null;
   } else {
     const ja = Number(body.jobAmount);
     if (!Number.isFinite(ja) || ja <= 0) {
@@ -145,16 +178,27 @@ export async function POST(req: NextRequest) {
   const wiseStatus = funded ? (fund.data?.status ?? "funded") : transfer.data.status;
 
   const stamp = new Date().toISOString();
-  const update: Record<string, unknown> = {
-    wise_transfer_id: String(transfer.data.id),
-    wise_status: wiseStatus,
-  };
-  if (funded && scope === "full") {
-    update.wise_paid_at = stamp;
-    update.paid_at = stamp;
-    update.status = "paid";
+  const wiseTransferId = String(transfer.data.id);
+
+  if (scope === "full" && installmentId) {
+    await applySelfBillWiseInstallmentPayment(
+      sb.id,
+      installmentId,
+      { wiseTransferId, wiseStatus, funded },
+      admin,
+    );
+  } else {
+    const update: Record<string, unknown> = {
+      wise_transfer_id: wiseTransferId,
+      wise_status: wiseStatus,
+    };
+    if (funded && scope === "full") {
+      update.wise_paid_at = stamp;
+      update.paid_at = stamp;
+      update.status = "paid";
+    }
+    await admin.from("self_bills").update(update).eq("id", sb.id);
   }
-  await admin.from("self_bills").update(update).eq("id", sb.id);
 
   // Resolve user_name for audit.
   const profileClient = await createClient();
@@ -180,6 +224,7 @@ export async function POST(req: NextRequest) {
       amount,
       scope,
       jobId,
+      installmentId,
       funded,
       ...(fund.ok ? {} : { fund_error: fund.error }),
     },

@@ -8,6 +8,7 @@ import {
 import { isSupabaseMissingColumnError, isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { jobCustomerBillableRevenueForCollections } from "@/lib/job-financials";
+import { syncPaymentPlanFromAmountPaid } from "@/services/invoice-payment-plan";
 
 const EPS = 0.02;
 
@@ -186,6 +187,11 @@ async function applyInvoicePaymentUpdates(
         console.error("syncInvoicesFromJobCustomerPayments: invoice update", inv.id, upErr);
       }
     }
+  }
+
+  if (inv.payment_plan_active) {
+    const refreshed = { ...inv, amount_paid: allocated, status: nextStatus } as Invoice;
+    await syncPaymentPlanFromAmountPaid(client, refreshed);
   }
 }
 
