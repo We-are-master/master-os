@@ -234,13 +234,14 @@ export async function createPartnerPortalLink(
     "",
   );
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+  const authUserId = (partner as { auth_user_id?: string | null }).auth_user_id?.trim() || null;
+
   let onboardingUrl = "";
   let fullUrl = "";
   let tokenId: string | null = null;
   let expiresAtIso = expiresAt.toISOString();
 
-  if (linkKind === "trade_onboarding") {
-    // Existing OS partners sign in at /login (email pre-filled) — not /join or onboarding signup.
+  if (linkKind === "trade_onboarding" && authUserId) {
     onboardingUrl = `${tradePortalBaseUrl}/login?email=${encodeURIComponent(partnerEmail)}`;
     fullUrl = onboardingUrl;
   } else {
@@ -256,8 +257,14 @@ export async function createPartnerPortalLink(
     tokenId = tokenRow.id;
     expiresAtIso = tokenRow.expires_at;
     const code = tokenRow.short_code;
-    onboardingUrl = `${osBaseUrl}/partner-upload?code=${encodeURIComponent(code)}`;
-    fullUrl = `${osBaseUrl}/partner-upload?token=${encodeURIComponent(rawToken)}`;
+
+    if (linkKind === "trade_onboarding") {
+      onboardingUrl = `${tradePortalBaseUrl}/join?invite=${encodeURIComponent(code)}`;
+      fullUrl = onboardingUrl;
+    } else {
+      onboardingUrl = `${osBaseUrl}/partner-upload?code=${encodeURIComponent(code)}`;
+      fullUrl = `${osBaseUrl}/partner-upload?token=${encodeURIComponent(rawToken)}`;
+    }
   }
 
   let emailSent = false;
