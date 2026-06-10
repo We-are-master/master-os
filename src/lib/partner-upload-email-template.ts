@@ -120,20 +120,3 @@ export function buildPartnerUploadEmailHTML(
 </body>
 </html>`;
 }
-
-export function buildPartnerTradePortalEmailHTML(
-  branding: CompanyBranding,
-  options: PartnerUploadEmailOptions & { variant?: "join" | "sign_in" },
-): string {
-  const variant = options.variant ?? "join";
-  return buildPartnerUploadEmailHTML(branding, {
-    ...options,
-    requestedDocTypes: [],
-    showDocList: false,
-    intro:
-      variant === "sign_in"
-        ? "Your Fixfy Trade partner account is ready. Sign in to complete your profile, upload compliance documents, and start receiving jobs."
-        : "You're invited to complete your Fixfy Trade partner onboarding — create your account, upload your documents, and confirm your business details.",
-    ctaLabel: variant === "sign_in" ? "Sign in to Fixfy Trade" : "Start Trade Portal onboarding",
-  });
-}

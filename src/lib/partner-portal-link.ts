@@ -6,9 +6,13 @@ import {
   hashPartnerPortalToken,
 } from "@/lib/partner-portal-crypto";
 import {
-  buildPartnerTradePortalEmailHTML,
   buildPartnerUploadEmailHTML,
 } from "@/lib/partner-upload-email-template";
+import {
+  buildPartnerOnboardingRefreshEmailHTML,
+  PARTNER_ONBOARDING_EMAIL_SUBJECT,
+  resolvePartnerTradeLabel,
+} from "@/lib/partner-onboarding-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 
@@ -136,22 +140,22 @@ async function sendPartnerEmail(
   input: {
     partnerEmail: string;
     partnerName: string;
+    tradeLabel: string;
     onboardingUrl: string;
     expiresAt: Date;
     customMessage?: string;
     linkKind: PartnerPortalLinkKind;
-    tradeVariant: "join" | "sign_in";
   },
 ): Promise<{ emailSent: boolean; emailError: string | null; warning?: string }> {
   const branding = await loadCompanyBranding(supabase);
   const html =
     input.linkKind === "trade_onboarding"
-      ? buildPartnerTradePortalEmailHTML(branding, {
-          partnerName: input.partnerName,
-          uploadUrl: input.onboardingUrl,
-          expiresAt: input.expiresAt,
+      ? buildPartnerOnboardingRefreshEmailHTML(branding, {
+          contactName: input.partnerName,
+          email: input.partnerEmail,
+          tradeLabel: input.tradeLabel,
+          onboardingUrl: input.onboardingUrl,
           customMessage: input.customMessage,
-          variant: input.tradeVariant,
         })
       : buildPartnerUploadEmailHTML(branding, {
           partnerName: input.partnerName,
@@ -162,7 +166,7 @@ async function sendPartnerEmail(
 
   const subject =
     input.linkKind === "trade_onboarding"
-      ? `${branding.companyName} — complete your Fixfy Trade onboarding`
+      ? PARTNER_ONBOARDING_EMAIL_SUBJECT
       : `${branding.companyName} — please update your documents`;
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
@@ -200,7 +204,7 @@ export async function createPartnerPortalLink(
 
   const { data: partner, error: partnerErr } = await supabase
     .from("partners")
-    .select("id, company_name, contact_name, email, auth_user_id")
+    .select("id, company_name, contact_name, email, auth_user_id, trade, trades")
     .eq("id", input.partnerId)
     .maybeSingle();
 
@@ -220,6 +224,10 @@ export async function createPartnerPortalLink(
     (partner as { company_name?: string | null }).company_name?.trim() ||
     "there";
 
+  const tradeLabel = resolvePartnerTradeLabel(
+    partner as { trade?: string | null; trades?: string[] | null },
+  );
+
   const osBaseUrl = input.osBaseUrl.replace(/\/$/, "");
   const tradePortalBaseUrl = (input.tradePortalBaseUrl ?? resolvePartnerTradePortalBaseUrl()).replace(
     /\/$/,
@@ -232,10 +240,8 @@ export async function createPartnerPortalLink(
   let fullUrl = "";
   let tokenId: string | null = null;
   let expiresAtIso = expiresAt.toISOString();
-  let tradeVariant: "join" | "sign_in" = "join";
 
   if (linkKind === "trade_onboarding" && authUserId) {
-    tradeVariant = "sign_in";
     onboardingUrl = `${tradePortalBaseUrl}/?email=${encodeURIComponent(partnerEmail)}`;
     fullUrl = onboardingUrl;
     expiresAtIso = expiresAt.toISOString();
@@ -270,11 +276,11 @@ export async function createPartnerPortalLink(
     const mail = await sendPartnerEmail(supabase, {
       partnerEmail,
       partnerName,
+      tradeLabel,
       onboardingUrl,
       expiresAt: new Date(expiresAtIso),
       customMessage,
       linkKind,
-      tradeVariant,
     });
     emailSent = mail.emailSent;
     emailError = mail.emailError;

@@ -856,7 +856,8 @@ const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> 
 
 const emptyForm = {
   company_name: "",
-  contact_name: "",
+  first_name: "",
+  last_name: "",
   email: "",
   phone: "",
   vat_number: "",
@@ -900,13 +901,22 @@ function formatPartnerCreateError(err: unknown): string {
   return "Failed to create partner. Check required fields and try again.";
 }
 
+function formatCreateContactName(firstName: string, lastName: string): string {
+  return `${firstName.trim()} ${lastName.trim()}`.trim();
+}
+
 function validateCreatePartnerWizardStep(
   step: CreatePartnerWizardStep,
   form: typeof emptyForm,
 ): string | null {
   if (step !== "info") return null;
-  if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
-    return "Fill in company name, contact name, and email.";
+  if (
+    !form.company_name.trim() ||
+    !form.first_name.trim() ||
+    !form.last_name.trim() ||
+    !form.email.trim()
+  ) {
+    return "Fill in company name, first name, last name, and email.";
   }
   if (form.partner_legal_type === "limited_company") {
     if (form.vat_registered === null) return "Select whether the company is VAT registered.";
@@ -1412,7 +1422,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       );
       const created = await createPartner({
         company_name: form.company_name.trim(),
-        contact_name: form.contact_name.trim(),
+        contact_name: formatCreateContactName(form.first_name, form.last_name),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         vat_number:
@@ -1441,6 +1451,22 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ partnerId: created.id }),
       }).catch(() => { /* non-blocking */ });
+
+      let onboardingInviteNote: string | null = null;
+      try {
+        const invite = await requestPartnerOnboardingLink(created.id, { sendEmail: true });
+        if (invite.emailSent && invite.sentTo) {
+          onboardingInviteNote = `Onboarding invite sent to ${invite.sentTo}.`;
+        } else if (invite.emailError) {
+          onboardingInviteNote = `Onboarding email failed: ${invite.emailError}`;
+        } else if (invite.warning) {
+          onboardingInviteNote = invite.warning;
+        } else {
+          onboardingInviteNote = "Partner saved; onboarding email was not sent.";
+        }
+      } catch {
+        onboardingInviteNote = "Partner saved; could not send onboarding invite.";
+      }
 
       let partnerToShow: Partner = created;
       if (createAvatarFile) {
@@ -1504,6 +1530,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             : `${rateSaveCount} custom rate(s) saved.`,
         );
       }
+      if (onboardingInviteNote) parts.push(onboardingInviteNote);
       toast.success(parts.join(" "));
     } catch (err) {
       toast.error(formatPartnerCreateError(err));
@@ -2354,9 +2381,25 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </div>
             )}
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-text-secondary">Contact Name *</label>
-            <Input value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} placeholder="John Doe" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-text-secondary">First name *</label>
+              <Input
+                value={form.first_name}
+                onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                placeholder="John"
+                autoComplete="given-name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-text-secondary">Last name *</label>
+              <Input
+                value={form.last_name}
+                onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                placeholder="Doe"
+                autoComplete="family-name"
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<title>Welcome to the Fixfy Partner Portal</title>
+</head>
+<body style="margin:0;padding:0;background:#f2f2f5;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;font-size:1px;line-height:1px;color:#f2f2f5;">Keep your Fixfy partner profile up to date — log in to your portal to review your documents and details.</div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f2f5;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 6px rgba(2,0,64,0.10);">
+
+        <tr><td style="background:#020040;padding:34px 40px;text-align:center;">
+          <img src="{{logo_url}}" alt="Fixfy" width="140" style="display:inline-block;height:auto;border:0;outline:none;text-decoration:none;max-width:140px;">
+        </td></tr>
+        <tr><td style="height:6px;background:#ED4B00;line-height:6px;font-size:6px;">&nbsp;</td></tr>
+
+        <tr><td style="padding:36px 40px 8px;">
+          <p style="font-size:12px;font-weight:700;letter-spacing:3px;color:#ED4B00;text-transform:uppercase;margin:0 0 14px;">Partner account update</p>
+          <h1 style="font-size:30px;line-height:1.15;color:#020040;font-weight:800;margin:0 0 18px;">Hi {{partner_first_name}}</h1>
+          <p style="font-size:16px;line-height:1.6;color:#333;margin:0 0 16px;">It's time for a quick review of the details we hold for you as a Fixfy partner. Keeping your profile current means jobs keep flowing and your payments stay on time.</p>
+          {{custom_message_block}}
+        </td></tr>
+
+        <tr><td style="padding:8px 40px 8px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f0f7;border-radius:12px;">
+            <tr><td style="padding:22px 26px;">
+              <p style="font-size:12px;font-weight:700;letter-spacing:2px;color:#8a8a9a;text-transform:uppercase;margin:0 0 12px;">Your account</p>
+              <p style="font-size:20px;font-weight:800;color:#020040;margin:0 0 4px;">{{partner_name}}</p>
+              <p style="font-size:15px;margin:0 0 14px;"><a href="mailto:{{partner_email}}" style="color:#2a5bd7;text-decoration:underline;">{{partner_email}}</a></p>
+              <span style="display:inline-block;background:#020040;color:#ffffff;font-size:13px;font-weight:700;padding:8px 18px;border-radius:20px;">Partner &middot; {{partner_trade}}</span>
+            </td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:24px 40px 4px;">
+          <p style="font-size:12px;font-weight:700;letter-spacing:2px;color:#020040;text-transform:uppercase;margin:0 0 10px;">What to review</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr><td style="font-size:15px;line-height:1.5;color:#333;padding:5px 0;"><span style="color:#ED4B00;font-weight:700;">&#8211;</span>&nbsp;&nbsp;Insurance, ID and trade certifications</td></tr>
+            <tr><td style="font-size:15px;line-height:1.5;color:#333;padding:5px 0;"><span style="color:#ED4B00;font-weight:700;">&#8211;</span>&nbsp;&nbsp;Your contact details</td></tr>
+            <tr><td style="font-size:15px;line-height:1.5;color:#333;padding:5px 0;"><span style="color:#ED4B00;font-weight:700;">&#8211;</span>&nbsp;&nbsp;Your payment details <span style="color:#888;">(managed securely inside your portal)</span></td></tr>
+          </table>
+          <p style="font-size:15px;line-height:1.6;color:#333;margin:18px 0 4px;">Everything is updated inside your Fixfy portal, behind your secure login. We never ask you to send documents or bank details by email.</p>
+        </td></tr>
+
+        <tr><td style="padding:24px 40px 8px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr><td align="center" style="border-radius:10px;background:#ED4B00;">
+              <a href="{{onboarding_url}}" target="_blank" style="display:block;padding:18px 28px;font-size:17px;font-weight:800;color:#ffffff;text-decoration:none;border-radius:10px;background:#ED4B00;">Complete Your Onboarding &rarr;</a>
+            </td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td align="center" style="padding:10px 40px 4px;">
+          <p style="font-size:13px;color:#888;margin:0;">Always reach the portal by typing <strong style="color:#555;">partners.getfixfy.com</strong> into your browser.</p>
+        </td></tr>
+
+        <tr><td style="padding:20px 40px 8px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f7fa;border-left:4px solid #ED4B00;border-radius:4px;">
+            <tr><td style="padding:13px 16px;font-size:13px;line-height:1.5;color:#555;">
+              <strong style="color:#020040;">Staying safe:</strong> Fixfy will never ask for your password, bank details or documents by email or over the phone. If a message does, it isn't from us — forward it to <a href="mailto:{{support_email}}" style="color:#ED4B00;text-decoration:none;">{{support_email}}</a>.
+            </td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:24px 40px 0;"><div style="border-top:1px solid #e6e6ec;"></div></td></tr>
+        <tr><td style="padding:18px 40px 32px;">
+          <p style="font-size:12px;line-height:1.5;color:#999;margin:0;">{{company_name}} &middot; {{company_address}}</p>
+          <p style="font-size:12px;line-height:1.5;color:#999;margin:4px 0 0;">Company No. 15406523 &middot; <a href="mailto:{{support_email}}" style="color:#999;text-decoration:underline;">{{support_email}}</a></p>
+          <p style="font-size:11px;line-height:1.5;color:#bbb;margin:12px 0 0;">You're receiving this because you're a registered Fixfy partner.</p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
