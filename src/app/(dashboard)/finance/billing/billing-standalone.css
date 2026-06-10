@@ -52,6 +52,35 @@
   box-shadow: inset 0 0 0 1px rgba(237, 75, 0, 0.28);
 }
 
+.bl-standalone .cf__day.is-selected {
+  background: #fff8f4;
+  box-shadow: inset 0 0 0 2px rgba(237, 75, 0, 0.45);
+}
+
+.bl-standalone .cf__day.cf__week {
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  padding: 4px 4px;
+}
+
+.bl-standalone .cf__day.cf__week:focus-visible {
+  outline: 2px solid rgba(237, 75, 0, 0.5);
+  outline-offset: 1px;
+}
+
+.bl-standalone .cf__day.cf__week.is-today {
+  background: #fff1ea;
+  box-shadow: inset 0 0 0 1px rgba(237, 75, 0, 0.28);
+}
+
+.bl-standalone .cf__day.cf__week.is-selected {
+  background: #fff8f4;
+  box-shadow: inset 0 0 0 2px rgba(237, 75, 0, 0.45);
+}
+
 .bl-standalone .cf__amt {
   height: 14px;
   text-align: center;

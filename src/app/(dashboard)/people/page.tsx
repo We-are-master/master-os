@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { CountrySelect } from "@/components/ui/country-select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import { Plus, Loader2, Users, HardHat } from "lucide-react";
 import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
 import { toast } from "sonner";
@@ -859,12 +860,12 @@ export default function PeoplePage() {
                 )}
                 {displayMode === "list" ? (
                   <div className="rounded-xl border border-border-light overflow-hidden -mx-1 sm:mx-0">
-                    <div className="hidden sm:grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5.25rem_auto] gap-2 border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(7.5rem,1fr)_auto] gap-2 border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
                       <span>
                         {section === "contractors" ? "Contractor" : section === "internal" ? "Employee" : "Person"}
                       </span>
                       <span>Status</span>
-                      <span className="text-right">Pay</span>
+                      <span className="text-right">Schedule</span>
                       <span className="text-right">Actions</span>
                     </div>
                     {filtered.map((r, index) => {
@@ -1011,9 +1012,11 @@ export default function PeoplePage() {
               type="email"
               value={formEmail}
               onChange={(e) => {
-                setFormEmail(e.target.value);
-                const syncAccess = formEmployment === "employee" || formCreateAccess;
-                if (syncAccess && !formAccessEmail.trim()) setFormAccessEmail(e.target.value);
+                const v = e.target.value;
+                setFormEmail(v);
+                if (formEmployment === "employee" || formCreateAccess) {
+                  setFormAccessEmail(v);
+                }
               }}
               placeholder="person@example.com"
               className="w-full min-w-0"
@@ -1210,9 +1213,7 @@ export default function PeoplePage() {
               setFormEmployment(next);
               if (next === "employee") {
                 setFormCreateAccess(true);
-                if (!formAccessEmail.trim() && formEmail.trim()) {
-                  setFormAccessEmail(formEmail.trim().toLowerCase());
-                }
+                if (formEmail.trim()) setFormAccessEmail(formEmail);
               } else {
                 setFormCreateAccess(false);
                 setFormCategory("Contractor");
@@ -1245,7 +1246,11 @@ export default function PeoplePage() {
                 <input
                   type="checkbox"
                   checked={formCreateAccess}
-                  onChange={(e) => setFormCreateAccess(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setFormCreateAccess(checked);
+                    if (checked && formEmail.trim()) setFormAccessEmail(formEmail);
+                  }}
                   className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
                 />
                 <div className="min-w-0 flex-1">
@@ -1262,11 +1267,22 @@ export default function PeoplePage() {
                   <label className="block text-[11px] font-medium text-text-secondary mb-1">Login email</label>
                   <Input
                     type="email"
-                    value={formAccessEmail}
-                    onChange={(e) => setFormAccessEmail(e.target.value)}
+                    value={formEmployment === "employee" ? formEmail : formAccessEmail}
+                    onChange={
+                      formEmployment === "employee"
+                        ? undefined
+                        : (e) => setFormAccessEmail(e.target.value)
+                    }
+                    readOnly={formEmployment === "employee"}
                     placeholder={formEmail.trim() || "person@example.com"}
-                    className="w-full min-w-0"
+                    className={cn(
+                      "w-full min-w-0",
+                      formEmployment === "employee" && "bg-surface-hover/60 text-text-secondary",
+                    )}
                   />
+                  {formEmployment === "employee" ? (
+                    <p className="text-[11px] text-text-tertiary mt-1">Same as work email above.</p>
+                  ) : null}
                 </div>
                 <Select
                   label="Role"

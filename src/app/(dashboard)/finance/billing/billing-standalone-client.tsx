@@ -28,14 +28,17 @@ import {
   selfBillPayWorkPeriodInPeriod,
   ymdInBounds,
 } from "@/lib/billing-standalone-period";
+import { CASHFLOW_RUNWAY_HINT, cashflowWeekColumnTitle } from "@/lib/billing-cashflow-runway-copy";
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
+import { CashflowWeekDetailModal } from "@/components/finance/cashflow-week-detail-modal";
 import { PaymentHistoryTab } from "@/app/(dashboard)/finance/billing/payment-history-tab";
 import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
   buildInvoiceLedgerAccountGroups,
   buildCashflowWeekly,
+  buildCashflowWeekBreakdown,
   buildCustomerExposure,
   computeAgingTotals,
   computeBillingKpis,
@@ -496,6 +499,7 @@ function BillingStandaloneInner() {
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
   const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
+  const [cashflowDetailWeekStart, setCashflowDetailWeekStart] = useState<string | null>(null);
 
   const todayYmd = invoiceFinanceListTodayYmd();
   const periodBounds = useMemo(() => resolveBillingStandaloneFilterBounds(periodFilter), [periodFilter]);
@@ -717,6 +721,7 @@ function BillingStandaloneInner() {
       buildCashflowWeekly({
         invoices: data.invoices,
         selfBills: data.selfBills,
+        bills: data.bills,
         jobsByRef: data.jobsByRef,
         customerPaidByJobId: data.customerPaidByJobId,
         jobsBySelfBillId: data.jobsBySelfBillId,
@@ -729,6 +734,7 @@ function BillingStandaloneInner() {
     [
       data.invoices,
       data.selfBills,
+      data.bills,
       data.jobsByRef,
       data.customerPaidByJobId,
       data.jobsBySelfBillId,
@@ -744,6 +750,34 @@ function BillingStandaloneInner() {
     if (cashflow.length === 1) return cashflow[0]!.title;
     return `${cashflow[0]!.dayNum} – ${cashflow[cashflow.length - 1]!.dayNum}`;
   }, [cashflow]);
+
+  const cashflowBuildArgs = useMemo(
+    () => ({
+      invoices: data.invoices,
+      selfBills: data.selfBills,
+      bills: data.bills,
+      jobsByRef: data.jobsByRef,
+      customerPaidByJobId: data.customerPaidByJobId,
+      jobsBySelfBillId: data.jobsBySelfBillId,
+      partnerPaidByJobId: data.partnerPaidByJobId,
+      dueCtx: data.dueCtx,
+    }),
+    [
+      data.invoices,
+      data.selfBills,
+      data.bills,
+      data.jobsByRef,
+      data.customerPaidByJobId,
+      data.jobsBySelfBillId,
+      data.partnerPaidByJobId,
+      data.dueCtx,
+    ],
+  );
+
+  const cashflowDetailBreakdown = useMemo(() => {
+    if (!cashflowDetailWeekStart) return null;
+    return buildCashflowWeekBreakdown(cashflowDetailWeekStart, cashflowBuildArgs);
+  }, [cashflowDetailWeekStart, cashflowBuildArgs]);
 
   const customers = useMemo(
     () =>
@@ -1124,13 +1158,14 @@ function BillingStandaloneInner() {
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                       Cash-Flow Runway
                       <FixfyHintIcon
-                        text="Green up = expected in · coral down = scheduled out · Mon–Sun buckets."
+                        text={CASHFLOW_RUNWAY_HINT}
                         placement="bottom-start"
                       />
                     </h2>
                     {cashflowRangeLabel ? (
                       <p className="mt-0.5 text-xs text-text-tertiary tabular-nums">{cashflowRangeLabel}</p>
                     ) : null}
+                    <p className="mt-0.5 text-[11px] text-text-tertiary">Click a week to see what is due in and out</p>
                   </div>
                   {!periodBounds ? (
                     <button
@@ -1153,19 +1188,27 @@ function BillingStandaloneInner() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Money in</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Money out</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
                 {cashflow.map((w) => {
                   const ih = w.moneyIn ? Math.max(8, Math.round((w.moneyIn / cfMax) * 72)) : 0;
                   const oh = w.moneyOut ? Math.max(8, Math.round((w.moneyOut / cfMax) * 72)) : 0;
+                  const isSelected = cashflowDetailWeekStart === w.weekStart;
                   return (
-                    <div
+                    <button
                       key={w.weekStart}
-                      title={w.title}
-                      className={cn("cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]", w.isCurrentWeek && "is-today")}
+                      type="button"
+                      title={cashflowWeekColumnTitle(w.title, w.moneyIn, w.moneyOut)}
+                      aria-label={`${w.title}. Receivables ${formatCurrency(w.moneyIn)}. Pay and expenses ${formatCurrency(w.moneyOut)}. View breakdown.`}
+                      onClick={() => setCashflowDetailWeekStart(w.weekStart)}
+                      className={cn(
+                        "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px] cursor-pointer transition-colors hover:bg-surface-hover/80",
+                        w.isCurrentWeek && "is-today",
+                        isSelected && "is-selected",
+                      )}
                     >
                       <div className={cn("cf__amt cf__amt--in", !w.moneyIn && "is-empty")}>{w.moneyIn ? formatCurrency(w.moneyIn) : "·"}</div>
                       <div className="cf__well"><div className="cf__bar cf__bar--in" style={{ height: ih }} /></div>
@@ -1173,7 +1216,7 @@ function BillingStandaloneInner() {
                       <div className="cf__well cf__well--out"><div className="cf__bar cf__bar--out" style={{ height: oh }} /></div>
                       <div className={cn("cf__amt cf__amt--out", !w.moneyOut && "is-empty")}>{w.moneyOut ? formatCurrency(w.moneyOut) : "·"}</div>
                       <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -1764,6 +1807,12 @@ function BillingStandaloneInner() {
         />
 
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+
+        <CashflowWeekDetailModal
+          open={cashflowDetailWeekStart !== null}
+          onClose={() => setCashflowDetailWeekStart(null)}
+          breakdown={cashflowDetailBreakdown}
+        />
 
         {ledgerTab === "history" ? null : ledgerTab === "inv" ? (
           <BillingBulkBar

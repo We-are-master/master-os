@@ -30,7 +30,7 @@ import {
 import { computeSelfBillAmountDue, type SelfBillJobLine } from "@/lib/billing-selfbill-actions";
 import { startOfWeekMondayFromYmd, weekRangeLabel } from "@/lib/dashboard-cashflow-buckets";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
-import type { Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, SelfBill } from "@/types/database";
 
 const DEFAULT_CASHFLOW_WEEKS = 8;
 
@@ -56,6 +56,21 @@ export function selfBillDueYmd(
 
 export function selfBillCountsAsReady(sb: Pick<SelfBill, "status">): boolean {
   return READY_SB.has(sb.status);
+}
+
+export function selfBillCountsAsApprovedForPayout(
+  sb: Pick<SelfBill, "status" | "approved_at" | "wise_paid_at">,
+): boolean {
+  return selfBillCountsAsReady(sb) && !!sb.approved_at && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb);
+}
+
+const OPEN_BILL_STATUSES = new Set<Bill["status"]>(["submitted", "approved", "needs_attention"]);
+
+export function billCountsAsOpenForCashflow(
+  bill: Pick<Bill, "status" | "archived_at">,
+): boolean {
+  if (bill.archived_at) return false;
+  return OPEN_BILL_STATUSES.has(bill.status);
 }
 
 export function isSelfBillOverdue(
@@ -139,7 +154,7 @@ export function computeBillingKpis(args: {
   const partnerIds = new Set<string>();
   let nextDue = "";
   for (const sb of args.selfBills) {
-    if (isSelfBillPayoutVoided(sb) || !selfBillCountsAsReady(sb)) continue;
+    if (!selfBillCountsAsApprovedForPayout(sb)) continue;
     if (!sbInPeriod(sb)) continue;
     const amt = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
     if (amt <= 0.02) continue;
@@ -160,7 +175,7 @@ export function computeBillingKpis(args: {
     weekIn += invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
   }
   for (const sb of args.selfBills) {
-    if (isSelfBillPayoutVoided(sb) || !selfBillCountsAsReady(sb)) continue;
+    if (!selfBillCountsAsApprovedForPayout(sb)) continue;
     if (!sbInPeriod(sb)) continue;
     weekOut += computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
   }
@@ -430,6 +445,114 @@ export type CashflowWeek = {
   isCurrentWeek: boolean;
 };
 
+export type CashflowBreakdownLine = {
+  id: string;
+  kind: "invoice" | "self_bill" | "expense";
+  label: string;
+  detail?: string;
+  dueYmd: string;
+  amount: number;
+};
+
+export type CashflowWeekBreakdown = {
+  weekStart: string;
+  title: string;
+  moneyIn: number;
+  moneyOut: number;
+  inLines: CashflowBreakdownLine[];
+  outLines: CashflowBreakdownLine[];
+};
+
+export type BuildCashflowWeeklyArgs = {
+  invoices: Invoice[];
+  selfBills: SelfBill[];
+  jobsByRef: Record<string, InvoiceListJobSnapshot>;
+  customerPaidByJobId: Record<string, number>;
+  jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
+  partnerPaidByJobId: Record<string, number>;
+  dueCtx: SelfBillDueResolveContext;
+  bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at">[];
+  startYmd?: string;
+  endYmd?: string;
+  weekCount?: number;
+};
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Line items for one Cash-Flow Runway week (same filters as `buildCashflowWeekly`). */
+export function buildCashflowWeekBreakdown(
+  weekStart: string,
+  args: Omit<BuildCashflowWeeklyArgs, "startYmd" | "endYmd" | "weekCount">,
+): CashflowWeekBreakdown {
+  const todayYmd = todayYmdLocal();
+  const inLines: CashflowBreakdownLine[] = [];
+  const outLines: CashflowBreakdownLine[] = [];
+
+  for (const inv of args.invoices) {
+    if (!isInvoiceCollectible(inv, args.jobsByRef, todayYmd)) continue;
+    const dueYmd = (inv.due_date ?? "").slice(0, 10);
+    if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
+    const amount = invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
+    if (amount <= 0.02) continue;
+    const ref = inv.job_reference?.trim() || inv.reference?.trim();
+    inLines.push({
+      id: inv.id,
+      kind: "invoice",
+      label: inv.client_name?.trim() || "Invoice",
+      detail: ref || undefined,
+      dueYmd,
+      amount: roundMoney(amount),
+    });
+  }
+
+  for (const sb of args.selfBills) {
+    if (!selfBillCountsAsApprovedForPayout(sb)) continue;
+    const dueYmd = selfBillDueYmd(sb, args.dueCtx);
+    if (!ymdInWeekBounds(dueYmd, weekStart)) continue;
+    const amount = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+    if (amount <= 0.02) continue;
+    const label =
+      sb.bill_origin === "internal"
+        ? sb.partner_name?.trim() || "Workforce"
+        : sb.partner_name?.trim() || "Partner";
+    outLines.push({
+      id: sb.id,
+      kind: "self_bill",
+      label,
+      detail: sb.reference?.trim() || sb.week_label?.trim() || undefined,
+      dueYmd,
+      amount: roundMoney(amount),
+    });
+  }
+
+  for (const bill of args.bills ?? []) {
+    if (!billCountsAsOpenForCashflow(bill)) continue;
+    const dueYmd = bill.due_date?.slice(0, 10);
+    if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
+    const amount = Number(bill.amount ?? 0);
+    if (amount <= 0.02) continue;
+    outLines.push({
+      id: bill.id,
+      kind: "expense",
+      label: bill.description?.trim() || "Expense",
+      detail: bill.status,
+      dueYmd,
+      amount: roundMoney(amount),
+    });
+  }
+
+  inLines.sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label));
+  outLines.sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label));
+
+  const moneyIn = roundMoney(inLines.reduce((s, l) => s + l.amount, 0));
+  const moneyOut = roundMoney(outLines.reduce((s, l) => s + l.amount, 0));
+  const { title } = compactWeekColumnLabels(weekStart);
+
+  return { weekStart, title, moneyIn, moneyOut, inLines, outLines };
+}
+
 function isoWeekNumberFromYmd(ymd: string): number {
   const d = new Date(`${ymd}T12:00:00`);
   const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -457,19 +580,16 @@ function ymdInWeekBounds(ymd: string, weekStart: string): boolean {
   return ymd >= weekStart && ymd <= weekEnd;
 }
 
-/** Mon–Sun buckets: open invoice balances due in-week (in) vs self-bill partner pay due in-week (out). */
-export function buildCashflowWeekly(args: {
-  invoices: Invoice[];
-  selfBills: SelfBill[];
-  jobsByRef: Record<string, InvoiceListJobSnapshot>;
-  customerPaidByJobId: Record<string, number>;
-  jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
-  partnerPaidByJobId: Record<string, number>;
-  dueCtx: SelfBillDueResolveContext;
-  startYmd?: string;
-  endYmd?: string;
-  weekCount?: number;
-}): CashflowWeek[] {
+/** Cash-Flow Runway: Mon–Sun projection buckets (not realized cash).
+ *
+ * **moneyIn** — sum of `invoiceListBalanceDue` for collectible open invoices whose `due_date`
+ * falls in the week (excludes draft, on_hold, paid, cancelled; respects job on_hold).
+ *
+ * **moneyOut** — approved self-bills (`approved_at`, ready status, not Wise-paid) whose
+ * `selfBillDueYmd` falls in the week, plus open bills (`submitted`/`approved`/`needs_attention`,
+ * not archived) whose `due_date` falls in the week.
+ */
+export function buildCashflowWeekly(args: BuildCashflowWeeklyArgs): CashflowWeek[] {
   const todayYmd = todayYmdLocal();
   const anchor = args.startYmd ?? todayYmd;
   let weekStart = startOfWeekMondayFromYmd(anchor);
@@ -491,10 +611,16 @@ export function buildCashflowWeekly(args: {
       moneyIn += invoiceListBalanceDue(inv, args.jobsByRef, args.customerPaidByJobId);
     }
     for (const sb of args.selfBills) {
-      if (isSelfBillPayoutVoided(sb) || !selfBillCountsAsReady(sb)) continue;
+      if (!selfBillCountsAsApprovedForPayout(sb)) continue;
       const dueYmd = selfBillDueYmd(sb, args.dueCtx);
       if (!ymdInWeekBounds(dueYmd, weekStart)) continue;
       moneyOut += computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+    }
+    for (const bill of args.bills ?? []) {
+      if (!billCountsAsOpenForCashflow(bill)) continue;
+      const dueYmd = bill.due_date?.slice(0, 10);
+      if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
+      moneyOut += Number(bill.amount ?? 0);
     }
     const { label, dayNum, title } = compactWeekColumnLabels(weekStart);
     weeks.push({

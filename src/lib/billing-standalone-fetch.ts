@@ -2,7 +2,7 @@ import { getSupabase } from "@/services/base";
 import { fetchAllActiveInvoices } from "@/lib/billing-invoice-list-data";
 import { addDaysYmd, type YmdBounds } from "@/lib/billing-standalone-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
-import type { Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, SelfBill } from "@/types/database";
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
@@ -24,6 +24,9 @@ const CLOSED_SELF_BILL_STATUSES = [
   "payout_lost",
 ] as const;
 const CLOSED_SELF_BILL_LIST = `(${CLOSED_SELF_BILL_STATUSES.map((s) => `"${s}"`).join(",")})`;
+
+const CLOSED_BILL_STATUSES = ["paid", "rejected"] as const;
+const CLOSED_BILL_LIST = `(${CLOSED_BILL_STATUSES.map((s) => `"${s}"`).join(",")})`;
 
 function invoiceQueryBase() {
   return getSupabase().from("invoices").select("*").is("deleted_at", null);
@@ -241,4 +244,60 @@ export async function fetchSelfBillsForBilling(bounds: YmdBounds | null): Promis
     ...dueDateRows,
     ...internalAccumulatingRows,
   ]);
+}
+
+function billQueryBase() {
+  return getSupabase().from("bills").select("*");
+}
+
+type BillQuery = ReturnType<typeof billQueryBase>;
+
+async function fetchBillQueryPages(apply: (q: BillQuery) => BillQuery): Promise<Bill[]> {
+  const acc: Bill[] = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const from = page * PAGE_SIZE;
+    const { data, error } = await apply(billQueryBase())
+      .order("due_date", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Bill[];
+    if (rows.length === 0) break;
+    acc.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return acc;
+}
+
+async function fetchOpenBillQueryPages(apply: (q: BillQuery) => BillQuery): Promise<Bill[]> {
+  try {
+    return await fetchBillQueryPages((q) =>
+      apply(q.not("status", "in", CLOSED_BILL_LIST).is("archived_at", null)),
+    );
+  } catch (e) {
+    if (!isSupabaseMissingColumnError(e, "archived_at")) throw e;
+    console.warn("billing bills: archived_at missing — fetching without archive filter");
+    return fetchBillQueryPages((q) => apply(q.not("status", "in", CLOSED_BILL_LIST)));
+  }
+}
+
+export function mergeBillsById(rows: Bill[]): Bill[] {
+  const byId = new Map<string, Bill>();
+  for (const row of rows) byId.set(row.id, row);
+  return [...byId.values()].sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""));
+}
+
+/** Open bills (not paid/rejected/archived) with due_date in or near the billing window. */
+export async function fetchBillsForBilling(bounds: YmdBounds | null): Promise<Bill[]> {
+  if (!bounds) {
+    return fetchOpenBillQueryPages((q) => q);
+  }
+
+  const openFrom = openItemsRecencyFrom(bounds);
+
+  const [openRows, dueRows] = await Promise.all([
+    fetchOpenBillQueryPages((q) => q.gte("due_date", openFrom)),
+    fetchOpenBillQueryPages((q) => q.gte("due_date", bounds.from).lte("due_date", bounds.to)),
+  ]);
+
+  return mergeBillsById([...openRows, ...dueRows]);
 }

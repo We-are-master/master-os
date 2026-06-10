@@ -14,8 +14,10 @@ import {
   type BillingEnrichmentState,
 } from "@/lib/billing-standalone-enrich";
 import {
+  fetchBillsForBilling,
   fetchInvoicesForBilling,
   fetchSelfBillsForBilling,
+  mergeBillsById,
   mergeInvoicesById,
   mergeSelfBillsById,
 } from "@/lib/billing-standalone-fetch";
@@ -26,7 +28,7 @@ import {
 } from "@/lib/billing-standalone-filter";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
-import type { Invoice, SelfBill } from "@/types/database";
+import type { Bill, Invoice, SelfBill } from "@/types/database";
 
 export type BillingRepairAccountLabel = {
   id: string;
@@ -39,6 +41,7 @@ export function useBillingStandaloneData() {
   const { partnerPayoutStandardTerms, partnerPayoutReferenceYmd } = useFrontendSetup();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
   const [enrichment, setEnrichment] = useState<BillingEnrichmentState>(EMPTY_BILLING_ENRICHMENT);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -182,11 +185,13 @@ export function useBillingStandaloneData() {
 
     let invRows: Invoice[] = [];
     let sbRows: SelfBill[] = [];
+    let billRows: Bill[] = [];
     let fetchHadErrors = false;
 
-    const [invResult, sbResult] = await Promise.allSettled([
+    const [invResult, sbResult, billResult] = await Promise.allSettled([
       fetchInvoicesForBilling(bounds),
       fetchSelfBillsForBilling(bounds),
+      fetchBillsForBilling(bounds),
     ]);
 
     if (invResult.status === "fulfilled") {
@@ -207,11 +212,20 @@ export function useBillingStandaloneData() {
       if (!background && !hasLoadedOnceRef.current) setSelfBills([]);
     }
 
+    if (billResult.status === "fulfilled") {
+      billRows = billResult.value;
+      setBills(billRows);
+    } else {
+      fetchHadErrors = true;
+      console.error("billing bills fetch failed", billResult.reason);
+      if (!background && !hasLoadedOnceRef.current) setBills([]);
+    }
+
     if (bounds === null) fullHistoryLoadedRef.current = true;
 
     billingPerfMark("billing:fetch:end");
 
-    if (fetchHadErrors && invRows.length === 0 && sbRows.length === 0) {
+    if (fetchHadErrors && invRows.length === 0 && sbRows.length === 0 && billRows.length === 0) {
       setLoading(false);
       setRefreshing(false);
       return;
@@ -253,12 +267,14 @@ export function useBillingStandaloneData() {
     prefetchingRef.current = true;
     setRefreshing(true);
     try {
-      const [fullInv, fullSb] = await Promise.all([
+      const [fullInv, fullSb, fullBills] = await Promise.all([
         fetchInvoicesForBilling(null),
         fetchSelfBillsForBilling(null),
+        fetchBillsForBilling(null),
       ]);
       let mergedInv = fullInv;
       let mergedSb = fullSb;
+      let mergedBills = fullBills;
       setInvoices((prev) => {
         mergedInv = mergeInvoicesById([...prev, ...fullInv]);
         return mergedInv;
@@ -266,6 +282,10 @@ export function useBillingStandaloneData() {
       setSelfBills((prev) => {
         mergedSb = mergeSelfBillsById([...prev, ...fullSb]);
         return mergedSb;
+      });
+      setBills((prev) => {
+        mergedBills = mergeBillsById([...prev, ...fullBills]);
+        return mergedBills;
       });
       fullHistoryLoadedRef.current = true;
 
@@ -311,6 +331,7 @@ export function useBillingStandaloneData() {
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "self_bills" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "job_payments" }, schedule)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bills" }, schedule)
       .subscribe();
     return () => {
       clearTimeout(t);
@@ -353,6 +374,7 @@ export function useBillingStandaloneData() {
       hasLoadedOnce,
       invoices,
       selfBills,
+      bills,
       jobsByRef,
       customerPaidByJobId,
       jobsBySelfBillId,
@@ -380,6 +402,7 @@ export function useBillingStandaloneData() {
       hasLoadedOnce,
       invoices,
       selfBills,
+      bills,
       jobsByRef,
       customerPaidByJobId,
       jobsBySelfBillId,
