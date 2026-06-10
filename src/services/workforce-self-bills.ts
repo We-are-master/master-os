@@ -130,28 +130,72 @@ function hasExplicitWorkforceStartDate(payrollProfile: unknown): boolean {
   return typeof raw === "string" && /^\d{4}-\d{2}-\d{2}/.test(raw.trim());
 }
 
+const PURGEABLE_WORKFORCE_SELF_BILL_STATUSES: SelfBillStatus[] = [
+  "accumulating",
+  "pending_review",
+  "needs_attention",
+  "ready_to_pay",
+  "draft",
+];
+
+/**
+ * Remove workforce SB-INT drafts outside the open calendar month, and any draft for
+ * contractors without an explicit payroll start_date (user must set it before accrual).
+ */
+export async function purgeStaleWorkforceSelfBillDrafts(
+  anchorDate: Date = new Date(),
+  supabase: SupabaseClient = getSupabase(),
+): Promise<{ deleted: number; ids: string[] }> {
+  const currentMonthStart = format(startOfMonth(anchorDate), "yyyy-MM-dd");
+
+  const { data: people, error: peopleErr } = await supabase
+    .from("payroll_internal_costs")
+    .select("id, payroll_profile")
+    .eq("employment_type", "self_employed");
+  if (peopleErr) throw peopleErr;
+
+  const missingStartDateIds = new Set(
+    (people ?? [])
+      .filter((p) => !hasExplicitWorkforceStartDate(p.payroll_profile))
+      .map((p) => p.id as string),
+  );
+
+  const { data: rows, error } = await supabase
+    .from("self_bills")
+    .select("id, week_start, internal_cost_id, status")
+    .eq("bill_origin", "internal")
+    .in("status", PURGEABLE_WORKFORCE_SELF_BILL_STATUSES);
+  if (error) throw error;
+
+  const toDelete = (rows ?? []).filter((row) => {
+    const ws = String(row.week_start ?? "").slice(0, 10);
+    const personId = row.internal_cost_id as string | null;
+    if (personId && missingStartDateIds.has(personId)) return true;
+    return ws !== currentMonthStart;
+  });
+
+  const ids = toDelete.map((r) => r.id as string);
+  if (ids.length === 0) return { deleted: 0, ids: [] };
+
+  const { error: delErr } = await supabase.from("self_bills").delete().in("id", ids);
+  if (delErr) throw delErr;
+
+  return { deleted: ids.length, ids };
+}
+
 export type WorkforceSelfBillSyncBounds = {
   from: string;
   to: string;
 };
 
-function monthAnchorDatesBetween(bounds: WorkforceSelfBillSyncBounds): Date[] {
-  const from = parseISO(`${bounds.from.slice(0, 10)}T12:00:00`);
-  const to = parseISO(`${bounds.to.slice(0, 10)}T12:00:00`);
-  const anchors: Date[] = [];
-  let cur = startOfMonth(from);
-  const end = startOfMonth(to);
-  while (cur.getTime() <= end.getTime()) {
-    anchors.push(cur);
-    cur = addMonths(cur, 1);
-  }
-  return anchors.length > 0 ? anchors : [startOfMonth(from)];
+/** Open monthly draft sync — only the calendar month containing `realToday`. */
+export function workforceSelfBillSyncMonthAnchors(realToday: Date = new Date()): Date[] {
+  return [startOfMonth(realToday)];
 }
 
 /** Monthly workforce: accumulating until month-end cutoff, then ready_to_pay for billing (pay day 5). */
-function resolveWorkforceSelfBillStatus(anchorDate: Date, periodEnd: string): SelfBillStatus {
-  const today = format(anchorDate, "yyyy-MM-dd");
-  if (today >= periodEnd) return "ready_to_pay";
+function resolveWorkforceSelfBillStatus(realTodayYmd: string, periodEnd: string): SelfBillStatus {
+  if (realTodayYmd > periodEnd) return "ready_to_pay";
   return "accumulating";
 }
 
@@ -172,17 +216,26 @@ export async function ensureWorkforceSelfBillForPeriod(
 
   const person = row as WorkforceSelfBillRow;
   if (!isWorkforceSelfBillEligible(person.employment_type)) return null;
+  if (!hasExplicitWorkforceStartDate(person.payroll_profile)) return null;
+
   const payFrequency = person.pay_frequency ?? "monthly";
   const period = getPayPeriodBounds(payFrequency, anchorDate);
-  const todayYmd = format(anchorDate, "yyyy-MM-dd");
+  const realTodayYmd = format(new Date(), "yyyy-MM-dd");
   const workforceStart = parseWorkforceStartDate(person.payroll_profile, person.created_at);
+  if (workforceStart && period.periodEnd < workforceStart) return null;
+  const accrualAsOfYmd =
+    realTodayYmd < period.periodStart
+      ? period.periodStart
+      : realTodayYmd < period.periodEnd
+        ? realTodayYmd
+        : period.periodEnd;
   const daysOff = parseWorkforceDaysOff(person.payroll_profile);
   const payableMeta =
     payFrequency === "monthly"
       ? countWorkforceCalendarPayableDays(
           period.periodStart,
           period.periodEnd,
-          todayYmd,
+          accrualAsOfYmd,
           workforceStart,
           daysOff,
         )
@@ -194,14 +247,15 @@ export async function ensureWorkforceSelfBillForPeriod(
           monthlyFixed,
           period.periodStart,
           period.periodEnd,
-          todayYmd,
+          accrualAsOfYmd,
           workforceStart,
           daysOff,
         )
       : monthlyFixed;
 
   const commissionPeriodStart = effectiveWorkforcePeriodStart(period.periodStart, workforceStart);
-  const commissionPeriodEnd = todayYmd < period.periodEnd ? todayYmd : period.periodEnd;
+  const commissionPeriodEnd =
+    accrualAsOfYmd < period.periodEnd ? accrualAsOfYmd : period.periodEnd;
 
   let commission = {
     basisTotal: 0,
@@ -260,7 +314,7 @@ export async function ensureWorkforceSelfBillForPeriod(
 
   const netPayout = clampMoney(fixedPay + commission.commissionAmount);
   const reference = `SB-INT-${period.weekLabel}-${person.id.replace(/-/g, "").slice(0, 8)}`;
-  const status = resolveWorkforceSelfBillStatus(anchorDate, period.periodEnd);
+  const status = resolveWorkforceSelfBillStatus(realTodayYmd, period.periodEnd);
   const payDay = person.payment_day_of_month ?? WORKFORCE_MONTHLY_PAY_DAY;
   const dueDate =
     payFrequency === "monthly"
@@ -295,6 +349,10 @@ export async function ensureWorkforceSelfBillForPeriod(
     reference,
   );
 
+  if (!existing && period.periodStart > realTodayYmd) {
+    return null;
+  }
+
   if (existing) {
     if (!UPDATABLE_SELF_BILL_STATUSES.has(existing.status)) {
       const { data: frozen } = await supabase.from("self_bills").select("*").eq("id", existing.id).maybeSingle();
@@ -315,11 +373,12 @@ export async function syncAllActiveWorkforceSelfBills(
 }
 
 /**
- * Sync workforce SB-INT for each calendar month in bounds (or current month when bounds is null).
- * Ensures contractors appear in Billing for every pay-day-5 cycle in the selected period.
+ * Ensure workforce SB-INT for the open calendar month only.
+ * Billing period filters control which rows are shown — not how many drafts are created.
+ * (Bounds are accepted for API compatibility but no longer backfill every month in range.)
  */
 export async function syncWorkforceSelfBillsForBounds(
-  bounds: WorkforceSelfBillSyncBounds | null,
+  _bounds: WorkforceSelfBillSyncBounds | null,
   anchorDate: Date = new Date(),
   supabase: SupabaseClient = getSupabase(),
 ): Promise<SelfBill[]> {
@@ -330,7 +389,7 @@ export async function syncWorkforceSelfBillsForBounds(
     .eq("employment_type", "self_employed");
   if (error) throw error;
 
-  const anchors = bounds ? monthAnchorDatesBetween(bounds) : [startOfMonth(anchorDate)];
+  const anchors = workforceSelfBillSyncMonthAnchors(anchorDate);
   const byBillId = new Map<string, SelfBill>();
 
   for (const monthAnchor of anchors) {
@@ -413,15 +472,7 @@ export async function refreshWorkforceSelfBillsForJobIds(
 
   for (const person of people ?? []) {
     if (!isWorkforceSelfBillSyncEligible(person.lifecycle_stage)) continue;
-    const keys = new Set<string>([currentMonthKey]);
-    for (const job of jobs ?? []) {
-      if (job.owner_id?.trim() !== person.profile_id?.trim()) continue;
-      const cd = job.completed_date?.trim().slice(0, 10) ?? "";
-      if (/^\d{4}-\d{2}-\d{2}$/.test(cd)) {
-        keys.add(format(startOfMonth(parseISO(`${cd}T12:00:00`)), "yyyy-MM-dd"));
-      }
-    }
-    anchorsByPerson.set(person.id, keys);
+    anchorsByPerson.set(person.id, new Set([currentMonthKey]));
   }
 
   for (const [personId, monthKeys] of anchorsByPerson) {

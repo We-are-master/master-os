@@ -1,24 +1,15 @@
-import { getBillingInitialFetchBounds } from "@/lib/billing-standalone-filter";
-import { addDaysYmd, todayYmdLocal, type YmdBounds } from "@/lib/billing-standalone-period";
-
-/** Billing sync window: selected period, or 12 months back + 90 days ahead (covers pay-day-5 due dates). */
-export function resolveWorkforceSyncBoundsForBilling(periodBounds: YmdBounds | null): YmdBounds {
-  if (periodBounds) return periodBounds;
-  const today = todayYmdLocal();
-  return { from: addDaysYmd(today, -365), to: addDaysYmd(today, 90) };
-}
+import type { YmdBounds } from "@/lib/billing-standalone-period";
 
 export type WorkforceSyncResult = { count: number; ids: string[] };
 
-/** Ensure workforce SB-INT rows exist for the billing fetch window. */
+/** Ensure the open monthly workforce SB-INT draft exists (current month only). */
 export async function syncWorkforceSelfBillsForBilling(
-  periodBounds: YmdBounds | null,
+  _periodBounds: YmdBounds | null,
 ): Promise<WorkforceSyncResult> {
-  const bounds = resolveWorkforceSyncBoundsForBilling(periodBounds ?? getBillingInitialFetchBounds());
   const res = await fetch("/api/workforce/sync-self-bills", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from: bounds.from, to: bounds.to }),
+    body: JSON.stringify({}),
   });
   const payload = (await res.json().catch(() => ({}))) as {
     ok?: boolean;

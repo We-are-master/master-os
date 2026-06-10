@@ -10,7 +10,7 @@ import {
   type PartnerTradeIconEntry,
 } from "@/lib/service-display-icons";
 import { cn } from "@/lib/utils";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type { PartnerTradeIconEntry };
 
@@ -108,6 +108,22 @@ export function PartnerTradesIconStrip({
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [overflowOpen]);
+
+  const hiddenTradeLabels = hiddenTrades.map((t) => {
+    const k = String(t).trim().toLowerCase();
+    return tradeDisplayLabel(t, byLc?.get(k));
+  });
+
   return (
     <div
       className={cn(
@@ -121,17 +137,12 @@ export function PartnerTradesIconStrip({
         <TradeIconBadge key={`vis-${i}`} trade={t} byLc={byLc} tooltipPlacement="bottom" />
       ))}
       {hasOverflow ? (
-        <div
-          ref={overflowRef}
-          className="relative shrink-0"
-          onMouseEnter={() => setOverflowOpen(true)}
-          onMouseLeave={() => setOverflowOpen(false)}
-        >
+        <div ref={overflowRef} className="relative shrink-0">
           <button
             type="button"
             aria-expanded={overflowOpen}
-            aria-label={`${hiddenCount} more trades: ${hiddenTrades.join(", ")}`}
-            title={hiddenTrades.join(" · ")}
+            aria-label={`${hiddenCount} more trades: ${hiddenTradeLabels.join(", ")}`}
+            title={hiddenTradeLabels.join(" · ")}
             onClick={() => setOverflowOpen((v) => !v)}
             className={cn(
               SERVICE_ICON_CELL_CLASSES,
@@ -144,19 +155,23 @@ export function PartnerTradesIconStrip({
           </button>
           {overflowOpen ? (
             <div
-              role="tooltip"
+              role="dialog"
+              aria-label="Additional trades"
               className={cn(
                 "absolute top-full left-1/2 z-[90] mt-1.5 -translate-x-1/2",
-                "rounded-lg border border-border-light bg-card px-2 py-1.5 shadow-lg",
+                "min-w-[7.5rem] max-w-[min(14rem,70vw)] rounded-lg border border-border-light bg-card px-2.5 py-2 shadow-lg",
               )}
-              onMouseEnter={() => setOverflowOpen(true)}
-              onMouseLeave={() => setOverflowOpen(false)}
             >
-              <div className="flex flex-nowrap items-center gap-0.5 max-w-[min(16rem,70vw)] overflow-x-auto [scrollbar-width:thin]">
-                {hiddenTrades.map((t, i) => (
-                  <TradeIconBadge key={`more-${i}`} trade={t} byLc={byLc} tooltipPlacement="bottom" />
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">
+                More trades
+              </p>
+              <ul className="space-y-0.5">
+                {hiddenTradeLabels.map((label, i) => (
+                  <li key={`more-label-${i}`} className="text-[11px] font-medium text-text-primary leading-snug">
+                    {label}
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           ) : null}
         </div>

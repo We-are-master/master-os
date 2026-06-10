@@ -252,14 +252,18 @@ export function WorkforcePersonDrawer({
     try {
       const { onboardingUrl, warning } = await requestWorkforceOnboardingLink(person.id, { sendEmail: false });
       await navigator.clipboard.writeText(onboardingUrl);
-      toast.success("Onboarding link copied — person can upload docs and update profile");
+      toast.success(
+        isEmployee
+          ? "Login link copied — employee can sign in to the OS"
+          : "Onboarding link copied — person can upload docs and update profile",
+      );
       if (warning) toast.warning(warning);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create onboarding link");
     } finally {
       setOnboardingLinkBusy(false);
     }
-  }, [person, workEmail]);
+  }, [person, workEmail, isEmployee]);
 
   const handleSendOnboardingEmail = useCallback(async () => {
     if (!person) return;
@@ -268,7 +272,7 @@ export function WorkforcePersonDrawer({
       setTab("overview");
       return;
     }
-    if (!paymentMethod.trim()) {
+    if (!paymentMethod.trim() && !isEmployee) {
       toast.error("Set payment method in Finance before emailing the invite");
       setTab("finance");
       return;
@@ -276,14 +280,18 @@ export function WorkforcePersonDrawer({
     setSendingWelcome(true);
     try {
       const { sentTo, warning } = await requestWorkforceOnboardingLink(person.id, { sendEmail: true });
-      toast.success(`Onboarding invite sent to ${sentTo ?? workEmail}`);
+      toast.success(
+        isEmployee
+          ? `OS login invite sent to ${sentTo ?? workEmail}`
+          : `Onboarding invite sent to ${sentTo ?? workEmail}`,
+      );
       if (warning) toast.warning(warning);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not send onboarding invite");
     } finally {
       setSendingWelcome(false);
     }
-  }, [person, workEmail, paymentMethod]);
+  }, [person, workEmail, paymentMethod, isEmployee]);
 
   const syncFromPerson = useCallback(async () => {
     if (!person) return;
@@ -1268,10 +1276,10 @@ export function WorkforcePersonDrawer({
           variant="outline"
           size="sm"
           icon={<Mail className="h-3.5 w-3.5" />}
-          disabled={sendingWelcome || !workEmail || !paymentMethod}
+          disabled={sendingWelcome || !workEmail || (!isEmployee && !paymentMethod)}
           onClick={() => void handleSendOnboardingEmail()}
         >
-          {sendingWelcome ? "Sending…" : "Resend invite"}
+          {sendingWelcome ? "Sending…" : isEmployee ? "Resend login invite" : "Resend invite"}
         </Button>
         <Button
           type="button"
@@ -1303,17 +1311,28 @@ export function WorkforcePersonDrawer({
 
   const onboardingInviteCard = (
     <div className={workforceSectionFormClass}>
-      <p className="text-sm font-semibold text-text-primary">Onboarding link</p>
+      <p className="text-sm font-semibold text-text-primary">
+        {isEmployee ? "OS login invite" : "Onboarding link"}
+      </p>
       <p className="text-xs text-text-secondary">
-        Send a self-service link so {payeeName || "this person"} can see what&apos;s missing
-        {docsProgress.total > 0 ? (
+        {isEmployee ? (
           <>
-            {" "}
-            (<strong className="font-medium text-text-primary">{docsProgress.missing}</strong> of{" "}
-            {docsProgress.total} document{docsProgress.total === 1 ? "" : "s"} still needed)
+            Email {payeeName || "this person"} the same welcome template with a sign-in link to the Fixfy Operating
+            System.
           </>
-        ) : null}
-        , upload files, and update their profile.
+        ) : (
+          <>
+            Send a self-service link so {payeeName || "this person"} can see what&apos;s missing
+            {docsProgress.total > 0 ? (
+              <>
+                {" "}
+                (<strong className="font-medium text-text-primary">{docsProgress.missing}</strong> of{" "}
+                {docsProgress.total} document{docsProgress.total === 1 ? "" : "s"} still needed)
+              </>
+            ) : null}
+            , upload files, and update their profile.
+          </>
+        )}
       </p>
       {!workEmail ? (
         <p className="text-xs text-amber-700">Add a work email on Profile before sending the link.</p>
@@ -1327,16 +1346,16 @@ export function WorkforcePersonDrawer({
           disabled={onboardingLinkBusy || sendingWelcome || !workEmail}
           onClick={() => void handleCopyOnboardingLink()}
         >
-          {onboardingLinkBusy ? "Creating…" : "Copy link"}
+          {onboardingLinkBusy ? "Creating…" : isEmployee ? "Copy login link" : "Copy link"}
         </Button>
         <Button
           type="button"
           size="sm"
           icon={sendingWelcome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-          disabled={sendingWelcome || onboardingLinkBusy || !workEmail || !paymentMethod.trim()}
+          disabled={sendingWelcome || onboardingLinkBusy || !workEmail || (!isEmployee && !paymentMethod.trim())}
           onClick={() => void handleSendOnboardingEmail()}
         >
-          {sendingWelcome ? "Sending…" : "Send link"}
+          {sendingWelcome ? "Sending…" : isEmployee ? "Send login invite" : "Send link"}
         </Button>
       </div>
     </div>

@@ -15,8 +15,10 @@ import {
   resolveWorkforceDocumentRules,
   resolvePartnerPayoutReferenceYmd,
   resolvePartnerPayoutStandardTerms,
+  resolvePartnerLevelThresholds,
   type AccessFees,
   type MarginThresholds,
+  type PartnerLevelThresholds,
 } from "@/lib/frontend-setup";
 
 export function useFrontendSetup() {
@@ -51,6 +53,10 @@ export function useFrontendSetup() {
   const workforceDocumentRules = useMemo(() => resolveWorkforceDocumentRules(setup), [setup]);
   const partnerPayoutStandardTerms = useMemo(() => resolvePartnerPayoutStandardTerms(setup), [setup]);
   const partnerPayoutReferenceYmd = useMemo(() => resolvePartnerPayoutReferenceYmd(setup), [setup]);
+  const partnerLevelThresholds = useMemo<PartnerLevelThresholds>(
+    () => resolvePartnerLevelThresholds(setup),
+    [setup],
+  );
 
   return {
     loading,
@@ -65,6 +71,7 @@ export function useFrontendSetup() {
     workforceDocumentRules,
     partnerPayoutStandardTerms,
     partnerPayoutReferenceYmd,
+    partnerLevelThresholds,
     refetch: load,
   };
 }

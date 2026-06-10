@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient } from "@/lib/supabase/server";
+import { sendWorkforcePlatformLoginInvite } from "@/lib/workforce-welcome-email-send";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +121,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let welcomeEmailSent = false;
+    let welcomeEmailWarning: string | undefined;
+
     // Optionally link the new profile to an existing payroll row
     if (payrollId) {
       await admin
@@ -129,12 +133,36 @@ export async function POST(req: NextRequest) {
           updated_at: now,
         })
         .eq("id", payrollId);
+
+      const { data: payrollRow } = await admin
+        .from("payroll_internal_costs")
+        .select("employment_type, payee_name, description")
+        .eq("id", payrollId)
+        .maybeSingle();
+
+      if (payrollRow?.employment_type === "employee") {
+        const invite = await sendWorkforcePlatformLoginInvite({
+          admin,
+          personName: payrollRow.payee_name?.trim() || full_name,
+          workEmail: email,
+          employmentType: payrollRow.employment_type,
+          description: payrollRow.description,
+        });
+        if (invite.ok) {
+          welcomeEmailSent = true;
+        } else {
+          welcomeEmailWarning = invite.warning ?? invite.error;
+          console.warn("[create-user] employee welcome email:", invite.error);
+        }
+      }
     }
 
     return NextResponse.json({
       success: true,
       userId: user.id,
       email: user.email,
+      welcomeEmailSent,
+      welcomeEmailWarning,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "User creation failed";

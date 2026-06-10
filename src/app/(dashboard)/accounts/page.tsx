@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
-import type { ListParams } from "@/services/base";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -46,10 +45,9 @@ import {
   listClientsLinkedToAccountPaged,
   listInvoicesForJobReferences,
 } from "@/services/accounts";
-import { enrichAccountsBillableRevenue } from "@/lib/account-billable-revenue";
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
-import { getSupabase, getStatusCounts } from "@/services/base";
+import { getSupabase, getStatusCounts, getAggregates } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
@@ -210,16 +208,6 @@ export default function AccountsPage() {
     [partnerPayoutStandardTerms, partnerPayoutReferenceYmd],
   );
 
-  const fetchAccountsWithBillableRevenue = useCallback(async (params: ListParams) => {
-    const result = await listAccounts(params);
-    try {
-      const data = await enrichAccountsBillableRevenue(result.data);
-      return { ...result, data };
-    } catch {
-      return result;
-    }
-  }, []);
-
   const {
     data,
     loading,
@@ -233,7 +221,7 @@ export default function AccountsPage() {
     setStatus,
     refresh,
   } = useSupabaseList<Account>({
-    fetcher: fetchAccountsWithBillableRevenue,
+    fetcher: listAccounts,
     realtimeTable: "accounts",
     initialStatus: "active",
   });
@@ -284,16 +272,14 @@ export default function AccountsPage() {
 
   const loadKpis = useCallback(async () => {
     try {
-      const supabase = getSupabase();
-      const [{ data: rows, error }, counts] = await Promise.all([
-        supabase.from("accounts").select("id, total_revenue, active_jobs").is("deleted_at", null),
+      const [revenueAgg, jobsAgg, counts] = await Promise.all([
+        getAggregates("accounts", "total_revenue"),
+        getAggregates("accounts", "active_jobs"),
         getStatusCounts("accounts", ["active", "onboarding", "inactive"], "status"),
       ]);
-      if (error) throw error;
-      const rows_ = rows ?? [];
-      setTotalAccounts(rows_.length);
-      setTotalRevenue(rows_.reduce((sum, r) => sum + (Number(r.total_revenue) || 0), 0));
-      setTotalJobs(rows_.reduce((sum, r) => sum + (Number(r.active_jobs) || 0), 0));
+      setTotalAccounts(revenueAgg.count);
+      setTotalRevenue(revenueAgg.sum);
+      setTotalJobs(jobsAgg.sum);
       setAccountStatusCounts(counts);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load KPIs");
@@ -787,17 +773,19 @@ export default function AccountsPage() {
         </motion.div>
       </div>
 
-      <AccountDetailDrawer
-        account={selectedAccount}
-        loading={detailLoading}
-        paymentOrgCtx={paymentOrgCtx}
-        onClose={() => setSelectedAccount(null)}
-        onAccountUpdated={(a) => {
-          setSelectedAccount(a);
-          refresh();
-          loadKpis();
-        }}
-      />
+      {selectedAccount ? (
+        <AccountDetailDrawer
+          account={selectedAccount}
+          loading={detailLoading}
+          paymentOrgCtx={paymentOrgCtx}
+          onClose={() => setSelectedAccount(null)}
+          onAccountUpdated={(a) => {
+            setSelectedAccount(a);
+            refresh();
+            loadKpis();
+          }}
+        />
+      ) : null}
 
       {/* ── Sync due dates confirmation ───────────────────────────── */}
       <Modal open={syncOpen} onClose={() => !syncing && setSyncOpen(false)} title="Sync invoice due dates" size="sm">
@@ -1373,10 +1361,11 @@ function AccountDetailDrawer({
   }, [account?.id]);
 
   useEffect(() => {
+    if (!account) return;
     void listCatalogServicesForPicker()
       .then(setCatalogServices)
       .catch(() => setCatalogServices([]));
-  }, []);
+  }, [account?.id]);
 
   const accountServiceLabels = useMemo(
     () => catalogServiceLabelsForIds(editCatalogServiceIds, catalogServices),

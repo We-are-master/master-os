@@ -6,7 +6,7 @@ import {
   getSchoolLesson,
   type SchoolPhaseId,
 } from "@/lib/fixfy-school-curriculum";
-import { SCHOOL_QUIZ_PASS_STARS } from "@/lib/fixfy-school-quizzes";
+import { isPhaseQuizScorePassing } from "@/lib/fixfy-school-quizzes";
 
 const STORAGE_KEY = "fixfy_school_progress_v2";
 
@@ -114,10 +114,10 @@ export function getQuizStars(progress: SchoolProgress, phaseId: SchoolPhaseId): 
 }
 
 export function isPhaseQuizPassed(progress: SchoolProgress, phaseId: SchoolPhaseId): boolean {
-  return getQuizStars(progress, phaseId) >= SCHOOL_QUIZ_PASS_STARS;
+  return isPhaseQuizScorePassing(phaseId, getQuizStars(progress, phaseId));
 }
 
-/** Lessons complete + quiz 5/5 = phase certified. */
+/** Lessons complete + phase quiz passed = phase certified. */
 export function isPhaseComplete(progress: SchoolProgress, phaseId: SchoolPhaseId): boolean {
   return isPhaseLessonsComplete(progress, phaseId) && isPhaseQuizPassed(progress, phaseId);
 }
@@ -128,7 +128,7 @@ export function previousPhaseId(phaseId: SchoolPhaseId): SchoolPhaseId | null {
   return PHASE_ORDER[idx - 1] ?? null;
 }
 
-/** First phase (Foundation) always open. Next phases need previous quiz 5/5 stars. */
+/** First phase (Foundation) always open. Next phases need previous phase quiz passed. */
 export function isPhaseUnlocked(progress: SchoolProgress, phaseId: SchoolPhaseId): boolean {
   const prev = previousPhaseId(phaseId);
   if (!prev) return true;

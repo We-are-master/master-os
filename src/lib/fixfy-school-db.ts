@@ -2,7 +2,7 @@ import {
   FIXFY_SCHOOL_PHASES,
   type SchoolPhaseId,
 } from "@/lib/fixfy-school-curriculum";
-import { SCHOOL_QUIZ_PASS_STARS } from "@/lib/fixfy-school-quizzes";
+import { isPhaseQuizScorePassing } from "@/lib/fixfy-school-quizzes";
 import type { SchoolProgress } from "@/lib/fixfy-school-progress";
 import { isLessonComplete, totalEarnedXp } from "@/lib/fixfy-school-progress";
 
@@ -80,7 +80,7 @@ export function certifiedPhaseIds(progress: SchoolProgress): SchoolPhaseId[] {
   return FIXFY_SCHOOL_PHASES.filter((p) => {
     const stars = progress.quizStars[p.id] ?? 0;
     const lessonsDone = p.lessons.every((l) => isLessonComplete(progress, l.id));
-    return lessonsDone && stars >= SCHOOL_QUIZ_PASS_STARS;
+    return lessonsDone && isPhaseQuizScorePassing(p.id, stars);
   }).map((p) => p.id);
 }
 

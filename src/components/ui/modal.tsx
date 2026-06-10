@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { X } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 interface ModalProps {
   open: boolean;
@@ -38,6 +39,23 @@ export function Modal({
   rootClassName,
   scrollBody = true,
 }: ModalProps) {
+  /** After the native file picker closes, a stray click often hits the overlay — ignore briefly. */
+  const suppressOverlayCloseUntilRef = useRef(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const onWindowFocus = () => {
+      suppressOverlayCloseUntilRef.current = Date.now() + 500;
+    };
+    window.addEventListener("focus", onWindowFocus);
+    return () => window.removeEventListener("focus", onWindowFocus);
+  }, [open]);
+
+  const handleOverlayClose = () => {
+    if (Date.now() < suppressOverlayCloseUntilRef.current) return;
+    onClose();
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -55,7 +73,7 @@ export function Modal({
             initial="hidden"
             animate="visible"
             exit="exit"
-            onClick={onClose}
+            onClick={handleOverlayClose}
             className="absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
@@ -63,6 +81,7 @@ export function Modal({
             initial="hidden"
             animate="visible"
             exit="exit"
+            onClick={(e) => e.stopPropagation()}
             className={cn(
               "relative w-full min-h-0 flex flex-col max-h-[min(90dvh,100dvh-2rem)] bg-card rounded-xl shadow-modal border border-fx-line overflow-hidden my-auto",
               scrollBody ? "h-fit" : "h-[min(90dvh,100dvh-2rem)] min-h-0",

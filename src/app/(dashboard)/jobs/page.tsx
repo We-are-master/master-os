@@ -1215,9 +1215,18 @@ function JobsPageContent() {
     return () => { cancelled = true; };
   }, [data]);
 
+  const attachSitePhotosToJob = useCallback(async (jobId: string, files: File[]) => {
+    if (!files.length) return;
+    const urls = await uploadQuoteInviteImages(files, `job/${jobId}`);
+    await updateJob(jobId, { images: capJobImagesArray(urls) });
+  }, []);
+
   const handleCreate = useCallback(async (
     formData: Partial<Job> & { __createZendeskTicket?: boolean },
-    opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
+    opts?: {
+      series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
+      pendingSitePhotos?: File[];
+    },
   ) => {
     // ─── Zendesk: open a new ticket when the modal asked us to ──────────
     // The modal sets `__createZendeskTicket` when staff ticked "No ticket —
@@ -1384,9 +1393,18 @@ function JobsPageContent() {
             max_occurrences: opts.series.max_occurrences ?? null,
           },
         });
+        const firstJob = seriesResult.jobs[0];
+        if (firstJob && opts.pendingSitePhotos?.length) {
+          try {
+            await attachSitePhotosToJob(firstJob.id, opts.pendingSitePhotos);
+          } catch (photoErr) {
+            toast.error(
+              getErrorMessage(photoErr, "Series created but photos could not be uploaded — add them from the job page."),
+            );
+          }
+        }
         setCreateOpen(false);
         toast.success(`Series created with ${seriesResult.jobs.length} occurrences`);
-        const firstJob = seriesResult.jobs[0];
         if (firstJob) {
           setJobsNavQueue(seriesResult.jobs.map((j) => j.id));
           router.push(`/jobs/${firstJob.id}`);
@@ -1458,6 +1476,15 @@ function JobsPageContent() {
         external_source: formData.external_source ?? null,
         external_ref:    formData.external_ref    ?? null,
       });
+      if (opts?.pendingSitePhotos?.length) {
+        try {
+          await attachSitePhotosToJob(result.id, opts.pendingSitePhotos);
+        } catch (photoErr) {
+          toast.error(
+            getErrorMessage(photoErr, "Job created but photos could not be uploaded — add them from the job page."),
+          );
+        }
+      }
       setCreateOpen(false);
       toast.success("Job created");
       setJobsNavQueue([result.id]);
@@ -1497,7 +1524,7 @@ function JobsPageContent() {
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
     }
-  }, [refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]);
+  }, [attachSitePhotosToJob, refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(job, newStatus);
@@ -2965,7 +2992,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
   onClose: () => void;
   onCreate: (
     data: Partial<Job>,
-    opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
+    opts?: {
+      series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
+      pendingSitePhotos?: File[];
+    },
   ) => void;
 }) {
   const { accessFees } = useFrontendSetup();
@@ -2988,7 +3018,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
     end_time: "17:00",
     job_type: "fixed",
     scope: "",
-    additional_notes: "",
     report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
@@ -3002,7 +3031,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
   const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
-  const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
@@ -3331,18 +3359,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
-    let uploadedImageUrls: string[] = [];
-    if (sitePhotoFiles.length > 0) {
-      setUploadingPhotos(true);
-      try {
-        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, "job-new");
-      } catch (err) {
-        toast.error(getErrorMessage(err, "Photo upload failed"));
-        setUploadingPhotos(false);
-        return;
-      }
-      setUploadingPhotos(false);
-    }
+    const pendingSitePhotos = sitePhotoFiles.length > 0 ? [...sitePhotoFiles] : undefined;
 
     onCreate({
       // Zendesk linkage: either paste an existing ticket id, or signal to the
@@ -3385,10 +3402,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
       job_kind,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
-      additional_notes: form.additional_notes.trim() || undefined,
       report_link: form.report_link.trim() || undefined,
-      images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
-    }, schedV2.series ? { series: schedV2.series } : undefined);
+    }, schedV2.series
+      ? { series: schedV2.series, pendingSitePhotos }
+      : pendingSitePhotos
+        ? { pendingSitePhotos }
+        : undefined);
     setSitePhotoFiles([]);
     setRecurrence(DEFAULT_RECURRENCE_FORM);
     lastAutoPartnerCost.current = null;
@@ -3410,7 +3429,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
       end_time: "17:00",
       job_type: "fixed",
       scope: "",
-      additional_notes: "",
       report_link: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
@@ -3836,7 +3854,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
           <details className="rounded-xl border border-border-light bg-surface-hover/20 p-2.5 min-w-0" open>
             <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-primary">
-              Scope & notes
+              Scope
               <span className="text-[11px] font-normal text-text-tertiary">required ▾</span>
             </summary>
             <div className="mt-2.5 space-y-2.5 min-w-0">
@@ -3845,19 +3863,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <textarea
                   value={form.scope}
                   onChange={(e) => update("scope", e.target.value)}
-                  rows={3}
-                  placeholder="Describe exactly what should be done on this job."
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[52px]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Notes</label>
-                <textarea
-                  value={form.additional_notes}
-                  onChange={(e) => update("additional_notes", e.target.value)}
-                  rows={2}
-                  placeholder="Internal only — parking, keys, client preferences, things not in scope…"
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[40px]"
+                  rows={4}
+                  placeholder="Describe what should be done — work details, access, parking, keys, client preferences…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
                 />
               </div>
               <div>
@@ -3902,7 +3910,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
                       Add photos
                     </span>
                   </label>
-                  {uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" aria-hidden /> : null}
                 </div>
                 {sitePhotoFiles.length > 0 ? (
                   <div className="flex flex-wrap gap-2 pt-1">
@@ -4171,8 +4178,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
             Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
           </p>
           <div className="flex items-center justify-end gap-2 min-w-0">
-            <Button variant="outline" onClick={onClose} type="button" disabled={uploadingPhotos}>Cancel</Button>
-            <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos} className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]">Create Job</Button>
+            <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+            <Button type="submit" className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]">Create Job</Button>
           </div>
         </div>
       </form>

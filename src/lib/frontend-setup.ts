@@ -21,6 +21,13 @@ import {
   normalizePartnerPayoutStandardTerms,
   ORG_PARTNER_PAYOUT_STANDARD_TERMS,
 } from "@/lib/partner-payout-schedule";
+import {
+  clampElitePlusMultiplier,
+  clampPartnerLevelGbp,
+  DEFAULT_PARTNER_LEVEL_THRESHOLDS,
+  type PartnerLevelGoalMode,
+  resolvePartnerLevelThresholds,
+} from "@/lib/partner-revenue-goal";
 
 /**
  * Parsed from `company_settings.frontend_setup` (Settings → Setup).
@@ -116,6 +123,17 @@ export type FrontendSetup = {
   partner_document_rules?: PartnerDocRuleRow[];
   /** Workforce document rules — employee + contractor (Settings → Setup). */
   workforce_document_rules?: WorkforceDocumentRules;
+
+  /**
+   * Partner level gamification — monthly £ thresholds for L2–L4 (Settings → Setup).
+   * Shown on Partners list and partner drawer.
+   */
+  partner_level_monthly_goal_gbp?: number;
+  partner_level_goal_mode?: PartnerLevelGoalMode;
+  partner_level_l2_min_gbp?: number;
+  partner_level_l3_min_gbp?: number;
+  partner_level_l4_min_gbp?: number;
+  partner_level_elite_plus_multiplier?: number;
 
   /**
    * Org-wide default partner self-bill payout schedule (Settings → Setup).
@@ -472,6 +490,39 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
   base.workforce_document_rules = mergeWorkforceDocumentRules(o.workforce_document_rules);
+  if (o.partner_level_monthly_goal_gbp !== undefined) {
+    base.partner_level_monthly_goal_gbp = clampPartnerLevelGbp(
+      o.partner_level_monthly_goal_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.monthlyGoalGbp,
+    );
+  }
+  if (o.partner_level_goal_mode === "fixed" || o.partner_level_goal_mode === "weekly_pace") {
+    base.partner_level_goal_mode = o.partner_level_goal_mode;
+  }
+  if (o.partner_level_l2_min_gbp !== undefined) {
+    base.partner_level_l2_min_gbp = clampPartnerLevelGbp(
+      o.partner_level_l2_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l2MinGbp,
+    );
+  }
+  if (o.partner_level_l3_min_gbp !== undefined) {
+    base.partner_level_l3_min_gbp = clampPartnerLevelGbp(
+      o.partner_level_l3_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l3MinGbp,
+    );
+  }
+  if (o.partner_level_l4_min_gbp !== undefined) {
+    base.partner_level_l4_min_gbp = clampPartnerLevelGbp(
+      o.partner_level_l4_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l4MinGbp,
+    );
+  }
+  if (o.partner_level_elite_plus_multiplier !== undefined) {
+    base.partner_level_elite_plus_multiplier = clampElitePlusMultiplier(
+      o.partner_level_elite_plus_multiplier,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.elitePlusMultiplier,
+    );
+  }
   if (o.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(o.partner_payout_standard_terms);
   }
@@ -480,6 +531,9 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   }
   return base;
 }
+
+export { resolvePartnerLevelThresholds };
+export type { PartnerLevelGoalMode, PartnerLevelThresholds } from "@/lib/partner-revenue-goal";
 
 export function resolvePartnerPayoutStandardTerms(setup?: FrontendSetup | null): string {
   return normalizePartnerPayoutStandardTerms(setup?.partner_payout_standard_terms);
@@ -630,6 +684,42 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.workforce_document_rules !== undefined) {
     base.workforce_document_rules = mergeWorkforceDocumentRules(patch.workforce_document_rules);
+  }
+  if (patch.partner_level_monthly_goal_gbp !== undefined) {
+    base.partner_level_monthly_goal_gbp = clampPartnerLevelGbp(
+      patch.partner_level_monthly_goal_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.monthlyGoalGbp,
+    );
+  }
+  if (patch.partner_level_goal_mode !== undefined) {
+    base.partner_level_goal_mode =
+      patch.partner_level_goal_mode === "fixed" || patch.partner_level_goal_mode === "weekly_pace"
+        ? patch.partner_level_goal_mode
+        : DEFAULT_PARTNER_LEVEL_THRESHOLDS.goalMode;
+  }
+  if (patch.partner_level_l2_min_gbp !== undefined) {
+    base.partner_level_l2_min_gbp = clampPartnerLevelGbp(
+      patch.partner_level_l2_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l2MinGbp,
+    );
+  }
+  if (patch.partner_level_l3_min_gbp !== undefined) {
+    base.partner_level_l3_min_gbp = clampPartnerLevelGbp(
+      patch.partner_level_l3_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l3MinGbp,
+    );
+  }
+  if (patch.partner_level_l4_min_gbp !== undefined) {
+    base.partner_level_l4_min_gbp = clampPartnerLevelGbp(
+      patch.partner_level_l4_min_gbp,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.l4MinGbp,
+    );
+  }
+  if (patch.partner_level_elite_plus_multiplier !== undefined) {
+    base.partner_level_elite_plus_multiplier = clampElitePlusMultiplier(
+      patch.partner_level_elite_plus_multiplier,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.elitePlusMultiplier,
+    );
   }
   if (patch.partner_payout_standard_terms !== undefined) {
     base.partner_payout_standard_terms = normalizePartnerPayoutStandardTerms(patch.partner_payout_standard_terms);

@@ -1,6 +1,8 @@
 /** Partner monthly revenue levels — mirrors trade portal gamification. */
 export const DEFAULT_PARTNER_MONTHLY_GOAL_GBP = 5000;
 
+export type PartnerLevelGoalMode = "fixed" | "weekly_pace";
+
 export type PartnerLevelTone = "mute" | "coral" | "amber" | "green" | "navy";
 
 export type PartnerLevelConfig = {
@@ -60,10 +62,89 @@ export const PARTNER_LEVEL_ICONS: Record<number, PartnerLevelIconId> = {
   5: "gem",
 };
 
-export function resolvePartnerMonthlyGoal(weekEarnings: number): number {
-  if (weekEarnings <= 0) return DEFAULT_PARTNER_MONTHLY_GOAL_GBP;
+export type PartnerLevelThresholds = {
+  monthlyGoalGbp: number;
+  goalMode: PartnerLevelGoalMode;
+  l2MinGbp: number;
+  l3MinGbp: number;
+  l4MinGbp: number;
+  elitePlusMultiplier: number;
+};
+
+export type PartnerLevelSetupSlice = {
+  partner_level_monthly_goal_gbp?: number;
+  partner_level_goal_mode?: PartnerLevelGoalMode;
+  partner_level_l2_min_gbp?: number;
+  partner_level_l3_min_gbp?: number;
+  partner_level_l4_min_gbp?: number;
+  partner_level_elite_plus_multiplier?: number;
+};
+
+export const MIN_PARTNER_LEVEL_GBP = 100;
+export const MAX_PARTNER_LEVEL_GBP = 500_000;
+export const MIN_PARTNER_ELITE_PLUS_MULTIPLIER = 1.5;
+export const MAX_PARTNER_ELITE_PLUS_MULTIPLIER = 5;
+
+export const DEFAULT_PARTNER_LEVEL_THRESHOLDS: PartnerLevelThresholds = {
+  monthlyGoalGbp: DEFAULT_PARTNER_MONTHLY_GOAL_GBP,
+  goalMode: "weekly_pace",
+  l2MinGbp: 1250,
+  l3MinGbp: 2500,
+  l4MinGbp: DEFAULT_PARTNER_MONTHLY_GOAL_GBP,
+  elitePlusMultiplier: ELITE_PLUS_CONFIG.stretchMultiplier,
+};
+
+export function clampPartnerLevelGbp(raw: unknown, fallback: number): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_PARTNER_LEVEL_GBP, Math.max(MIN_PARTNER_LEVEL_GBP, Math.round(n)));
+}
+
+export function clampElitePlusMultiplier(raw: unknown, fallback: number): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_PARTNER_ELITE_PLUS_MULTIPLIER, Math.max(MIN_PARTNER_ELITE_PLUS_MULTIPLIER, Math.round(n * 10) / 10));
+}
+
+export function resolvePartnerLevelThresholds(setup?: PartnerLevelSetupSlice | null): PartnerLevelThresholds {
+  const monthlyGoalGbp = clampPartnerLevelGbp(
+    setup?.partner_level_monthly_goal_gbp,
+    DEFAULT_PARTNER_MONTHLY_GOAL_GBP,
+  );
+  const goalMode: PartnerLevelGoalMode =
+    setup?.partner_level_goal_mode === "fixed" || setup?.partner_level_goal_mode === "weekly_pace"
+      ? setup.partner_level_goal_mode
+      : DEFAULT_PARTNER_LEVEL_THRESHOLDS.goalMode;
+
+  let l2MinGbp = clampPartnerLevelGbp(setup?.partner_level_l2_min_gbp, Math.round(monthlyGoalGbp * 0.25));
+  let l3MinGbp = clampPartnerLevelGbp(setup?.partner_level_l3_min_gbp, Math.round(monthlyGoalGbp * 0.5));
+  let l4MinGbp = clampPartnerLevelGbp(setup?.partner_level_l4_min_gbp, monthlyGoalGbp);
+
+  l2MinGbp = Math.min(l2MinGbp, l3MinGbp, l4MinGbp);
+  l3MinGbp = Math.max(l2MinGbp, Math.min(l3MinGbp, l4MinGbp));
+  l4MinGbp = Math.max(l3MinGbp, l4MinGbp);
+
+  return {
+    monthlyGoalGbp,
+    goalMode,
+    l2MinGbp,
+    l3MinGbp,
+    l4MinGbp,
+    elitePlusMultiplier: clampElitePlusMultiplier(
+      setup?.partner_level_elite_plus_multiplier,
+      DEFAULT_PARTNER_LEVEL_THRESHOLDS.elitePlusMultiplier,
+    ),
+  };
+}
+
+export function resolvePartnerMonthlyGoal(
+  weekEarnings: number,
+  thresholds: PartnerLevelThresholds = DEFAULT_PARTNER_LEVEL_THRESHOLDS,
+): number {
+  if (thresholds.goalMode === "fixed") return thresholds.monthlyGoalGbp;
+  if (weekEarnings <= 0) return thresholds.monthlyGoalGbp;
   const pace = Math.ceil((weekEarnings * 4.3) / 250) * 250;
-  return Math.max(DEFAULT_PARTNER_MONTHLY_GOAL_GBP, pace);
+  return Math.max(thresholds.monthlyGoalGbp, pace);
 }
 
 export type PartnerLevelState = {
@@ -80,17 +161,29 @@ export type PartnerLevelState = {
   icon: PartnerLevelIconId;
 };
 
-function levelForPct(pct: number): PartnerLevelConfig {
-  if (pct >= 100) return PARTNER_LEVELS[3];
-  if (pct >= 50) return PARTNER_LEVELS[2];
-  if (pct >= 25) return PARTNER_LEVELS[1];
+function levelForEarned(earned: number, thresholds: PartnerLevelThresholds): PartnerLevelConfig {
+  if (earned >= thresholds.l4MinGbp) return PARTNER_LEVELS[3];
+  if (earned >= thresholds.l3MinGbp) return PARTNER_LEVELS[2];
+  if (earned >= thresholds.l2MinGbp) return PARTNER_LEVELS[1];
   return PARTNER_LEVELS[0];
 }
 
-export function partnerLevelFromProgress(earned: number, goal: number): PartnerLevelState {
+function nextLevelThreshold(currentLevel: number, thresholds: PartnerLevelThresholds): number | null {
+  if (currentLevel === 1) return thresholds.l2MinGbp;
+  if (currentLevel === 2) return thresholds.l3MinGbp;
+  if (currentLevel === 3) return thresholds.l4MinGbp;
+  if (currentLevel === 4) return thresholds.l4MinGbp * thresholds.elitePlusMultiplier;
+  return null;
+}
+
+export function partnerLevelFromProgress(
+  earned: number,
+  goal: number,
+  thresholds: PartnerLevelThresholds = DEFAULT_PARTNER_LEVEL_THRESHOLDS,
+): PartnerLevelState {
   const safeGoal = Math.max(1, goal);
   const pct = Math.round((earned / safeGoal) * 100);
-  const stretchGoal = safeGoal * ELITE_PLUS_CONFIG.stretchMultiplier;
+  const stretchGoal = thresholds.l4MinGbp * thresholds.elitePlusMultiplier;
   const isElitePlus = earned >= stretchGoal;
 
   if (isElitePlus) {
@@ -109,7 +202,7 @@ export function partnerLevelFromProgress(earned: number, goal: number): PartnerL
     };
   }
 
-  if (earned >= safeGoal) {
+  if (earned >= thresholds.l4MinGbp) {
     const toDouble = Math.max(0, stretchGoal - earned);
     return {
       level: PARTNER_LEVELS[3].level,
@@ -122,18 +215,18 @@ export function partnerLevelFromProgress(earned: number, goal: number): PartnerL
       isElitePlus: false,
       footerLine:
         toDouble > 0
-          ? `Elite — £${Math.ceil(toDouble).toLocaleString("en-GB")} to double goal`
+          ? `Elite — £${Math.ceil(toDouble).toLocaleString("en-GB")} to Elite+`
           : "Elite — top priority this month",
       barPct: 100,
       icon: PARTNER_LEVEL_ICONS[4],
     };
   }
 
-  const current = levelForPct(pct);
-  const nextIdx = PARTNER_LEVELS.findIndex((l) => l.level === current.level) + 1;
-  const next = nextIdx < PARTNER_LEVELS.length ? PARTNER_LEVELS[nextIdx] : null;
-  const nextThreshold = next ? (next.minPct / 100) * safeGoal : safeGoal;
-  const amountToNext = Math.max(0, Math.ceil(nextThreshold - earned));
+  const current = levelForEarned(earned, thresholds);
+  const nextThreshold = nextLevelThreshold(current.level, thresholds);
+  const amountToNext =
+    nextThreshold != null ? Math.max(0, Math.ceil(nextThreshold - earned)) : 0;
+  const nextLevel = current.level + 1;
 
   return {
     level: current.level,
@@ -144,9 +237,10 @@ export function partnerLevelFromProgress(earned: number, goal: number): PartnerL
     goal: safeGoal,
     earned,
     isElitePlus: false,
-    footerLine: next
-      ? `£${amountToNext.toLocaleString("en-GB")} to Level ${next.level}`
-      : current.priorityLabel,
+    footerLine:
+      nextThreshold != null && amountToNext > 0
+        ? `£${amountToNext.toLocaleString("en-GB")} to Level ${nextLevel}`
+        : current.priorityLabel,
     barPct: Math.min(100, pct),
     icon: PARTNER_LEVEL_ICONS[current.level] ?? "circle-dot",
   };

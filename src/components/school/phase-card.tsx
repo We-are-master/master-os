@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Lock, CheckCircle2, ChevronRight, Sparkles, Star } from "lucide-react";
+import { Lock, CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SchoolPhase } from "@/lib/fixfy-school-curriculum";
 import {
@@ -14,7 +14,10 @@ import {
   previousPhaseId,
   type SchoolProgress,
 } from "@/lib/fixfy-school-progress";
-import { SCHOOL_QUIZ_PASS_STARS } from "@/lib/fixfy-school-quizzes";
+import {
+  getPhaseQuizPassMinCorrect,
+  getPhaseQuizQuestionCount,
+} from "@/lib/fixfy-school-quizzes";
 import { getLocalizedPhase } from "@/lib/fixfy-school-localized";
 import { useFixfySchoolLocale } from "@/hooks/use-fixfy-school-locale";
 
@@ -56,10 +59,12 @@ export function PhaseCard({ phase, progress }: Props) {
   const complete = isPhaseComplete(progress, phase.id);
   const lessonsDone = isPhaseLessonsComplete(progress, phase.id);
   const quizPassed = isPhaseQuizPassed(progress, phase.id);
-  const quizStars = getQuizStars(progress, phase.id);
+  const prevPhase = previousPhaseId(phase.id);
+  const quizScore = getQuizStars(progress, phase.id);
+  const quizTotal = getPhaseQuizQuestionCount(phase.id);
+  const quizPassMin = prevPhase ? getPhaseQuizPassMinCorrect(prevPhase) : 0;
   const stats = phaseProgress(progress, phase.id);
   const accent = ACCENT[phase.accent] ?? ACCENT.coral;
-  const prevPhase = previousPhaseId(phase.id);
   const prevTitle = prevPhase ? getLocalizedPhase(prevPhase, locale)?.title : null;
 
   const inner = (
@@ -78,7 +83,7 @@ export function PhaseCard({ phase, progress }: Props) {
             <Lock className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
             <p className="text-sm font-medium text-text-secondary">Locked</p>
             <p className="text-xs text-text-tertiary mt-1">
-              Score {SCHOOL_QUIZ_PASS_STARS}/{SCHOOL_QUIZ_PASS_STARS} on{prevTitle ? ` ${prevTitle}` : " the previous phase"} quiz
+              Pass the{prevTitle ? ` ${prevTitle}` : " previous phase"} quiz ({quizPassMin}+ correct)
             </p>
           </div>
         </div>
@@ -126,19 +131,15 @@ export function PhaseCard({ phase, progress }: Props) {
         </div>
         {unlocked && lessonsDone && (
           <div className="flex items-center justify-between text-[11px]">
-            <span className="text-text-tertiary">Quiz stars</span>
-            <span className="inline-flex items-center gap-0.5">
-              {Array.from({ length: SCHOOL_QUIZ_PASS_STARS }).map((_, i) => (
-                <Star
-                  key={i}
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    i < quizStars ? "fill-amber-400 text-amber-400" : "text-text-tertiary/40",
-                  )}
-                />
-              ))}
+            <span className="text-text-tertiary">Quiz score</span>
+            <span className="inline-flex items-center gap-0.5 tabular-nums">
+              <span className={cn("font-medium", quizPassed ? "text-emerald-600" : "text-amber-700 dark:text-amber-400")}>
+                {quizScore}/{quizTotal}
+              </span>
               {!quizPassed && (
-                <span className="text-amber-700 dark:text-amber-400 font-medium ml-1">5/5 to pass</span>
+                <span className="text-text-tertiary ml-1">
+                  · need {getPhaseQuizPassMinCorrect(phase.id)}/{quizTotal}
+                </span>
               )}
             </span>
           </div>

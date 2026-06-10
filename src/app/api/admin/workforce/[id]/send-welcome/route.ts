@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
@@ -7,9 +6,12 @@ import {
   buildWorkforceWelcomeEmailHTML,
   formatWorkforceWelcomeRole,
 } from "@/lib/workforce-welcome-email-template";
-import type { CompanyBranding } from "@/lib/pdf/quote-template";
-
-const DEFAULT_FROM = "Fixfy <support@getfixfy.com>";
+import {
+  loadWorkforceEmailBranding,
+  sendWorkforcePlatformLoginInvite,
+  sendWorkforceWelcomeEmail,
+  workforcePlatformLoginUrl,
+} from "@/lib/workforce-welcome-email-send";
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth();
@@ -47,6 +49,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "Set work email on the person profile first" }, { status: 400 });
   }
 
+  const isEmployee = person.employment_type === "employee";
+
+  if (isEmployee) {
+    const platformLoginUrl = workforcePlatformLoginUrl(email);
+    if (!sendEmail) {
+      return NextResponse.json({
+        ok: true,
+        platformLoginUrl,
+        sentTo: email,
+      });
+    }
+
+    const sent = await sendWorkforcePlatformLoginInvite({
+      admin,
+      personName: person.payee_name?.trim() || "there",
+      workEmail: email,
+      employmentType: person.employment_type,
+      description: person.description,
+      customMessage,
+    });
+
+    if (!sent.ok) {
+      if (sent.warning) {
+        return NextResponse.json({ ok: true, platformLoginUrl, warning: sent.warning });
+      }
+      return NextResponse.json({ error: sent.error, platformLoginUrl }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, platformLoginUrl, sentTo: sent.sentTo });
+  }
+
   if (sendEmail && !person.payment_method) {
     return NextResponse.json(
       { error: "Set payment method in Finance before emailing the welcome invite" },
@@ -79,49 +112,33 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
   const onboardingUrl = `${baseUrl}/onboard/${encodeURIComponent(token)}`;
 
-  const { data: brandingRow } = await admin.from("company_settings").select("*").maybeSingle();
-  const branding: CompanyBranding = {
-    companyName: (brandingRow as { company_name?: string } | null)?.company_name ?? "Fixfy",
-    address: (brandingRow as { address?: string } | null)?.address ?? "",
-    phone: (brandingRow as { phone?: string } | null)?.phone ?? "",
-    email: (brandingRow as { email?: string } | null)?.email ?? "",
-    logoUrl: (brandingRow as { logo_url?: string } | null)?.logo_url ?? undefined,
-    primaryColor: (brandingRow as { primary_color?: string } | null)?.primary_color ?? undefined,
-    tagline: (brandingRow as { tagline?: string } | null)?.tagline ?? undefined,
-  };
-
+  const branding = await loadWorkforceEmailBranding(admin);
   const role = formatWorkforceWelcomeRole(person.employment_type, person.description);
 
   const html = buildWorkforceWelcomeEmailHTML(branding, {
     personName: person.payee_name?.trim() || "there",
     workEmail: email,
     role,
-    onboardingUrl,
+    actionUrl: onboardingUrl,
+    variant: "onboarding",
     customMessage,
   });
 
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!sendEmail || !resendKey) {
+  if (!sendEmail) {
     return NextResponse.json({
       ok: true,
       onboardingUrl,
       requestId: requestRow.id,
-      sentTo: sendEmail ? undefined : email,
-      warning: sendEmail && !resendKey ? "RESEND_API_KEY not set — email not sent" : undefined,
+      sentTo: email,
     });
   }
 
-  const resend = new Resend(resendKey);
-  const from = process.env.RESEND_FROM_EMAIL?.trim() || DEFAULT_FROM;
-  const send = await resend.emails.send({
-    from,
-    to: email,
-    subject: "Welcome to the Fixfy Operating System",
-    html,
-  });
-
-  if (send.error) {
-    return NextResponse.json({ error: send.error.message }, { status: 500 });
+  const send = await sendWorkforceWelcomeEmail(email, html);
+  if (!send.ok) {
+    if (send.warning) {
+      return NextResponse.json({ ok: true, onboardingUrl, requestId: requestRow.id, warning: send.warning });
+    }
+    return NextResponse.json({ error: send.error, onboardingUrl, requestId: requestRow.id }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, onboardingUrl, requestId: requestRow.id, sentTo: email });

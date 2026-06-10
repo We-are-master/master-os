@@ -1789,11 +1789,28 @@ export function SelfBillDetailDrawer({
     : `Created ${formatDate(sb.created_at)}`;
 
   const footerBtnClass =
-    "min-h-9 flex-1 min-w-[6.5rem] max-w-[11rem] !flex-nowrap items-center justify-center text-center leading-none";
+    "min-h-9 flex-1 min-w-[7rem] basis-[calc(50%-0.25rem)] sm:basis-auto sm:max-w-[11rem] !flex-nowrap items-center justify-center text-center leading-none";
+
+  const cancelBtnClass =
+    "inline-flex min-h-9 flex-1 min-w-[7rem] basis-[calc(50%-0.25rem)] sm:basis-auto sm:max-w-[11rem] items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium leading-none text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400";
+
+  const cancelButton = canTransition ? (
+    <button
+      type="button"
+      onClick={() => {
+        setCancelReason("");
+        setCancelModalOpen(true);
+      }}
+      className={cancelBtnClass}
+      title="Cancel self-bill (does not affect job or invoice)"
+    >
+      <Ban className="h-3.5 w-3.5 shrink-0" /> Cancel
+    </button>
+  ) : null;
 
   const footer = tab === "details" ? (
-    <div className="px-4 pb-3 pt-2.5 space-y-2.5">
-      <div className="flex flex-wrap items-center justify-center gap-2 w-full">
+    <div className="px-4 pb-3 pt-2.5 space-y-2">
+      <div className="flex w-full flex-wrap items-stretch justify-center gap-2">
         {isPaid ? (
           <Button
             variant="outline"
@@ -1805,28 +1822,18 @@ export function SelfBillDetailDrawer({
             Reopen self-bill
           </Button>
         ) : isRejected ? null : isDraft ? (
-          <div className="flex w-full max-w-sm mx-auto flex-col items-center gap-2">
+          <>
             <Button
               variant="success"
               size="sm"
-              className="w-full min-h-9 !flex-nowrap items-center justify-center text-center leading-none"
+              className={footerBtnClass}
               icon={<Check className="h-3.5 w-3.5 shrink-0" />}
               onClick={onMarkReadyToPay}
             >
               Mark Ready to Pay
             </Button>
-            {showRecordPartnerPayment && jobs.length > 0 ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full min-h-9 !flex-nowrap items-center justify-center text-center leading-none"
-                icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                onClick={openRecordPartnerPayModal}
-              >
-                Partner payment — partial / advance
-              </Button>
-            ) : null}
-          </div>
+            {cancelButton}
+          </>
         ) : isReady ? (
           <>
             {showRecordPartnerPayment && jobs.length > 0 ? (
@@ -1860,23 +1867,20 @@ export function SelfBillDetailDrawer({
             >
               Mark as paid
             </Button>
+            {cancelButton}
           </>
         ) : null}
       </div>
-      {canTransition ? (
-        <div className="flex items-center justify-center">
-          <button
-            type="button"
-            onClick={() => {
-              setCancelReason("");
-              setCancelModalOpen(true);
-            }}
-            className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 px-5 py-2 text-[11px] font-medium leading-none text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
-            title="Cancel self-bill (does not affect job or invoice)"
-          >
-            <Ban className="h-3.5 w-3.5 shrink-0" /> Cancel
-          </button>
-        </div>
+      {isDraft && showRecordPartnerPayment && jobs.length > 0 ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full min-h-9 !flex-nowrap items-center justify-center text-center leading-none"
+          icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+          onClick={openRecordPartnerPayModal}
+        >
+          Partner payment — partial / advance
+        </Button>
       ) : null}
     </div>
   ) : undefined;

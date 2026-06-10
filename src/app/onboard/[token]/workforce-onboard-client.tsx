@@ -54,6 +54,7 @@ import { getSupabase } from "@/services/base";
 import type { PayrollInternalProfile } from "@/types/database";
 
 const WORKFORCE_CONTRACTOR_FEE_LABEL = "Service fee";
+const WISE_UK_ACCOUNT_REFERRAL_URL = "https://wise.com/invite/dic/victors5530";
 
 type PayrollDocumentFiles = Record<string, { path?: string; file_name?: string } | undefined>;
 
@@ -982,6 +983,28 @@ export default function WorkforceOnboardClient() {
                 </div>
               </div>
               <div className="ob-card__b">
+                {!bankValid ? (
+                  <div className="ob-bank-tip">
+                    <span className="ob-bank-tip__ic" aria-hidden>
+                      <Globe className="h-[18px] w-[18px]" />
+                    </span>
+                    <div className="ob-bank-tip__body">
+                      <p className="ob-bank-tip__t">Don&apos;t have a UK bank account yet?</p>
+                      <p className="ob-bank-tip__s">
+                        We recommend opening one with{" "}
+                        <a
+                          href={WISE_UK_ACCOUNT_REFERRAL_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Wise
+                        </a>
+                        . You&apos;ll get a UK sort code and account number for GBP salary payments — then paste
+                        those details here.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="ob-field">
                   <label>
                     Account holder name <span className="req">*</span>
