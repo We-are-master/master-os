@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
+import { WorkforceProfilePhoto } from "@/components/settings/workforce-profile-photo";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import {
@@ -153,6 +154,8 @@ function ProfileTab() {
     confirm: "",
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [workforcePhotoUrl, setWorkforcePhotoUrl] = useState<string | null>(null);
+  const [workforceLinked, setWorkforceLinked] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -231,8 +234,12 @@ function ProfileTab() {
             </div>
           </CardHeader>
           <div className="p-6 space-y-4">
-            <div className="flex items-center gap-4 mb-6">
-              <Avatar name={form.full_name || "User"} size="xl" />
+            <div className="flex items-center gap-4 mb-2">
+              <Avatar
+                src={workforceLinked ? workforcePhotoUrl : null}
+                name={form.full_name || "User"}
+                size="xl"
+              />
               <div>
                 <p className="text-lg font-bold text-text-primary">{form.full_name || "Your Name"}</p>
                 <p className="text-sm text-text-tertiary">{form.email}</p>
@@ -243,6 +250,10 @@ function ProfileTab() {
                 )}
               </div>
             </div>
+            <WorkforceProfilePhoto
+              onPhotoChange={setWorkforcePhotoUrl}
+              onLinkedChange={setWorkforceLinked}
+            />
 
             <div className="grid grid-cols-2 gap-4">
               <div>

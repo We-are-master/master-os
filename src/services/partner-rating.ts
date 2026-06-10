@@ -116,12 +116,18 @@ export async function refreshPartnerRating(
   };
 }
 
-export async function addManualPartnerKudos(
+export async function addManualPartnerFeedback(
   partnerId: string,
-  input: { notes?: string; jobId?: string; createdByUserId?: string },
+  input: {
+    kind: PartnerFeedbackKind;
+    notes?: string;
+    jobId?: string;
+    createdByUserId?: string;
+  },
   supabase?: SupabaseClient,
 ): Promise<PartnerRatingMeta> {
   const client = supabase ?? getSupabase();
+  const kind = input.kind === "complaint" ? "complaint" : "praise";
   const notes = input.notes?.trim().slice(0, 2000) || null;
   const jobId = input.jobId?.trim() || null;
 
@@ -143,16 +149,22 @@ export async function addManualPartnerKudos(
       .select("id")
       .eq("partner_id", partnerId)
       .eq("job_id", jobId)
-      .eq("kind", "praise")
+      .eq("kind", kind)
       .eq("source", "manual")
       .maybeSingle();
-    if (dup?.id) throw new Error("Kudos already recorded for this job");
+    if (dup?.id) {
+      throw new Error(
+        kind === "complaint"
+          ? "Negative rating already recorded for this job"
+          : "Positive rating already recorded for this job",
+      );
+    }
   }
 
   const { error } = await client.from("partner_feedback").insert({
     partner_id: partnerId,
     job_id: jobId,
-    kind: "praise",
+    kind,
     source: "manual",
     notes,
     job_reference: jobReference,
@@ -161,6 +173,19 @@ export async function addManualPartnerKudos(
   if (error) throw error;
 
   return refreshPartnerRating(partnerId, client);
+}
+
+/** @deprecated Use {@link addManualPartnerFeedback} with `kind: "praise"`. */
+export async function addManualPartnerKudos(
+  partnerId: string,
+  input: { notes?: string; jobId?: string; createdByUserId?: string },
+  supabase?: SupabaseClient,
+): Promise<PartnerRatingMeta> {
+  return addManualPartnerFeedback(
+    partnerId,
+    { ...input, kind: "praise" },
+    supabase,
+  );
 }
 
 /** Recompute stored ratings for partners still at legacy 0 (no events → 5). */

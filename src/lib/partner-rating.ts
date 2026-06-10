@@ -3,10 +3,10 @@ import type { JobStatus } from "@/types/database";
 /** Maximum partner score (stars). */
 export const PARTNER_RATING_MAX = 5;
 
-/** Points deducted per partner-fault complaint (≈10% of max). */
-export const PARTNER_COMPLAINT_PENALTY_POINTS = 0.5;
+/** Points deducted per complaint (on-hold auto or manual bad rating). */
+export const PARTNER_COMPLAINT_PENALTY_POINTS = 0.25;
 
-/** Points added per praise event (customer review 4+ or manual kudos). */
+/** Points added per praise event (customer review 4+ or manual good rating). */
 export const PARTNER_PRAISE_POINTS = 0.25;
 
 /** Minimum customer review (1–5) that earns automatic praise. */
@@ -27,22 +27,14 @@ export type PartnerComplaintJob = {
   status: JobStatus;
 };
 
-/**
- * How much of {@link PARTNER_COMPLAINT_PENALTY_POINTS} applies for this job outcome.
- * - Cancelled: full penalty
- * - Completed (sorted & closed): half penalty
- * - Other (on hold, in progress, etc.): full penalty while complaint stands
- */
-export function complaintPenaltyMultiplier(status: JobStatus): number {
-  if (status === "cancelled") return 1;
-  if (status === "completed") return 0.5;
+/** @deprecated All complaints use flat {@link PARTNER_COMPLAINT_PENALTY_POINTS}. */
+export function complaintPenaltyMultiplier(_status: JobStatus): number {
   return 1;
 }
 
 export function feedbackEventPoints(event: PartnerFeedbackEvent): number {
   if (event.kind === "praise") return PARTNER_PRAISE_POINTS;
-  const status = event.jobStatus ?? "on_hold";
-  return -PARTNER_COMPLAINT_PENALTY_POINTS * complaintPenaltyMultiplier(status);
+  return -PARTNER_COMPLAINT_PENALTY_POINTS;
 }
 
 export function computePartnerRatingFromFeedback(events: readonly PartnerFeedbackEvent[]): number {
@@ -117,7 +109,7 @@ export function partnerFeedbackSourceLabel(source: PartnerFeedbackSource): strin
     case "customer_review":
       return "Customer review";
     case "manual":
-      return "Kudos";
+      return "Staff rating";
     default:
       return source;
   }

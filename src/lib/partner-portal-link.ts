@@ -242,9 +242,8 @@ export async function createPartnerPortalLink(
   let expiresAtIso = expiresAt.toISOString();
 
   if (linkKind === "trade_onboarding" && authUserId) {
-    onboardingUrl = `${tradePortalBaseUrl}/?email=${encodeURIComponent(partnerEmail)}`;
+    onboardingUrl = `${tradePortalBaseUrl}/login?email=${encodeURIComponent(partnerEmail)}`;
     fullUrl = onboardingUrl;
-    expiresAtIso = expiresAt.toISOString();
   } else {
     const rawToken = generatePartnerPortalTokenRaw();
     const shortCode = generatePartnerPortalShortCode();

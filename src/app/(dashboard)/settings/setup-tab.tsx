@@ -19,6 +19,7 @@ import {
   PauseCircle,
   Plus,
   Trash2,
+  TrendingUp,
   XCircle,
 } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
@@ -57,7 +58,9 @@ import {
   normalizeJobOnHoldPresets,
   resolvePartnerPayoutReferenceYmd,
   resolvePartnerPayoutStandardTerms,
+  resolvePartnerLevelThresholds,
   type JobOnHoldPresetRow,
+  type PartnerLevelGoalMode,
   type OfficeJobCancellationPresetRow,
   type PulseRevenueGoalMode,
 } from "@/lib/frontend-setup";
@@ -96,6 +99,14 @@ import {
   mergeWorkforceDocumentRules,
   type WorkforceDocRuleRow,
 } from "@/lib/workforce-required-docs";
+import {
+  DEFAULT_PARTNER_LEVEL_THRESHOLDS,
+  MAX_PARTNER_ELITE_PLUS_MULTIPLIER,
+  MAX_PARTNER_LEVEL_GBP,
+  MIN_PARTNER_ELITE_PLUS_MULTIPLIER,
+  MIN_PARTNER_LEVEL_GBP,
+  PARTNER_LEVELS,
+} from "@/lib/partner-revenue-goal";
 
 const WEEKDAY_LABELS: { id: number; short: string; full: string }[] = [
   { id: 1, short: "Mon", full: "Monday" },
@@ -191,6 +202,19 @@ export function SetupTab() {
   const [partnerPayoutReferenceYmd, setPartnerPayoutReferenceYmd] = useState("");
   const [savedPayoutReferenceYmd, setSavedPayoutReferenceYmd] = useState("");
   const [syncPayoutLoading, setSyncPayoutLoading] = useState(false);
+
+  const [partnerLevelGoalMode, setPartnerLevelGoalMode] = useState<PartnerLevelGoalMode>(
+    DEFAULT_PARTNER_LEVEL_THRESHOLDS.goalMode,
+  );
+  const [partnerLevelMonthlyGoalStr, setPartnerLevelMonthlyGoalStr] = useState(
+    String(DEFAULT_PARTNER_LEVEL_THRESHOLDS.monthlyGoalGbp),
+  );
+  const [partnerLevelL2Str, setPartnerLevelL2Str] = useState(String(DEFAULT_PARTNER_LEVEL_THRESHOLDS.l2MinGbp));
+  const [partnerLevelL3Str, setPartnerLevelL3Str] = useState(String(DEFAULT_PARTNER_LEVEL_THRESHOLDS.l3MinGbp));
+  const [partnerLevelL4Str, setPartnerLevelL4Str] = useState(String(DEFAULT_PARTNER_LEVEL_THRESHOLDS.l4MinGbp));
+  const [partnerLevelElitePlusStr, setPartnerLevelElitePlusStr] = useState(
+    String(DEFAULT_PARTNER_LEVEL_THRESHOLDS.elitePlusMultiplier),
+  );
 
   const zendeskIntegrationSetup = useMemo(
     () =>
@@ -357,6 +381,13 @@ export function SetupTab() {
       setSavedPayoutStandard(payoutStd);
       setPartnerPayoutReferenceYmd(payoutRef);
       setSavedPayoutReferenceYmd(payoutRef);
+      const levelThresholds = resolvePartnerLevelThresholds(parsed);
+      setPartnerLevelGoalMode(levelThresholds.goalMode);
+      setPartnerLevelMonthlyGoalStr(String(levelThresholds.monthlyGoalGbp));
+      setPartnerLevelL2Str(String(levelThresholds.l2MinGbp));
+      setPartnerLevelL3Str(String(levelThresholds.l3MinGbp));
+      setPartnerLevelL4Str(String(levelThresholds.l4MinGbp));
+      setPartnerLevelElitePlusStr(String(levelThresholds.elitePlusMultiplier));
       setLoading(false);
     })();
     return () => {
@@ -519,6 +550,39 @@ export function SetupTab() {
           return;
         }
       }
+      const partnerLevelMonthlyGoal = Number(partnerLevelMonthlyGoalStr);
+      const partnerLevelL2 = Number(partnerLevelL2Str);
+      const partnerLevelL3 = Number(partnerLevelL3Str);
+      const partnerLevelL4 = Number(partnerLevelL4Str);
+      const partnerLevelElitePlus = Number(partnerLevelElitePlusStr);
+      for (const [label, v] of [
+        ["Monthly goal", partnerLevelMonthlyGoal],
+        ["Level 2 (Rising)", partnerLevelL2],
+        ["Level 3 (Priority)", partnerLevelL3],
+        ["Level 4 (Elite)", partnerLevelL4],
+      ] as const) {
+        if (!Number.isFinite(v) || v < MIN_PARTNER_LEVEL_GBP || v > MAX_PARTNER_LEVEL_GBP) {
+          toast.error(`${label} must be between £${MIN_PARTNER_LEVEL_GBP} and £${MAX_PARTNER_LEVEL_GBP.toLocaleString("en-GB")}.`);
+          setSaving(false);
+          return;
+        }
+      }
+      if (!(partnerLevelL2 < partnerLevelL3 && partnerLevelL3 < partnerLevelL4)) {
+        toast.error("Level thresholds must increase: Rising < Priority < Elite.");
+        setSaving(false);
+        return;
+      }
+      if (
+        !Number.isFinite(partnerLevelElitePlus) ||
+        partnerLevelElitePlus < MIN_PARTNER_ELITE_PLUS_MULTIPLIER ||
+        partnerLevelElitePlus > MAX_PARTNER_ELITE_PLUS_MULTIPLIER
+      ) {
+        toast.error(
+          `Elite+ multiplier must be between ${MIN_PARTNER_ELITE_PLUS_MULTIPLIER} and ${MAX_PARTNER_ELITE_PLUS_MULTIPLIER}.`,
+        );
+        setSaving(false);
+        return;
+      }
       const next = mergeFrontendSetup(rawSetup, {
         bidding_sla_hours: hours,
         job_on_hold_presets: onHoldPresets,
@@ -558,6 +622,12 @@ export function SetupTab() {
         },
         partner_payout_standard_terms: partnerPayoutStandard,
         partner_payout_reference_ymd: partnerPayoutReferenceYmd.trim() || null,
+        partner_level_goal_mode: partnerLevelGoalMode,
+        partner_level_monthly_goal_gbp: partnerLevelMonthlyGoal,
+        partner_level_l2_min_gbp: partnerLevelL2,
+        partner_level_l3_min_gbp: partnerLevelL3,
+        partner_level_l4_min_gbp: partnerLevelL4,
+        partner_level_elite_plus_multiplier: partnerLevelElitePlus,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -634,6 +704,13 @@ export function SetupTab() {
       setSavedPayoutStandard(payoutStd);
       setPartnerPayoutReferenceYmd(payoutRef);
       setSavedPayoutReferenceYmd(payoutRef);
+      const levelThresholds = resolvePartnerLevelThresholds(next);
+      setPartnerLevelGoalMode(levelThresholds.goalMode);
+      setPartnerLevelMonthlyGoalStr(String(levelThresholds.monthlyGoalGbp));
+      setPartnerLevelL2Str(String(levelThresholds.l2MinGbp));
+      setPartnerLevelL3Str(String(levelThresholds.l3MinGbp));
+      setPartnerLevelL4Str(String(levelThresholds.l4MinGbp));
+      setPartnerLevelElitePlusStr(String(levelThresholds.elitePlusMultiplier));
       toast.success("Setup saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
       if (zendeskOnHoldReasonFieldConfigured(next)) {
@@ -1512,6 +1589,124 @@ export function SetupTab() {
               </p>
             )}
           </div>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Partner levels</CardTitle>
+            <FixfyHintIcon text="Monthly partner earnings (£) drive the Level column on Partners. Set how much a partner must bill this month to reach Rising, Priority, and Elite. Progress % uses the monthly goal below." />
+          </div>
+          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+            Defaults match the trade portal: L1 Starter from £0, then Rising → Priority → Elite. Elite+ unlocks at Elite × multiplier.
+          </p>
+        </CardHeader>
+        <div className="px-6 pb-6 space-y-4">
+          <div>
+            <MicroLabel>Monthly progress goal</MicroLabel>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  { id: "weekly_pace" as const, label: "Adjust from weekly pace" },
+                  { id: "fixed" as const, label: "Fixed monthly target" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={!canEditConfig}
+                  onClick={() => setPartnerLevelGoalMode(opt.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                    partnerLevelGoalMode === opt.id
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border-light bg-card text-text-secondary hover:border-border"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+              {partnerLevelGoalMode === "fixed"
+                ? "Every partner uses the fixed monthly goal for the progress bar (% of goal)."
+                : "Goal is at least the fixed monthly target, or scales up from the partner’s weekly pace (current default)."}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Monthly goal (£) — progress bar denominator
+              </label>
+              <Input
+                type="number"
+                min={MIN_PARTNER_LEVEL_GBP}
+                max={MAX_PARTNER_LEVEL_GBP}
+                step={50}
+                disabled={!canEditConfig}
+                value={partnerLevelMonthlyGoalStr}
+                onChange={(e) => setPartnerLevelMonthlyGoalStr(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Elite+ multiplier (× Elite threshold)
+              </label>
+              <Input
+                type="number"
+                min={MIN_PARTNER_ELITE_PLUS_MULTIPLIER}
+                max={MAX_PARTNER_ELITE_PLUS_MULTIPLIER}
+                step={0.1}
+                disabled={!canEditConfig}
+                value={partnerLevelElitePlusStr}
+                onChange={(e) => setPartnerLevelElitePlusStr(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {(
+              [
+                { level: 2, name: PARTNER_LEVELS[1].name, value: partnerLevelL2Str, set: setPartnerLevelL2Str },
+                { level: 3, name: PARTNER_LEVELS[2].name, value: partnerLevelL3Str, set: setPartnerLevelL3Str },
+                { level: 4, name: PARTNER_LEVELS[3].name, value: partnerLevelL4Str, set: setPartnerLevelL4Str },
+              ] as const
+            ).map((row) => {
+              const goal = Number(partnerLevelMonthlyGoalStr);
+              const threshold = Number(row.value);
+              const pct =
+                Number.isFinite(goal) && goal > 0 && Number.isFinite(threshold)
+                  ? Math.round((threshold / goal) * 100)
+                  : null;
+              return (
+                <div key={row.level}>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">
+                    Level {row.level} · {row.name} — min monthly earned (£)
+                  </label>
+                  <Input
+                    type="number"
+                    min={MIN_PARTNER_LEVEL_GBP}
+                    max={MAX_PARTNER_LEVEL_GBP}
+                    step={50}
+                    disabled={!canEditConfig}
+                    value={row.value}
+                    onChange={(e) => row.set(e.target.value)}
+                  />
+                  {pct != null ? (
+                    <p className="text-[10px] text-text-tertiary mt-1 tabular-nums">{pct}% of monthly goal</p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-text-tertiary leading-snug rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+            Level 1 <strong>Starter</strong> is automatic below Rising. Elite+ at{" "}
+            {formatSetupGbp(
+              (Number(partnerLevelL4Str) || 0) * (Number(partnerLevelElitePlusStr) || 2),
+            )}{" "}
+            when Elite is {formatSetupGbp(Number(partnerLevelL4Str) || 0)} and multiplier is{" "}
+            {partnerLevelElitePlusStr || "2"}×.
+          </p>
         </div>
       </Card>
 

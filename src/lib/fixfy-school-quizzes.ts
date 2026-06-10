@@ -9,7 +9,40 @@ export type SchoolQuizQuestion = {
   explanation: string;
 };
 
+export const SCHOOL_QUIZ_PASS_PERCENT_DEFAULT = 100;
+
+/** Minimum score % to pass a phase quiz (per phase override). */
+export const PHASE_QUIZ_PASS_PERCENT: Partial<Record<SchoolPhaseId, number>> = {
+  "fixfy-products": 75,
+};
+
+export function getPhaseQuizQuestions(phaseId: SchoolPhaseId): SchoolQuizQuestion[] {
+  return FIXFY_SCHOOL_QUIZZES[phaseId] ?? [];
+}
+
+export function getPhaseQuizQuestionCount(phaseId: SchoolPhaseId): number {
+  return getPhaseQuizQuestions(phaseId).length;
+}
+
+export function getPhaseQuizPassPercent(phaseId: SchoolPhaseId): number {
+  return PHASE_QUIZ_PASS_PERCENT[phaseId] ?? SCHOOL_QUIZ_PASS_PERCENT_DEFAULT;
+}
+
+export function getPhaseQuizPassMinCorrect(phaseId: SchoolPhaseId): number {
+  const total = getPhaseQuizQuestionCount(phaseId);
+  if (total <= 0) return 0;
+  return Math.ceil((total * getPhaseQuizPassPercent(phaseId)) / 100);
+}
+
+export function isPhaseQuizScorePassing(phaseId: SchoolPhaseId, correctCount: number): boolean {
+  return correctCount >= getPhaseQuizPassMinCorrect(phaseId);
+}
+
+/** @deprecated Use getPhaseQuizQuestionCount — kept for legacy star UI on 5-question phases. */
 export const SCHOOL_QUIZ_SIZE = 5;
+
+/** @deprecated Use isPhaseQuizScorePassing — kept for imports that expect a numeric cap. */
+export const SCHOOL_QUIZ_PASS_STARS = 5;
 
 export const FIXFY_SCHOOL_QUIZZES: Record<SchoolPhaseId, SchoolQuizQuestion[]> = {
   "fixfy-products": [
@@ -52,6 +85,56 @@ export const FIXFY_SCHOOL_QUIZZES: Record<SchoolPhaseId, SchoolQuizQuestion[]> =
       options: ["Trade Portal", "Ops Playbook", "Zendesk Complete (Phase 1)", "Skip to certification"],
       correctIndex: 2,
       explanation: "The learning path continues with Zendesk after Products & Vision.",
+    },
+    {
+      id: "fp-6",
+      prompt: "What is Fixfy's core mission statement?",
+      options: [
+        "Cheapest maintenance in London",
+        "Maintenance, handled. End to end.",
+        "Partner lead generation only",
+        "Zendesk ticket automation",
+      ],
+      correctIndex: 1,
+      explanation: "Fixfy combines ops, vetted trades, compliance and technology into one streamlined solution.",
+    },
+    {
+      id: "fp-7",
+      prompt: "Which certificate is the annual landlord gas safety check (CP12)?",
+      options: ["EICR", "Gas Safety Certificate (GSC)", "PAT testing only", "OFTEC oil service"],
+      correctIndex: 1,
+      explanation: "Gas Safe engineers issue CP12 / GSC certificates — a regulated SKU in Services.",
+    },
+    {
+      id: "fp-8",
+      prompt: "End of Tenancy (EOT) cleaning is best described as:",
+      options: [
+        "A quick weekly office tidy",
+        "Deep property cleaning for move-outs and tenancy compliance",
+        "Garden clearance only",
+        "Emergency gas repair",
+      ],
+      correctIndex: 1,
+      explanation: "EOT is a structured deep clean package — base property size plus optional add-ons.",
+    },
+    {
+      id: "fp-9",
+      prompt: "In Fixfy OS, Pulse is mainly used for:",
+      options: [
+        "Partner payouts and self-bills only",
+        "KPIs, alerts, live board and financial snapshot",
+        "Uploading partner compliance documents",
+        "Creating Zendesk macros",
+      ],
+      correctIndex: 1,
+      explanation: "Pulse is the operations overview — business health at a glance.",
+    },
+    {
+      id: "fp-10",
+      prompt: "Fixfy Trade partner subscription is priced at:",
+      options: ["Free forever", "£99 / month", "£499 per lead", "Only paid after each job"],
+      correctIndex: 1,
+      explanation: "Partners pay £99/month for real B2B opportunities — Fixfy handles customer comms and invoicing.",
     },
   ],
   zendesk: [
@@ -265,7 +348,5 @@ export const FIXFY_SCHOOL_QUIZZES: Record<SchoolPhaseId, SchoolQuizQuestion[]> =
 };
 
 export function getPhaseQuiz(phaseId: SchoolPhaseId): SchoolQuizQuestion[] {
-  return FIXFY_SCHOOL_QUIZZES[phaseId] ?? [];
+  return getPhaseQuizQuestions(phaseId);
 }
-
-export const SCHOOL_QUIZ_PASS_STARS = 5;

@@ -37,8 +37,8 @@ export function SchoolHero({ progress, overallPercent }: Props) {
             Learn Fixfy in 5 phases
           </h1>
           <p className="text-sm text-white/65 max-w-xl m-0 leading-relaxed">
-            Start with Zendesk, then the Operating System and Trade Portal — earn XP, pass each
-            phase quiz with 5/5 stars to unlock the next level.
+            Start with Products & Vision, then Zendesk, the OS and Trade Portal — earn XP and pass each
+            phase quiz (Foundation: 8/10+) to unlock the next level.
           </p>
         </div>
 

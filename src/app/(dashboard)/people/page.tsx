@@ -649,11 +649,20 @@ export default function PeoplePage() {
               payroll_internal_cost_id: insertedId,
             }),
           });
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            welcomeEmailSent?: boolean;
+            welcomeEmailWarning?: string;
+          };
           if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
             throw new Error(body.error ?? "Failed to create dashboard access");
           }
-          toast.success("Dashboard access created");
+          if (body.welcomeEmailSent) {
+            toast.success(`Dashboard access created — login invite sent to ${accessEmail}`);
+          } else {
+            toast.success("Dashboard access created");
+          }
+          if (body.welcomeEmailWarning) toast.warning(body.welcomeEmailWarning);
         } catch (err) {
           toast.warning(
             err instanceof Error

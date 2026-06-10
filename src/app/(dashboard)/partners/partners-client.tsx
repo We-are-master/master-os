@@ -142,6 +142,7 @@ import {
   PARTNER_PRAISE_POINTS,
   PARTNER_RATING_MAX,
   partnerFeedbackSourceLabel,
+  type PartnerFeedbackKind,
 } from "@/lib/partner-rating";
 import {
   refreshLegacyZeroPartnerRatings,
@@ -3668,10 +3669,11 @@ function PartnerDetailDrawer({
     pointsGained: 0,
     feedback: [] as PartnerFeedbackRow[],
   });
-  const [kudosOpen, setKudosOpen] = useState(false);
-  const [kudosNotes, setKudosNotes] = useState("");
-  const [kudosJobRef, setKudosJobRef] = useState("");
-  const [kudosSubmitting, setKudosSubmitting] = useState(false);
+  const [ratingFeedbackOpen, setRatingFeedbackOpen] = useState(false);
+  const [ratingKind, setRatingKind] = useState<PartnerFeedbackKind>("praise");
+  const [ratingNotes, setRatingNotes] = useState("");
+  const [ratingJobRef, setRatingJobRef] = useState("");
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
@@ -4400,15 +4402,15 @@ function PartnerDetailDrawer({
     }
   }, [partner]);
 
-  const handleAddKudos = useCallback(async () => {
+  const handleSaveRatingFeedback = useCallback(async () => {
     if (!partner) return;
-    setKudosSubmitting(true);
+    setRatingSubmitting(true);
     try {
       const jobId =
-        kudosJobRef.trim() !== ""
-          ? partnerJobs.find((j) => j.reference === kudosJobRef.trim())?.id
+        ratingJobRef.trim() !== ""
+          ? partnerJobs.find((j) => j.reference === ratingJobRef.trim())?.id
           : undefined;
-      if (kudosJobRef.trim() && !jobId) {
+      if (ratingJobRef.trim() && !jobId) {
         toast.error("Job reference not found for this partner");
         return;
       }
@@ -4416,7 +4418,8 @@ function PartnerDetailDrawer({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          notes: kudosNotes.trim() || undefined,
+          kind: ratingKind,
+          notes: ratingNotes.trim() || undefined,
           jobId,
         }),
       });
@@ -4429,7 +4432,7 @@ function PartnerDetailDrawer({
         pointsLost?: number;
         feedback?: PartnerFeedbackRow[];
       };
-      if (!res.ok) throw new Error(data.error ?? "Could not add kudos");
+      if (!res.ok) throw new Error(data.error ?? "Could not save rating");
       setRatingMeta({
         complaintCount: data.complaintCount ?? 0,
         pointsLost: data.pointsLost ?? 0,
@@ -4440,16 +4443,19 @@ function PartnerDetailDrawer({
       if (typeof data.rating === "number") {
         onPartnerUpdate?.({ ...partner, rating: data.rating });
       }
-      toast.success("Kudos added — rating updated");
-      setKudosOpen(false);
-      setKudosNotes("");
-      setKudosJobRef("");
+      const delta =
+        ratingKind === "praise" ? `+${PARTNER_PRAISE_POINTS}` : `−${PARTNER_COMPLAINT_PENALTY_POINTS}`;
+      toast.success(`Rating saved (${delta})`);
+      setRatingFeedbackOpen(false);
+      setRatingKind("praise");
+      setRatingNotes("");
+      setRatingJobRef("");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not add kudos");
+      toast.error(e instanceof Error ? e.message : "Could not save rating");
     } finally {
-      setKudosSubmitting(false);
+      setRatingSubmitting(false);
     }
-  }, [partner, kudosNotes, kudosJobRef, partnerJobs, onPartnerUpdate]);
+  }, [partner, ratingKind, ratingNotes, ratingJobRef, partnerJobs, onPartnerUpdate]);
 
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -4761,69 +4767,70 @@ function PartnerDetailDrawer({
       }
       width="w-[min(100vw-1rem,40rem)]"
     >
-      <div className="px-6 pt-3 pb-0 border-b border-border-light">
+      <div className="px-4 pt-2 pb-0 border-b border-border-light shrink-0">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={handleDrawerTabChange} />
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className={cn(
+          "flex-1 min-h-0",
+          tab === "overview" && !editingOverview && !editingName ? "overflow-hidden" : "overflow-y-auto",
+        )}
+      >
         {/* ========== OVERVIEW ========== */}
         {tab === "overview" && (
-          <div className="p-6 space-y-5">
-            <PartnerLevelCard
-              monthEarned={(partner as PartnerWithEarnings).month_earnings ?? 0}
-            />
+          <div
+            className={cn(
+              "p-4 space-y-2.5",
+              editingOverview || editingName ? "overflow-y-auto max-h-full" : "",
+            )}
+          >
+            <div className="grid grid-cols-2 gap-2">
+              <PartnerLevelCard
+                compact
+                monthEarned={(partner as PartnerWithEarnings).month_earnings ?? 0}
+              />
+              <button
+                type="button"
+                onClick={() => openDocuments("compliance")}
+                className="p-2 rounded-lg bg-surface-hover border border-border-light text-left transition-colors hover:border-primary/25 hover:bg-primary/[0.03] min-w-0"
+              >
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
+                <div className="flex items-baseline gap-1 mt-0.5">
+                  <span className="text-sm font-bold text-text-primary">{computedCompliance}</span>
+                  <span className="text-[10px] text-text-tertiary">/100</span>
+                </div>
+                <Progress
+                  value={computedCompliance}
+                  size="sm"
+                  color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
+                  className="mt-1"
+                />
+              </button>
+            </div>
             {overviewAlerts.length > 0 && (
-              <div className="rounded-xl border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/20 p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                  <p className="text-sm font-semibold text-text-primary">Attention alerts</p>
-                </div>
-                <div className="space-y-1.5">
-                  {overviewAlerts.map((a) => (
-                    <div key={a.key} className="flex items-start gap-2">
-                      <span className={`mt-1 h-1.5 w-1.5 rounded-full ${a.level === "danger" ? "bg-red-500" : "bg-amber-500"}`} />
-                      <p className={`text-xs ${a.level === "danger" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-300"}`}>{a.text}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {canSendPartnerLinks && (
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
-                  <p className="text-xs text-text-secondary mt-1">
-                    Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
-                    partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
-                  </p>
-                  {!partner.email?.trim() ? (
-                    <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-                    disabled={onboardingLinkBusy || sendingOnboardingLink || !partner.email?.trim()}
-                    onClick={() => void handleCopyOnboardingLink()}
-                  >
-                    {onboardingLinkBusy ? "Creating…" : "Copy link"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    icon={sendingOnboardingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                    disabled={sendingOnboardingLink || onboardingLinkBusy || !partner.email?.trim()}
-                    onClick={() => void handleSendOnboardingEmail()}
-                  >
-                    {sendingOnboardingLink ? "Sending…" : "Send link"}
-                  </Button>
+              <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-2">
+                <div className="flex items-start gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <ul className="min-w-0 space-y-0.5">
+                    {overviewAlerts.slice(0, 2).map((a) => (
+                      <li
+                        key={a.key}
+                        className={`text-[10px] leading-snug ${a.level === "danger" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-300"}`}
+                      >
+                        {a.text}
+                      </li>
+                    ))}
+                    {overviewAlerts.length > 2 ? (
+                      <li className="text-[10px] text-text-tertiary">+{overviewAlerts.length - 2} more</li>
+                    ) : null}
+                  </ul>
                 </div>
               </div>
             )}
-            <div className="flex items-start gap-4">
-              <div className="flex flex-col items-center gap-2 shrink-0">
-                <Avatar name={partner.company_name} size="xl" src={partner.avatar_url ?? undefined} />
+            <div className="flex items-start gap-3">
+              <div className="flex flex-col items-center gap-1 shrink-0">
+                <Avatar name={partner.company_name} size="lg" src={partner.avatar_url ?? undefined} />
                 <input
                   ref={partnerAvatarInputRef}
                   type="file"
@@ -4850,7 +4857,7 @@ function PartnerDetailDrawer({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="text-[11px] h-8"
+                  className="text-[10px] h-6 px-2"
                   disabled={uploadingAvatar}
                   onClick={() => partnerAvatarInputRef.current?.click()}
                 >
@@ -4859,7 +4866,7 @@ function PartnerDetailDrawer({
               </div>
               <div className="flex-1 min-w-0">
                 {editingName && !editingOverview ? (
-                  <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/[0.03] p-3">
+                  <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/[0.03] p-2.5">
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                         Company / display name
@@ -4913,15 +4920,15 @@ function PartnerDetailDrawer({
                           className="h-9"
                         />
                       ) : (
-                        <h3 className="text-lg font-bold text-text-primary truncate">{partner.company_name}</h3>
+                        <h3 className="text-base font-bold text-text-primary truncate leading-tight">{partner.company_name}</h3>
                       )}
                       <div className="flex shrink-0 items-center gap-1">
-                        {partner.verified ? <ShieldCheck className="h-4 w-4 text-emerald-500" /> : null}
+                        {partner.verified ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> : null}
                         {isAdmin && !editingOverview ? (
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-8 gap-1.5 text-[11px]"
+                            className="h-7 gap-1 text-[10px] px-2"
                             icon={<Pencil className="h-3 w-3" />}
                             onClick={() => {
                               setNameForm({
@@ -4938,7 +4945,7 @@ function PartnerDetailDrawer({
                           <Button
                             size="sm"
                             variant={editingOverview ? "outline" : "ghost"}
-                            className="h-8 text-[11px]"
+                            className="h-7 text-[10px] px-2"
                             onClick={() => {
                               if (editingOverview) {
                                 setEditingOverview(false);
@@ -4963,12 +4970,12 @@ function PartnerDetailDrawer({
                         />
                       </div>
                     ) : (
-                      <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
+                      <p className="text-xs text-text-tertiary leading-tight">{partner.contact_name}</p>
                     )}
                   </>
                 )}
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant={config.variant} dot size="md">
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  <Badge variant={config.variant} dot size="sm">
                     {partner.status === "on_break" ? "Inactive" : config.label}
                   </Badge>
                   {partner.status === "on_break" ? (
@@ -4995,20 +5002,13 @@ function PartnerDetailDrawer({
                       </span>
                     ));
                   })()}
-                  {!editingOverview ? (
-                    <PartnerTradesIconStrip
-                      trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
-                      catalogServices={partnerCatalogForIds}
-                      className="max-w-[min(100%,20rem)]"
-                    />
-                  ) : null}
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <Mail className="h-4 w-4 text-text-tertiary" />
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-text-secondary">
+              <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                <Mail className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                 {editingOverview ? (
                   <Input
                     type="email"
@@ -5019,7 +5019,7 @@ function PartnerDetailDrawer({
                 ) : partner.email}
               </div>
               {editingOverview ? (
-                <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-3 space-y-3">
+                <div className="col-span-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-3 space-y-3">
                   <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">Partner type</p>
                   <div className="flex flex-wrap gap-2">
                     {(["self_employed", "limited_company"] as const).map((opt) => (
@@ -5115,47 +5115,47 @@ function PartnerDetailDrawer({
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <Briefcase className="h-4 w-4 text-text-tertiary shrink-0" />
-                    <span>{inferPartnerLegal(partner) === "limited_company" ? "Limited company" : "Self-employed"}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Briefcase className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                    <span className="truncate">{inferPartnerLegal(partner) === "limited_company" ? "Limited company" : "Self-employed"}</span>
                   </div>
                   {inferPartnerLegal(partner) === "limited_company" && partner.crn?.trim() ? (
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                      <span>CRN: {partner.crn.trim()}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate">CRN {partner.crn.trim()}</span>
                     </div>
                   ) : null}
                   {inferPartnerLegal(partner) === "self_employed" && partner.utr?.trim() ? (
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                      <span>UTR: {partner.utr.trim()}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate">UTR {partner.utr.trim()}</span>
                     </div>
                   ) : null}
                   {inferPartnerLegal(partner) === "limited_company" && partner.vat_registered === false ? (
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                    <div className="flex items-center gap-1.5 min-w-0 col-span-2">
+                      <FileText className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                       <span>Not VAT registered</span>
                     </div>
                   ) : null}
                   {inferPartnerLegal(partner) === "limited_company" &&
                   partner.vat_number?.trim() &&
                   partner.vat_registered !== false ? (
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                      <span>VAT: {partner.vat_number.trim()}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate">VAT {partner.vat_number.trim()}</span>
                     </div>
                   ) : null}
                   {inferPartnerLegal(partner) === "self_employed" && partner.vat_number?.trim() ? (
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                      <span>VAT: {partner.vat_number.trim()}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate">VAT {partner.vat_number.trim()}</span>
                     </div>
                   ) : null}
                 </>
               )}
               {(editingOverview || partner.phone?.trim()) && (
-                <div className="flex items-start gap-2 text-sm text-text-secondary">
-                  <Phone className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
+                <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                  <Phone className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                   {editingOverview ? (
                     <Input
                       type="tel"
@@ -5200,151 +5200,77 @@ function PartnerDetailDrawer({
               ) : (
                 <>
                   {(formatPartnerCoverageSummary(partner) || "").trim() ? (
-                    <div className="flex items-start gap-2 text-sm text-text-secondary">
-                      <MapPin className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
-                      <span className="min-w-0">
-                        <span className="text-[10px] font-medium text-text-tertiary block">Coverage</span>
-                        {formatPartnerCoverageSummary(partner)}
-                        <button
-                          type="button"
-                          className="text-[10px] text-primary hover:underline mt-0.5 block"
-                          onClick={() => setTab("coverage")}
-                        >
-                          Edit in Coverage tab
-                        </button>
-                      </span>
+                    <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                      <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate min-w-0">{formatPartnerCoverageSummary(partner)}</span>
+                      <button
+                        type="button"
+                        className="text-[10px] text-primary hover:underline shrink-0"
+                        onClick={() => setTab("coverage")}
+                      >
+                        Edit
+                      </button>
                     </div>
                   ) : null}
                   {partner.partner_address?.trim() ? (
-                    <div className="flex items-start gap-2 text-sm text-text-secondary">
-                      <Home className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
-                      <span className="min-w-0">
-                        <span className="text-[10px] font-medium text-text-tertiary block">Address</span>
-                        {partner.partner_address}
-                      </span>
+                    <div className="flex items-center gap-1.5 min-w-0 col-span-2">
+                      <Home className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="truncate">{partner.partner_address}</span>
                     </div>
                   ) : null}
                 </>
               )}
-              <div className="flex items-center gap-2 text-sm text-text-tertiary pt-1 border-t border-border-light/60">
-                <Calendar className="h-4 w-4 shrink-0" />
-                Joined {new Date(partner.joined_at).toLocaleDateString()}
+              <div className="flex items-center gap-1.5 text-text-tertiary col-span-2 sm:col-span-1">
+                <Calendar className="h-3.5 w-3.5 shrink-0" />
+                <span>Joined {new Date(partner.joined_at).toLocaleDateString()}</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Jobs</p>
-                <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : realJobsCount}</p>
-                <p className="text-[10px] text-text-tertiary">{completedJobs} completed, {activeJobs} active</p>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Jobs</p>
+                <p className="text-base font-bold text-text-primary leading-tight">{loadingJobs ? "…" : realJobsCount}</p>
+                <p className="text-[9px] text-text-tertiary truncate">{completedJobs} done · {activeJobs} active</p>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Earned</p>
-                <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(realEarnings)}</p>
-                <p className="text-[10px] text-text-tertiary">from partner cost</p>
+              <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Earned</p>
+                <p className="text-base font-bold text-text-primary leading-tight truncate">{loadingJobs ? "…" : formatCurrency(realEarnings)}</p>
+                <p className="text-[9px] text-text-tertiary">partner cost</p>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Value</p>
-                <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(totalJobValue)}</p>
-                <p className="text-[10px] text-text-tertiary">total client value</p>
+              <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Value</p>
+                <p className="text-base font-bold text-text-primary leading-tight truncate">{loadingJobs ? "…" : formatCurrency(totalJobValue)}</p>
+                <p className="text-[9px] text-text-tertiary">client total</p>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
+              <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
                   {isAdmin ? (
                     <button
                       type="button"
-                      onClick={() => setKudosOpen(true)}
-                      className="text-[10px] font-semibold text-primary hover:underline shrink-0"
+                      onClick={() => {
+                        setRatingKind("praise");
+                        setRatingFeedbackOpen(true);
+                      }}
+                      className="text-[9px] font-semibold text-primary hover:underline shrink-0"
                     >
-                      + Add kudos
+                      + rating
                     </button>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
-                  <span className="text-xl font-bold text-text-primary">
+                <div className="flex items-center gap-1 mt-0.5">
+                  <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />
+                  <span className="text-base font-bold text-text-primary leading-tight">
                     {displayPartnerRating(partner.rating)}
                   </span>
-                  <span className="text-xs text-text-tertiary">/{PARTNER_RATING_MAX.toFixed(1)}</span>
-                  {displayPartnerRating(partner.rating) >= 4.8 && realJobsCount >= 10 ? (
-                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full ml-1">
-                      Top rated
-                    </span>
-                  ) : null}
+                  <span className="text-[10px] text-text-tertiary">/{PARTNER_RATING_MAX.toFixed(1)}</span>
                 </div>
-                <p className="text-[10px] text-text-tertiary mt-1 leading-snug">
-                  Base {PARTNER_RATING_MAX}. Complaints −{PARTNER_COMPLAINT_PENALTY_POINTS} (half if job completed).
-                  Kudos +{PARTNER_PRAISE_POINTS} (review 4+ or manual).
-                  {ratingMeta.complaintCount > 0 || ratingMeta.praiseCount > 0 ? (
-                    <>
-                      {" "}
-                      {ratingMeta.complaintCount > 0
-                        ? `${ratingMeta.complaintCount} complaint(s) (−${ratingMeta.pointsLost}).`
-                        : ""}
-                      {ratingMeta.praiseCount > 0
-                        ? ` ${ratingMeta.praiseCount} kudos (+${ratingMeta.pointsGained}).`
-                        : ""}
-                    </>
-                  ) : (
-                    " No feedback events yet."
-                  )}
+                <p className="text-[9px] text-text-tertiary truncate">
+                  {ratingMeta.complaintCount > 0 || ratingMeta.praiseCount > 0
+                    ? `${ratingMeta.complaintCount} negative · ${ratingMeta.praiseCount} positive`
+                    : "No feedback yet"}
                 </p>
-                {ratingMeta.feedback.length > 0 ? (
-                  <ul className="mt-2 space-y-1.5 max-h-28 overflow-y-auto border-t border-border-light/60 pt-2">
-                    {ratingMeta.feedback.slice(0, 6).map((item) => (
-                      <li key={item.id} className="text-[10px] leading-snug">
-                        <span
-                          className={
-                            item.kind === "praise"
-                              ? "font-semibold text-emerald-600 dark:text-emerald-400"
-                              : "font-semibold text-amber-700 dark:text-amber-400"
-                          }
-                        >
-                          {item.kind === "praise" ? "+" : "−"}
-                          {item.kind === "praise" ? PARTNER_PRAISE_POINTS : PARTNER_COMPLAINT_PENALTY_POINTS}
-                        </span>
-                        <span className="text-text-secondary">
-                          {" "}
-                          {partnerFeedbackSourceLabel(item.source)}
-                          {item.job_reference ? ` · ${item.job_reference}` : ""}
-                        </span>
-                        {item.notes ? (
-                          <span className="block text-text-tertiary truncate" title={item.notes}>
-                            {item.notes}
-                          </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
               </div>
-              <button
-                type="button"
-                onClick={() => openDocuments("compliance")}
-                className="p-3 rounded-xl bg-surface-hover border border-border-light text-left transition-colors hover:border-primary/25 hover:bg-primary/[0.03] w-full"
-              >
-                <div className="flex items-center gap-1">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
-                  <span title="Profile completeness, required documents, and expired docs (higher penalty)" className="text-text-tertiary cursor-help">
-                    <Info className="h-3 w-3" />
-                  </span>
-                </div>
-                <div className="mt-1">
-                  <span className="text-xl font-bold text-text-primary">{computedCompliance}</span>
-                  <span className="text-xs text-text-tertiary ml-0.5">/100</span>
-                  <Progress
-                    value={computedCompliance}
-                    size="sm"
-                    color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
-                    className="mt-1.5"
-                  />
-                </div>
-                <p className="text-[10px] text-primary mt-1.5 font-medium">View in Documents →</p>
-              </button>
             </div>
             {isAdmin && editingOverview && (
               <div className="flex flex-col @sm:flex-row gap-2">
@@ -5365,37 +5291,37 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            <div className="flex flex-col gap-2 pt-4 border-t border-border-light">
-              {isAdmin && (
-                <div className="flex flex-wrap gap-2">
-                  {partner.status !== "active" && (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      icon={<Play className="h-3.5 w-3.5" />}
-                      onClick={() => void runActivate(false)}
-                    >
-                      Activate
-                    </Button>
-                  )}
-                  {!isPartnerInactiveStage(partner) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      icon={<XCircle className="h-3.5 w-3.5" />}
-                      onClick={() => {
-                        setDeactivatePreset("");
-                        setDeactivateOtherText("");
-                        setDeactivateOtherStage("needs_attention");
-                        setDeactivateOpen(true);
-                      }}
-                    >
-                      Deactivate
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
+            {isAdmin && (partner.status !== "active" || !isPartnerInactiveStage(partner)) ? (
+              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border-light/60">
+                {partner.status !== "active" && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    className="h-7 text-[11px]"
+                    icon={<Play className="h-3 w-3" />}
+                    onClick={() => void runActivate(false)}
+                  >
+                    Activate
+                  </Button>
+                )}
+                {!isPartnerInactiveStage(partner) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px]"
+                    icon={<XCircle className="h-3 w-3" />}
+                    onClick={() => {
+                      setDeactivatePreset("");
+                      setDeactivateOtherText("");
+                      setDeactivateOtherStage("needs_attention");
+                      setDeactivateOpen(true);
+                    }}
+                  >
+                    Deactivate
+                  </Button>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -6228,22 +6154,8 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            <div className="pt-4 border-t border-border-light space-y-4">
-            <InternalProfileTab
-              partner={partner}
-              onUpdate={async (updates) => {
-                try {
-                  const updated = await updatePartner(partner.id, updates);
-                  onPartnerUpdate?.(updated);
-                  toast.success("Internal profile updated");
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Failed to update");
-                }
-              }}
-            />
-
             {partner.auth_user_id && isAdmin && (
-              <div className="space-y-3">
+              <div className="pt-4 border-t border-border-light space-y-3">
                 <p className="text-sm font-semibold text-text-primary">Admin actions</p>
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
@@ -6334,9 +6246,10 @@ function PartnerDetailDrawer({
             )}
 
             {!partner.auth_user_id && (
-              <p className="text-xs text-text-tertiary">No linked app user yet — admin account actions are unavailable.</p>
+              <p className="pt-4 border-t border-border-light text-xs text-text-tertiary">
+                No linked app user yet — admin account actions are unavailable.
+              </p>
             )}
-            </div>
           </div>
         )}
 
@@ -6821,22 +6734,56 @@ function PartnerDetailDrawer({
       </Modal>
 
       <Modal
-        open={kudosOpen}
+        open={ratingFeedbackOpen}
         onClose={() => {
-          if (kudosSubmitting) return;
-          setKudosOpen(false);
+          if (ratingSubmitting) return;
+          setRatingFeedbackOpen(false);
         }}
-        title="Add kudos"
-        subtitle="Recognise great work — adds +0.25 to this partner's rating (max 5.0)."
+        title="Add rating"
+        subtitle={
+          ratingKind === "praise"
+            ? `Good feedback — adds +${PARTNER_PRAISE_POINTS} to this partner's rating (max ${PARTNER_RATING_MAX.toFixed(1)}).`
+            : `Poor feedback — subtracts ${PARTNER_COMPLAINT_PENALTY_POINTS} from this partner's rating.`
+        }
         size="md"
       >
         <div className="p-6 space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-text-secondary">Note (optional)</label>
+            <label className="text-xs font-medium text-text-secondary">Rating type</label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { id: "praise" as const, label: "Good" },
+                  { id: "complaint" as const, label: "Bad / Poor" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setRatingKind(opt.id)}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
+                    ratingKind === opt.id
+                      ? opt.id === "praise"
+                        ? "border-emerald-500/50 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                        : "border-red-400/50 bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
+                      : "border-border-light bg-card text-text-secondary hover:border-border"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary">Feedback (optional)</label>
             <textarea
-              value={kudosNotes}
-              onChange={(e) => setKudosNotes(e.target.value)}
-              placeholder="What went well? e.g. customer praised punctuality on JOB-1234"
+              value={ratingNotes}
+              onChange={(e) => setRatingNotes(e.target.value)}
+              placeholder={
+                ratingKind === "praise"
+                  ? "What went well? e.g. customer praised punctuality on JOB-1234"
+                  : "What went wrong? e.g. late arrival, poor communication on JOB-1234"
+              }
               rows={3}
               className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm resize-none"
               maxLength={2000}
@@ -6845,11 +6792,11 @@ function PartnerDetailDrawer({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary">Link to job (optional)</label>
             <select
-              value={kudosJobRef}
-              onChange={(e) => setKudosJobRef(e.target.value)}
+              value={ratingJobRef}
+              onChange={(e) => setRatingJobRef(e.target.value)}
               className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm"
             >
-              <option value="">General kudos (no job)</option>
+              <option value="">General feedback (no job)</option>
               {partnerJobs.map((j) => (
                 <option key={j.id} value={j.reference}>
                   {j.reference} · {j.status}
@@ -6858,11 +6805,16 @@ function PartnerDetailDrawer({
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" type="button" onClick={() => setKudosOpen(false)} disabled={kudosSubmitting}>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setRatingFeedbackOpen(false)}
+              disabled={ratingSubmitting}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={kudosSubmitting} onClick={() => void handleAddKudos()}>
-              {kudosSubmitting ? "Saving…" : "Add kudos"}
+            <Button type="button" disabled={ratingSubmitting} onClick={() => void handleSaveRatingFeedback()}>
+              {ratingSubmitting ? "Saving…" : "Save rating"}
             </Button>
           </div>
         </div>
@@ -7069,73 +7021,6 @@ function PartnerDetailDrawer({
         </div>
       </Modal>
     </Drawer>
-  );
-}
-
-function InternalProfileTab({ partner, onUpdate }: { partner: Partner; onUpdate: (updates: Partial<Partner>) => void }) {
-  const [internalNotes, setInternalNotes] = useState(partner.internal_notes ?? "");
-  const [role, setRole] = useState(partner.role ?? "");
-  const [permission, setPermission] = useState(partner.permission ?? "");
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      setInternalNotes(partner.internal_notes ?? "");
-      setRole(partner.role ?? "");
-      setPermission(partner.permission ?? "");
-    });
-  }, [partner.id, partner.internal_notes, partner.role, partner.permission]);
-
-  return (
-    <div className="p-6 space-y-5">
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Role</label>
-        <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Subcontractor, Lead Partner..." />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Permission Level</label>
-        <select
-          value={permission}
-          onChange={(e) => setPermission(e.target.value)}
-          className="w-full h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15"
-        >
-          <option value="">No permission set</option>
-          <option value="view_only">View Only</option>
-          <option value="submit_reports">Submit Reports</option>
-          <option value="submit_quotes">Submit Quotes</option>
-          <option value="full_access">Full Access</option>
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal Notes</label>
-        <textarea
-          value={internalNotes}
-          onChange={(e) => setInternalNotes(e.target.value)}
-          rows={5}
-          placeholder="Internal information about this partner..."
-          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
-        />
-      </div>
-      <div className="p-4 rounded-xl bg-surface-hover">
-        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Partner History</p>
-        <div className="space-y-2 text-xs text-text-secondary">
-          <div className="flex justify-between">
-            <span>Joined</span>
-            <span className="font-medium text-text-primary">{new Date(partner.joined_at).toLocaleDateString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Status</span>
-            <Badge variant={statusConfig[partner.status]?.variant ?? "default"} size="sm">{statusConfig[partner.status]?.label ?? partner.status}</Badge>
-          </div>
-          <div className="flex justify-between">
-            <span>Verified</span>
-            <span className={`font-medium ${partner.verified ? "text-emerald-600" : "text-text-tertiary"}`}>{partner.verified ? "Yes" : "No"}</span>
-          </div>
-        </div>
-      </div>
-      <Button onClick={() => onUpdate({ internal_notes: internalNotes, role, permission })} className="w-full">
-        Save Internal Profile
-      </Button>
-    </div>
   );
 }
 

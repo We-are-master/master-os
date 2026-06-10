@@ -10,7 +10,10 @@ import {
   type SchoolProgressRow,
 } from "@/lib/fixfy-school-db";
 import { recordSchoolQuizAttemptAdmin } from "@/lib/fixfy-school-record-quiz-attempt";
-import { SCHOOL_QUIZ_PASS_STARS } from "@/lib/fixfy-school-quizzes";
+import {
+  getPhaseQuizQuestionCount,
+  isPhaseQuizScorePassing,
+} from "@/lib/fixfy-school-quizzes";
 import type { SchoolProgress } from "@/lib/fixfy-school-progress";
 import type { SchoolPhaseId } from "@/lib/fixfy-school-curriculum";
 
@@ -37,12 +40,13 @@ export async function POST(req: NextRequest) {
   if (!isValidPhaseId(phaseId)) {
     return NextResponse.json({ error: "Invalid phaseId." }, { status: 400 });
   }
-  if (!Number.isInteger(stars) || stars < 0 || stars > SCHOOL_QUIZ_PASS_STARS) {
-    return NextResponse.json({ error: "Invalid stars (0-5)." }, { status: 400 });
+  const maxScore = getPhaseQuizQuestionCount(phaseId);
+  if (!Number.isInteger(stars) || stars < 0 || stars > maxScore) {
+    return NextResponse.json({ error: `Invalid score (0-${maxScore}).` }, { status: 400 });
   }
 
   const answers = parseQuizAnswers(body.answers);
-  const passed = stars >= SCHOOL_QUIZ_PASS_STARS;
+  const passed = isPhaseQuizScorePassing(phaseId, stars);
   const progressPayload = body.progress;
   let mergedProgress: SchoolProgress | null = null;
   if (progressPayload && typeof progressPayload === "object" && !Array.isArray(progressPayload)) {

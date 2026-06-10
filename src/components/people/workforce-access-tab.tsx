@@ -120,11 +120,20 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           payroll_internal_cost_id: person.id,
         }),
       });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        welcomeEmailSent?: boolean;
+        welcomeEmailWarning?: string;
+      };
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to create user");
       }
-      toast.success(`Dashboard access created. ${fullName} must change password on first login.`);
+      if (body.welcomeEmailSent) {
+        toast.success(`Dashboard access created — login invite sent to ${cleanEmail}`);
+      } else {
+        toast.success(`Dashboard access created. ${fullName} must change password on first login.`);
+      }
+      if (body.welcomeEmailWarning) toast.warning(body.welcomeEmailWarning);
       setPassword("");
       await onSaved();
       await loadProfile();

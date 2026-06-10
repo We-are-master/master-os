@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SchoolPhase } from "@/lib/fixfy-school-curriculum";
 import { FIXFY_SCHOOL_PHASES } from "@/lib/fixfy-school-curriculum";
-import { SCHOOL_QUIZ_PASS_STARS, type SchoolQuizQuestion } from "@/lib/fixfy-school-quizzes";
+import {
+  getPhaseQuizPassMinCorrect,
+  getPhaseQuizPassPercent,
+  getPhaseQuizQuestionCount,
+  isPhaseQuizScorePassing,
+  type SchoolQuizQuestion,
+} from "@/lib/fixfy-school-quizzes";
 import { getLocalizedPhase, getLocalizedQuiz } from "@/lib/fixfy-school-localized";
 import { useFixfySchoolLocale } from "@/hooks/use-fixfy-school-locale";
 import {
@@ -33,43 +39,52 @@ function scoreAnswers(questions: SchoolQuizQuestion[], answers: Record<string, n
 }
 
 function StarRating({
-  stars,
-  max = SCHOOL_QUIZ_PASS_STARS,
+  score,
+  total,
   animate = false,
   size = "lg",
 }: {
-  stars: number;
-  max?: number;
+  score: number;
+  total: number;
   animate?: boolean;
   size?: "md" | "lg";
 }) {
   const iconSize = size === "lg" ? "h-10 w-10" : "h-6 w-6";
+  const filledStars = total > 0 ? Math.round((score / total) * 5) : 0;
   return (
-    <div className="flex items-center justify-center gap-2" role="img" aria-label={`${stars} of ${max} stars`}>
-      {Array.from({ length: max }).map((_, i) => {
-        const filled = i < stars;
-        return (
-          <Star
-            key={i}
-            className={cn(
-              iconSize,
-              "transition-all duration-500",
-              filled
-                ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]"
-                : "fill-transparent text-white/25",
-              animate && filled && "scale-110 animate-[pulse_0.6s_ease-in-out]",
-            )}
-            style={animate && filled ? { animationDelay: `${i * 120}ms` } : undefined}
-          />
-        );
-      })}
+    <div className="space-y-2">
+      <p className="text-sm font-semibold text-text-primary tabular-nums m-0">
+        {score}/{total} correct
+      </p>
+      <div className="flex items-center justify-center gap-2" role="img" aria-label={`${score} of ${total} correct`}>
+        {Array.from({ length: 5 }).map((_, i) => {
+          const filled = i < filledStars;
+          return (
+            <Star
+              key={i}
+              className={cn(
+                iconSize,
+                "transition-all duration-500",
+                filled
+                  ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]"
+                  : "fill-transparent text-white/25",
+                animate && filled && "scale-110 animate-[pulse_0.6s_ease-in-out]",
+              )}
+              style={animate && filled ? { animationDelay: `${i * 120}ms` } : undefined}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 export function PhaseQuizCta({ phase, progress }: Props) {
-  const stars = getQuizStars(progress, phase.id);
+  const bestScore = getQuizStars(progress, phase.id);
   const passed = isPhaseQuizPassed(progress, phase.id);
+  const total = getPhaseQuizQuestionCount(phase.id);
+  const minCorrect = getPhaseQuizPassMinCorrect(phase.id);
+  const passPercent = getPhaseQuizPassPercent(phase.id);
 
   return (
     <div
@@ -86,12 +101,12 @@ export function PhaseQuizCta({ phase, progress }: Props) {
             Final challenge
           </p>
           <h2 className="text-lg font-bold text-text-primary mt-0.5 m-0">
-            {passed ? "Phase certified!" : "Phase quiz — 5 questions"}
+            {passed ? "Phase certified!" : `Phase quiz — ${total} questions`}
           </h2>
           <p className="text-sm text-text-secondary mt-1 m-0 leading-relaxed">
             {passed
-              ? "You scored 5/5 stars. The next phase is unlocked."
-              : "Study done? Prove it. You need 5/5 stars to unlock the next phase."}
+              ? `You passed with ${bestScore}/${total}. The next phase is unlocked.`
+              : `Study done? Prove it. Score at least ${minCorrect}/${total} (${passPercent}%) to unlock the next phase.`}
           </p>
         </div>
         {passed ? (
@@ -101,7 +116,7 @@ export function PhaseQuizCta({ phase, progress }: Props) {
         )}
       </div>
 
-      <StarRating stars={stars} animate={false} size="md" />
+      <StarRating score={bestScore} total={total} animate={false} size="md" />
 
       <Link href={`/school/${phase.id}/quiz`}>
         <Button
@@ -110,7 +125,7 @@ export function PhaseQuizCta({ phase, progress }: Props) {
           variant={passed ? "outline" : "primary"}
           icon={passed ? <RotateCcw className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
         >
-          {passed ? "Retake quiz" : stars > 0 ? `Try again (${stars}/5)` : "Start quiz"}
+          {passed ? "Retake quiz" : bestScore > 0 ? `Try again (${bestScore}/${total})` : "Start quiz"}
         </Button>
       </Link>
     </div>
@@ -136,46 +151,51 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
   const router = useRouter();
   const { locale } = useFixfySchoolLocale();
   const questions = getLocalizedQuiz(phase.id, locale);
+  const questionTotal = questions.length;
+  const passMin = getPhaseQuizPassMinCorrect(phase.id);
+  const passPercent = getPhaseQuizPassPercent(phase.id);
   const { progress, submitQuizResult } = useFixfySchoolProgress();
   const displayProgress = progress.completedLessonIds.length >= initialProgress.completedLessonIds.length
     ? progress
     : initialProgress;
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
-  const [resultStars, setResultStars] = useState(0);
+  const [resultScore, setResultScore] = useState(0);
   const [showExplanations, setShowExplanations] = useState(false);
 
-  const bestStars = getQuizStars(displayProgress, phase.id);
-  const passed = submitted ? resultStars >= SCHOOL_QUIZ_PASS_STARS : isPhaseQuizPassed(displayProgress, phase.id);
+  const bestScore = getQuizStars(displayProgress, phase.id);
+  const passed = submitted
+    ? isPhaseQuizScorePassing(phase.id, resultScore)
+    : isPhaseQuizPassed(displayProgress, phase.id);
 
   const handleSubmit = useCallback(() => {
     const unanswered = questions.filter((q) => answers[q.id] === undefined);
     if (unanswered.length > 0) {
-      toast.error("Answer all 5 questions before submitting.");
+      toast.error(`Answer all ${questionTotal} questions before submitting.`);
       return;
     }
-    const stars = scoreAnswers(questions, answers);
+    const score = scoreAnswers(questions, answers);
     const attemptAnswers = buildAttemptAnswers(questions, answers);
-    setResultStars(stars);
+    setResultScore(score);
     setSubmitted(true);
     setShowExplanations(true);
-    void submitQuizResult(phase.id, stars, attemptAnswers);
+    void submitQuizResult(phase.id, score, attemptAnswers);
 
-    if (stars >= SCHOOL_QUIZ_PASS_STARS) {
-      toast.success("5/5 stars — phase certified!", {
+    if (isPhaseQuizScorePassing(phase.id, score)) {
+      toast.success(`Phase certified — ${score}/${questionTotal}!`, {
         description: "Next phase unlocked. Great work!",
       });
     } else {
-      toast.error(`${stars}/5 stars — keep studying and try again.`, {
-        description: "You need a perfect score to pass.",
+      toast.error(`${score}/${questionTotal} — need ${passMin}/${questionTotal} (${passPercent}%) to pass.`, {
+        description: "Review the explanations below and try again.",
       });
     }
-  }, [answers, phase.id, questions, submitQuizResult]);
+  }, [answers, passMin, passPercent, phase.id, questionTotal, questions, submitQuizResult]);
 
   const handleRetry = () => {
     setAnswers({});
     setSubmitted(false);
-    setResultStars(0);
+    setResultScore(0);
     setShowExplanations(false);
   };
 
@@ -194,10 +214,10 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
         </p>
         <h1 className="text-2xl font-bold text-text-primary m-0">{phase.title}</h1>
         <p className="text-sm text-text-secondary m-0 max-w-md mx-auto">
-          5 questions · 1 star per correct answer · <strong className="text-text-primary">5/5 to pass</strong>
+          {questionTotal} questions · pass with <strong className="text-text-primary">{passMin}/{questionTotal}</strong> ({passPercent}%+)
         </p>
-        {bestStars > 0 && !submitted && (
-          <p className="text-xs text-text-tertiary m-0">Best score: {bestStars}/5 stars</p>
+        {bestScore > 0 && !submitted && (
+          <p className="text-xs text-text-tertiary m-0">Best score: {bestScore}/{questionTotal}</p>
         )}
       </div>
 
@@ -224,11 +244,11 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
             <>
               <h2 className="text-xl font-bold text-text-primary m-0">Almost there!</h2>
               <p className="text-sm text-text-secondary m-0">
-                You got {resultStars}/5. Review the explanations below and try again.
+                You got {resultScore}/{questionTotal}. Need {passMin}/{questionTotal} to pass.
               </p>
             </>
           )}
-          <StarRating stars={submitted ? resultStars : bestStars} animate={submitted} />
+          <StarRating score={submitted ? resultScore : bestScore} total={questionTotal} animate={submitted} />
         </div>
       )}
 
@@ -344,7 +364,7 @@ export function PhaseQuizLocked({ phaseId }: { phaseId: string }) {
         {prevPhase && (
           <>
             {" "}
-            Previous phase ({prevPhase.title}) requires 5/5 on its quiz to unlock this phase.
+            Previous phase ({prevPhase.title}) requires passing its quiz to unlock this phase.
           </>
         )}
       </p>

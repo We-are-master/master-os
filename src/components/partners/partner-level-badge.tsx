@@ -8,13 +8,17 @@ import {
   Gem,
   type LucideIcon,
 } from "lucide-react";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   partnerLevelFromProgress,
+  resolvePartnerLevelThresholds,
   resolvePartnerMonthlyGoal,
   type PartnerLevelIconId,
+  type PartnerLevelThresholds,
   type PartnerLevelTone,
 } from "@/lib/partner-revenue-goal";
+import { useMemo } from "react";
 
 const ICONS: Record<PartnerLevelIconId, LucideIcon> = {
   "circle-dot": CircleDot,
@@ -55,9 +59,18 @@ const TONE_CLASS: Record<
   },
 };
 
-function levelFromEarnings(monthEarned: number, weekEarned?: number) {
-  const goal = resolvePartnerMonthlyGoal(weekEarned ?? monthEarned / 4);
-  return partnerLevelFromProgress(monthEarned, goal);
+function usePartnerLevelThresholds(): PartnerLevelThresholds {
+  const { setup } = useFrontendSetup();
+  return useMemo(() => resolvePartnerLevelThresholds(setup), [setup]);
+}
+
+function levelFromEarnings(
+  monthEarned: number,
+  weekEarned: number | undefined,
+  thresholds: PartnerLevelThresholds,
+) {
+  const goal = resolvePartnerMonthlyGoal(weekEarned ?? monthEarned / 4, thresholds);
+  return partnerLevelFromProgress(monthEarned, goal, thresholds);
 }
 
 export function PartnerLevelIcon({
@@ -103,7 +116,8 @@ export function PartnerLevelBadge({
   weekEarned?: number;
   className?: string;
 }) {
-  const state = levelFromEarnings(monthEarned, weekEarned);
+  const thresholds = usePartnerLevelThresholds();
+  const state = levelFromEarnings(monthEarned, weekEarned, thresholds);
   const toneClass = TONE_CLASS[state.tone];
 
   return (
@@ -131,14 +145,45 @@ export function PartnerLevelBadge({
 export function PartnerLevelCard({
   monthEarned,
   weekEarned,
+  compact = false,
   className,
 }: {
   monthEarned: number;
   weekEarned?: number;
+  compact?: boolean;
   className?: string;
 }) {
-  const state = levelFromEarnings(monthEarned, weekEarned);
+  const thresholds = usePartnerLevelThresholds();
+  const state = levelFromEarnings(monthEarned, weekEarned, thresholds);
   const toneClass = TONE_CLASS[state.tone];
+
+  if (compact) {
+    return (
+      <div className={cn("p-2 rounded-lg bg-surface-hover border border-border-light min-w-0", className)}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <PartnerLevelIcon level={state.level} icon={state.icon} tone={state.tone} size="sm" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide leading-none">
+              Month level
+            </p>
+            <p className="text-sm font-bold text-text-primary leading-tight truncate">
+              L{state.level} · {state.name}
+            </p>
+          </div>
+          <span className="text-[10px] text-text-tertiary tabular-nums shrink-0">{state.pct}%</span>
+        </div>
+        <div className="h-1 w-full rounded-full bg-surface-tertiary overflow-hidden mt-1.5">
+          <div
+            className={cn("h-full rounded-full transition-all", toneClass.bar)}
+            style={{ width: `${state.barPct}%` }}
+          />
+        </div>
+        <p className="text-[9px] text-text-tertiary mt-1 truncate tabular-nums">
+          {formatCurrency(state.earned)} / {formatCurrency(state.goal)} · {state.footerLine}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("p-3 rounded-xl bg-surface-hover border border-border-light", className)}>

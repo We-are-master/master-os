@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyWorkforceOnboardingToken } from "@/lib/workforce-onboarding-token";
 import { ensureWorkforceDashboardAccess } from "@/lib/workforce-onboarding-access";
+import { sendWorkforcePlatformLoginInvite } from "@/lib/workforce-welcome-email-send";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
 
   const { data: person } = await admin
     .from("payroll_internal_costs")
-    .select("id, payee_name, profile_id, payroll_profile, lifecycle_stage")
+    .select("id, payee_name, profile_id, payroll_profile, lifecycle_stage, employment_type, description")
     .eq("id", payload.payrollInternalCostId)
     .maybeSingle();
   if (!person) return NextResponse.json({ error: "Person not found" }, { status: 404 });
@@ -83,9 +84,25 @@ export async function POST(req: NextRequest) {
       .eq("id", person.profile_id);
   }
 
+  let welcomeEmailSent = false;
+  if (loginEmail && person.employment_type === "employee") {
+    const invite = await sendWorkforcePlatformLoginInvite({
+      admin,
+      personName: person.payee_name?.trim() || "there",
+      workEmail: loginEmail,
+      employmentType: person.employment_type,
+      description: person.description,
+    });
+    welcomeEmailSent = invite.ok;
+    if (!invite.ok) {
+      console.warn("[workforce/onboarding/complete] employee login email:", invite.error);
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     autoLoginReady: !!loginEmail,
     email: loginEmail,
+    welcomeEmailSent,
   });
 }

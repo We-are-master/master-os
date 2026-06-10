@@ -146,6 +146,12 @@ a{color:inherit;text-decoration:none}
 @media (max-width:640px){.ob-row{grid-template-columns:1fr}}
 .ob-hint{font-size:12px;color:var(--mute);margin-top:-6px;margin-bottom:14px;display:flex;align-items:center;gap:6px}
 .ob-hint svg{width:13px;height:13px;flex:0 0 auto}
+.ob-bank-tip{display:flex;gap:12px;padding:14px 16px;margin-bottom:16px;border:1px solid rgba(11,95,255,.22);border-radius:var(--r3);background:var(--blue-soft)}
+.ob-bank-tip__ic{width:36px;height:36px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;background:var(--white);color:var(--blue)}
+.ob-bank-tip__t{font-size:14px;font-weight:600;color:var(--navy);margin:0 0 4px}
+.ob-bank-tip__s{font-size:13px;color:var(--slate);margin:0;line-height:1.5}
+.ob-bank-tip__s a{color:var(--blue);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.ob-bank-tip__s a:hover{color:var(--navy)}
 .ob-badge-pre{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--rf);background:var(--blue-soft);color:var(--blue);font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:500}
 
 /* documents */

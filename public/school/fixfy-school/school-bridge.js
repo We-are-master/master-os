@@ -4,6 +4,7 @@
   var QUIZ_PASS = 5;
   var params = new URLSearchParams(window.location.search);
   var embedded = params.get("embed") === "1" || window.self !== window.top;
+  var pagehideBound = false;
 
   function emptyProgress() {
     return {
@@ -36,16 +37,57 @@
     } catch (e) {}
   }
 
-  async function persist(progress) {
+  function mergeProgress(local, remote) {
+    var localIds = local.completedLessonIds || [];
+    var remoteIds = remote.completedLessonIds || [];
+    var seen = {};
+    var mergedIds = [];
+    localIds.concat(remoteIds).forEach(function (id) {
+      if (!seen[id]) {
+        seen[id] = true;
+        mergedIds.push(id);
+      }
+    });
+    var quizStars = Object.assign({}, local.quizStars || {});
+    var remoteStars = remote.quizStars || {};
+    Object.keys(remoteStars).forEach(function (phase) {
+      quizStars[phase] = Math.max(quizStars[phase] || 0, remoteStars[phase] || 0);
+    });
+    return {
+      completedLessonIds: mergedIds,
+      lastLessonId: remote.lastLessonId || local.lastLessonId || null,
+      unlockedAt: Object.assign({}, local.unlockedAt || {}, remote.unlockedAt || {}),
+      quizStars: quizStars,
+    };
+  }
+
+  async function persist(progress, attempt) {
     writeLocal(progress);
+    var tries = typeof attempt === "number" ? attempt : 0;
     try {
-      await fetch("/api/school/progress", {
+      var res = await fetch("/api/school/progress", {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(progress),
+        keepalive: true,
       });
-    } catch (e) {}
+      if (!res.ok && tries < 2) {
+        await new Promise(function (r) {
+          setTimeout(r, 400 * (tries + 1));
+        });
+        return persist(progress, tries + 1);
+      }
+      return res.ok;
+    } catch (e) {
+      if (tries < 2) {
+        await new Promise(function (r) {
+          setTimeout(r, 400 * (tries + 1));
+        });
+        return persist(progress, tries + 1);
+      }
+      return false;
+    }
   }
 
   window.FX_SCHOOL_BRIDGE = {
@@ -61,13 +103,26 @@
         if (res.ok) {
           var data = await res.json();
           if (data.progress) {
-            this.progress = data.progress;
-            writeLocal(data.progress);
+            var local = readLocal();
+            this.progress = mergeProgress(local, data.progress);
+            writeLocal(this.progress);
+            if (this.progress.completedLessonIds.length > (data.progress.completedLessonIds || []).length) {
+              void persist(this.progress);
+            }
           }
           this.profileSummary = data.profileSummary || null;
           this.isAdmin = Boolean(data.isAdmin || (data.profileSummary && data.profileSummary.isAdmin));
         }
       } catch (e) {}
+      if (typeof window !== "undefined" && !pagehideBound) {
+        pagehideBound = true;
+        window.addEventListener("pagehide", function () {
+          var p = readLocal();
+          if (p.completedLessonIds && p.completedLessonIds.length) {
+            void persist(p);
+          }
+        });
+      }
       return this.progress;
     },
 

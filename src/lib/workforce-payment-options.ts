@@ -25,13 +25,15 @@ export async function requestWorkforceOnboardingLink(
   const data = (await res.json().catch(() => ({}))) as {
     error?: string;
     onboardingUrl?: string;
+    platformLoginUrl?: string;
     sentTo?: string;
     warning?: string;
   };
-  if (!res.ok) throw new Error(data.error ?? "Could not create onboarding link");
-  if (!data.onboardingUrl) throw new Error("No onboarding URL returned");
+  if (!res.ok) throw new Error(data.error ?? "Could not create invite link");
+  const inviteUrl = data.onboardingUrl ?? data.platformLoginUrl;
+  if (!inviteUrl) throw new Error("No invite URL returned");
   return {
-    onboardingUrl: data.onboardingUrl,
+    onboardingUrl: inviteUrl,
     sentTo: data.sentTo,
     warning: data.warning,
   };

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
-  addManualPartnerKudos,
+  addManualPartnerFeedback,
   listPartnerFeedbackEvents,
 } from "@/services/partner-rating";
+import type { PartnerFeedbackKind } from "@/lib/partner-rating";
 import { partnerRatingBreakdown } from "@/lib/partner-rating";
 
 const STAFF_ROLES = new Set(["admin", "manager", "operator"]);
@@ -67,20 +68,23 @@ export async function POST(
   const gate = await requireStaffPartnerAccess(partnerId);
   if (gate instanceof NextResponse) return gate;
 
-  let body: { notes?: unknown; jobId?: unknown } = {};
+  let body: { kind?: unknown; notes?: unknown; jobId?: unknown } = {};
   try {
     body = await req.json();
   } catch {
     body = {};
   }
 
+  const kind: PartnerFeedbackKind =
+    body.kind === "complaint" ? "complaint" : "praise";
   const notes = typeof body.notes === "string" ? body.notes : undefined;
   const jobId = typeof body.jobId === "string" ? body.jobId : undefined;
 
   try {
-    const meta = await addManualPartnerKudos(
+    const meta = await addManualPartnerFeedback(
       partnerId,
       {
+        kind,
         notes,
         jobId,
         createdByUserId: gate.auth.user.id,
@@ -93,16 +97,20 @@ export async function POST(
       .insert({
         entity_type: "partner",
         entity_id: partnerId,
-        action: "partner_kudos_added",
-        metadata: { job_id: jobId ?? null, notes: notes?.trim().slice(0, 500) ?? null },
+        action: "partner_rating_feedback_added",
+        metadata: {
+          kind,
+          job_id: jobId ?? null,
+          notes: notes?.trim().slice(0, 500) ?? null,
+        },
       })
       .then(({ error }) => {
-        if (error) console.error("audit_logs partner_kudos_added", error);
+        if (error) console.error("audit_logs partner_rating_feedback_added", error);
       });
 
     return NextResponse.json({ ok: true, ...meta });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Failed to add kudos";
+    const message = e instanceof Error ? e.message : "Failed to save rating";
     const status = message.includes("already recorded") ? 409 : 500;
     return NextResponse.json({ error: message }, { status });
   }

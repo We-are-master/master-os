@@ -59,17 +59,31 @@ export async function POST(req: NextRequest) {
   const supabase = await workforceSyncSupabase();
 
   try {
+    const { purgeStaleWorkforceSelfBillDrafts, ensureWorkforceSelfBillForPeriod } = await import(
+      "@/services/workforce-self-bills"
+    );
+    const purged = await purgeStaleWorkforceSelfBillDrafts(anchor, supabase);
+
     if (personId) {
-      const { ensureWorkforceSelfBillForPeriod } = await import("@/services/workforce-self-bills");
       const bill = await ensureWorkforceSelfBillForPeriod(personId, anchor, supabase);
-      return NextResponse.json({ ok: true, count: bill ? 1 : 0, ids: bill ? [bill.id] : [] });
+      return NextResponse.json({
+        ok: true,
+        count: bill ? 1 : 0,
+        ids: bill ? [bill.id] : [],
+        purged: purged.deleted,
+      });
     }
 
     const bills = bounds
       ? await syncWorkforceSelfBillsForBounds(bounds, anchor, supabase)
       : await syncAllActiveWorkforceSelfBills(anchor, supabase);
 
-    return NextResponse.json({ ok: true, count: bills.length, ids: bills.map((b) => b.id) });
+    return NextResponse.json({
+      ok: true,
+      count: bills.length,
+      ids: bills.map((b) => b.id),
+      purged: purged.deleted,
+    });
   } catch (e) {
     console.error("workforce sync-self-bills:", e);
     return NextResponse.json(

@@ -41,8 +41,15 @@
     "trade-portal": "var(--fx-green)",
     "ops-playbook": "var(--fx-coral)",
   };
+  var PHASE_QUIZ_PASS = {
+    "fixfy-products": { min: 8, total: 10 },
+    zendesk: { min: 5, total: 5 },
+    "fixfy-os": { min: 5, total: 5 },
+    "ops-playbook": { min: 5, total: 5 },
+    "trade-portal": { min: 5, total: 5 },
+  };
   var PHASE_NEED = {
-    zendesk: "Score 5/5 on Fixfy Products & Vision quiz",
+    zendesk: "Score 8/10 on Fixfy Products & Vision quiz",
     "fixfy-os": "Score 5/5 on Zendesk Complete quiz",
     "ops-playbook": "Score 5/5 on Fixfy Operating System quiz",
     "trade-portal": "Score 5/5 on Ops Playbook quiz",
@@ -320,7 +327,7 @@
       '<div class="sc-hero__main">' +
       '<div class="sc-hero__eyebrow">Fixfy School</div>' +
       "<h1 class=\"sc-hero__title\">Learn Fixfy, one episode at a time</h1>" +
-      '<p class="sc-hero__sub">Start with Zendesk, then the Operating System and Trade Portal. Earn XP as you scroll, pass each checkpoint, and clear the phase quiz with 5/5 to unlock the next level.</p>' +
+      '<p class="sc-hero__sub">Start with Products & Vision, then Zendesk, the OS and Trade Portal. Earn XP as you scroll, pass each checkpoint, and clear each phase quiz to unlock the next level (Foundation: 8/10).</p>' +
       "</div>" +
       '<div class="sc-hero__stats">' +
       '<div class="sc-hero__stat"><div class="sc-hero__stat-k"><i data-lucide="zap"></i>Level ' +
@@ -541,8 +548,13 @@
     h += '<div class="sc-list">' + list.map(epRow).join("") + "</div>";
 
     if (stats.done === stats.total && stats.total > 0) {
+      var passReq = PHASE_QUIZ_PASS[pid] || { min: 5, total: 5 };
       h +=
-        '<div class="sc-quiz-cta"><p>All lessons complete — take the phase quiz and score 5/5 to unlock the next phase.</p>' +
+        '<div class="sc-quiz-cta"><p>All lessons complete — take the phase quiz and score ' +
+        passReq.min +
+        "/" +
+        passReq.total +
+        " to unlock the next phase.</p>" +
         '<button type="button" class="fx-btn fx-btn--p" data-quiz="' +
         esc(pid) +
         '"><i data-lucide="star"></i>Take quiz</button></div>';

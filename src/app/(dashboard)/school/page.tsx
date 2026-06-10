@@ -56,7 +56,7 @@ export default function FixfySchoolPage() {
           <h2 className="text-sm font-semibold text-text-primary m-0">Badges</h2>
           <SchoolAchievementStrip progress={progress} locale={locale} />
           <p className="text-xs text-text-tertiary m-0 leading-relaxed">
-            Complete all lessons and score 5/5 on each phase quiz to earn badges. Finish all five
+            Complete all lessons and pass each phase quiz to earn badges. Finish all five
             phases to unlock <strong className="text-text-secondary">Fixfy Scholar</strong>.
           </p>
         </div>

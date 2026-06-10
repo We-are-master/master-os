@@ -48,7 +48,7 @@ export function LessonViewer({ lessonId }: Props) {
       const allDone = sorted.every((l) => next.completedLessonIds.includes(l.id));
       if (allDone) {
         toast.info("All lessons done — take the phase quiz!", {
-          description: "Score 5/5 stars to unlock the next phase.",
+          description: "Pass the phase quiz to unlock the next phase.",
         });
         setTimeout(() => router.push(`/school/${lesson.phaseId}/quiz`), 1500);
       } else if (nextLesson && isLessonUnlocked(next, nextLesson.id)) {
