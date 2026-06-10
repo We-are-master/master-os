@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import type { NavGroup, NavItem } from "@/lib/constants";
+import { ADMIN_ONLY_NAV_HREFS } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 import { getAdminConfig, setAdminConfig as saveAdminConfig } from "@/services/admin-config";
 import { useProfile } from "@/hooks/use-profile";
@@ -103,6 +104,9 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
     function filterNestedItems(items: NavItem[]): NavItem[] {
       const out: NavItem[] = [];
       for (const item of items) {
+        // Admin-only items are never shown to non-admins, regardless of the
+        // permissions config. Admins skip this whole branch (early return above).
+        if (ADMIN_ONLY_NAV_HREFS.has(item.href)) continue;
         const childList = item.children?.length ? filterNestedItems(item.children) : [];
         const selfOk = itemAllowed(item.permission);
         const hasKids = childList.length > 0;
