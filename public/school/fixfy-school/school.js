@@ -41,15 +41,8 @@
     "trade-portal": "var(--fx-green)",
     "ops-playbook": "var(--fx-coral)",
   };
-  var PHASE_QUIZ_PASS = {
-    "fixfy-products": { min: 8, total: 10 },
-    zendesk: { min: 5, total: 5 },
-    "fixfy-os": { min: 5, total: 5 },
-    "ops-playbook": { min: 5, total: 5 },
-    "trade-portal": { min: 5, total: 5 },
-  };
   var PHASE_NEED = {
-    zendesk: "Score 8/10 on Fixfy Products & Vision quiz",
+    zendesk: "Score 5/5 on Fixfy Products & Vision quiz",
     "fixfy-os": "Score 5/5 on Zendesk Complete quiz",
     "ops-playbook": "Score 5/5 on Fixfy Operating System quiz",
     "trade-portal": "Score 5/5 on Ops Playbook quiz",
@@ -122,6 +115,14 @@
     });
     if (idx <= 0) return true;
     return bridge.isLessonComplete(sorted[idx - 1].id);
+  }
+
+  function isPhaseLessonsComplete(phaseId, includingLessonId) {
+    var list = lessonsSorted(phaseId);
+    if (!list.length) return false;
+    return list.every(function (l) {
+      return bridge.isLessonComplete(l.id) || l.id === includingLessonId;
+    });
   }
 
   function phaseStats(phaseId) {
@@ -327,7 +328,7 @@
       '<div class="sc-hero__main">' +
       '<div class="sc-hero__eyebrow">Fixfy School</div>' +
       "<h1 class=\"sc-hero__title\">Learn Fixfy, one episode at a time</h1>" +
-      '<p class="sc-hero__sub">Start with Products & Vision, then Zendesk, the OS and Trade Portal. Earn XP as you scroll, pass each checkpoint, and clear each phase quiz to unlock the next level (Foundation: 8/10).</p>' +
+      '<p class="sc-hero__sub">Start with Zendesk, then the Operating System and Trade Portal. Earn XP as you scroll, pass each checkpoint, and clear the phase quiz with 5/5 to unlock the next level.</p>' +
       "</div>" +
       '<div class="sc-hero__stats">' +
       '<div class="sc-hero__stat"><div class="sc-hero__stat-k"><i data-lucide="zap"></i>Level ' +
@@ -548,13 +549,8 @@
     h += '<div class="sc-list">' + list.map(epRow).join("") + "</div>";
 
     if (stats.done === stats.total && stats.total > 0) {
-      var passReq = PHASE_QUIZ_PASS[pid] || { min: 5, total: 5 };
       h +=
-        '<div class="sc-quiz-cta"><p>All lessons complete — take the phase quiz and score ' +
-        passReq.min +
-        "/" +
-        passReq.total +
-        " to unlock the next phase.</p>" +
+        '<div class="sc-quiz-cta"><p>All lessons complete — take the phase quiz and score 5/5 to unlock the next phase.</p>' +
         '<button type="button" class="fx-btn fx-btn--p" data-quiz="' +
         esc(pid) +
         '"><i data-lucide="star"></i>Take quiz</button></div>';
@@ -626,6 +622,22 @@
     document.getElementById("player").classList.remove("is-complete");
   }
 
+  function clearQuizRedirectTimer() {
+    if (player.quizRedirectTimer) {
+      clearTimeout(player.quizRedirectTimer);
+      player.quizRedirectTimer = null;
+    }
+  }
+
+  function scheduleQuizRedirect(phaseId) {
+    clearQuizRedirectTimer();
+    player.quizRedirectTimer = setTimeout(function () {
+      player.quizRedirectTimer = null;
+      closeLesson();
+      bridge.navigate("/school/" + phaseId + "/quiz");
+    }, 1200);
+  }
+
   function resolveNextTarget(lesson) {
     if (lesson.next) {
       return {
@@ -635,10 +647,19 @@
         title: lesson.next.title,
       };
     }
-    var phase = findPhase(lesson.phaseId || currentPhaseId);
+    var phaseId = lesson.phaseId || currentPhaseId;
+    if (isPhaseLessonsComplete(phaseId, lesson.id)) {
+      return {
+        kind: "quiz",
+        id: phaseId,
+        k: "Final challenge",
+        title: "Take the phase quiz",
+      };
+    }
+    var phase = findPhase(phaseId);
     return {
       kind: "phase",
-      id: lesson.phaseId || currentPhaseId,
+      id: phaseId,
       k: "Phase complete",
       title: phase ? "Back to " + phase.title : "Back to phase",
     };
@@ -660,6 +681,10 @@
     var tEl = document.getElementById("scCompleteDockTitle");
     if (kEl) kEl.textContent = target.k;
     if (tEl) tEl.textContent = target.title;
+    if (btn) {
+      var iconEl = btn.querySelector(".sc-complete-dock__icon i");
+      if (iconEl) iconEl.setAttribute("data-lucide", target.kind === "quiz" ? "star" : "arrow-right");
+    }
     icons();
   }
 
@@ -682,11 +707,16 @@
     document.getElementById("hudScene").textContent = "Complete";
     document.getElementById("hudProg").style.width = "100%";
     syncCompleteDock(player.lesson);
+    var phaseId = player.lesson.phaseId || currentPhaseId;
+    if (isPhaseLessonsComplete(phaseId, player.lesson.id)) {
+      scheduleQuizRedirect(phaseId);
+    }
     icons();
   }
 
   function reviewLessonFromComplete() {
     if (!player.lesson || !player.completed) return;
+    clearQuizRedirectTimer();
     var stage = document.getElementById("stage");
     var screen = document.getElementById("scCompleteScreen");
     if (!stage || !screen) return;
@@ -725,6 +755,7 @@
     player.awarded = [];
     player.active = 0;
     player.completed = false;
+    clearQuizRedirectTimer();
     player.total = totalLessonXp(l);
     document.getElementById("hudTitle").textContent = l.title;
 
@@ -955,6 +986,12 @@
       openLesson(target.id);
       return;
     }
+    if (target.kind === "quiz") {
+      clearQuizRedirectTimer();
+      closeLesson();
+      bridge.navigate("/school/" + target.id + "/quiz");
+      return;
+    }
     closeLesson();
     renderPhase(target.id);
     showView("phase");
@@ -1067,8 +1104,15 @@
       return;
     }
     if (e.target.closest("[data-finish]")) {
+      clearQuizRedirectTimer();
+      var finishLesson = player.lesson;
+      var finishPhaseId = finishLesson && (finishLesson.phaseId || currentPhaseId);
       closeLesson();
-      goHome();
+      if (finishLesson && finishPhaseId && isPhaseLessonsComplete(finishPhaseId, finishLesson.id)) {
+        bridge.navigate("/school/" + finishPhaseId + "/quiz");
+      } else {
+        goHome();
+      }
       return;
     }
     if (e.target.closest("[data-review-lesson]")) {

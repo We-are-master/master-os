@@ -35,8 +35,8 @@ export default function SchoolQuizPage() {
 
   return (
     <PageTransition>
-      <div className="space-y-6 max-w-2xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="mx-auto w-full max-w-lg sm:max-w-xl space-y-5 pb-6">
+        <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
           <Link
             href={`/school/${phase.id}`}
             className="inline-flex items-center gap-1.5 text-sm text-text-tertiary hover:text-text-primary transition-colors"
@@ -52,7 +52,7 @@ export default function SchoolQuizPage() {
             <Lock className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
             <p className="text-sm font-medium text-text-secondary">This phase is locked</p>
             <p className="text-xs text-text-tertiary mt-1">
-              Pass the previous phase quiz to unlock.
+              Score 5/5 on the previous phase quiz to unlock.
             </p>
             <Link href="/school" className="text-[#E94A02] text-sm font-medium mt-4 inline-block">
               Back to overview

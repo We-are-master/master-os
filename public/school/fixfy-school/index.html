@@ -48,22 +48,22 @@
   <div class="sc-complete-screen" id="scCompleteScreen" hidden aria-hidden="true"></div>
   <div class="sc-complete-dock" id="scCompleteDock" hidden aria-hidden="true">
     <div class="sc-complete-dock__stack">
-      <button type="button" class="sc-complete-dock__btn" data-go-next>
+      <button type="button" class="sc-complete-dock__btn sc-complete-dock__btn--review" data-review-lesson>
+        <span class="sc-complete-dock__copy">
+          <span class="sc-complete-dock__k">Review again</span>
+          <span class="sc-complete-dock__title">Re-read the scenes from the top</span>
+        </span>
+        <span class="sc-complete-dock__icon"><i data-lucide="rotate-ccw"></i></span>
+      </button>
+      <button type="button" class="sc-complete-dock__exit" data-finish>
+        <i data-lucide="check-circle-2"></i>Mark complete &amp; exit
+      </button>
+      <button type="button" class="sc-complete-dock__btn sc-complete-dock__btn--next" data-go-next>
         <span class="sc-complete-dock__copy">
           <span class="sc-complete-dock__k" id="scCompleteDockK">Next lesson</span>
           <span class="sc-complete-dock__title" id="scCompleteDockTitle">Continue</span>
         </span>
         <span class="sc-complete-dock__icon"><i data-lucide="arrow-right"></i></span>
-      </button>
-      <button type="button" class="sc-complete-dock__btn sc-complete-dock__btn--review" data-review-lesson>
-        <span class="sc-complete-dock__copy">
-          <span class="sc-complete-dock__k">Back to review</span>
-          <span class="sc-complete-dock__title">Read the scenes from the top</span>
-        </span>
-        <span class="sc-complete-dock__icon"><i data-lucide="chevrons-up"></i></span>
-      </button>
-      <button type="button" class="sc-complete-dock__exit" data-finish>
-        <i data-lucide="check-circle-2"></i>Mark complete &amp; exit
       </button>
     </div>
   </div>

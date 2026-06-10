@@ -16,7 +16,7 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
   return (
     <FixfySchoolLocaleProvider>
       {quiz ? (
-        <div className="space-y-4">
+        <div className="mx-auto w-full max-w-lg sm:max-w-xl space-y-4">
           <SchoolEscapeBar />
           {children}
         </div>

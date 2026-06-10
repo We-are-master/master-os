@@ -843,9 +843,60 @@ body.sc-reading {
   cursor: pointer;
   text-align: left;
   font: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
 }
+
+.sc-complete-dock__btn:active {
+  transform: scale(0.99);
+}
+
 .sc-complete-dock__btn--review {
-  background: var(--fx-paper);
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border: 1.5px solid #f59e0b;
+  box-shadow: 0 1px 0 rgba(245, 158, 11, 0.12);
+}
+
+.sc-complete-dock__btn--review .sc-complete-dock__k {
+  color: #b45309;
+  font-weight: 700;
+}
+
+.sc-complete-dock__btn--review .sc-complete-dock__title {
+  color: #92400e;
+}
+
+.sc-complete-dock__btn--review .sc-complete-dock__icon {
+  color: #d97706;
+}
+
+.sc-complete-dock__btn--review:hover {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-color: #d97706;
+}
+
+.sc-complete-dock__btn--next {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  border: 1.5px solid #047857;
+  box-shadow: 0 4px 14px rgba(5, 150, 105, 0.28);
+}
+
+.sc-complete-dock__btn--next .sc-complete-dock__k {
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 700;
+}
+
+.sc-complete-dock__btn--next .sc-complete-dock__title {
+  color: #fff;
+}
+
+.sc-complete-dock__btn--next .sc-complete-dock__icon {
+  color: #fff;
+}
+
+.sc-complete-dock__btn--next:hover {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-color: #059669;
+  box-shadow: 0 6px 18px rgba(5, 150, 105, 0.35);
 }
 
 .sc-complete-dock__k {
@@ -874,13 +925,26 @@ body.sc-reading {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-radius: 12px;
-  border: 1px solid var(--fx-line);
-  background: var(--fx-paper);
+  border: 2px solid #ef4444;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  color: #b91c1c;
   font: inherit;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 15px;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sc-complete-dock__exit:hover {
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+  border-color: #dc2626;
+  color: #991b1b;
+}
+
+.sc-complete-dock__exit svg {
+  color: #dc2626;
 }
 
 /* Scenes */
