@@ -33,7 +33,8 @@ import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
-import { enrichPartnersDirectoryEarnings } from "@/lib/partner-directory-earnings";
+import { enrichPartnersDirectoryEarnings, type PartnerWithEarnings } from "@/lib/partner-directory-earnings";
+import { PartnerLevelBadge, PartnerLevelCard } from "@/components/partners/partner-level-badge";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
@@ -135,8 +136,18 @@ import {
 import { upsertPartnerServicePrice } from "@/services/partner-service-prices";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
-import { displayPartnerRating, PARTNER_RATING_MAX } from "@/lib/partner-rating";
-import { refreshLegacyZeroPartnerRatings, refreshPartnerRating } from "@/services/partner-rating";
+import {
+  displayPartnerRating,
+  PARTNER_COMPLAINT_PENALTY_POINTS,
+  PARTNER_PRAISE_POINTS,
+  PARTNER_RATING_MAX,
+  partnerFeedbackSourceLabel,
+} from "@/lib/partner-rating";
+import {
+  refreshLegacyZeroPartnerRatings,
+  refreshPartnerRating,
+  type PartnerFeedbackRow,
+} from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 
 const PARTNERS_PAGE_SIZE = 10;
@@ -466,6 +477,15 @@ function PartnersDirectoryGridView({
                           amount={item.total_earnings}
                           maxAmount={maxEarningsInView}
                           valueClassName="text-lg"
+                        />
+                      </dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Month level</dt>
+                      <dd>
+                        <PartnerLevelBadge
+                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+                          className="items-start"
                         />
                       </dd>
                     </div>
@@ -1722,7 +1742,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "total_earnings",
       label: "Revenue",
-      width: "18%",
+      width: "16%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
@@ -1736,9 +1756,23 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       ),
     },
     {
+      key: "month_level",
+      label: "Level",
+      width: "12%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: (item) => (
+        <PartnerLevelBadge
+          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+          className="mx-auto w-full max-w-[8.5rem]"
+        />
+      ),
+    },
+    {
       key: "compliance_score",
       label: "Compliance",
-      width: "14%",
+      width: "12%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
@@ -3627,7 +3661,17 @@ function PartnerDetailDrawer({
     phone: "",
     partner_address: "",
   });
-  const [ratingMeta, setRatingMeta] = useState({ complaintCount: 0, pointsLost: 0 });
+  const [ratingMeta, setRatingMeta] = useState({
+    complaintCount: 0,
+    pointsLost: 0,
+    praiseCount: 0,
+    pointsGained: 0,
+    feedback: [] as PartnerFeedbackRow[],
+  });
+  const [kudosOpen, setKudosOpen] = useState(false);
+  const [kudosNotes, setKudosNotes] = useState("");
+  const [kudosJobRef, setKudosJobRef] = useState("");
+  const [kudosSubmitting, setKudosSubmitting] = useState(false);
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
@@ -3767,14 +3811,28 @@ function PartnerDetailDrawer({
     void refreshPartnerRating(partner.id)
       .then((meta) => {
         if (cancelled) return;
-        setRatingMeta({ complaintCount: meta.complaintCount, pointsLost: meta.pointsLost });
+        setRatingMeta({
+          complaintCount: meta.complaintCount,
+          pointsLost: meta.pointsLost,
+          praiseCount: meta.praiseCount,
+          pointsGained: meta.pointsGained,
+          feedback: meta.feedback,
+        });
         const stored = partner.rating ?? PARTNER_RATING_MAX;
         if (Math.abs(stored - meta.rating) > 0.009) {
           onPartnerUpdate?.({ ...partner, rating: meta.rating });
         }
       })
       .catch(() => {
-        if (!cancelled) setRatingMeta({ complaintCount: 0, pointsLost: 0 });
+        if (!cancelled) {
+          setRatingMeta({
+            complaintCount: 0,
+            pointsLost: 0,
+            praiseCount: 0,
+            pointsGained: 0,
+            feedback: [],
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -4342,6 +4400,57 @@ function PartnerDetailDrawer({
     }
   }, [partner]);
 
+  const handleAddKudos = useCallback(async () => {
+    if (!partner) return;
+    setKudosSubmitting(true);
+    try {
+      const jobId =
+        kudosJobRef.trim() !== ""
+          ? partnerJobs.find((j) => j.reference === kudosJobRef.trim())?.id
+          : undefined;
+      if (kudosJobRef.trim() && !jobId) {
+        toast.error("Job reference not found for this partner");
+        return;
+      }
+      const res = await fetch(`/api/partners/${partner.id}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: kudosNotes.trim() || undefined,
+          jobId,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        rating?: number;
+        praiseCount?: number;
+        pointsGained?: number;
+        complaintCount?: number;
+        pointsLost?: number;
+        feedback?: PartnerFeedbackRow[];
+      };
+      if (!res.ok) throw new Error(data.error ?? "Could not add kudos");
+      setRatingMeta({
+        complaintCount: data.complaintCount ?? 0,
+        pointsLost: data.pointsLost ?? 0,
+        praiseCount: data.praiseCount ?? 0,
+        pointsGained: data.pointsGained ?? 0,
+        feedback: data.feedback ?? [],
+      });
+      if (typeof data.rating === "number") {
+        onPartnerUpdate?.({ ...partner, rating: data.rating });
+      }
+      toast.success("Kudos added — rating updated");
+      setKudosOpen(false);
+      setKudosNotes("");
+      setKudosJobRef("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not add kudos");
+    } finally {
+      setKudosSubmitting(false);
+    }
+  }, [partner, kudosNotes, kudosJobRef, partnerJobs, onPartnerUpdate]);
+
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   if (teamMember) {
@@ -4660,6 +4769,9 @@ function PartnerDetailDrawer({
         {/* ========== OVERVIEW ========== */}
         {tab === "overview" && (
           <div className="p-6 space-y-5">
+            <PartnerLevelCard
+              monthEarned={(partner as PartnerWithEarnings).month_earnings ?? 0}
+            />
             {overviewAlerts.length > 0 && (
               <div className="rounded-xl border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/20 p-4 space-y-2">
                 <div className="flex items-center gap-2">
@@ -5140,22 +5252,75 @@ function PartnerDetailDrawer({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
+                  {isAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => setKudosOpen(true)}
+                      className="text-[10px] font-semibold text-primary hover:underline shrink-0"
+                    >
+                      + Add kudos
+                    </button>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-1.5 mt-1">
                   <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
                   <span className="text-xl font-bold text-text-primary">
                     {displayPartnerRating(partner.rating)}
                   </span>
                   <span className="text-xs text-text-tertiary">/{PARTNER_RATING_MAX.toFixed(1)}</span>
+                  {displayPartnerRating(partner.rating) >= 4.8 && realJobsCount >= 10 ? (
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full ml-1">
+                      Top rated
+                    </span>
+                  ) : null}
                 </div>
                 <p className="text-[10px] text-text-tertiary mt-1 leading-snug">
-                  Starts at {PARTNER_RATING_MAX}. Each partner-fault complaint costs{" "}
-                  {ratingMeta.pointsLost > 0 ? `${ratingMeta.pointsLost} pts` : "0.5 pts"} (half if job completed,
-                  full if cancelled).
-                  {ratingMeta.complaintCount > 0
-                    ? ` ${ratingMeta.complaintCount} complaint job(s) on record.`
-                    : " No complaint jobs on record."}
+                  Base {PARTNER_RATING_MAX}. Complaints −{PARTNER_COMPLAINT_PENALTY_POINTS} (half if job completed).
+                  Kudos +{PARTNER_PRAISE_POINTS} (review 4+ or manual).
+                  {ratingMeta.complaintCount > 0 || ratingMeta.praiseCount > 0 ? (
+                    <>
+                      {" "}
+                      {ratingMeta.complaintCount > 0
+                        ? `${ratingMeta.complaintCount} complaint(s) (−${ratingMeta.pointsLost}).`
+                        : ""}
+                      {ratingMeta.praiseCount > 0
+                        ? ` ${ratingMeta.praiseCount} kudos (+${ratingMeta.pointsGained}).`
+                        : ""}
+                    </>
+                  ) : (
+                    " No feedback events yet."
+                  )}
                 </p>
+                {ratingMeta.feedback.length > 0 ? (
+                  <ul className="mt-2 space-y-1.5 max-h-28 overflow-y-auto border-t border-border-light/60 pt-2">
+                    {ratingMeta.feedback.slice(0, 6).map((item) => (
+                      <li key={item.id} className="text-[10px] leading-snug">
+                        <span
+                          className={
+                            item.kind === "praise"
+                              ? "font-semibold text-emerald-600 dark:text-emerald-400"
+                              : "font-semibold text-amber-700 dark:text-amber-400"
+                          }
+                        >
+                          {item.kind === "praise" ? "+" : "−"}
+                          {item.kind === "praise" ? PARTNER_PRAISE_POINTS : PARTNER_COMPLAINT_PENALTY_POINTS}
+                        </span>
+                        <span className="text-text-secondary">
+                          {" "}
+                          {partnerFeedbackSourceLabel(item.source)}
+                          {item.job_reference ? ` · ${item.job_reference}` : ""}
+                        </span>
+                        {item.notes ? (
+                          <span className="block text-text-tertiary truncate" title={item.notes}>
+                            {item.notes}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -6650,6 +6815,54 @@ function PartnerDetailDrawer({
             </Button>
             <Button type="button" disabled={!deactivatePreset} onClick={() => void submitDeactivate()}>
               Confirm
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={kudosOpen}
+        onClose={() => {
+          if (kudosSubmitting) return;
+          setKudosOpen(false);
+        }}
+        title="Add kudos"
+        subtitle="Recognise great work — adds +0.25 to this partner's rating (max 5.0)."
+        size="md"
+      >
+        <div className="p-6 space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary">Note (optional)</label>
+            <textarea
+              value={kudosNotes}
+              onChange={(e) => setKudosNotes(e.target.value)}
+              placeholder="What went well? e.g. customer praised punctuality on JOB-1234"
+              rows={3}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm resize-none"
+              maxLength={2000}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary">Link to job (optional)</label>
+            <select
+              value={kudosJobRef}
+              onChange={(e) => setKudosJobRef(e.target.value)}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm"
+            >
+              <option value="">General kudos (no job)</option>
+              {partnerJobs.map((j) => (
+                <option key={j.id} value={j.reference}>
+                  {j.reference} · {j.status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" onClick={() => setKudosOpen(false)} disabled={kudosSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" disabled={kudosSubmitting} onClick={() => void handleAddKudos()}>
+              {kudosSubmitting ? "Saving…" : "Add kudos"}
             </Button>
           </div>
         </div>

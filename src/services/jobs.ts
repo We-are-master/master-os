@@ -25,7 +25,7 @@ import {
   isSupabaseMissingColumnError,
   parsePostgrestUnknownColumnName,
 } from "@/lib/supabase-schema-compat";
-import { refreshPartnerRating } from "./partner-rating";
+import { syncPartnerFeedbackFromJob } from "@/lib/partner-feedback-sync";
 import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
@@ -1148,9 +1148,9 @@ export async function updateJob(
     }
   }
   const partnerId = row.partner_id?.trim();
-  if (partnerId && row.on_hold_reason_preset_id === "complaint") {
-    void refreshPartnerRating(partnerId).catch((e) => {
-      console.error("refreshPartnerRating:", e);
+  if (partnerId) {
+    void syncPartnerFeedbackFromJob(getSupabase(), row).catch((e) => {
+      console.error("syncPartnerFeedbackFromJob:", e);
     });
   }
   return row;
