@@ -7,6 +7,7 @@ import {
   isValid,
   parseISO,
   startOfMonth,
+  subMonths,
 } from "date-fns";
 import type { PayrollInternalPayFrequency } from "@/types/database";
 import { getWeekBoundsForDate } from "./self-bill-period";
@@ -258,4 +259,22 @@ export function parseWorkforceStartDate(
   }
   if (createdAt?.trim()) return createdAt.trim().slice(0, 10);
   return null;
+}
+
+/** Work-period cutoff (last day of accrual) for the payment due on `dueYmd`. */
+export function workforceCutoffForNextDue(
+  dueYmd: string | null | undefined,
+  payFrequency: PayrollInternalPayFrequency | null | undefined,
+  _payDay?: number | null,
+): string | null {
+  const freq = payFrequency ?? "monthly";
+  const due = dueYmd?.trim().slice(0, 10);
+  if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    return getPayPeriodBounds(freq, new Date()).periodEnd;
+  }
+  const anchor = parseISO(`${due}T12:00:00`);
+  if (freq === "monthly") {
+    return format(endOfMonth(subMonths(anchor, 1)), "yyyy-MM-dd");
+  }
+  return getPayPeriodBounds(freq, anchor).periodEnd;
 }

@@ -4,9 +4,10 @@ import {
   UNLINKED_ATTENTION_ACCOUNT_KEY,
   buildAttentionAccountGroups,
   buildCashflowWeekly,
+  buildCashflowWeekBreakdown,
   buildInvoiceLedgerAccountGroups,
 } from "@/lib/billing-standalone-metrics";
-import type { Invoice } from "@/types/database";
+import type { Bill, Invoice, SelfBill } from "@/types/database";
 
 function inv(
   id: string,
@@ -22,6 +23,32 @@ function inv(
     collection_stage: "awaiting_final",
     ...opts,
   };
+}
+
+function sb(id: string, opts: Partial<SelfBill> = {}): SelfBill {
+  return {
+    id,
+    reference: `SB-${id}`,
+    status: "ready_to_pay",
+    net_payout: 500,
+    due_date: "2026-06-12",
+    week_start: "2026-06-02",
+    week_end: "2026-06-08",
+    created_at: "2026-06-01T00:00:00Z",
+    ...opts,
+  } as SelfBill;
+}
+
+function bill(id: string, opts: Partial<Bill> = {}): Bill {
+  return {
+    id,
+    description: "Expense",
+    amount: 120,
+    due_date: "2026-06-12",
+    status: "approved",
+    created_at: "2026-06-01T00:00:00Z",
+    ...opts,
+  } as Bill;
 }
 
 describe("buildAttentionAccountGroups", () => {
@@ -144,5 +171,81 @@ describe("buildCashflowWeekly", () => {
     assert.equal(weeks[0]!.weekStart, "2026-06-08");
     assert.equal(weeks[0]!.moneyIn, 2574.7);
     assert.equal(weeks[0]!.moneyOut, 0);
+  });
+
+  it("counts only approved self-bills in moneyOut, not pending ready rows", () => {
+    const weeks = buildCashflowWeekly({
+      invoices: [],
+      selfBills: [
+        sb("pending", { net_payout: 8000, due_date: "2026-06-10", approved_at: null }),
+        sb("approved", { net_payout: 500, due_date: "2026-06-10", approved_at: "2026-06-01T10:00:00Z" }),
+      ],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      startYmd: "2026-06-08",
+      endYmd: "2026-06-14",
+    });
+
+    assert.equal(weeks.length, 1);
+    assert.equal(weeks[0]!.moneyOut, 500);
+  });
+
+  it("includes open bills with due_date in the week in moneyOut", () => {
+    const weeks = buildCashflowWeekly({
+      invoices: [],
+      selfBills: [],
+      bills: [
+        bill("open", { amount: 250, due_date: "2026-06-11", status: "submitted" }),
+        bill("paid", { amount: 999, due_date: "2026-06-11", status: "paid" }),
+        bill("later", { amount: 100, due_date: "2026-06-20", status: "approved" }),
+      ],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      startYmd: "2026-06-08",
+      endYmd: "2026-06-14",
+    });
+
+    assert.equal(weeks[0]!.moneyOut, 250);
+  });
+
+  it("buildCashflowWeekBreakdown lists line items for the selected week", () => {
+    const breakdown = buildCashflowWeekBreakdown("2026-06-08", {
+      invoices: [
+        inv("a", {
+          client_name: "Acme",
+          due_date: "2026-06-12",
+          amount: 1000,
+          status: "pending",
+        }),
+      ],
+      selfBills: [
+        sb("sb1", {
+          due_date: "2026-06-10",
+          approved_at: "2026-06-01T10:00:00Z",
+          net_payout: 500,
+          partner_name: "Partner A",
+        }),
+      ],
+      bills: [
+        bill("b1", { amount: 80, due_date: "2026-06-11", description: "Rent", status: "approved" }),
+      ],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+    });
+
+    assert.equal(breakdown.inLines.length, 1);
+    assert.equal(breakdown.inLines[0]!.label, "Acme");
+    assert.equal(breakdown.outLines.length, 2);
+    assert.equal(breakdown.moneyIn, 1000);
+    assert.equal(breakdown.moneyOut, 580);
   });
 });

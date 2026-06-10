@@ -23,6 +23,10 @@ import {
   Wallet,
 } from "lucide-react";
 import type { InternalCost, BusinessUnit } from "@/types/database";
+import {
+  parseWorkforceStartDate,
+  workforceCutoffForNextDue,
+} from "@/lib/workforce-pay-schedule";
 
 export type WorkforcePeopleRow = InternalCost & { bu_name?: string | null };
 
@@ -368,6 +372,55 @@ function DocsProgressBadge({ done, total }: { done: number; total: number }) {
   );
 }
 
+function workforceRowSchedule(row: WorkforcePeopleRow) {
+  const startYmd = parseWorkforceStartDate(row.payroll_profile, row.created_at);
+  const nextDueYmd = row.due_date?.trim().slice(0, 10) || null;
+  const cutoffYmd = workforceCutoffForNextDue(nextDueYmd, row.pay_frequency, row.payment_day_of_month);
+  return { startYmd, nextDueYmd, cutoffYmd };
+}
+
+function WorkforceScheduleBlock({
+  row,
+  className,
+  compact,
+}: {
+  row: WorkforcePeopleRow;
+  className?: string;
+  compact?: boolean;
+}) {
+  const { startYmd, nextDueYmd, cutoffYmd } = workforceRowSchedule(row);
+  if (compact) {
+    return (
+      <div className={cn("text-[10px] tabular-nums text-text-tertiary", className)}>
+        <span className="font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</span>
+        <span className="mx-1">·</span>
+        <span>Start {startYmd ? formatDate(startYmd) : "—"}</span>
+        <span className="mx-1">·</span>
+        <span>Due {nextDueYmd ? formatDate(nextDueYmd) : "—"}</span>
+        <span className="mx-1">·</span>
+        <span>Cutoff {cutoffYmd ? formatDate(cutoffYmd) : "—"}</span>
+      </div>
+    );
+  }
+  return (
+    <div className={cn("text-right shrink-0 tabular-nums leading-tight", className)}>
+      <p className="text-[11px] font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</p>
+      <p className="text-[10px] text-text-tertiary mt-0.5">
+        <span className="text-text-tertiary/80">Start </span>
+        {startYmd ? formatDate(startYmd) : "—"}
+      </p>
+      <p className="text-[10px] text-text-tertiary">
+        <span className="text-text-tertiary/80">Due </span>
+        {nextDueYmd ? formatDate(nextDueYmd) : "—"}
+      </p>
+      <p className="text-[10px] text-text-tertiary">
+        <span className="text-text-tertiary/80">Cutoff </span>
+        {cutoffYmd ? formatDate(cutoffYmd) : "—"}
+      </p>
+    </div>
+  );
+}
+
 function LifecycleDotBadge({ stage }: { stage: string }) {
   const isActive = stage === "active";
   const isOnboarding = stage === "onboarding";
@@ -425,6 +478,7 @@ export function WorkforcePersonCard({
   onSendOnboardingLink: () => void;
 }) {
   const stage = row.lifecycle_stage ?? "active";
+  const schedule = workforceRowSchedule(row);
   const emailLine =
     row.payroll_profile && typeof row.payroll_profile === "object" && "email" in (row.payroll_profile as object)
       ? String((row.payroll_profile as { email?: string }).email ?? "").trim()
@@ -456,11 +510,25 @@ export function WorkforcePersonCard({
             <p className="font-bold text-text-primary tabular-nums mt-0.5">{formatCurrency(Number(row.amount))}</p>
           </div>
           <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Start</p>
+            <p className="font-semibold text-text-primary mt-0.5">
+              {schedule.startYmd ? formatDate(schedule.startYmd) : "—"}
+            </p>
+          </div>
+          <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next due</p>
-            <p className="font-semibold text-text-primary mt-0.5">{row.due_date ? formatDate(row.due_date) : "—"}</p>
+            <p className="font-semibold text-text-primary mt-0.5">
+              {row.due_date ? formatDate(row.due_date) : "—"}
+            </p>
             {row.status === "pending" ? (
               <p className="text-[10px] font-semibold text-primary mt-0.5">Pending</p>
             ) : null}
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Cutoff</p>
+            <p className="font-semibold text-text-primary mt-0.5">
+              {schedule.cutoffYmd ? formatDate(schedule.cutoffYmd) : "—"}
+            </p>
           </div>
         </div>
       </button>
@@ -577,6 +645,7 @@ export function WorkforcePersonListRow({
   onSendOnboardingLink: () => void;
 }) {
   const stage = row.lifecycle_stage ?? "active";
+  const schedule = workforceRowSchedule(row);
   const emailLine =
     row.payroll_profile && typeof row.payroll_profile === "object" && "email" in (row.payroll_profile as object)
       ? String((row.payroll_profile as { email?: string }).email ?? "").trim()
@@ -587,7 +656,7 @@ export function WorkforcePersonListRow({
   return (
     <div
       className={cn(
-        "group flex flex-col gap-1 border-b border-border-light/80 px-3 py-1.5 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5.25rem_auto] sm:items-center sm:gap-2 transition-colors",
+        "group flex flex-col gap-1 border-b border-border-light/80 px-3 py-1.5 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(7.5rem,1fr)_auto] sm:items-center sm:gap-2 transition-colors",
         striped ? "bg-surface-hover/35" : "bg-card",
         "hover:bg-primary/[0.04]",
       )}
@@ -625,15 +694,10 @@ export function WorkforcePersonListRow({
           </Badge>
         )}
       </div>
-      <div className="hidden sm:block text-right shrink-0 tabular-nums leading-none">
-        <p className="text-[11px] font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</p>
-        <p className="text-[10px] text-text-tertiary mt-0.5">{row.due_date ? formatDate(row.due_date) : "—"}</p>
-      </div>
+      <WorkforceScheduleBlock row={row} className="hidden sm:block" />
       <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-        <div className="flex gap-1 sm:hidden text-[10px] tabular-nums text-text-tertiary">
-          <span className="font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</span>
-          <span>·</span>
-          <span>{row.due_date ? formatDate(row.due_date) : "—"}</span>
+        <div className="flex gap-1 sm:hidden w-full">
+          <WorkforceScheduleBlock row={row} compact className="w-full" />
         </div>
         <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => onOpenDocuments()}>
           Docs
