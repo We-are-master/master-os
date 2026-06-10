@@ -186,6 +186,10 @@ import { patchJobFinancialsForAccessTransition } from "@/lib/job-access-fee-fina
 import { jobPaymentNoteWithoutLedgerPrefix, parseJobPaymentLedgerLabel } from "@/lib/job-payment-history-label";
 import { isLegacyMisclassifiedPartnerPayment, sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
+import {
+  holdLinkedInvoicesForJob,
+  releaseLinkedInvoicesForJob,
+} from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
@@ -3808,6 +3812,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         } catch {
           /* non-blocking */
         }
+        try {
+          await holdLinkedInvoicesForJob(getSupabase(), updated.reference);
+        } catch (e) {
+          console.error("hold linked invoices failed", e);
+        }
       }
     } finally {
       setPutOnHoldSaving(false);
@@ -3942,6 +3951,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           await bumpLinkedInvoiceAmountsToJobSchedule(updated);
         } catch {
           /* non-blocking */
+        }
+        try {
+          await releaseLinkedInvoicesForJob(getSupabase(), updated.reference);
+        } catch (e) {
+          console.error("release linked invoices failed", e);
         }
         if (updated.partner_id) {
           notifyAssignedPartnerAboutJob({

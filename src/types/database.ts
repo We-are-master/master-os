@@ -142,7 +142,8 @@ export type InvoiceStatus =
   | "overdue"
   | "cancelled"
   /** Client dispute / office audit queue (same idea as self_bills.audit_required). */
-  | "audit_required";
+  | "audit_required"
+  | "on_hold";
 
 /** Customer collection lifecycle for job-linked invoices (synced from job flags unless locked). */
 export type InvoiceCollectionStage =
@@ -895,6 +896,8 @@ export interface Invoice {
   stripe_payment_intent_id?: string;
   stripe_customer_email?: string;
   stripe_paid_at?: string;
+  /** Status before job hold; restored on resume. */
+  on_hold_previous_status?: string | null;
   /** Set when cancelled (e.g. job cancel mirrors jobs.cancellation_reason). */
   cancellation_reason?: string | null;
 }

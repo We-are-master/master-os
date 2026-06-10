@@ -1,11 +1,17 @@
 import { getSupabase } from "@/services/base";
 import { fetchAllActiveInvoices } from "@/lib/billing-invoice-list-data";
-import type { YmdBounds } from "@/lib/billing-standalone-period";
+import { addDaysYmd, type YmdBounds } from "@/lib/billing-standalone-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import type { Invoice, SelfBill } from "@/types/database";
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
+/** Open items older than this (before period start) are omitted unless bounds is null (All). */
+const OPEN_ITEM_LOOKBACK_DAYS = 180;
+
+function openItemsRecencyFrom(bounds: YmdBounds): string {
+  return addDaysYmd(bounds.from, -OPEN_ITEM_LOOKBACK_DAYS);
+}
 
 const CLOSED_INVOICE_STATUSES = ["paid", "cancelled"] as const;
 const CLOSED_INVOICE_LIST = `(${CLOSED_INVOICE_STATUSES.map((s) => `"${s}"`).join(",")})`;
@@ -77,8 +83,10 @@ export function mergeInvoicesById(rows: Invoice[]): Invoice[] {
 export async function fetchInvoicesForBilling(bounds: YmdBounds | null): Promise<Invoice[]> {
   if (!bounds) return fetchAllActiveInvoices();
 
+  const openFrom = openItemsRecencyFrom(bounds);
+
   const [openRows, dueRows, paidByDueRows, paidByPaidDateRows, paidByStripeRows] = await Promise.all([
-    fetchInvoiceQueryPages((q) => q.not("status", "in", CLOSED_INVOICE_LIST)),
+    fetchInvoiceQueryPages((q) => q.not("status", "in", CLOSED_INVOICE_LIST).gte("due_date", openFrom)),
     fetchInvoiceQueryPages((q) => q.gte("due_date", bounds.from).lte("due_date", bounds.to)),
     fetchInvoiceQueryPages((q) =>
       q.eq("status", "paid").gte("paid_date", bounds.from).lte("paid_date", bounds.to),
@@ -140,29 +148,44 @@ async function fetchSelfBillQueryPagesOptional(
 
 const INTERNAL_LIVE_STATUSES = ["accumulating", "draft", "needs_attention"] as const;
 
-async function fetchInternalLiveSelfBills(bounds: YmdBounds): Promise<SelfBill[]> {
+async function fetchSelfBillsWithDueDateFallback(
+  applyWithDueDate: (q: SelfBillQuery) => SelfBillQuery,
+  applyWithWeekEnd: (q: SelfBillQuery) => SelfBillQuery,
+  label: string,
+): Promise<SelfBill[]> {
   try {
-    return await fetchSelfBillQueryPages((q) =>
+    return await fetchSelfBillQueryPages(applyWithDueDate);
+  } catch (e) {
+    if (!isSupabaseMissingColumnError(e, "due_date")) throw e;
+    console.warn(`billing self-bills: ${label} using week_end fallback — apply migration 146 for due_date`);
+    return fetchSelfBillQueryPages(applyWithWeekEnd);
+  }
+}
+
+async function fetchInternalLiveSelfBills(bounds: YmdBounds): Promise<SelfBill[]> {
+  return fetchSelfBillsWithDueDateFallback(
+    (q) =>
       q
         .eq("bill_origin", "internal")
         .in("status", [...INTERNAL_LIVE_STATUSES])
         .gte("due_date", bounds.from),
+    (q) =>
+      q
+        .eq("bill_origin", "internal")
+        .in("status", [...INTERNAL_LIVE_STATUSES])
+        .lte("week_start", bounds.to)
+        .gte("week_end", bounds.from),
+    "internal live by due_date",
+  ).catch(async (e) => {
+    if (!isSupabaseMissingColumnError(e, "bill_origin")) throw e;
+    return fetchSelfBillQueryPages((q) =>
+      q
+        .eq("bill_origin", "internal")
+        .in("status", [...INTERNAL_LIVE_STATUSES])
+        .lte("week_start", bounds.to)
+        .gte("week_end", bounds.from),
     );
-  } catch (e) {
-    if (!isSupabaseMissingColumnError(e)) throw e;
-    try {
-      return await fetchSelfBillQueryPages((q) =>
-        q
-          .eq("bill_origin", "internal")
-          .in("status", [...INTERNAL_LIVE_STATUSES])
-          .lte("week_start", bounds.to)
-          .gte("week_end", bounds.from),
-      );
-    } catch (e2) {
-      if (isSupabaseMissingColumnError(e2, "bill_origin")) return [];
-      throw e2;
-    }
-  }
+  });
 }
 
 export function mergeSelfBillsById(rows: SelfBill[]): SelfBill[] {
@@ -194,8 +217,14 @@ export async function fetchSelfBillsForBilling(bounds: YmdBounds | null): Promis
     return acc;
   }
 
+  const openFrom = openItemsRecencyFrom(bounds);
+
   const [openRows, overlapRows, weekEndRows, dueDateRows, internalAccumulatingRows] = await Promise.all([
-    fetchSelfBillQueryPages((q) => q.not("status", "in", CLOSED_SELF_BILL_LIST)),
+    fetchSelfBillsWithDueDateFallback(
+      (q) => q.not("status", "in", CLOSED_SELF_BILL_LIST).gte("due_date", openFrom),
+      (q) => q.not("status", "in", CLOSED_SELF_BILL_LIST).gte("week_end", openFrom),
+      "open items by due_date",
+    ),
     fetchSelfBillQueryPages((q) => q.lte("week_start", bounds.to).gte("week_end", bounds.from)),
     fetchSelfBillQueryPages((q) => q.gte("week_end", bounds.from).lte("week_end", bounds.to)),
     fetchSelfBillQueryPagesOptional(

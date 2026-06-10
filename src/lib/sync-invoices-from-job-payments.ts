@@ -132,10 +132,21 @@ async function applyInvoicePaymentUpdates(
   opts?: { preserveCollectionStage?: boolean },
 ): Promise<void> {
   const amt = Number(inv.amount ?? 0);
+  const prevPaid = Number(inv.amount_paid ?? 0);
+  const prevStatus = inv.status;
   const nextStatus = computeStatus(inv, allocated, amt);
   const full = nextStatus === "paid";
   const partial = nextStatus === "partially_paid";
   const preserveStage = opts?.preserveCollectionStage === true;
+
+  // Finance manual "Mark paid" — don't downgrade when job ledger sync hasn't linked yet.
+  if (prevStatus === "paid" && prevPaid >= amt - EPS && nextStatus !== "paid") {
+    return;
+  }
+
+  if (prevStatus === "on_hold") {
+    return;
+  }
 
   const nextStage: InvoiceCollectionStage = deriveCollectionStageForInvoice(job, {
     invoice_kind: inv.invoice_kind === "weekly_batch" ? "combined" : inv.invoice_kind,
@@ -162,8 +173,6 @@ async function applyInvoicePaymentUpdates(
     updates.last_payment_date = null;
   }
 
-  const prevPaid = Number(inv.amount_paid ?? 0);
-  const prevStatus = inv.status;
   const stageWouldChange = !preserveStage && (inv.collection_stage ?? "") !== (nextStage ?? "");
   if (Math.abs(prevPaid - allocated) > EPS || prevStatus !== nextStatus || stageWouldChange) {
     const { error: upErr } = await client.from("invoices").update(updates).eq("id", inv.id);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useSearchParams } from "next/navigation";
 import { typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
@@ -433,10 +434,14 @@ export function JoinClient() {
 }
 
 function RegistrationForm() {
+  const searchParams = useSearchParams();
+  const inviteCode = searchParams.get("invite")?.trim() ?? "";
+
   const [step, setStep]       = useState(0);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(Boolean(inviteCode));
 
   // Step 0 — Account
   const [fullName,        setFullName]        = useState("");
@@ -471,6 +476,42 @@ function RegistrationForm() {
   const [services,       setServices]       = useState("");
   const [utr,            setUtr]            = useState("");
   const [website,        setWebsite]        = useState("");
+
+  useEffect(() => {
+    if (!inviteCode) {
+      setInviteLoading(false);
+      return;
+    }
+    void fetch(`/api/join/invite?code=${encodeURIComponent(inviteCode)}`)
+      .then(async (r) => {
+        if (!r.ok) {
+          const j = (await r.json().catch(() => ({}))) as { error?: string };
+          throw new Error(j.error ?? "Invite invalid");
+        }
+        return r.json() as Promise<{
+          fullName?: string;
+          email?: string;
+          phone?: string;
+          companyName?: string;
+          address?: string;
+          trades?: string[];
+          utr?: string;
+        }>;
+      })
+      .then((data) => {
+        if (data.fullName) setFullName(data.fullName);
+        if (data.email) setEmail(data.email);
+        if (data.phone) setPhone(data.phone);
+        if (data.companyName) setCompanyName(data.companyName);
+        if (data.address) setAddress(data.address);
+        if (Array.isArray(data.trades) && data.trades.length > 0) setSelectedTrades(data.trades);
+        if (data.utr) setUtr(data.utr);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Invite link expired or invalid.");
+      })
+      .finally(() => setInviteLoading(false));
+  }, [inviteCode]);
 
   // Step 2 — Documents (all required) + profile/logo photo (optional)
   const [docs,         setDocs]         = useState<Partial<Record<DocKey, File>>>({});
@@ -560,6 +601,7 @@ function RegistrationForm() {
         const f = compressedDocs[idx];
         if (f) form.append(key, sanitizeFileForUpload(f, key));
       });
+      if (inviteCode) form.append("inviteCode", inviteCode);
 
       const res = await fetch("/api/join/register", {
         method: "POST",

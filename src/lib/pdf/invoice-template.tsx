@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
+import { displayBillingReference } from "@/lib/billing-reference";
 
 export interface InvoicePdfData {
   reference: string;
@@ -38,61 +39,75 @@ const MUTED = "#4A4A55";
 const LABEL = "#9A9AA8";
 const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
-const PAD = 40;
+const FOOTER_INFO = "#AAAAD0";
+const PAD = 32;
+const FOOTER_RESERVE = 76;
 
 const styles = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: 0 },
+  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: FOOTER_RESERVE },
 
   // Header
-  headerBand: { backgroundColor: NAVY, paddingVertical: 22, alignItems: "center" },
-  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 22, color: "#FFFFFF", letterSpacing: 0.5 },
-  accentBar: { backgroundColor: ORANGE, height: 5 },
+  headerBand: { backgroundColor: NAVY, paddingVertical: 14, alignItems: "center" },
+  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 20, color: "#FFFFFF", letterSpacing: 0.5 },
+  accentBar: { backgroundColor: ORANGE, height: 4 },
 
-  body: { paddingHorizontal: PAD, paddingTop: 28 },
+  body: { paddingHorizontal: PAD, paddingTop: 18 },
 
-  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 8 },
-  headline: { fontFamily: "Helvetica-Bold", fontSize: 22, color: NAVY, marginBottom: 8 },
-  intro: { fontSize: 11, lineHeight: 1.5, color: MUTED, marginBottom: 22 },
+  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 6 },
+  docTitle: { marginBottom: 10 },
+  docRef: { fontFamily: "Helvetica-Bold", fontSize: 14, color: ORANGE, marginBottom: 3 },
+  docClient: { fontFamily: "Helvetica-Bold", fontSize: 16, color: NAVY, lineHeight: 1.25 },
+  headline: { fontFamily: "Helvetica-Bold", fontSize: 14, color: NAVY, marginBottom: 6 },
+  intro: { fontSize: 10.5, lineHeight: 1.45, color: MUTED, marginBottom: 12 },
 
-  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 10 },
+  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 8 },
 
   // Reference bar
-  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 16, marginBottom: 24 },
-  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 7 },
+  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 12, marginBottom: 14 },
+  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 5 },
   refRowLast: { flexDirection: "row", justifyContent: "space-between" },
   refKey: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1, color: LABEL, textTransform: "uppercase" },
   refVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
   refValDue: { fontFamily: "Helvetica-Bold", fontSize: 11, color: ORANGE },
 
   // Cards
-  card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 24 },
-  cardHead: { padding: 16, borderBottomWidth: 1, borderBottomColor: BORDER },
-  cardHeadText: { fontFamily: "Helvetica-Bold", fontSize: 14, color: NAVY },
-  infoRow: { flexDirection: "row", paddingHorizontal: 16, paddingVertical: 11 },
+  card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 14 },
+  cardHead: { padding: 12, borderBottomWidth: 1, borderBottomColor: BORDER },
+  cardHeadText: { fontFamily: "Helvetica-Bold", fontSize: 13, color: NAVY },
+  infoRow: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 8 },
   infoDivider: { borderTopWidth: 1, borderTopColor: HAIRLINE },
   infoKey: { width: "35%", fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 0.8, color: LABEL, textTransform: "uppercase" },
-  infoVal: { flex: 1, fontSize: 11, color: TEXT, lineHeight: 1.4 },
+  infoVal: { flex: 1, fontSize: 10.5, color: TEXT, lineHeight: 1.35 },
   infoValMuted: { color: MUTED },
 
   // Breakdown
-  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
-  lineLabel: { fontSize: 11, color: TEXT },
-  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 16, paddingVertical: 14 },
-  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 11, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
-  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 20, color: NAVY },
+  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
+  lineLabel: { fontSize: 10.5, color: TEXT },
+  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 10.5, color: NAVY },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 12, paddingVertical: 11 },
+  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 10, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
+  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 17, color: NAVY },
 
   // Notes
-  paidNote: { backgroundColor: "#E8F5EF", borderRadius: 8, padding: 14, marginBottom: 22 },
-  paidNoteText: { fontSize: 11, color: "#0F6B45", fontFamily: "Helvetica-Bold" },
-  vatNote: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 14, marginBottom: 24 },
-  vatEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 4 },
-  vatText: { fontSize: 10, lineHeight: 1.5, color: NAVY },
+  paidNote: { backgroundColor: "#E8F5EF", borderRadius: 8, padding: 11, marginBottom: 12 },
+  paidNoteText: { fontSize: 10.5, color: "#0F6B45", fontFamily: "Helvetica-Bold" },
+  vatNote: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 11, marginBottom: 12 },
+  vatEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 3 },
+  vatText: { fontSize: 9.5, lineHeight: 1.4, color: NAVY },
 
-  // Footer
-  footer: { backgroundColor: NAVY, paddingVertical: 22, paddingHorizontal: PAD, alignItems: "center", marginTop: 8 },
-  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 14, color: "#FFFFFF", marginBottom: 8 },
-  footerText: { fontSize: 8, lineHeight: 1.6, color: "#AAAAD0", textAlign: "center" },
+  // Footer (pinned to bottom — mirrors quote-template.tsx)
+  footer: {
+    position: "absolute" as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: NAVY,
+    paddingVertical: 14,
+    paddingHorizontal: PAD,
+    alignItems: "center",
+  },
+  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 13, color: "#FFFFFF", marginBottom: 6 },
+  footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
 
 function money(n: number): string {
@@ -140,11 +155,15 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
 
         <View style={styles.body}>
           <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <View style={styles.docTitle} wrap={false}>
+            <Text style={styles.docRef}>{displayBillingReference(data.reference)}</Text>
+            <Text style={styles.docClient}>{data.clientName.trim() || "Client"}</Text>
+          </View>
           <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
           <Text style={styles.intro}>{intro}</Text>
 
           {isPaid ? (
-            <View style={styles.paidNote}>
+            <View style={styles.paidNote} wrap={false}>
               <Text style={styles.paidNoteText}>
                 Payment received — {money(data.amount)}
                 {data.paymentDate ? ` on ${data.paymentDate}` : ""}
@@ -153,11 +172,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           ) : null}
 
           {/* Reference bar */}
-          <View style={styles.refBar}>
-            <View style={styles.refRow}>
-              <Text style={styles.refKey}>{isPaid ? "Receipt Ref" : "Statement Ref"}</Text>
-              <Text style={styles.refVal}>{data.reference}</Text>
-            </View>
+          <View style={styles.refBar} wrap={false}>
             <View style={styles.refRow}>
               <Text style={styles.refKey}>Issue date</Text>
               <Text style={styles.refVal}>{data.issueDate}</Text>
@@ -185,7 +200,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
 
           {/* Job completed */}
           <Text style={styles.sectionLabel}>{isPaid ? "Job" : "Job completed"}</Text>
-          <View style={styles.card}>
+          <View style={styles.card} wrap={false}>
             <View style={styles.cardHead}>
               <Text style={styles.cardHeadText}>{data.jobTitle}</Text>
             </View>
@@ -215,7 +230,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
 
           {/* Charges breakdown */}
           <Text style={styles.sectionLabel}>Charges breakdown</Text>
-          <View style={styles.card}>
+          <View style={styles.card} wrap={false}>
             <View style={styles.lineRow}>
               <Text style={styles.lineLabel}>Trade services</Text>
               <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
@@ -237,7 +252,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           </View>
 
           {/* VAT note */}
-          <View style={styles.vatNote}>
+          <View style={styles.vatNote} wrap={false}>
             <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
             <Text style={styles.vatText}>
               Reply to your statement email or contact support@getfixfy.com and we&#39;ll send one across.
@@ -245,8 +260,8 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           </View>
         </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
+        {/* Footer (navy, pinned) */}
+        <View style={styles.footer} fixed>
           <Text style={styles.footerWordmark}>Fixfy</Text>
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}

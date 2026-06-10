@@ -1,7 +1,7 @@
 import { getSupabase } from "@/services/base";
 import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
-import { maybeCompleteAwaitingPaymentJob, syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
+import { maybeCompleteAwaitingPaymentJob, syncJobAfterInvoicePaidToLedger, syncJobsAfterBulkInvoicesMarkedPaid } from "@/lib/sync-job-after-invoice-paid";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { updateInvoice } from "@/services/invoices";
 import { logBulkAction } from "@/services/audit";
@@ -14,18 +14,34 @@ export async function bulkMarkInvoicesPaid(
   if (ids.length === 0) return;
   const supabase = getSupabase();
   const today = new Date().toISOString().split("T")[0];
-  for (const id of ids) {
-    const { data: inv } = await supabase.from("invoices").select("amount").eq("id", id).maybeSingle();
-    const amt = Number((inv as { amount?: number } | null)?.amount ?? 0);
-    await updateInvoice(id, {
-      status: "paid",
-      paid_date: today,
-      collection_stage: "completed",
-      amount_paid: amt,
-    });
-    await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
-  }
-  await logBulkAction("invoice", ids, "status_changed", "status", "paid", profile?.id, profile?.full_name ?? undefined);
+
+  const { data: rows, error } = await supabase.from("invoices").select("id, amount, status").in("id", ids);
+  if (error) throw error;
+  const payableIds = (rows ?? [])
+    .filter((row) => {
+      const st = (row as { status?: string }).status;
+      return st !== "on_hold" && st !== "draft";
+    })
+    .map((row) => row.id as string);
+  if (payableIds.length === 0) return;
+  const amountById = new Map(
+    (rows ?? []).map((row) => [row.id as string, Number((row as { amount?: number }).amount ?? 0)]),
+  );
+
+  await Promise.all(
+    payableIds.map(async (id) => {
+      const amt = amountById.get(id) ?? 0;
+      await updateInvoice(id, {
+        status: "paid",
+        paid_date: today,
+        collection_stage: "completed",
+        amount_paid: amt,
+      });
+    }),
+  );
+
+  await syncJobsAfterBulkInvoicesMarkedPaid(supabase, payableIds, "Manual");
+  await logBulkAction("invoice", payableIds, "status_changed", "status", "paid", profile?.id, profile?.full_name ?? undefined);
 }
 
 export async function bulkUpdateInvoiceStatus(

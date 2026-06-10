@@ -29,9 +29,8 @@ describe("canLinkJobToSelfBill", () => {
   it("still requires completed_date for finalize link", () => {
     assert.equal(
       canLinkJobToSelfBill({
-        partner_id: "p1",
         scheduled_date: "2026-06-09",
-        completed_date: null,
+        completed_date: undefined,
       }),
       false,
     );

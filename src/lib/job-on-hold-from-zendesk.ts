@@ -15,6 +15,8 @@ import {
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
+import { syncPartnerFeedbackFromJob } from "@/lib/partner-feedback-sync";
+import { holdLinkedInvoicesForJob } from "@/lib/sync-invoices-on-job-hold";
 
 const NON_HOLDABLE = new Set(["completed", "cancelled", "deleted", "on_hold"]);
 const DEFAULT_PRESET_ID = "complaint";
@@ -144,6 +146,26 @@ export async function putJobOnHoldFromZendesk(
   if (upErr) {
     console.error("[zendesk-on-hold-webhook] update failed:", upErr);
     return { ok: false, status: 500, error: "Failed to put job on hold." };
+  }
+
+  const { data: updatedJob } = await supabase
+    .from("jobs")
+    .select(
+      "id, partner_id, reference, status, on_hold_reason_preset_id, on_hold_complaint_description, on_hold_reason, customer_review_rating, deleted_at",
+    )
+    .eq("id", job.id)
+    .maybeSingle();
+
+  if (updatedJob?.partner_id) {
+    void syncPartnerFeedbackFromJob(supabase, updatedJob as Parameters<typeof syncPartnerFeedbackFromJob>[1]).catch(
+      (err) => console.error("[zendesk-on-hold-webhook] partner feedback sync:", err),
+    );
+  }
+
+  try {
+    await holdLinkedInvoicesForJob(supabase, job.reference);
+  } catch (e) {
+    console.error("[zendesk-on-hold-webhook] hold linked invoices failed:", e);
   }
 
   await supabase.from("audit_logs").insert([

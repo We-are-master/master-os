@@ -63,6 +63,80 @@ function namesLooselyMatch(a: string, b: string): boolean {
 }
 
 /** Same rule as `get_jobs_for_account` RPC: client_name ILIKE %company_name%. */
+function escapeIlike(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+async function fetchScopedAccountsAndLinkedClients(
+  supabase: ReturnType<typeof getSupabase>,
+  invoices: Pick<Invoice, "source_account_id" | "client_name">[],
+  jobRows: JobRow[],
+): Promise<{ accounts: AccountRow[]; linkedClientsForNames: ClientRow[] }> {
+  const accountById = new Map<string, AccountRow>();
+  const linkedById = new Map<string, ClientRow>();
+  const linkedClientsForNames: ClientRow[] = [];
+
+  const directAccountIds = [
+    ...new Set(invoices.map((i) => i.source_account_id?.trim()).filter(Boolean)),
+  ] as string[];
+  for (const ids of chunk(directAccountIds, CHUNK)) {
+    if (ids.length === 0) continue;
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("id, company_name, contact_name, email")
+      .in("id", ids)
+      .is("deleted_at", null);
+    if (error) throw error;
+    for (const a of (data ?? []) as AccountRow[]) accountById.set(a.id, a);
+  }
+
+  const namesForHeuristic = new Set<string>();
+  for (const inv of invoices) {
+    const n = inv.client_name?.trim();
+    if (n && n.length >= 2) namesForHeuristic.add(n);
+  }
+  for (const job of jobRows) {
+    const n = job.client_name?.trim();
+    if (n && n.length >= 2) namesForHeuristic.add(n);
+  }
+
+  const nameList = [...namesForHeuristic];
+  const NAME_QUERY_BATCH = 12;
+  for (let i = 0; i < nameList.length; i += NAME_QUERY_BATCH) {
+    const batch = nameList.slice(i, i + NAME_QUERY_BATCH);
+    await Promise.all(
+      batch.map(async (name) => {
+        const pattern = `%${escapeIlike(name)}%`;
+        const [{ data: accts, error: acctErr }, { data: clients, error: clientErr }] = await Promise.all([
+          supabase
+            .from("accounts")
+            .select("id, company_name, contact_name, email")
+            .is("deleted_at", null)
+            .or(`company_name.ilike."${pattern}",contact_name.ilike."${pattern}"`)
+            .limit(5),
+          supabase
+            .from("clients")
+            .select("id, full_name, email, source_account_id")
+            .not("source_account_id", "is", null)
+            .is("deleted_at", null)
+            .ilike("full_name", pattern)
+            .limit(5),
+        ]);
+        if (acctErr) throw acctErr;
+        if (clientErr) throw clientErr;
+        for (const a of (accts ?? []) as AccountRow[]) accountById.set(a.id, a);
+        for (const c of (clients ?? []) as ClientRow[]) {
+          if (linkedById.has(c.id)) continue;
+          linkedById.set(c.id, c);
+          linkedClientsForNames.push(c);
+        }
+      }),
+    );
+  }
+
+  return { accounts: [...accountById.values()], linkedClientsForNames };
+}
+
 function matchNameToAccountCompany(
   name: string | null | undefined,
   accounts: AccountRow[],
@@ -134,22 +208,11 @@ export async function buildInvoiceAccountMaps(
     }
   }
 
-  const [{ data: accountsData }, { data: linkedClientsData }] = await Promise.all([
-    supabase
-      .from("accounts")
-      .select("id, company_name, contact_name, email")
-      .is("deleted_at", null)
-      .limit(5000),
-    supabase
-      .from("clients")
-      .select("id, full_name, email, source_account_id")
-      .not("source_account_id", "is", null)
-      .is("deleted_at", null)
-      .limit(8000),
-  ]);
-
-  const accounts = (accountsData ?? []) as AccountRow[];
-  const allLinkedClients = (linkedClientsData ?? []) as ClientRow[];
+  const { accounts, linkedClientsForNames } = await fetchScopedAccountsAndLinkedClients(
+    supabase,
+    invoices,
+    jobRows,
+  );
 
   const clientIds = new Set<string>();
   const quoteIds = new Set<string>();
@@ -360,7 +423,12 @@ export async function buildInvoiceAccountMaps(
     const jn = String(name ?? "").trim();
     if (!jn) return null;
 
-    for (const c of allLinkedClients) {
+    for (const c of linkedClientsForNames) {
+      const aid = c.source_account_id?.trim();
+      if (!aid || !c.full_name) continue;
+      if (namesLooselyMatch(jn, c.full_name)) return aid;
+    }
+    for (const c of clientById.values()) {
       const aid = c.source_account_id?.trim();
       if (!aid || !c.full_name) continue;
       if (namesLooselyMatch(jn, c.full_name)) return aid;

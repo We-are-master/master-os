@@ -14,6 +14,9 @@ export interface PartnerUploadEmailOptions {
   customMessage?: string;
   /** Empty array → "any documents" wording; otherwise show the list. */
   requestedDocTypes?: string[];
+  intro?: string;
+  ctaLabel?: string;
+  showDocList?: boolean;
 }
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -44,14 +47,28 @@ export function buildPartnerUploadEmailHTML(
   options: PartnerUploadEmailOptions,
 ): string {
   const color = branding.primaryColor ?? "#F97316";
-  const { partnerName, uploadUrl, expiresAt, customMessage, requestedDocTypes } = options;
+  const {
+    partnerName,
+    uploadUrl,
+    expiresAt,
+    customMessage,
+    requestedDocTypes,
+    intro = "We need to refresh the documents and details we hold for you. Please use the secure link below to upload your files and confirm your contact / bank information — no login needed.",
+    ctaLabel = "Open secure upload page",
+    showDocList = true,
+  } = options;
 
   const docList = (requestedDocTypes ?? []).filter((t) => t && t.trim());
-  const docListHtml = docList.length > 0
-    ? `<ul style="margin:0 0 16px 20px;padding:0;font-size:14px;color:#1C1917;line-height:1.7;">
+  const docListHtml =
+    !showDocList
+      ? ""
+      : docList.length > 0
+        ? `<p style="margin:0 0 8px;font-size:13px;color:#78716C;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">What we need</p>
+         <ul style="margin:0 0 16px 20px;padding:0;font-size:14px;color:#1C1917;line-height:1.7;">
          ${docList.map((t) => `<li>${escapeHtml(DOC_TYPE_LABELS[t] ?? t)}</li>`).join("")}
        </ul>`
-    : `<p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">
+        : `<p style="margin:0 0 8px;font-size:13px;color:#78716C;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">What we need</p>
+       <p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">
          Please upload any current documents we have on file (insurance, ID, certifications) and
          confirm your contact and bank details so we can keep paying you on time.
        </p>`;
@@ -79,15 +96,13 @@ export function buildPartnerUploadEmailHTML(
     <tr><td style="padding:0 40px 30px;">
       <p style="margin:0 0 8px;font-size:16px;color:#1C1917;">Hi <strong>${escapeHtml(partnerName)}</strong>,</p>
       <p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">
-        We need to refresh the documents and details we hold for you. Please use the secure link below
-        to upload your files and confirm your contact / bank information — no login needed.
+        ${escapeHtml(intro)}
       </p>
       ${messageBlock}
-      <p style="margin:0 0 8px;font-size:13px;color:#78716C;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">What we need</p>
       ${docListHtml}
       <table cellpadding="0" cellspacing="0" style="margin:8px auto 24px;">
         <tr><td style="background:${color};border-radius:8px;padding:14px 32px;">
-          <a href="${uploadUrl}" style="color:#fff;text-decoration:none;font-size:14px;font-weight:600;">Open secure upload page</a>
+          <a href="${uploadUrl}" style="color:#fff;text-decoration:none;font-size:14px;font-weight:600;">${escapeHtml(ctaLabel)}</a>
         </td></tr>
       </table>
       <p style="margin:0 0 8px;font-size:12px;color:#78716C;text-align:center;">

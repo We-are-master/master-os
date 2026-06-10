@@ -38,6 +38,7 @@ export function canSendJobInvoiceEmail(input: InvoiceSendEligibilityInput): Send
   if (input.loadError?.trim()) return { ok: false, reason: input.loadError.trim() };
   if (!input.invoice) return { ok: false, reason: "No invoice linked to this job yet." };
   if (input.invoice.status === "cancelled") return { ok: false, reason: "Invoice is cancelled." };
+  if (input.invoice.status === "on_hold") return { ok: false, reason: "Job is on hold — resume before sending." };
   if (!input.canIncludeInvoice) {
     return { ok: false, reason: "This account does not allow invoice emails. Update Billing on the account." };
   }

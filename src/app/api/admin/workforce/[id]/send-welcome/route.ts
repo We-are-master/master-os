@@ -116,7 +116,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const send = await resend.emails.send({
     from,
     to: email,
-    subject: `Welcome to ${branding.companyName} — complete your onboarding`,
+    subject: "Welcome to the Fixfy Operating System",
     html,
   });
 

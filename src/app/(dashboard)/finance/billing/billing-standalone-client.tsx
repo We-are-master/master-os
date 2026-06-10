@@ -14,8 +14,9 @@ import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
 import { useBillingStandaloneData } from "@/hooks/use-billing-standalone-data";
 import {
-  DEFAULT_BILLING_STANDALONE_FILTER,
   billingStandaloneFilterDescription,
+  defaultBillingStandaloneFilter,
+  resolveBillingStandaloneFilterBounds,
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
 import { addMonths, format as formatDateFns, parseISO, startOfMonth } from "date-fns";
@@ -51,6 +52,7 @@ import {
 } from "@/lib/invoice-balance";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { bulkMarkInvoicesPaid, syncInvoicesForJobIds, updateInvoiceStatusOne } from "@/lib/billing-invoice-actions";
+import { displayBillingReference } from "@/lib/billing-reference";
 import {
   bulkApproveSelfBills,
   bulkCancelSelfBills,
@@ -136,8 +138,31 @@ function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(DEFAULT_BILLING_STANDALONE_FILTER);
+  const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(defaultBillingStandaloneFilter);
   const data = useBillingStandaloneData();
+  const { loadData, hasLoadedOnce, selfBills: billingSelfBills, patchInvoicesPaid, ensureSelfBillJobsEnriched } = data;
+
+  const handleMarkInvoicesPaid = useCallback(
+    async (ids: string[], opts?: { clearSelection?: boolean }) => {
+      if (!ids.length) return;
+      patchInvoicesPaid(ids);
+      if (opts?.clearSelection) setSelectedInvoiceIds(new Set());
+      try {
+        await bulkMarkInvoicesPaid(ids, profile ?? undefined);
+        toast.success(ids.length === 1 ? "Invoice marked paid" : `${ids.length} invoices marked paid`);
+        void loadData({ background: true });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to mark paid");
+        void loadData({ background: true });
+      }
+    },
+    [loadData, patchInvoicesPaid, profile],
+  );
+
+  const handleMarkInvoicePaid = useCallback(
+    (id: string) => void handleMarkInvoicesPaid([id]),
+    [handleMarkInvoicesPaid],
+  );
   const [ledgerTab, setLedgerTab] = useState<LedgerTab>(() => {
     const t = searchParams.get("tab");
     return t === "sb" || t === "history" ? t : "inv";
@@ -177,7 +202,7 @@ function BillingStandaloneInner() {
           toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
         }
         setSelectedSbIds(new Set());
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Approve failed");
       } finally {
@@ -188,7 +213,7 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [loadData],
   );
 
   const handleUnapproveSelfBills = useCallback(
@@ -207,7 +232,7 @@ function BillingStandaloneInner() {
         if (r.skipped.length > 0) {
           toast.error(`${r.skipped.length} skipped — ${r.skipped[0]?.reason ?? "see logs"}`);
         }
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Unapprove failed");
       } finally {
@@ -218,7 +243,7 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [loadData],
   );
 
   const handleMarkSelfBillsReadyToPay = useCallback(
@@ -237,7 +262,7 @@ function BillingStandaloneInner() {
           .in("id", ids);
         if (error) throw error;
 
-        const internalMarked = data.selfBills.filter(
+        const internalMarked = billingSelfBills.filter(
           (sb) =>
             ids.includes(sb.id) &&
             sb.bill_origin === "internal" &&
@@ -272,7 +297,7 @@ function BillingStandaloneInner() {
           (ids.length === 1 ? "Marked ready to pay" : `${ids.length} marked ready to pay`) + nextHint,
         );
         setSelectedSbIds(new Set());
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to mark ready");
       } finally {
@@ -283,7 +308,7 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [billingSelfBills, loadData],
   );
 
   /** Sequential Wise payouts — used by the Approved tab's Pay all / Pay selected button. */
@@ -317,9 +342,9 @@ function BillingStandaloneInner() {
         setSelectedSbIds(new Set());
         setMoneyOutSelectedIds(new Set());
       }
-      await data.loadData();
+      await loadData();
     },
-    [data],
+    [loadData],
   );
 
   const handlePayWithWise = useCallback(
@@ -337,7 +362,7 @@ function BillingStandaloneInner() {
         }
         if (r.funded) toast.success("Payment funded");
         else toast.success(`Transfer created — ${r.wise_status ?? "pending fund"}`);
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Wise pay failed");
       } finally {
@@ -348,7 +373,7 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [loadData],
   );
 
   const handleSendSelfBills = useCallback(
@@ -373,7 +398,7 @@ function BillingStandaloneInner() {
             `${result.skipped.length} skipped — ${result.skipped[0]?.reason ?? "see logs"}`,
           );
         }
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Send failed");
       } finally {
@@ -384,14 +409,14 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [loadData],
   );
 
   const handleApproveAndSendSelfBills = useCallback(
     async (approveIds: string[], scope: "week" | "partner" | "row") => {
       if (!approveIds.length) return;
       const sendIds = approveIds.filter((id) => {
-        const sb = data.selfBills.find((s) => s.id === id);
+        const sb = billingSelfBills.find((s) => s.id === id);
         return (
           sb &&
           !isSelfBillPayoutVoided(sb) &&
@@ -441,7 +466,7 @@ function BillingStandaloneInner() {
         }
 
         setSelectedSbIds(new Set());
-        await data.loadData();
+        await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Approve & send failed");
       } finally {
@@ -457,7 +482,7 @@ function BillingStandaloneInner() {
         });
       }
     },
-    [data],
+    [billingSelfBills, loadData],
   );
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [drawerSb, setDrawerSb] = useState<SelfBill | null>(null);
@@ -473,8 +498,8 @@ function BillingStandaloneInner() {
   const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
 
   const todayYmd = invoiceFinanceListTodayYmd();
-  const periodBounds = useMemo(() => data.periodBounds(periodFilter), [data, periodFilter]);
-  const selfBillPeriodBounds = useMemo(() => data.selfBillPeriodBounds(periodFilter), [data, periodFilter]);
+  const periodBounds = useMemo(() => resolveBillingStandaloneFilterBounds(periodFilter), [periodFilter]);
+  const selfBillPeriodBounds = periodBounds;
   const periodLabel = useMemo(
     () => (periodBounds ? formatPeriodBoundsLabel(periodBounds) : billingStandaloneFilterDescription(periodFilter)),
     [periodBounds, periodFilter],
@@ -497,7 +522,16 @@ function BillingStandaloneInner() {
         periodBounds: kpiMonthBounds,
         selfBillPeriodBounds: kpiMonthBounds,
       }),
-    [data, kpiMonthBounds],
+    [
+      data.invoices,
+      data.selfBills,
+      data.jobsByRef,
+      data.customerPaidByJobId,
+      data.jobsBySelfBillId,
+      data.partnerPaidByJobId,
+      data.dueCtx,
+      kpiMonthBounds,
+    ],
   );
 
   const periodInvoices = useMemo(
@@ -592,11 +626,6 @@ function BillingStandaloneInner() {
     return { cancelled, paid };
   }, [inactivePeriodInvoices]);
 
-  const inactiveSelfBillLedgerSections = useMemo(
-    () => buildSelfBillLedgerSections(inactivePeriodSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [inactivePeriodSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
-  );
-
   const aging = useMemo(
     () => computeAgingTotals(data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds ?? undefined),
     [data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds],
@@ -673,6 +702,11 @@ function BillingStandaloneInner() {
     setCashflowWeekOffset(0);
   }, [periodFilter]);
 
+  useEffect(() => {
+    if (ledgerTab !== "sb") return;
+    void ensureSelfBillJobsEnriched();
+  }, [ledgerTab, ensureSelfBillJobsEnriched]);
+
   const cashflowWeekStart = useMemo(() => {
     const monday = startOfWeekMondayFromYmd(todayYmd);
     return addDaysYmd(monday, cashflowWeekOffset * 7);
@@ -692,7 +726,17 @@ function BillingStandaloneInner() {
         endYmd: periodBounds?.to,
         weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
       }),
-    [data, periodBounds, cashflowWeekStart],
+    [
+      data.invoices,
+      data.selfBills,
+      data.jobsByRef,
+      data.customerPaidByJobId,
+      data.jobsBySelfBillId,
+      data.partnerPaidByJobId,
+      data.dueCtx,
+      periodBounds,
+      cashflowWeekStart,
+    ],
   );
 
   const cashflowRangeLabel = useMemo(() => {
@@ -716,7 +760,15 @@ function BillingStandaloneInner() {
         data.resolveAccountId,
         periodBounds ?? undefined,
       ),
-    [data, periodBounds],
+    [
+      data.invoices,
+      data.jobsByRef,
+      data.customerPaidByJobId,
+      data.accountNameById,
+      data.accountTermsById,
+      data.resolveAccountId,
+      periodBounds,
+    ],
   );
 
   const payableSelfBills = useMemo(
@@ -758,18 +810,33 @@ function BillingStandaloneInner() {
     [goingOutSelfBills],
   );
 
-  const ledgerSbDraftSections = useMemo(
-    () => buildSelfBillLedgerSections(ledgerSbDraftSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [ledgerSbDraftSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
+  const selfBillLedgerSectionMap = useMemo(
+    () =>
+      buildSelfBillLedgerSectionMap(
+        {
+          inactive: inactivePeriodSelfBills,
+          draft: ledgerSbDraftSelfBills,
+          pending: goingOutPendingSelfBills,
+          approved: goingOutApprovedSelfBills,
+        },
+        data.dueCtx,
+        data.jobsBySelfBillId,
+        data.partnerPaidByJobId,
+      ),
+    [
+      inactivePeriodSelfBills,
+      ledgerSbDraftSelfBills,
+      goingOutPendingSelfBills,
+      goingOutApprovedSelfBills,
+      data.dueCtx,
+      data.jobsBySelfBillId,
+      data.partnerPaidByJobId,
+    ],
   );
-  const goingOutPendingSections = useMemo(
-    () => buildSelfBillLedgerSections(goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [goingOutPendingSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
-  );
-  const goingOutApprovedSections = useMemo(
-    () => buildSelfBillLedgerSections(goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId),
-    [goingOutApprovedSelfBills, data.dueCtx, data.jobsBySelfBillId, data.partnerPaidByJobId],
-  );
+  const inactiveSelfBillLedgerSections = selfBillLedgerSectionMap.inactive;
+  const ledgerSbDraftSections = selfBillLedgerSectionMap.draft;
+  const goingOutPendingSections = selfBillLedgerSectionMap.pending;
+  const goingOutApprovedSections = selfBillLedgerSectionMap.approved;
 
   const sumDue = useCallback(
     (rows: SelfBill[]) =>
@@ -923,7 +990,7 @@ function BillingStandaloneInner() {
           `Workforce ${wfResult.count} self-bill(s) · linked ${linked} invoice(s) · ${unlinked} unlinked · synced ${n} job(s) + partner self-bills${suffix}`,
         );
       }
-      await data.loadData({ bounds: null });
+      await loadData({ bounds: null });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Sync failed");
     } finally {
@@ -961,7 +1028,7 @@ function BillingStandaloneInner() {
       await logAudit({ entityType: "invoice", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
       toast.success("Invoice created");
-      await data.loadData();
+      await loadData();
     } catch {
       toast.error("Failed to create invoice");
     }
@@ -1117,9 +1184,9 @@ function BillingStandaloneInner() {
                 <div className="border-b border-border-light px-4 py-4 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                      Needs Attention · Money In
+                      Money In
                       <FixfyHintIcon
-                        text={`Overdue first, then ${periodBounds ? `due in ${periodLabel}` : "all open receivables"}. Mark paid in the Invoices tab below.`}
+                        text={`Collectible receivables only (excludes draft and on hold). ${periodBounds ? `Due in ${periodLabel}` : "All open"}. Mark paid in the Invoices tab below.`}
                         placement="bottom-start"
                       />
                     </h2>
@@ -1156,7 +1223,7 @@ function BillingStandaloneInner() {
                 </div>
                 <div className="max-h-[420px] divide-y divide-border-light overflow-y-auto">
                   {attentionAccountGroups.length === 0 ? (
-                    <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing needs attention right now.</p>
+                    <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing to collect right now.</p>
                   ) : (
                     attentionAccountGroups.map((group) => {
                       const open = expandedAttentionAccounts.has(group.accountKey);
@@ -1211,7 +1278,7 @@ function BillingStandaloneInner() {
                                   <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-[#020040]">{row.clientName}</p>
                                     <p className="text-xs text-text-secondary">
-                                      {row.invoice.reference}
+                                      {displayBillingReference(row.invoice.reference)}
                                       {row.invoice.job_reference ? ` · ${row.invoice.job_reference}` : ""}
                                       {" · "}Issued {formatDate(row.invoice.created_at.slice(0, 10))}
                                     </p>
@@ -1247,7 +1314,7 @@ function BillingStandaloneInner() {
               <div className="rounded-xl border border-border-light bg-white shadow-sm">
                 <div className="border-b border-border-light px-4 py-4 sm:px-5">
                   <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                    Going Out · Money Out
+                    Money Out
                     <FixfyHintIcon
                       text={`Approved self-bills grouped by pay date · ${periodWorkWeekLabel}. Approve in the Self-bills tab below, then pay here via Wise.`}
                       placement="bottom-start"
@@ -1264,6 +1331,16 @@ function BillingStandaloneInner() {
                   const payTargetTotal = sumDue(
                     goingOutApprovedSelfBills.filter((sb) => payTargetIds.includes(sb.id)),
                   );
+                  const allSelected =
+                    hasSelection &&
+                    eligiblePayIds.length > 0 &&
+                    selectedPayInTab.length === eligiblePayIds.length;
+                  const payButtonLabel =
+                    !hasSelection || allSelected
+                      ? `Pay all ${formatCurrency(payTargetTotal)}`
+                      : selectedPayInTab.length <= 2
+                        ? `Pay ${formatCurrency(payTargetTotal)}`
+                        : `Pay selected ${formatCurrency(payTargetTotal)}`;
 
                   return (
                     <>
@@ -1284,9 +1361,7 @@ function BillingStandaloneInner() {
                             disabled={payTargetIds.length === 0}
                             onClick={() => void handleBulkPayWithWise(payTargetIds)}
                           >
-                            {hasSelection
-                              ? `Pay selected ${formatCurrency(payTargetTotal)} (${payTargetIds.length})`
-                              : `Pay all ${formatCurrency(payTargetTotal)}`}
+                            {payButtonLabel}
                           </Button>
                         </div>
                       </div>
@@ -1361,7 +1436,7 @@ function BillingStandaloneInner() {
                     customerPaidByJobId={data.customerPaidByJobId}
                     accountLogoById={data.accountLogoById}
                     onOpen={openInvoice}
-                    onMarkPaid={(id) => void bulkMarkInvoicesPaid([id], profile ?? undefined).then(() => data.loadData())}
+                    onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
                     emptyLabel="No active invoices in this period."
                     collapsibleAccounts={{
                       expandedKeys: expandedLedgerInvoiceAccounts,
@@ -1400,7 +1475,7 @@ function BillingStandaloneInner() {
                           customerPaidByJobId={data.customerPaidByJobId}
                           accountLogoById={data.accountLogoById}
                           onOpen={openInvoice}
-                          onMarkPaid={(id) => void bulkMarkInvoicesPaid([id], profile ?? undefined).then(() => data.loadData())}
+                          onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
                           compact
                           collapsibleAccounts={{
                             expandedKeys: expandedLedgerInvoiceAccounts,
@@ -1584,7 +1659,7 @@ function BillingStandaloneInner() {
                           onMarkPaid={async (id) => {
                             await markSelfBillsPaid([id]);
                             toast.success("Marked paid");
-                            await data.loadData();
+                            await loadData();
                           }}
                           variant="compact"
                           collapsiblePartners={{
@@ -1645,11 +1720,11 @@ function BillingStandaloneInner() {
           onStatusChange={async (inv, status) => {
             const updated = await updateInvoiceStatusOne(inv, status);
             setSelectedInvoice(updated);
-            await data.loadData();
+            await loadData();
           }}
           onInvoiceUpdated={(inv) => {
             setSelectedInvoice(inv);
-            void data.loadData();
+            void loadData();
           }}
         />
 
@@ -1665,27 +1740,27 @@ function BillingStandaloneInner() {
             const supabase = getSupabase();
             await supabase.from("self_bills").update({ status: "ready_to_pay" }).eq("id", drawerSb.id);
             toast.success("Ready to pay");
-            await data.loadData();
+            await loadData();
           }}
           onMarkPaid={async () => {
             if (!drawerSb) return;
             await markSelfBillsPaid([drawerSb.id]);
             toast.success("Marked paid");
-            await data.loadData();
+            await loadData();
           }}
           onReopen={async () => {
             if (!drawerSb) return;
             const supabase = getSupabase();
             await supabase.from("self_bills").update({ status: "ready_to_pay" }).eq("id", drawerSb.id);
             toast.success("Reopened");
-            await data.loadData();
+            await loadData();
           }}
           onRefresh={async () => {
             closeSelfBillDrawer();
-            await data.loadData();
+            await loadData();
           }}
           onEditTotals={() => toast.message("Edit totals in self-bill drawer tabs")}
-          onPartnerPaymentsRecorded={() => data.loadData()}
+          onPartnerPaymentsRecorded={() => loadData()}
         />
 
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
@@ -1699,12 +1774,7 @@ function BillingStandaloneInner() {
             onMarkPaid={async () => {
               setBulkSaving(true);
               try {
-                await bulkMarkInvoicesPaid([...selectedInvoiceIds], profile ?? undefined);
-                toast.success("Marked paid");
-                setSelectedInvoiceIds(new Set());
-                await data.loadData();
-              } catch {
-                toast.error("Failed");
+                await handleMarkInvoicesPaid([...selectedInvoiceIds], { clearSelection: true });
               } finally {
                 setBulkSaving(false);
               }
@@ -1798,7 +1868,7 @@ function BillingStandaloneInner() {
                 await bulkCancelSelfBills(eligible);
                 toast.success("Cancelled");
                 setSelectedSbIds(new Set());
-                await data.loadData();
+                await loadData();
               } catch {
                 toast.error("Failed");
               } finally {
@@ -1876,6 +1946,19 @@ type SelfBillLedgerSections = {
   workforce: SelfBillWeekPartnerGroup[];
   partners: SelfBillWeekPartnerGroup[];
 };
+
+function buildSelfBillLedgerSectionMap<K extends string>(
+  buckets: Record<K, SelfBill[]>,
+  dueCtx: SelfBillDueResolveContext,
+  jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
+  partnerPaidByJobId: Record<string, number>,
+): Record<K, SelfBillLedgerSections> {
+  const out = {} as Record<K, SelfBillLedgerSections>;
+  for (const key of Object.keys(buckets) as K[]) {
+    out[key] = buildSelfBillLedgerSections(buckets[key]!, dueCtx, jobsBySelfBillId, partnerPaidByJobId);
+  }
+  return out;
+}
 
 function buildSelfBillLedgerSections(
   selfBills: SelfBill[],
@@ -1994,8 +2077,12 @@ function InvoiceLedgerRow({
   compact?: boolean;
   stripeAlt?: boolean;
 }) {
-  const canSelect = inv.status !== "paid" && inv.status !== "cancelled";
-  const st = invoiceDisplayStatus(inv, todayYmd);
+  const canSelect = inv.status !== "paid" && inv.status !== "cancelled" && inv.status !== "on_hold";
+  const st = invoiceDisplayStatus(inv, todayYmd, jobsByRef);
+  const jobOnHold = inv.job_reference?.trim()
+    ? jobsByRef[inv.job_reference.trim()]?.status === "on_hold"
+    : false;
+  const canMarkPaid = canSelect && !jobOnHold;
   const { total, paid, outstanding } = invoiceLedgerAmounts(inv, jobsByRef, customerPaidByJobId);
   return (
     <tr
@@ -2018,7 +2105,7 @@ function InvoiceLedgerRow({
         ) : null}
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-        <p className="font-semibold">{inv.reference}</p>
+        <p className="font-semibold">{displayBillingReference(inv.reference)}</p>
         <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
       </td>
       <td className={cn("text-xs", compact ? "px-4 py-2" : "px-3 py-2")}>{formatDate(inv.due_date)}</td>
@@ -2042,12 +2129,15 @@ function InvoiceLedgerRow({
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-1">
-          {canSelect ? (
+          {canMarkPaid ? (
             <button
               type="button"
               title="Mark paid"
               className="rounded border border-border-light p-1 hover:bg-emerald-50"
-              onClick={() => onMarkPaid(inv.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMarkPaid(inv.id);
+              }}
             >
               <Check className="h-3.5 w-3.5 text-emerald-700" />
             </button>
@@ -2747,7 +2837,14 @@ function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onCl
 }
 
 function InvoiceStatusPill({ status }: { status: ReturnType<typeof invoiceDisplayStatus> }) {
-  const tone = status === "Paid" ? "ok" : status === "Overdue" ? "bad" : status === "Draft" ? "muted" : "info";
+  const tone =
+    status === "Paid"
+      ? "ok"
+      : status === "Overdue"
+        ? "bad"
+        : status === "Draft" || status === "On hold"
+          ? "muted"
+          : "info";
   return <StatusPill label={status} tone={tone} />;
 }
 
