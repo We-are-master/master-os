@@ -2334,8 +2334,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           </div>
           <p className="text-xs text-text-secondary leading-relaxed">
             We add them under <span className="font-medium text-text-primary">Onboarding</span> with placeholder
-            details. The link opens <span className="font-medium text-text-primary">partners.getfixfy.com/join</span>{" "}
-            so they can fill everything in. If this email already exists without a portal account, we resend the link.
+            details. The email links to <span className="font-medium text-text-primary">partners.getfixfy.com</span>{" "}
+            so they can sign in or create an account. If this email already exists without a portal account, we resend the link.
           </p>
         </div>
         <div className="flex flex-col-reverse gap-2 border-t border-border-light px-4 sm:px-6 py-3 sm:flex-row sm:justify-end">

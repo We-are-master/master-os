@@ -11,7 +11,6 @@ export const PARTNER_ONBOARDING_EMAIL_SUBJECT = "Welcome to the Fixfy Partner Po
 export interface PartnerOnboardingEmailOptions {
   contactName: string;
   email: string;
-  tradeLabel: string;
   onboardingUrl: string;
   customMessage?: string;
 }
@@ -75,7 +74,6 @@ export function buildPartnerOnboardingRefreshEmailHTML(
   html = replaceAll(html, "partner_first_name", escapeHtml(firstName(contactName)));
   html = replaceAll(html, "partner_name", escapeHtml(contactName));
   html = replaceAll(html, "partner_email", escapeHtml(options.email.trim()));
-  html = replaceAll(html, "partner_trade", escapeHtml(options.tradeLabel.trim() || "General"));
   html = replaceAll(html, "onboarding_url", escapeHtml(options.onboardingUrl));
   html = replaceAll(html, "support_email", escapeHtml(supportEmail));
   html = replaceAll(html, "company_name", escapeHtml(companyName));

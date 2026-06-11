@@ -12,6 +12,7 @@ import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
 import { isJobExtraDiscountExtraType } from "@/lib/job-extra-discount";
+import { parseMoneyInput } from "@/lib/parse-money-input";
 
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
@@ -320,8 +321,8 @@ export function JobMoneyDrawer({
   };
 
   const isClientStripe = flow === "client_pay" && method === "stripe";
-  const n = Number(amount);
-  const amountOk = amount.trim() !== "" && !Number.isNaN(n) && n > 0;
+  const n = parseMoneyInput(amount);
+  const amountOk = amount.trim() !== "" && n > 0;
   const isExtraFlow = !isPayFlow(flow);
   const extraTypeUpper = extraType.trim().toUpperCase();
   const discountMode = isExtraFlow && isJobExtraDiscountExtraType(extraType);
@@ -349,9 +350,9 @@ export function JobMoneyDrawer({
   const extraTypeOk = !isExtraFlow || extraType.trim().length > 0;
   const extraReasonOk = !isExtraFlow || (requiresManualExtraReason ? extraReason.trim().length > 0 : true);
   const extraClientProofOk = flow !== "client_extra" || discountMode || extraClientProofConfirmed;
-  const linkedPartnerAmountNum = Number(linkedPartnerAmount);
+  const linkedPartnerAmountNum = parseMoneyInput(linkedPartnerAmount);
   const linkedPartnerAmountOk =
-    !addLinkedPartnerExtra || (!Number.isNaN(linkedPartnerAmountNum) && linkedPartnerAmountNum > 0);
+    !addLinkedPartnerExtra || (linkedPartnerAmount.trim() !== "" && linkedPartnerAmountNum > 0);
   const linkedPartnerTypeOk = !addLinkedPartnerExtra || linkedPartnerType.trim().length > 0;
   const linkedPartnerReasonOk = !addLinkedPartnerExtra || linkedPartnerReason.trim().length > 0;
   const canSubmit =

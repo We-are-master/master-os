@@ -11,7 +11,6 @@ import {
 import {
   buildPartnerOnboardingRefreshEmailHTML,
   PARTNER_ONBOARDING_EMAIL_SUBJECT,
-  resolvePartnerTradeLabel,
 } from "@/lib/partner-onboarding-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
@@ -100,6 +99,11 @@ function resolveLinkKind(
     : "trade_onboarding";
 }
 
+/** Trade portal home — partners sign in or create an account here (not /join invite deep links). */
+function tradePortalHomeUrl(tradePortalBaseUrl: string): string {
+  return `${tradePortalBaseUrl.replace(/\/$/, "")}/`;
+}
+
 async function insertPortalTokenWithRetry(
   supabase: SupabaseClient,
   row: {
@@ -140,7 +144,6 @@ async function sendPartnerEmail(
   input: {
     partnerEmail: string;
     partnerName: string;
-    tradeLabel: string;
     onboardingUrl: string;
     expiresAt: Date;
     customMessage?: string;
@@ -153,7 +156,6 @@ async function sendPartnerEmail(
       ? buildPartnerOnboardingRefreshEmailHTML(branding, {
           contactName: input.partnerName,
           email: input.partnerEmail,
-          tradeLabel: input.tradeLabel,
           onboardingUrl: input.onboardingUrl,
           customMessage: input.customMessage,
         })
@@ -224,10 +226,6 @@ export async function createPartnerPortalLink(
     (partner as { company_name?: string | null }).company_name?.trim() ||
     "there";
 
-  const tradeLabel = resolvePartnerTradeLabel(
-    partner as { trade?: string | null; trades?: string[] | null },
-  );
-
   const osBaseUrl = input.osBaseUrl.replace(/\/$/, "");
   const tradePortalBaseUrl = (input.tradePortalBaseUrl ?? resolvePartnerTradePortalBaseUrl()).replace(
     /\/$/,
@@ -241,9 +239,22 @@ export async function createPartnerPortalLink(
   let tokenId: string | null = null;
   let expiresAtIso = expiresAt.toISOString();
 
-  if (linkKind === "trade_onboarding" && authUserId) {
-    onboardingUrl = `${tradePortalBaseUrl}/login?email=${encodeURIComponent(partnerEmail)}`;
+  if (linkKind === "trade_onboarding") {
+    onboardingUrl = tradePortalHomeUrl(tradePortalBaseUrl);
     fullUrl = onboardingUrl;
+    if (!authUserId) {
+      const rawToken = generatePartnerPortalTokenRaw();
+      const shortCode = generatePartnerPortalShortCode();
+      const tokenRow = await insertPortalTokenWithRetry(supabase, {
+        partner_id: input.partnerId,
+        token_hash: hashPartnerPortalToken(rawToken),
+        short_code: shortCode,
+        expires_at: expiresAt.toISOString(),
+        requested_doc_ids: null,
+      });
+      tokenId = tokenRow.id;
+      expiresAtIso = tokenRow.expires_at;
+    }
   } else {
     const rawToken = generatePartnerPortalTokenRaw();
     const shortCode = generatePartnerPortalShortCode();
@@ -252,19 +263,13 @@ export async function createPartnerPortalLink(
       token_hash: hashPartnerPortalToken(rawToken),
       short_code: shortCode,
       expires_at: expiresAt.toISOString(),
-      requested_doc_ids: linkKind === "document_request" ? requestedDocIds : null,
+      requested_doc_ids: requestedDocIds,
     });
     tokenId = tokenRow.id;
     expiresAtIso = tokenRow.expires_at;
     const code = tokenRow.short_code;
-
-    if (linkKind === "trade_onboarding") {
-      onboardingUrl = `${tradePortalBaseUrl}/join?invite=${encodeURIComponent(code)}`;
-      fullUrl = onboardingUrl;
-    } else {
-      onboardingUrl = `${osBaseUrl}/partner-upload?code=${encodeURIComponent(code)}`;
-      fullUrl = `${osBaseUrl}/partner-upload?token=${encodeURIComponent(rawToken)}`;
-    }
+    onboardingUrl = `${osBaseUrl}/partner-upload?code=${encodeURIComponent(code)}`;
+    fullUrl = `${osBaseUrl}/partner-upload?token=${encodeURIComponent(rawToken)}`;
   }
 
   let emailSent = false;
@@ -275,7 +280,6 @@ export async function createPartnerPortalLink(
     const mail = await sendPartnerEmail(supabase, {
       partnerEmail,
       partnerName,
-      tradeLabel,
       onboardingUrl,
       expiresAt: new Date(expiresAtIso),
       customMessage,

@@ -284,6 +284,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
+import { clientMaterialsMisallocationPatch } from "@/lib/repair-client-materials-allocation";
 import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -1311,6 +1312,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const ownerKeepUnassignedRef = useRef<Set<string>>(new Set());
   const autoInvoiceEnsureRef = useRef<Set<string>>(new Set());
   const autoSelfBillEnsureRef = useRef<Set<string>>(new Set());
+  const materialsRepairAttemptedRef = useRef<string | null>(null);
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
@@ -2201,6 +2203,38 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     void loadExtraHistory(job.id);
   }, [job?.id, loadExtraHistory]);
+
+  useEffect(() => {
+    if (!job?.id || extraHistory.length === 0) return;
+    const repairKey = `${job.id}:${job.materials_cost}:${job.extras_amount}:${extraHistory.length}`;
+    if (materialsRepairAttemptedRef.current === repairKey) return;
+    const patch = clientMaterialsMisallocationPatch(
+      job,
+      extraHistory.map((row) => ({
+        side: row.side,
+        extra_type: row.extraType,
+        amount: row.amount,
+        allocation: row.allocation,
+      })),
+    );
+    if (!patch) return;
+    materialsRepairAttemptedRef.current = repairKey;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const updated = await updateJob(job.id, patch);
+        if (cancelled) return;
+        setJob(updated);
+        void loadJobInvoices(updated);
+        void loadJobSelfBill(updated);
+      } catch {
+        materialsRepairAttemptedRef.current = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job, extraHistory, loadJobInvoices, loadJobSelfBill]);
 
   useEffect(() => {
     if (!job?.id) {
@@ -4442,7 +4476,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
           if (actionPayload.flow === "client_extra") {
             const et = actionPayload.extraType?.trim() ?? "";
-            if (customerExtraLedgerAllocation(et) === "extras") {
+            const alloc = customerExtraLedgerAllocation(et);
+            if (alloc === "extras" || alloc === "materials") {
               const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
               setClientExtrasUiValue((v) => Math.round((v + delta) * 100) / 100);
             }
@@ -5627,7 +5662,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
    */
   const clientExtrasFromLedger = extraHistory.reduce((acc, row) => {
     if (row.side !== "client") return acc;
-    if (extraHistoryBucket(row.extraType) === "materials") return acc;
     return acc + extraHistorySignedAmount(row);
   }, 0);
   const partnerExtrasFromLedger = extraHistory.reduce((acc, row) => {
@@ -5677,12 +5711,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     Number(partnerExtraBreakdownUi.parking ?? 0);
   const partnerExtraResidual = Math.max(0, Math.round((partnerExtraDisplay - partnerExtraBreakdownTotal) * 100) / 100);
   const partnerExtraLine = Math.round((Number(partnerExtraBreakdownUi.extra ?? 0) + partnerExtraResidual) * 100) / 100;
-  const partnerMaterialsLine = Math.max(0, Number(job.materials_cost ?? 0));
+  const partnerMaterialsFromLedger = extraHistory.reduce((acc, row) => {
+    if (row.side !== "partner") return acc;
+    if (row.allocation !== "materials" && extraHistoryBucket(row.extraType) !== "materials") return acc;
+    return acc + extraHistorySignedAmount(row);
+  }, 0);
+  const partnerMaterialsLedgerRounded = Math.max(0, Math.round(partnerMaterialsFromLedger * 100) / 100);
+  const partnerHasMaterialsLedger = extraHistory.some(
+    (row) =>
+      row.side === "partner" &&
+      (row.allocation === "materials" || extraHistoryBucket(row.extraType) === "materials"),
+  );
+  const partnerMaterialsLine = partnerHasMaterialsLedger
+    ? partnerMaterialsLedgerRounded
+    : Math.max(0, Number(job.materials_cost ?? 0));
   const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
-      ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
-      : partnerPaymentCap(job) + Number(job.materials_cost ?? 0);
+      ? hourlyAutoBilling.partnerTotal + partnerMaterialsLine
+      : partnerPaymentCap(job) + partnerMaterialsLine;
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
