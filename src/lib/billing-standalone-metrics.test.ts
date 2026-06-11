@@ -7,7 +7,13 @@ import {
   buildCashflowWeekBreakdown,
   buildInvoiceLedgerAccountGroups,
 } from "@/lib/billing-standalone-metrics";
-import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill } from "@/types/database";
+import type {
+  Bill,
+  Invoice,
+  InvoicePaymentInstallment,
+  SelfBill,
+  SelfBillPaymentInstallment,
+} from "@/types/database";
 
 function inv(
   id: string,
@@ -313,5 +319,74 @@ describe("buildCashflowWeekly", () => {
     const july = weeks.find((w) => w.weekStart === "2026-07-06");
     assert.equal(june?.moneyIn, 2111);
     assert.equal(july?.moneyIn, 2111);
+  });
+
+  it("buildCashflowWeekly buckets money out by partner installment due_date when plan active", () => {
+    const selfBill = sb("sb-plan", {
+      net_payout: 8655,
+      due_date: "2026-06-12",
+      approved_at: "2026-06-01T10:00:00Z",
+      payment_plan_active: true,
+      partner_name: "Partner A",
+    });
+    const installments: SelfBillPaymentInstallment[] = [
+      {
+        id: "p1",
+        self_bill_id: "sb-plan",
+        sequence: 1,
+        amount: 4026,
+        due_date: "2026-06-12",
+        status: "pending",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "p2",
+        self_bill_id: "sb-plan",
+        sequence: 2,
+        amount: 4629,
+        due_date: "2026-07-10",
+        status: "pending",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const weeks = buildCashflowWeekly({
+      invoices: [],
+      selfBills: [selfBill],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      installmentsBySelfBillId: { "sb-plan": installments },
+      startYmd: "2026-06-08",
+      endYmd: "2026-07-18",
+    });
+    const june = weeks.find((w) => w.weekStart === "2026-06-08");
+    const july = weeks.find((w) => w.weekStart === "2026-07-06");
+    assert.equal(june?.moneyOut, 4026);
+    assert.equal(july?.moneyOut, 4629);
+  });
+
+  it("does not lump full self-bill outstanding when payment_plan_active but installments missing", () => {
+    const weeks = buildCashflowWeekly({
+      invoices: [],
+      selfBills: [
+        sb("sb-flagged", {
+          net_payout: 8655,
+          due_date: "2026-06-12",
+          approved_at: "2026-06-01T10:00:00Z",
+          payment_plan_active: true,
+        }),
+      ],
+      jobsByRef: {},
+      customerPaidByJobId: {},
+      jobsBySelfBillId: {},
+      partnerPaidByJobId: {},
+      dueCtx: {},
+      installmentsBySelfBillId: {},
+      startYmd: "2026-06-08",
+      endYmd: "2026-06-14",
+    });
+    assert.equal(weeks[0]!.moneyOut, 0);
   });
 });

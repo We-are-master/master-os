@@ -115,7 +115,12 @@ export function JobPaymentPlanPanel(props: Props) {
           installments.length > 0
             ? await updateSelfBillPaymentPlan(props.entityId, props.totalAmount, rows)
             : await createSelfBillPaymentPlan(props.entityId, props.totalAmount, rows);
-        setInstallments(updated);
+        let next = updated;
+        if (props.amountPaid > 0) {
+          await syncSelfBillPaymentPlanFromPartnerPaid(props.entityId, props.amountPaid);
+          next = await listInstallmentsForSelfBill(props.entityId);
+        }
+        setInstallments(next);
       }
       setEditorOpen(false);
       toast.success("Payment plan saved");

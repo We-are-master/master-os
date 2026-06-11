@@ -28,7 +28,13 @@ import {
   selfBillPayWorkPeriodInPeriod,
   ymdInBounds,
 } from "@/lib/billing-standalone-period";
-import { CASHFLOW_RUNWAY_HINT, cashflowWeekColumnTitle } from "@/lib/billing-cashflow-runway-copy";
+import {
+  CASHFLOW_RUNWAY_HINT,
+  cashflowWeekColumnTitle,
+  cashflowWeekHasActivity,
+  cashflowWeekNet,
+  formatCashflowWeekPnl,
+} from "@/lib/billing-cashflow-runway-copy";
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
 import { CashflowWeekDetailModal } from "@/components/finance/cashflow-week-detail-modal";
@@ -53,7 +59,7 @@ import {
   invoiceEffectivePaidWithJobCustomerPaid,
   invoiceBalanceDueWithJobCustomerPaid,
 } from "@/lib/invoice-balance";
-import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
+import { invoiceDisplayDueYmd, invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { bulkMarkInvoicesPaid, syncInvoicesForJobIds, updateInvoiceStatusOne } from "@/lib/billing-invoice-actions";
 import { displayBillingReference } from "@/lib/billing-reference";
 import {
@@ -81,8 +87,8 @@ import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-ba
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { createInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { logAudit } from "@/services/audit";
-import { selfBillIsInstallmentDueForWisePay } from "@/lib/self-bill-payment-plan";
-import type { Invoice, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
+import { selfBillEffectiveDueYmd, selfBillIsInstallmentDueForWisePay } from "@/lib/self-bill-payment-plan";
+import type { Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 import "./billing-standalone.css";
 
 const InvoiceDetailDrawer = dynamic(
@@ -1218,6 +1224,9 @@ function BillingStandaloneInner() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
+                  <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
+                    <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Weekly P&amp;L
+                  </span>
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
                   <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
                 </div>
@@ -1227,12 +1236,15 @@ function BillingStandaloneInner() {
                   const ih = w.moneyIn ? Math.max(8, Math.round((w.moneyIn / cfMax) * 72)) : 0;
                   const oh = w.moneyOut ? Math.max(8, Math.round((w.moneyOut / cfMax) * 72)) : 0;
                   const isSelected = cashflowDetailWeekStart === w.weekStart;
+                  const weekNet = cashflowWeekNet(w.moneyIn, w.moneyOut);
+                  const weekHasActivity = cashflowWeekHasActivity(w.moneyIn, w.moneyOut);
+                  const pnlLabel = formatCashflowWeekPnl(w.moneyIn, w.moneyOut);
                   return (
                     <button
                       key={w.weekStart}
                       type="button"
                       title={cashflowWeekColumnTitle(w.title, w.moneyIn, w.moneyOut)}
-                      aria-label={`${w.title}. Receivables ${formatCurrency(w.moneyIn)}. Pay and expenses ${formatCurrency(w.moneyOut)}. View breakdown.`}
+                      aria-label={`${w.title}. Weekly P and L ${pnlLabel}. Receivables ${formatCurrency(w.moneyIn)}. Pay and expenses ${formatCurrency(w.moneyOut)}. View breakdown.`}
                       onClick={() => setCashflowDetailWeekStart(w.weekStart)}
                       className={cn(
                         "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px] cursor-pointer transition-colors hover:bg-surface-hover/80",
@@ -1240,6 +1252,16 @@ function BillingStandaloneInner() {
                         isSelected && "is-selected",
                       )}
                     >
+                      <div
+                        className={cn(
+                          "cf__pnl",
+                          !weekHasActivity && "cf__pnl--zero",
+                          weekHasActivity && weekNet >= 0 && "cf__pnl--pos",
+                          weekHasActivity && weekNet < 0 && "cf__pnl--neg",
+                        )}
+                      >
+                        {pnlLabel}
+                      </div>
                       <div className={cn("cf__amt cf__amt--in", !w.moneyIn && "is-empty")}>{w.moneyIn ? formatCurrency(w.moneyIn) : "·"}</div>
                       <div className="cf__well"><div className="cf__bar cf__bar--in" style={{ height: ih }} /></div>
                       <div className="cf__axis" />
@@ -1524,6 +1546,7 @@ function BillingStandaloneInner() {
                     onSelectionChange={setSelectedInvoiceIds}
                     jobsByRef={data.jobsByRef}
                     customerPaidByJobId={data.customerPaidByJobId}
+                    installmentsByInvoiceId={data.installmentsByInvoiceId}
                     accountLogoById={data.accountLogoById}
                     onOpen={openInvoice}
                     onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
@@ -1563,6 +1586,7 @@ function BillingStandaloneInner() {
                           onSelectionChange={setSelectedInvoiceIds}
                           jobsByRef={data.jobsByRef}
                           customerPaidByJobId={data.customerPaidByJobId}
+                          installmentsByInvoiceId={data.installmentsByInvoiceId}
                           accountLogoById={data.accountLogoById}
                           onOpen={openInvoice}
                           onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
@@ -2200,6 +2224,16 @@ function selfBillLedgerAmounts(
   return { total, paid, outstanding };
 }
 
+function ledgerNextDueLabel(
+  nextDueYmd: string,
+  outstanding: number,
+  todayYmd: string,
+): { text: string; overdue: boolean } {
+  const show = outstanding > 0.02 && /^\d{4}-\d{2}-\d{2}$/.test(nextDueYmd);
+  if (!show) return { text: "—", overdue: false };
+  return { text: formatDate(nextDueYmd), overdue: todayYmd > nextDueYmd };
+}
+
 function InvoiceLedgerRow({
   inv,
   todayYmd,
@@ -2207,6 +2241,7 @@ function InvoiceLedgerRow({
   onSelectionChange,
   jobsByRef,
   customerPaidByJobId,
+  installments,
   onOpen,
   onMarkPaid,
   compact,
@@ -2218,6 +2253,7 @@ function InvoiceLedgerRow({
   onSelectionChange: (ids: Set<string>) => void;
   jobsByRef: Record<string, InvoiceListJobSnapshot>;
   customerPaidByJobId: Record<string, number>;
+  installments?: InvoicePaymentInstallment[];
   onOpen: (inv: Invoice) => void;
   onMarkPaid: (id: string) => void;
   compact?: boolean;
@@ -2230,6 +2266,11 @@ function InvoiceLedgerRow({
     : false;
   const canMarkPaid = canSelect && !jobOnHold;
   const { total, paid, outstanding } = invoiceLedgerAmounts(inv, jobsByRef, customerPaidByJobId);
+  const nextDue = ledgerNextDueLabel(
+    invoiceDisplayDueYmd(inv, installments),
+    outstanding,
+    todayYmd,
+  );
   return (
     <tr
       className={cn("bl-inv-row cursor-pointer", stripeAlt && "bl-inv-row--alt")}
@@ -2252,10 +2293,7 @@ function InvoiceLedgerRow({
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
         <p className="font-semibold">{displayBillingReference(inv.reference)}</p>
-        <p className="text-xs text-text-tertiary">
-          {inv.job_reference ?? "—"}
-          {inv.due_date ? ` · Due ${formatDate(inv.due_date)}` : ""}
-        </p>
+        <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
         <InvoiceStatusPill status={st} />
@@ -2274,6 +2312,15 @@ function InvoiceLedgerRow({
         )}
       >
         {outstanding > 0 ? formatCurrency(outstanding) : "—"}
+      </td>
+      <td
+        className={cn(
+          "text-right text-sm tabular-nums",
+          nextDue.overdue ? "font-medium text-red-700" : nextDue.text === "—" ? "text-text-tertiary" : "text-text-secondary",
+          compact ? "px-4 py-2" : "px-3 py-2",
+        )}
+      >
+        {nextDue.text}
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-end gap-1">
@@ -2317,6 +2364,7 @@ function InvoiceGroupedLedger({
   onSelectionChange,
   jobsByRef,
   customerPaidByJobId,
+  installmentsByInvoiceId,
   accountLogoById,
   onOpen,
   onMarkPaid,
@@ -2330,6 +2378,7 @@ function InvoiceGroupedLedger({
   onSelectionChange: (ids: Set<string>) => void;
   jobsByRef: Record<string, InvoiceListJobSnapshot>;
   customerPaidByJobId: Record<string, number>;
+  installmentsByInvoiceId: Record<string, InvoicePaymentInstallment[]>;
   accountLogoById: Record<string, string | null>;
   onOpen: (inv: Invoice) => void;
   onMarkPaid: (id: string) => void;
@@ -2439,6 +2488,7 @@ function InvoiceGroupedLedger({
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Total</th>
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Paid</th>
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Outstanding</th>
+                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Next due</th>
                       <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")} />
                       <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Open</th>
                     </tr>
@@ -2453,6 +2503,7 @@ function InvoiceGroupedLedger({
                         onSelectionChange={onSelectionChange}
                         jobsByRef={jobsByRef}
                         customerPaidByJobId={customerPaidByJobId}
+                        installments={installmentsByInvoiceId[inv.id]}
                         onOpen={onOpen}
                         onMarkPaid={onMarkPaid}
                         compact={compact}
@@ -2736,6 +2787,7 @@ function SelfBillGroupedLedger({
                       <span className="text-right">Total</span>
                       <span className="text-right">Paid</span>
                       <span className="text-right">Outstanding</span>
+                      <span className="text-right">Next due</span>
                       <span className="text-center">
                         {approveQueue
                           ? "Approve & Send"
@@ -2759,11 +2811,17 @@ function SelfBillGroupedLedger({
                               : !isSelfBillPayoutVoided(sb) && sb.status !== "paid";
                       const overdue = isSelfBillOverdue(sb, todayYmd, partnerDueCtx(sb.partner_id));
                       const label = sb.status === "paid" ? "Paid" : overdue ? "Overdue" : selfBillCountsAsReady(sb) ? "Ready" : "Draft";
+                      const installments = installmentsBySelfBillId[sb.id];
                       const { total, paid, outstanding } = selfBillLedgerAmounts(
                         sb,
                         jobsBySelfBillId[sb.id],
                         partnerPaidByJobId,
-                        installmentsBySelfBillId[sb.id],
+                        installments,
+                      );
+                      const nextDue = ledgerNextDueLabel(
+                        selfBillEffectiveDueYmd(sb, installments, partnerDueCtx(sb.partner_id)),
+                        outstanding,
+                        todayYmd,
                       );
                       const rowAlt = ledgerRowIndex % 2 === 1;
                       ledgerRowIndex += 1;
@@ -2836,6 +2894,18 @@ function SelfBillGroupedLedger({
                               )}
                             >
                               {outstanding > 0.02 ? formatCurrency(outstanding) : "—"}
+                            </span>
+                            <span
+                              className={cn(
+                                "bl-sb-row__next-due text-sm tabular-nums",
+                                nextDue.overdue
+                                  ? "font-medium text-red-700"
+                                  : nextDue.text === "—"
+                                    ? "text-text-tertiary"
+                                    : "text-text-secondary",
+                              )}
+                            >
+                              {nextDue.text}
                             </span>
                             <div className="bl-sb-row__actions">
                               {showRowMarkPaid && canSelect ? (
