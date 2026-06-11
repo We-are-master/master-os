@@ -32,6 +32,20 @@ export function parsePostgrestUnknownColumnName(err: unknown): string | null {
   return m?.[1] ?? null;
 }
 
+/** Mig 235: `self_bill_payment_installments` table or `self_bills.payment_plan_active` missing / not in PostgREST cache. */
+export function isSupabaseSelfBillPaymentPlanSchemaMissing(err: unknown): boolean {
+  const msg = postgrestFullErrorText(err);
+  const code = String((err as { code?: string })?.code ?? "");
+  if (code === "42P01" && msg.includes("self_bill_payment_installments")) return true;
+  if (
+    msg.includes("self_bill_payment_installments") &&
+    (msg.includes("Could not find") || msg.includes("schema cache") || msg.includes("does not exist"))
+  ) {
+    return true;
+  }
+  return isSupabaseMissingColumnError(err, "payment_plan_active");
+}
+
 export function isSupabaseMissingColumnError(err: unknown, columnHint?: string): boolean {
   const msg = postgrestFullErrorText(err);
   const code = String((err as { code?: string })?.code ?? "");

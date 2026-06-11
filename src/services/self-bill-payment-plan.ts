@@ -9,7 +9,10 @@ import {
   validateInstallmentsSum,
 } from "@/lib/self-bill-payment-plan";
 import { PAYMENT_PLAN_MAX_INSTALLMENTS } from "@/lib/invoice-payment-plan";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import {
+  isSupabaseMissingColumnError,
+  isSupabaseSelfBillPaymentPlanSchemaMissing,
+} from "@/lib/supabase-schema-compat";
 import type { SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 export async function listInstallmentsForSelfBillIds(
@@ -24,7 +27,7 @@ export async function listInstallmentsForSelfBillIds(
     .in("self_bill_id", selfBillIds)
     .order("sequence", { ascending: true });
   if (error) {
-    if (isSupabaseMissingColumnError(error)) return {};
+    if (isSupabaseSelfBillPaymentPlanSchemaMissing(error)) return {};
     throw error;
   }
   const out: Record<string, SelfBillPaymentInstallment[]> = {};
@@ -82,9 +85,39 @@ export async function createSelfBillPaymentPlan(
     .from("self_bills")
     .update({ due_date: firstDue, payment_plan_active: true })
     .eq("id", selfBillId);
-  if (sbErr && !isSupabaseMissingColumnError(sbErr)) throw sbErr;
+  if (sbErr) {
+    if (isSupabaseSelfBillPaymentPlanSchemaMissing(sbErr)) {
+      throw new Error(
+        "Installments were saved but self_bills.payment_plan_active is missing — apply migration 235 and run NOTIFY pgrst, 'reload schema'; then save the plan again.",
+      );
+    }
+    throw sbErr;
+  }
 
   return (data ?? []) as SelfBillPaymentInstallment[];
+}
+
+/** Set payment_plan_active when installment rows exist but the flag was never flipped (e.g. plan saved before mig 235). */
+export async function repairSelfBillPaymentPlanActiveFlag(
+  selfBillId: string,
+  client?: SupabaseClient,
+): Promise<boolean> {
+  const supabase = client ?? getSupabase();
+  const installments = await listInstallmentsForSelfBill(selfBillId);
+  if (installments.length === 0) return false;
+  const firstDue = installments[0]!.due_date?.slice(0, 10);
+  const patch: { payment_plan_active: boolean; due_date?: string } = { payment_plan_active: true };
+  if (firstDue && /^\d{4}-\d{2}-\d{2}$/.test(firstDue)) patch.due_date = firstDue;
+  const { error } = await supabase.from("self_bills").update(patch).eq("id", selfBillId);
+  if (error) {
+    if (isSupabaseSelfBillPaymentPlanSchemaMissing(error)) {
+      throw new Error(
+        "Partner installments exist but payment_plan_active cannot be set — apply migration 235 and run NOTIFY pgrst, 'reload schema';",
+      );
+    }
+    throw error;
+  }
+  return true;
 }
 
 /** Replace installment rows when none are paid yet. */
@@ -188,18 +221,27 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
     .select("id, payment_plan_active, status, net_payout")
     .eq("id", selfBillId)
     .maybeSingle();
-  if (sbErr) throw sbErr;
+  if (sbErr) {
+    if (isSupabaseSelfBillPaymentPlanSchemaMissing(sbErr)) {
+      throw new Error(
+        "Database migration 235 is not visible to the API yet — confirm it ran on this project and execute NOTIFY pgrst, 'reload schema';",
+      );
+    }
+    throw sbErr;
+  }
   if (!sbRow) throw new Error("Self-bill not found.");
-  const sb = sbRow as Pick<SelfBill, "id" | "payment_plan_active" | "status" | "net_payout">;
-  if (!sb.payment_plan_active) {
+  let sb = sbRow as Pick<SelfBill, "id" | "payment_plan_active" | "status" | "net_payout">;
+
+  let installments = await listInstallmentsForSelfBill(selfBillId);
+  if (installments.length === 0) {
     throw new Error(
-      "Partner payment plan is not active on this self-bill. Save the plan again or apply migration 235.",
+      "No partner installments on this self-bill — open Partner plan, save the plan, then try Match again.",
     );
   }
 
-  const installments = await listInstallmentsForSelfBill(selfBillId);
-  if (installments.length === 0) {
-    throw new Error("No partner installments found for this self-bill.");
+  if (!sb.payment_plan_active) {
+    await repairSelfBillPaymentPlanActiveFlag(selfBillId, supabase);
+    sb = { ...sb, payment_plan_active: true };
   }
 
   const amountPaid = Math.round(Number(partnerPaidTotal ?? 0) * 100) / 100;

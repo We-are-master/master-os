@@ -13,6 +13,7 @@ export type InvitePartnerFromZeroResult = {
 };
 
 export async function invitePartnerFromZero(input: {
+  name: string;
   email: string;
   phone?: string;
   sendEmail?: boolean;
@@ -21,6 +22,7 @@ export async function invitePartnerFromZero(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      name: input.name.trim(),
       email: input.email.trim(),
       phone: input.phone?.trim() || undefined,
       sendEmail: input.sendEmail !== false,

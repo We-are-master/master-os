@@ -989,9 +989,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [invitePhone, setInvitePhone] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const legacyZeroRatingRefreshRef = useRef(new Set<string>());
   const [createWizardStep, setCreateWizardStep] = useState<CreatePartnerWizardStep>("info");
   const [pendingCreateRateDrafts, setPendingCreateRateDrafts] = useState<Record<string, PartnerServiceRateRowDraft>>({});
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
@@ -1169,11 +1171,19 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     initialData,
   });
 
-  const partnerListIdsKey = partners.map((p) => p.id).join(",");
+  const legacyZeroListKey = useMemo(
+    () => partners.filter((p) => p.rating === 0).map((p) => p.id).join(","),
+    [partners],
+  );
   useEffect(() => {
-    if (loading || viewMode !== "directory" || directoryDisplayMode === "kanban") return;
-    const legacyZeroIds = partners.filter((p) => p.rating === 0).map((p) => p.id);
+    if (viewMode !== "directory" || directoryDisplayMode === "kanban") return;
+    if (!legacyZeroListKey) return;
+    const legacyZeroIds = legacyZeroListKey
+      .split(",")
+      .filter(Boolean)
+      .filter((id) => !legacyZeroRatingRefreshRef.current.has(id));
     if (!legacyZeroIds.length) return;
+    for (const id of legacyZeroIds) legacyZeroRatingRefreshRef.current.add(id);
     let cancelled = false;
     void refreshLegacyZeroPartnerRatings(legacyZeroIds).then(() => {
       if (!cancelled) refreshList();
@@ -1181,7 +1191,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [partnerListIdsKey, loading, viewMode, directoryDisplayMode, refreshList]);
+  }, [legacyZeroListKey, viewMode, directoryDisplayMode, refreshList]);
 
   const [kanbanPartners, setKanbanPartners] = useState<Partner[]>([]);
   const [kanbanLoading, setKanbanLoading] = useState(false);
@@ -1217,11 +1227,19 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     void loadKanbanPartners();
   }, [viewMode, directoryDisplayMode, loadKanbanPartners]);
 
-  const kanbanPartnerIdsKey = kanbanPartners.map((p) => p.id).join(",");
+  const kanbanLegacyZeroListKey = useMemo(
+    () => kanbanPartners.filter((p) => p.rating === 0).map((p) => p.id).join(","),
+    [kanbanPartners],
+  );
   useEffect(() => {
-    if (viewMode !== "directory" || directoryDisplayMode !== "kanban" || kanbanLoading) return;
-    const legacyZeroIds = kanbanPartners.filter((p) => p.rating === 0).map((p) => p.id);
+    if (viewMode !== "directory" || directoryDisplayMode !== "kanban") return;
+    if (!kanbanLegacyZeroListKey) return;
+    const legacyZeroIds = kanbanLegacyZeroListKey
+      .split(",")
+      .filter(Boolean)
+      .filter((id) => !legacyZeroRatingRefreshRef.current.has(id));
     if (!legacyZeroIds.length) return;
+    for (const id of legacyZeroIds) legacyZeroRatingRefreshRef.current.add(id);
     let cancelled = false;
     void refreshLegacyZeroPartnerRatings(legacyZeroIds).then(() => {
       if (!cancelled) void loadKanbanPartners();
@@ -1229,7 +1247,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [kanbanPartnerIdsKey, kanbanLoading, viewMode, directoryDisplayMode, loadKanbanPartners]);
+  }, [kanbanLegacyZeroListKey, viewMode, directoryDisplayMode, loadKanbanPartners]);
 
   const refresh = useCallback(() => {
     refreshList();
@@ -1265,6 +1283,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   const handleInvitePartner = useCallback(async () => {
     const email = inviteEmail.trim();
+    const name = inviteName.trim();
+    if (!name) {
+      toast.error("Partner name is required");
+      return;
+    }
     if (!email) {
       toast.error("Email is required");
       return;
@@ -1272,6 +1295,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     setInviteSubmitting(true);
     try {
       const result = await invitePartnerFromZero({
+        name,
         email,
         phone: invitePhone.trim() || undefined,
         sendEmail: true,
@@ -1291,6 +1315,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       }
       if (result.warning && result.emailSent) toast.warning(result.warning);
       setInviteOpen(false);
+      setInviteName("");
       setInviteEmail("");
       setInvitePhone("");
       setStatusFilter("onboarding");
@@ -1301,7 +1326,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     } finally {
       setInviteSubmitting(false);
     }
-  }, [inviteEmail, invitePhone, refresh, loadCounts, setStatusFilter]);
+  }, [inviteName, inviteEmail, invitePhone, refresh, loadCounts, setStatusFilter]);
   useEffect(() => {
     refreshList();
     if (directoryDisplayMode === "kanban") void loadKanbanPartners();
@@ -2257,6 +2282,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         onClose={() => {
           if (inviteSubmitting) return;
           setInviteOpen(false);
+          setInviteName("");
           setInviteEmail("");
           setInvitePhone("");
         }}
@@ -2265,6 +2291,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         size="md"
       >
         <div className="px-4 sm:px-6 py-4 space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-name">
+              Name *
+            </label>
+            <Input
+              id="invite-partner-name"
+              type="text"
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+              placeholder="e.g. João Silva"
+              autoComplete="name"
+              required
+            />
+          </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-email">
               Email *
@@ -2305,6 +2345,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             disabled={inviteSubmitting}
             onClick={() => {
               setInviteOpen(false);
+              setInviteName("");
               setInviteEmail("");
               setInvitePhone("");
             }}
@@ -2313,7 +2354,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           </Button>
           <Button
             size="sm"
-            disabled={inviteSubmitting || !inviteEmail.trim()}
+            disabled={inviteSubmitting || !inviteName.trim() || !inviteEmail.trim()}
             icon={inviteSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             onClick={() => void handleInvitePartner()}
           >
