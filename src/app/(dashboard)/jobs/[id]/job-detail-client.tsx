@@ -8540,6 +8540,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </Button>
                 </div>
                 {(() => {
+                  if (job.job_kind !== "recurring") return null;
                   const primaryInv =
                     (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
                     jobInvoices[0];
@@ -8868,7 +8869,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Payout or discount
                   </Button>
                 </div>
-                {job.self_bill_id?.trim() && job.partner_id?.trim() && job.status !== "cancelled" ? (
+                {job.job_kind === "recurring" &&
+                job.self_bill_id?.trim() &&
+                job.partner_id?.trim() &&
+                job.status !== "cancelled" ? (
                   <div className="mt-2">
                     <JobPaymentPlanPanel
                       kind="partner"
