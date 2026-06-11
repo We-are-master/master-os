@@ -104,6 +104,70 @@ export function patchOfficeCancelZeroJobEconomics(): Partial<Job> {
  * has zeroed the live fields). Pass the job as it is BEFORE applying the zero
  * patch — typically `currentJob` in the cancel handler.
  */
+export type SelfBillCancellationFeeLine = {
+  label: string;
+  signedAmount: number;
+  kind: "clawback" | "compensation";
+};
+
+/** Display line for cancelled job fee on self-bill UI / PDF. */
+export function selfBillJobCancellationFeeLine(
+  job: Pick<
+    Job,
+    | "status"
+    | "reference"
+    | "partner_cancelled_at"
+    | "cancellation_fee_partner_gbp"
+    | "partner_cancellation_fee"
+    | "partner_cancellation_compensation_gbp"
+  >,
+): SelfBillCancellationFeeLine | null {
+  if (job.status !== "cancelled") return null;
+  const clawback =
+    partnerCancellationClawbackOwedGbp(job) + officeCancellationPartnerClawbackGbp(job);
+  if (clawback > EPS) {
+    return {
+      label: "(Cancelled - Fee Applied)",
+      signedAmount: -clawback,
+      kind: "clawback",
+    };
+  }
+  const comp = officeCancellationPartnerPayoutGbp(job);
+  if (comp > EPS) {
+    return {
+      label: "(Cancelled - Compensation)",
+      signedAmount: comp,
+      kind: "compensation",
+    };
+  }
+  return null;
+}
+
+export function selfBillCancellationFeeTotals(
+  jobs: Array<
+    Pick<
+      Job,
+      | "status"
+      | "partner_cancelled_at"
+      | "cancellation_fee_partner_gbp"
+      | "partner_cancellation_fee"
+      | "partner_cancellation_compensation_gbp"
+    >
+  >,
+): { clawbackTotal: number; compensationTotal: number } {
+  let clawbackTotal = 0;
+  let compensationTotal = 0;
+  for (const j of jobs) {
+    if (j.status !== "cancelled") continue;
+    clawbackTotal += partnerCancellationClawbackOwedGbp(j) + officeCancellationPartnerClawbackGbp(j);
+    compensationTotal += officeCancellationPartnerPayoutGbp(j);
+  }
+  return {
+    clawbackTotal: roundGbp(clawbackTotal),
+    compensationTotal: roundGbp(compensationTotal),
+  };
+}
+
 export function patchOfficeCancelLostSnapshot(
   currentJob: Pick<Job, "client_price" | "extras_amount" | "partner_cost">,
 ): Partial<Job> {

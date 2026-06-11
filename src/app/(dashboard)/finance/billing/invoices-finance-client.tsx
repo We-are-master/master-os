@@ -25,11 +25,13 @@ import type { Invoice, InvoicePaymentInstallment, InvoiceStatus, Job, JobStatus 
 import {
   PaymentPlanEditor,
   defaultPaymentPlanRows,
+  emptyPaymentPlanRow,
   type PaymentPlanEditorRow,
 } from "@/components/finance/payment-plan-editor";
 import {
   cancelPaymentPlan,
   createPaymentPlan,
+  updatePaymentPlan,
   listInstallmentsForInvoice,
   markAllInstallmentsPaid,
   markInstallmentPaid,
@@ -2322,7 +2324,16 @@ export function InvoiceDetailDrawer({
   const handleOpenPaymentPlanEditor = () => {
     if (!invoice) return;
     const total = Number(invoice.amount ?? 0);
-    setPaymentPlanRows(defaultPaymentPlanRows(total, 4));
+    const drafts =
+      installments.length > 0
+        ? installments.map((i) => ({
+            amount: Number(i.amount) || 0,
+            due_date: String(i.due_date).slice(0, 10),
+          }))
+        : defaultPaymentPlanRows(total, 4);
+    setPaymentPlanRows(
+      drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })),
+    );
     setPaymentPlanEditorOpen(true);
   };
 
@@ -2335,18 +2346,18 @@ export function InvoiceDetailDrawer({
     }
     setSavingPaymentPlan(true);
     try {
-      const rows = await createPaymentPlan(
-        invoice.id,
-        total,
-        paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
-      );
+      const drafts = paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
+      const rows =
+        installments.length > 0
+          ? await updatePaymentPlan(invoice.id, total, drafts)
+          : await createPaymentPlan(invoice.id, total, drafts);
       setInstallments(rows);
       const { data: fresh } = await getSupabase().from("invoices").select("*").eq("id", invoice.id).maybeSingle();
       if (fresh) onInvoiceUpdated(fresh as Invoice);
       setPaymentPlanEditorOpen(false);
-      toast.success("Payment plan created");
+      toast.success(installments.length > 0 ? "Payment plan updated" : "Payment plan created");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to create payment plan");
+      toast.error(e instanceof Error ? e.message : "Failed to save payment plan");
     } finally {
       setSavingPaymentPlan(false);
     }
@@ -2915,6 +2926,11 @@ export function InvoiceDetailDrawer({
                           </div>
                         ))}
                       </div>
+                      {canEditFields && !installments.some((i) => i.status === "paid") ? (
+                        <Button type="button" variant="ghost" size="sm" onClick={handleOpenPaymentPlanEditor}>
+                          Edit plan
+                        </Button>
+                      ) : null}
                       </>
                     ) : canEditFields ? (
                       <Button type="button" variant="ghost" size="sm" onClick={handleOpenPaymentPlanEditor}>

@@ -31,6 +31,8 @@ export interface CreateSeriesInput {
   createdBy?: string | null;
   /** Optional payment plan template from Create Job modal (mig 234). */
   paymentPlanTemplate?: PaymentPlanTemplate | null;
+  /** Optional partner payout plan template (mig 236). */
+  partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
 }
 
 export interface CreateSeriesResult {
@@ -132,6 +134,9 @@ export async function createJobOrSeries(
   };
   if (input.paymentPlanTemplate != null) {
     seriesInsertPayload.payment_plan_template = input.paymentPlanTemplate;
+  }
+  if (input.partnerPaymentPlanTemplate != null) {
+    seriesInsertPayload.partner_payment_plan_template = input.partnerPaymentPlanTemplate;
   }
 
   const { data: seriesRow, error: seriesErr } = await supabase

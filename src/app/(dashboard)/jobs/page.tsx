@@ -115,6 +115,12 @@ import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { createPaymentPlan } from "@/services/invoice-payment-plan";
+import { createSelfBillPaymentPlan } from "@/services/self-bill-payment-plan";
+import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
+import {
+  partnerCapForJobForm,
+  partnerPlanRowsFromClientSchedule,
+} from "@/lib/partner-payment-plan-create";
 import {
   defaultPaymentPlanRows,
   type PaymentPlanEditorRow,
@@ -1244,6 +1250,7 @@ function JobsPageContent() {
       series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
       pendingSitePhotos?: File[];
       paymentPlanTemplate?: PaymentPlanTemplate | null;
+      partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       recordExtraPaymentReceived?: { amount: number; note?: string };
     },
   ) => {
@@ -1410,6 +1417,7 @@ function JobsPageContent() {
         } as Omit<Job, "id" | "reference" | "created_at" | "updated_at">;
 
         const paymentPlanTemplate = opts.paymentPlanTemplate ?? null;
+        const partnerPaymentPlanTemplate = opts.partnerPaymentPlanTemplate ?? null;
         const seriesResult = await createJobOrSeries({
           anchorJobRow: anchor,
           series: {
@@ -1421,8 +1429,9 @@ function JobsPageContent() {
             max_occurrences: opts.series.max_occurrences ?? null,
           },
           paymentPlanTemplate,
+          partnerPaymentPlanTemplate,
         });
-        const firstJob = seriesResult.jobs[0];
+        let firstJob = seriesResult.jobs[0];
         if (firstJob) {
           try {
             const { invoice } = await ensureDraftInvoiceForJob(firstJob);
@@ -1436,6 +1445,30 @@ function JobsPageContent() {
                 Number(invoice.amount ?? 0),
                 paymentPlanTemplate.installments,
               );
+            }
+            let selfBillId = firstJob.self_bill_id ?? null;
+            if (!selfBillId?.trim() && firstJob.partner_id?.trim()) {
+              selfBillId = await ensureWeeklySelfBillForJob(firstJob);
+              if (selfBillId) firstJob = { ...firstJob, self_bill_id: selfBillId };
+            }
+            if (
+              selfBillId &&
+              partnerPaymentPlanTemplate?.enabled &&
+              partnerPaymentPlanTemplate.installments.length > 0 &&
+              firstJob.partner_id?.trim()
+            ) {
+              const partnerCap = partnerCapForJobForm({
+                partner_cost: Number(firstJob.partner_cost) || 0,
+                partner_agreed_value: firstJob.partner_agreed_value,
+                materials_cost: firstJob.materials_cost,
+              });
+              if (partnerCap > 0.02) {
+                await createSelfBillPaymentPlan(
+                  selfBillId,
+                  partnerCap,
+                  partnerPaymentPlanTemplate.installments,
+                );
+              }
             }
           } catch (invErr) {
             console.error("recurring series invoice/plan setup failed", invErr);
@@ -3080,6 +3113,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload;
       pendingSitePhotos?: File[];
       paymentPlanTemplate?: PaymentPlanTemplate | null;
+      partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       /** Smart pricing: record extra charge as deposit received after job is created. */
       recordExtraPaymentReceived?: { amount: number; note?: string };
     },
@@ -3126,6 +3160,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const [paymentPlanEnabled, setPaymentPlanEnabled] = useState(false);
   const [paymentPlanRows, setPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
+  const [partnerPaymentPlanEnabled, setPartnerPaymentPlanEnabled] = useState(true);
+  const [partnerPaymentPlanRows, setPartnerPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
+  const [partnerPlanCustomized, setPartnerPlanCustomized] = useState(false);
   const [accountPaymentTerms, setAccountPaymentTerms] = useState<string | null>(null);
   const [pricingOpen, setPricingOpen] = useState(false);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -3483,6 +3520,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const scheduledDeposit = extraAlreadyReceived ? manualExtra : 0;
     const scheduledFinal = Math.max(0, Math.round((jobInvoiceTotal - scheduledDeposit) * 100) / 100);
 
+    const partnerCapPreview = partnerCapForJobForm({
+      partner_cost: partnerCostOut,
+      materials_cost: Number(form.materials_cost) || 0,
+    });
+
     if (form.job_kind === "recurring" && paymentPlanEnabled) {
       if (paymentPlanRows.length < 1) {
         toast.error("Add at least one installment to the payment plan.");
@@ -3496,6 +3538,20 @@ function CreateJobModal({ open, onClose, onCreate }: {
         toast.error("Set a due date for each installment.");
         return;
       }
+      if (partnerPaymentPlanEnabled && form.partner_id?.trim() && partnerCapPreview > 0.02) {
+        if (partnerPaymentPlanRows.length < 1) {
+          toast.error("Add at least one partner payout installment.");
+          return;
+        }
+        if (!validateInstallmentsSum(partnerCapPreview, partnerPaymentPlanRows)) {
+          toast.error("Partner installments must sum to the partner cap.");
+          return;
+        }
+        if (partnerPaymentPlanRows.some((r) => !r.due_date?.trim())) {
+          toast.error("Set a due date for each partner installment.");
+          return;
+        }
+      }
     }
 
     const paymentPlanTemplate =
@@ -3503,6 +3559,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
         ? templateFromDrafts(
             true,
             paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
+          )
+        : null;
+    const partnerPaymentPlanTemplate =
+      form.job_kind === "recurring" &&
+      paymentPlanEnabled &&
+      partnerPaymentPlanEnabled &&
+      form.partner_id?.trim() &&
+      partnerCapPreview > 0.02
+        ? templateFromDrafts(
+            true,
+            partnerPaymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
           )
         : null;
 
@@ -3563,6 +3630,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           series: schedV2.series,
           pendingSitePhotos,
           paymentPlanTemplate,
+          partnerPaymentPlanTemplate,
           recordExtraPaymentReceived,
         }
       : {
@@ -3572,6 +3640,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
     setSitePhotoFiles([]);
     setPaymentPlanEnabled(false);
     setPaymentPlanRows([]);
+    setPartnerPaymentPlanEnabled(true);
+    setPartnerPaymentPlanRows([]);
+    setPartnerPlanCustomized(false);
     setRecurrence(DEFAULT_RECURRENCE_FORM);
     lastAutoPartnerCost.current = null;
     setForm({
@@ -3634,10 +3705,32 @@ function CreateJobModal({ open, onClose, onCreate }: {
     return Math.round((client + accessSurchargePreview + extra) * 100) / 100;
   }, [form.job_type, form.client_price, form.extra_payment, hourlyPreview.clientTotal, accessSurchargePreview]);
 
+  const partnerCapPreview = useMemo(
+    () =>
+      partnerCapForJobForm({
+        partner_cost: Number(form.partner_cost) || 0,
+        materials_cost: Number(form.materials_cost) || 0,
+      }),
+    [form.partner_cost, form.materials_cost],
+  );
+
   useEffect(() => {
     if (form.job_kind !== "recurring" || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
     queueMicrotask(() => setPaymentPlanRows(defaultPaymentPlanRows(invoiceTotalPreview, 4)));
   }, [form.job_kind, invoiceTotalPreview, paymentPlanRows.length]);
+
+  useEffect(() => {
+    if (!paymentPlanEnabled || partnerPlanCustomized || paymentPlanRows.length === 0 || partnerCapPreview <= 0) return;
+    queueMicrotask(() =>
+      setPartnerPaymentPlanRows(
+        partnerPlanRowsFromClientSchedule(paymentPlanRows, invoiceTotalPreview, partnerCapPreview),
+      ),
+    );
+  }, [paymentPlanEnabled, partnerPlanCustomized, paymentPlanRows, invoiceTotalPreview, partnerCapPreview]);
+
+  useEffect(() => {
+    if (paymentPlanEnabled) setPartnerPaymentPlanEnabled(true);
+  }, [paymentPlanEnabled]);
 
   const estimatedMarginPct = useMemo(() => {
     const extra = form.job_type === "hourly" ? Math.max(0, Number(form.extra_payment) || 0) : 0;
@@ -4050,6 +4143,36 @@ function CreateJobModal({ open, onClose, onCreate }: {
                       totalAmount: invoiceTotalPreview,
                       accountPaymentTerms,
                       orgCtx: paymentOrgCtx,
+                      label: "Client payment plan",
+                    }
+                  : undefined
+              }
+              partnerPaymentPlan={
+                form.job_kind === "recurring" && paymentPlanEnabled
+                  ? {
+                      enabled: partnerPaymentPlanEnabled,
+                      onEnabledChange: setPartnerPaymentPlanEnabled,
+                      rows: partnerPaymentPlanRows,
+                      onRowsChange: (rows) => {
+                        setPartnerPlanCustomized(true);
+                        setPartnerPaymentPlanRows(rows);
+                      },
+                      totalAmount: partnerCapPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                      customized: partnerPlanCustomized,
+                      onCustomizedChange: setPartnerPlanCustomized,
+                      partnerCap: partnerCapPreview,
+                      onSyncFromClient: () => {
+                        setPartnerPlanCustomized(false);
+                        setPartnerPaymentPlanRows(
+                          partnerPlanRowsFromClientSchedule(
+                            paymentPlanRows,
+                            invoiceTotalPreview,
+                            partnerCapPreview,
+                          ),
+                        );
+                      },
                     }
                   : undefined
               }

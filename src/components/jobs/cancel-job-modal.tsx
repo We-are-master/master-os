@@ -10,7 +10,7 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import { jobHasPartnerSet } from "@/lib/job-partner-assign";
-import { resolveOfficeCancelFeeDefaults } from "@/lib/office-cancel-fees";
+import { resolveOfficeCancelFeeDefaults, type OfficeCancelFeeDefaults } from "@/lib/office-cancel-fees";
 import { getJob } from "@/services/jobs";
 import type { Job } from "@/types/database";
 
@@ -26,14 +26,14 @@ type JobCancelHint = Pick<
   | "auto_assign_invited_partner_ids"
 >;
 
+type CancelFault = "partner" | "account" | "custom";
+
 type Props = {
   jobId: string;
   jobReference?: string;
-  /** Current job row from the detail/kanban page — avoids stale partner detection. */
   jobHint?: JobCancelHint | null;
   isOpen: boolean;
   onClose: () => void;
-  /** Fired after the cancel succeeds. Receives the updated row so callers can refresh derived state. */
   onCancelled?: (updated: Job) => void;
 };
 
@@ -42,7 +42,45 @@ function formatGbpInput(n: number | null | undefined): string {
   return String(Math.round(n * 100) / 100);
 }
 
-/** Inner body — kept separate so each open mounts a fresh component (auto-resets local state). */
+function applyFaultPreset(
+  fault: CancelFault,
+  defaults: OfficeCancelFeeDefaults,
+  hasClient: boolean,
+  hasPartner: boolean,
+): {
+  chargeClient: boolean;
+  clientFeeInput: string;
+  partnerFee: boolean;
+  partnerFlow: "owes" | "paid";
+  partnerFeeInput: string;
+} {
+  if (fault === "partner") {
+    return {
+      chargeClient: hasClient && defaults.clientFeeGbp != null,
+      clientFeeInput: formatGbpInput(defaults.clientFeeGbp),
+      partnerFee: hasPartner && defaults.partnerOwesFeeGbp != null,
+      partnerFlow: "owes",
+      partnerFeeInput: formatGbpInput(defaults.partnerOwesFeeGbp),
+    };
+  }
+  if (fault === "account") {
+    return {
+      chargeClient: hasClient,
+      clientFeeInput: formatGbpInput(defaults.accountFaultClientChargeGbp),
+      partnerFee: hasPartner,
+      partnerFlow: "paid",
+      partnerFeeInput: formatGbpInput(defaults.accountFaultPartnerCompGbp),
+    };
+  }
+  return {
+    chargeClient: false,
+    clientFeeInput: "",
+    partnerFee: false,
+    partnerFlow: "owes",
+    partnerFeeInput: "",
+  };
+}
+
 function CancelJobModalBody({
   jobId,
   jobReference,
@@ -57,6 +95,8 @@ function CancelJobModalBody({
   );
   const [detail, setDetail] = useState("");
   const [jobRow, setJobRow] = useState<Job | null>(null);
+  const [feeDefaults, setFeeDefaults] = useState<OfficeCancelFeeDefaults | null>(null);
+  const [cancelFault, setCancelFault] = useState<CancelFault>("partner");
   const [chargeClient, setChargeClient] = useState(false);
   const [clientFeeInput, setClientFeeInput] = useState("");
   const [partnerFee, setPartnerFee] = useState(false);
@@ -74,15 +114,16 @@ function CancelJobModalBody({
       if (cancelled || !j) return;
       setJobRow(j);
       const defaults = await resolveOfficeCancelFeeDefaults(j);
-      if (defaults.clientFeeGbp != null) {
-        setChargeClient(true);
-        setClientFeeInput(formatGbpInput(defaults.clientFeeGbp));
-      }
-      if (jobHasPartnerSet(j) && defaults.partnerOwesFeeGbp != null) {
-        setPartnerFee(true);
-        setPartnerFlow("owes");
-        setPartnerFeeInput(formatGbpInput(defaults.partnerOwesFeeGbp));
-      }
+      if (cancelled) return;
+      setFeeDefaults(defaults);
+      const hasClient = Boolean(j.client_id?.trim() || j.client_name?.trim());
+      const hasPartner = jobHasPartnerSet(j);
+      const preset = applyFaultPreset("partner", defaults, hasClient, hasPartner);
+      setChargeClient(preset.chargeClient);
+      setClientFeeInput(preset.clientFeeInput);
+      setPartnerFee(preset.partnerFee);
+      setPartnerFlow(preset.partnerFlow);
+      setPartnerFeeInput(preset.partnerFeeInput);
     })();
     return () => {
       cancelled = true;
@@ -98,6 +139,17 @@ function CancelJobModalBody({
     (Array.isArray(displayJob?.auto_assign_invited_partner_ids) &&
       (displayJob.auto_assign_invited_partner_ids?.length ?? 0) > 0);
   const partnerLabel = displayJob?.partner_name?.trim() || null;
+
+  const handleFaultChange = (fault: CancelFault) => {
+    setCancelFault(fault);
+    if (!feeDefaults) return;
+    const preset = applyFaultPreset(fault, feeDefaults, hasClient, hasPartner);
+    setChargeClient(preset.chargeClient);
+    setClientFeeInput(preset.clientFeeInput);
+    setPartnerFee(preset.partnerFee);
+    setPartnerFlow(preset.partnerFlow);
+    setPartnerFeeInput(preset.partnerFeeInput);
+  };
 
   const buildFees = (): OfficeCancelFeeChoices => {
     const clientGbp = chargeClient && clientFeeInput.trim() ? Number(clientFeeInput) : null;
@@ -119,12 +171,27 @@ function CancelJobModalBody({
       detail,
       presets: officeCancellationPresets,
       fees,
+      cancellationFault: cancelFault,
     });
     if (result.ok) {
       onCancelled?.(result.updated);
       onClose();
     }
   };
+
+  const clientFeeLabel =
+    cancelFault === "partner"
+      ? "Amount account charges Fixfy (£)"
+      : cancelFault === "account"
+        ? "Charge account (£)"
+        : "Amount (£)";
+
+  const partnerFeeLabel =
+    cancelFault === "partner"
+      ? "Deduct from partner on self-bill (£)"
+      : cancelFault === "account"
+        ? "Pay partner compensation (£)"
+        : "Amount (£)";
 
   return (
     <Modal
@@ -140,24 +207,15 @@ function CancelJobModalBody({
           {hasPartner ? (
             <>
               <strong className="text-text-primary">{partnerLabel ?? "Assigned partner"}</strong> will be notified with
-              the reason below. The same note stays on this job for your team.
+              the reason below.
             </>
           ) : isAutoAssigning ? (
-            <>
-              This job is still in <strong className="text-text-primary">auto-assign</strong> — no partner has accepted
-              yet, so invited partners are not notified. The cancellation reason stays on this job for your team.
-            </>
+            <>This job is still in <strong className="text-text-primary">auto-assign</strong> — partners are not notified.</>
           ) : (
-            <>
-              No partner is assigned on this job. The cancellation reason stays on this job for your team.
-            </>
+            <>No partner assigned. The cancellation reason stays on this job for your team.</>
           )}
         </p>
-        <p className="text-xs text-text-tertiary rounded-lg border border-border bg-muted/15 px-3 py-2">
-          Labour and open invoices/self-bills are zeroed and voided. Optional cancellation fees below are finalized
-          immediately (invoice pending / self-bill awaiting payment) — same as Review &amp; approve, without the review
-          modal.
-        </p>
+
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
           <select
@@ -181,15 +239,37 @@ function CancelJobModalBody({
             value={detail}
             onChange={(e) => setDetail(e.target.value)}
             rows={3}
-            placeholder={
-              detailRequired
-                ? "Describe why this job is being cancelled…"
-                : "Optional context for the partner or internal record…"
-            }
-            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary resize-y min-h-[72px]"
             disabled={isSubmitting}
           />
         </div>
+
+        {(hasClient || hasPartner) && (
+          <div className="rounded-lg border border-border p-3 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Who is at fault?</p>
+            <div className="flex flex-col gap-2 text-sm">
+              {(
+                [
+                  ["partner", "Partner fault — account charges Fixfy; deduct from partner"],
+                  ["account", "Account fault — pay partner; charge account"],
+                  ["custom", "Custom — set fees manually"],
+                ] as const
+              ).map(([id, label]) => (
+                <label key={id} className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="cancelFault"
+                    checked={cancelFault === id}
+                    onChange={() => handleFaultChange(id)}
+                    disabled={isSubmitting}
+                    className="mt-0.5"
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {hasClient && (
           <div className="rounded-lg border border-border p-3 space-y-2">
@@ -198,14 +278,14 @@ function CancelJobModalBody({
                 type="checkbox"
                 checked={chargeClient}
                 onChange={(e) => setChargeClient(e.target.checked)}
-                disabled={isSubmitting}
+                disabled={isSubmitting || cancelFault !== "custom"}
                 className="rounded border-border"
               />
-              Charge client a cancellation fee
+              {cancelFault === "partner" ? "Account charges Fixfy (invoice)" : "Charge account / client fee"}
             </label>
             {chargeClient && (
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">Amount (£)</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1">{clientFeeLabel}</label>
                 <input
                   type="number"
                   min={0}
@@ -214,18 +294,10 @@ function CancelJobModalBody({
                   onChange={(e) => setClientFeeInput(e.target.value)}
                   disabled={isSubmitting}
                   className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
-                  placeholder="0.00"
                 />
               </div>
             )}
           </div>
-        )}
-
-        {!hasPartner && (hasClient || isAutoAssigning) && (
-          <p className="text-xs text-text-tertiary rounded-lg border border-dashed border-border px-3 py-2">
-            Partner cancellation fee (self-bill) is only available once a partner has been assigned or has accepted the
-            job — not while the job is unassigned or waiting on auto-assign offers.
-          </p>
         )}
 
         {hasPartner && (
@@ -235,40 +307,40 @@ function CancelJobModalBody({
                 type="checkbox"
                 checked={partnerFee}
                 onChange={(e) => setPartnerFee(e.target.checked)}
-                disabled={isSubmitting}
+                disabled={isSubmitting || cancelFault !== "custom"}
                 className="rounded border-border"
               />
-              Partner cancellation fee
-              {partnerLabel ? (
-                <span className="text-text-tertiary font-normal">({partnerLabel})</span>
-              ) : null}
+              Partner fee on self-bill
+              {partnerLabel ? <span className="text-text-tertiary font-normal">({partnerLabel})</span> : null}
             </label>
             {partnerFee && (
               <div className="space-y-2">
-                <div className="flex flex-wrap gap-3 text-sm">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="partnerFlow"
-                      checked={partnerFlow === "owes"}
-                      onChange={() => setPartnerFlow("owes")}
-                      disabled={isSubmitting}
-                    />
-                    Partner owes Fixfy
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="partnerFlow"
-                      checked={partnerFlow === "paid"}
-                      onChange={() => setPartnerFlow("paid")}
-                      disabled={isSubmitting}
-                    />
-                    Fixfy pays partner
-                  </label>
-                </div>
+                {cancelFault === "custom" && (
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="partnerFlow"
+                        checked={partnerFlow === "owes"}
+                        onChange={() => setPartnerFlow("owes")}
+                        disabled={isSubmitting}
+                      />
+                      Partner owes Fixfy
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="partnerFlow"
+                        checked={partnerFlow === "paid"}
+                        onChange={() => setPartnerFlow("paid")}
+                        disabled={isSubmitting}
+                      />
+                      Fixfy pays partner
+                    </label>
+                  </div>
+                )}
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Amount (£)</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">{partnerFeeLabel}</label>
                   <input
                     type="number"
                     min={0}
@@ -277,8 +349,12 @@ function CancelJobModalBody({
                     onChange={(e) => setPartnerFeeInput(e.target.value)}
                     disabled={isSubmitting}
                     className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
-                    placeholder="0.00"
                   />
+                  {cancelFault === "partner" ? (
+                    <p className="text-[11px] text-text-tertiary mt-1">
+                      Shown on self-bill as (Cancelled - Fee Applied) and reduces net payout.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             )}

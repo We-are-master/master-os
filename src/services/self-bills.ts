@@ -6,9 +6,12 @@ import {
   officeCancellationPartnerPayoutGbp,
   partnerCancellationClawbackOwedGbp,
 } from "@/lib/job-cancel-economics";
+import { parseISO } from "date-fns";
 import {
   computePartnerSelfBillDueIso,
+  nextPartnerPayoutCycleAfterCurrent,
   partnerPayoutCadenceFromTerms,
+  resolveSelfBillDueYmd,
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -19,9 +22,9 @@ import {
 } from "@/lib/supabase-schema-compat";
 
 const JOB_LINE_FOR_SB_FULL =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at, partner_cancelled_at";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
 const JOB_LINE_FOR_SB_FULL_WITH_LINK =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
 const JOB_LINE_FOR_SB_LEGACY =
   "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at";
 const JOB_LINE_FOR_SB_LEGACY_WITH_LINK =
@@ -29,7 +32,17 @@ const JOB_LINE_FOR_SB_LEGACY_WITH_LINK =
 
 export type SelfBillJobLine = Pick<
   Job,
-  "id" | "reference" | "title" | "partner_cost" | "partner_agreed_value" | "materials_cost" | "status" | "property_address"
+  | "id"
+  | "reference"
+  | "title"
+  | "partner_cost"
+  | "partner_agreed_value"
+  | "materials_cost"
+  | "status"
+  | "property_address"
+  | "partner_cancellation_fee"
+  | "cancellation_fee_partner_gbp"
+  | "partner_cancellation_compensation_gbp"
 > & {
   deleted_at?: string | null;
   partner_cancelled_at?: string | null;
@@ -116,10 +129,22 @@ type JobPayoutRow = {
 };
 
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
-export function jobContributesToSelfBillPayout(j: Pick<Job, "status" | "deleted_at">): boolean {
+export function jobContributesToSelfBillPayout(
+  j: Pick<
+    Job,
+    | "status"
+    | "deleted_at"
+    | "partner_cancelled_at"
+    | "partner_cancellation_compensation_gbp"
+    | "cancellation_fee_partner_gbp"
+    | "partner_cancellation_fee"
+  >,
+): boolean {
   if (j.deleted_at) return false;
   if (j.status === "deleted") return false;
-  if (j.status === "cancelled") return false;
+  if (j.status === "cancelled") {
+    return officeCancellationPartnerPayoutGbp(j) > 0.02;
+  }
   return true;
 }
 
@@ -428,12 +453,13 @@ export function resolveJobSelfBillWeekAnchor(
 export type EnsureWeeklySelfBillOptions = {
   weekAnchorDate?: Date;
   dueCtx?: SelfBillDueResolveContext;
+  client?: SupabaseClient;
 };
 
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
   if (!canDraftSelfBillForJob(job)) return null;
-  const supabase = getSupabase();
+  const supabase = options?.client ?? getSupabase();
   let partnerId = job.partner_id.trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
   const { data: partnerRowInit, error: partnerLookupErr } = await supabase

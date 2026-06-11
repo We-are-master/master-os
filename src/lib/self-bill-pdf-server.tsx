@@ -4,6 +4,7 @@ import { SelfBillPDF } from "@/lib/pdf/self-bill-template";
 import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
 import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
 import type { Job, SelfBill } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -20,7 +21,9 @@ export async function renderSelfBillPdfBuffer(
 
   const jobsFull = await supabase
     .from("jobs")
-    .select("id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at, partner_cancelled_at")
+    .select(
+      "id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at, partner_cancelled_at, cancellation_fee_partner_gbp, partner_cancellation_fee, partner_cancellation_compensation_gbp",
+    )
     .eq("self_bill_id", selfBillId)
     .order("reference", { ascending: true });
   let jobs: Record<string, unknown>[] | null = (jobsFull.data ?? null) as Record<string, unknown>[] | null;
@@ -38,7 +41,7 @@ export async function renderSelfBillPdfBuffer(
     return { error: "Could not load jobs for self-bill", status: 500 };
   }
 
-  const lines = (jobs ?? []).map((j: Record<string, unknown>) => {
+  const lines = (jobs ?? []).flatMap((j: Record<string, unknown>) => {
     const row = j as Pick<
       Job,
       | "id"
@@ -50,9 +53,12 @@ export async function renderSelfBillPdfBuffer(
       | "status"
       | "deleted_at"
       | "partner_cancelled_at"
+      | "cancellation_fee_partner_gbp"
+      | "partner_cancellation_fee"
+      | "partner_cancellation_compensation_gbp"
     >;
     const note = selfBillJobPayoutStateLabel(row);
-    return {
+    const base = {
       reference: String(j.reference ?? ""),
       title: String(j.title ?? ""),
       partner_cost: Number(j.partner_cost) || 0,
@@ -61,6 +67,20 @@ export async function renderSelfBillPdfBuffer(
       jobId: row.id ? String(row.id) : undefined,
       payoutStateNote: note ?? undefined,
     };
+    const feeLine = selfBillJobCancellationFeeLine(row);
+    if (!feeLine) return [base];
+    return [
+      base,
+      {
+        reference: base.reference,
+        title: feeLine.label,
+        partner_cost: feeLine.signedAmount,
+        materials_cost: 0,
+        property_address: undefined,
+        jobId: undefined,
+        payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
+      },
+    ];
   });
 
   const voided = isSelfBillPayoutVoided({ status: sb.status });

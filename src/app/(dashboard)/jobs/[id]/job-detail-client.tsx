@@ -191,6 +191,7 @@ import {
   releaseLinkedInvoicesForJob,
 } from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
+import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
@@ -8491,6 +8492,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Charge or discount
                   </Button>
                 </div>
+                {(() => {
+                  const primaryInv =
+                    (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
+                    jobInvoices[0];
+                  if (!primaryInv || primaryInv.status === "cancelled") return null;
+                  return (
+                    <div className="mt-2">
+                      <JobPaymentPlanPanel
+                        kind="client"
+                        entityId={primaryInv.id}
+                        totalAmount={Number(primaryInv.amount ?? billableRevenue)}
+                        amountPaid={customerPaidTotal}
+                        canEdit={primaryInv.status !== "paid"}
+                        onUpdated={refreshJobFinance}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Cash out (partner payout) */}
@@ -8802,6 +8821,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Payout or discount
                   </Button>
                 </div>
+                {job.self_bill_id?.trim() && job.partner_id?.trim() && job.status !== "cancelled" ? (
+                  <div className="mt-2">
+                    <JobPaymentPlanPanel
+                      kind="partner"
+                      entityId={job.self_bill_id}
+                      totalAmount={Math.max(0, Number(jobSelfBill?.net_payout ?? partnerCashOutTotal))}
+                      amountPaid={partnerPaidTotal}
+                      canEdit={!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status)}
+                      multiJobWarning={
+                        jobSelfBill && Number(jobSelfBill.jobs_count) > 1
+                          ? `This self-bill includes ${jobSelfBill.jobs_count} jobs — plan total is ${formatCurrency(Number(jobSelfBill.net_payout))}. Your job cap is ${formatCurrency(partnerCap)}.`
+                          : null
+                      }
+                      onUpdated={refreshJobFinance}
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {/* Net margin */}

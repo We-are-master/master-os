@@ -150,6 +150,7 @@ import {
   type PartnerFeedbackRow,
 } from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
+import { invitePartnerFromZero } from "@/lib/partner-invite";
 
 const PARTNERS_PAGE_SIZE = 10;
 const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
@@ -987,6 +988,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitePhone, setInvitePhone] = useState("");
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [createWizardStep, setCreateWizardStep] = useState<CreatePartnerWizardStep>("info");
   const [pendingCreateRateDrafts, setPendingCreateRateDrafts] = useState<Record<string, PartnerServiceRateRowDraft>>({});
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
@@ -1257,6 +1262,46 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   }, []);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
+
+  const handleInvitePartner = useCallback(async () => {
+    const email = inviteEmail.trim();
+    if (!email) {
+      toast.error("Email is required");
+      return;
+    }
+    setInviteSubmitting(true);
+    try {
+      const result = await invitePartnerFromZero({
+        email,
+        phone: invitePhone.trim() || undefined,
+        sendEmail: true,
+      });
+      if (result.emailError) {
+        toast.error(`Link created but email failed: ${result.emailError}`);
+        await navigator.clipboard.writeText(result.onboardingUrl);
+        toast.message("Onboarding link copied to clipboard");
+      } else if (result.emailSent) {
+        const verb = result.created ? "Invite sent" : "Onboarding link resent";
+        toast.success(`${verb} to ${result.sentTo ?? email}`);
+      } else {
+        await navigator.clipboard.writeText(result.onboardingUrl);
+        toast.success(
+          result.warning ? `Link copied — ${result.warning}` : "Onboarding link copied to clipboard",
+        );
+      }
+      if (result.warning && result.emailSent) toast.warning(result.warning);
+      setInviteOpen(false);
+      setInviteEmail("");
+      setInvitePhone("");
+      setStatusFilter("onboarding");
+      refresh();
+      await loadCounts();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send invite");
+    } finally {
+      setInviteSubmitting(false);
+    }
+  }, [inviteEmail, invitePhone, refresh, loadCounts, setStatusFilter]);
   useEffect(() => {
     refreshList();
     if (directoryDisplayMode === "kanban") void loadKanbanPartners();
@@ -1908,14 +1953,27 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 setPartnerDrawerInitialTab(undefined);
               }}
             />
-            <Button
-              size="sm"
-              className="shrink-0 whitespace-nowrap w-full sm:w-auto"
-              icon={<UserPlus className="h-3.5 w-3.5 shrink-0" />}
-              onClick={() => setCreateOpen(true)}
-            >
-              Add Partner
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center shrink-0 w-full sm:w-auto">
+              {canSendPartnerLinks ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 whitespace-nowrap w-full sm:w-auto"
+                  icon={<MailPlus className="h-3.5 w-3.5 shrink-0" />}
+                  onClick={() => setInviteOpen(true)}
+                >
+                  Invite Partner
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                className="shrink-0 whitespace-nowrap w-full sm:w-auto"
+                icon={<UserPlus className="h-3.5 w-3.5 shrink-0" />}
+                onClick={() => setCreateOpen(true)}
+              >
+                Add Partner
+              </Button>
+            </div>
           </div>
         </PageHeader>
 
@@ -2193,6 +2251,76 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         onPartnerUpdate={setSelectedPartner}
         onTeamChanged={loadTeam}
       />
+
+      <Modal
+        open={inviteOpen}
+        onClose={() => {
+          if (inviteSubmitting) return;
+          setInviteOpen(false);
+          setInviteEmail("");
+          setInvitePhone("");
+        }}
+        title="Invite Partner"
+        subtitle="Create a minimal directory record and email a Trade Portal onboarding link. They complete profile, trades, coverage, and documents from scratch."
+        size="md"
+      >
+        <div className="px-4 sm:px-6 py-4 space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-email">
+              Email *
+            </label>
+            <Input
+              id="invite-partner-email"
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="partner@example.com"
+              autoComplete="email"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-phone">
+              Phone (optional)
+            </label>
+            <Input
+              id="invite-partner-phone"
+              type="tel"
+              value={invitePhone}
+              onChange={(e) => setInvitePhone(e.target.value)}
+              placeholder="+44 7…"
+              autoComplete="tel"
+            />
+          </div>
+          <p className="text-xs text-text-secondary leading-relaxed">
+            We add them under <span className="font-medium text-text-primary">Onboarding</span> with placeholder
+            details. The link opens <span className="font-medium text-text-primary">partners.getfixfy.com/join</span>{" "}
+            so they can fill everything in. If this email already exists without a portal account, we resend the link.
+          </p>
+        </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-border-light px-4 sm:px-6 py-3 sm:flex-row sm:justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={inviteSubmitting}
+            onClick={() => {
+              setInviteOpen(false);
+              setInviteEmail("");
+              setInvitePhone("");
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={inviteSubmitting || !inviteEmail.trim()}
+            icon={inviteSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            onClick={() => void handleInvitePartner()}
+          >
+            {inviteSubmitting ? "Sending…" : "Send invite"}
+          </Button>
+        </div>
+      </Modal>
 
       <Modal
         open={createOpen}

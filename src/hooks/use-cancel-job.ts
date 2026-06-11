@@ -40,6 +40,8 @@ export type CancelJobInput = {
   presets: readonly OfficeJobCancellationPresetRow[];
   /** Optional cancellation fee rails (client invoice + partner self-bill). */
   fees?: OfficeCancelFeeChoices;
+  /** Fault preset for audit (mig 237). */
+  cancellationFault?: "partner" | "account" | "custom" | null;
 };
 
 export type CancelJobResult =
@@ -103,6 +105,7 @@ export function useCancelJob() {
           ...feePatch,
           status: "cancelled",
           cancellation_reason: reasonText,
+          cancellation_fault: input.cancellationFault ?? null,
           cancelled_at: now,
           cancelled_by: profile?.id ?? null,
           ...statusChangePartnerTimerPatch(currentJob, "cancelled"),

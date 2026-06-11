@@ -35,8 +35,14 @@ function roundGbp(n: number): number {
 }
 
 export type OfficeCancelFeeDefaults = {
+  /** Account charges Fixfy (partner-fault preset) or charge to account (account-fault). */
   clientFeeGbp: number | null;
+  /** Partner clawback when partner at fault. */
   partnerOwesFeeGbp: number | null;
+  /** Fixfy pays partner when account at fault (company default, typically £25). */
+  accountFaultPartnerCompGbp: number | null;
+  /** Charge account when account at fault (company default, typically £50). */
+  accountFaultClientChargeGbp: number | null;
 };
 
 export async function resolveOfficeCancelFeeDefaults(
@@ -76,7 +82,19 @@ export async function resolveOfficeCancelFeeDefaults(
     }
   }
 
-  return { clientFeeGbp: clientFee, partnerOwesFeeGbp: partnerOwes };
+  const accountFaultPartnerComp = roundGbp(
+    Number(company?.default_account_fault_partner_comp_gbp ?? 25) || 25,
+  );
+  const accountFaultClientCharge = roundGbp(
+    Number(company?.default_account_fault_client_charge_gbp ?? 50) || 50,
+  );
+
+  return {
+    clientFeeGbp: clientFee,
+    partnerOwesFeeGbp: partnerOwes,
+    accountFaultPartnerCompGbp: accountFaultPartnerComp > EPS ? accountFaultPartnerComp : null,
+    accountFaultClientChargeGbp: accountFaultClientCharge > EPS ? accountFaultClientCharge : null,
+  };
 }
 
 export async function applyOfficeCancellationFees(args: {

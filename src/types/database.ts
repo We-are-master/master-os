@@ -123,6 +123,8 @@ export interface JobRecurrenceSeries {
   notes?: string | null;
   /** Payment plan defined at series create (mig 234). */
   payment_plan_template?: PaymentPlanTemplate | null;
+  /** Partner payout plan defined at series create (mig 236). */
+  partner_payment_plan_template?: PaymentPlanTemplate | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -628,6 +630,8 @@ export interface Job {
   cancellation_fee_client_gbp?: number | null;
   cancellation_fee_partner_gbp?: number | null;
   cancellation_fee_invoice_id?: string | null;
+  /** Office cancel fault preset: partner | account | custom (mig 237). */
+  cancellation_fault?: "partner" | "account" | "custom" | null;
   /** 1–5 when client leaves feedback (partner app shows on completed job). */
   customer_review_rating?: number | null;
   customer_review_comment?: string | null;
