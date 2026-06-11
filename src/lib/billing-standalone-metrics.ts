@@ -536,6 +536,8 @@ function moneyOutForSelfBillInWeek(
       .filter((s) => ymdInWeekBounds(s.dueYmd, weekStart))
       .reduce((s, slice) => s + slice.amount, 0);
   }
+  // Plan flagged on self_bill but installment rows missing (e.g. mig 235 not applied, stale billing fetch).
+  if (sb.payment_plan_active) return 0;
   const dueYmd = selfBillDueYmd(sb, args.dueCtx);
   if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) return 0;
   return computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
@@ -623,6 +625,7 @@ export function buildCashflowWeekBreakdown(
       }
       continue;
     }
+    if (sb.payment_plan_active) continue;
     const dueYmd = selfBillDueYmd(sb, args.dueCtx);
     if (!ymdInWeekBounds(dueYmd, weekStart)) continue;
     const amount = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);

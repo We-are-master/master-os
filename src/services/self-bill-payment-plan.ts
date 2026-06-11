@@ -188,12 +188,19 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
     .select("id, payment_plan_active, status, net_payout")
     .eq("id", selfBillId)
     .maybeSingle();
-  if (sbErr || !sbRow) return;
+  if (sbErr) throw sbErr;
+  if (!sbRow) throw new Error("Self-bill not found.");
   const sb = sbRow as Pick<SelfBill, "id" | "payment_plan_active" | "status" | "net_payout">;
-  if (!sb.payment_plan_active) return;
+  if (!sb.payment_plan_active) {
+    throw new Error(
+      "Partner payment plan is not active on this self-bill. Save the plan again or apply migration 235.",
+    );
+  }
 
   const installments = await listInstallmentsForSelfBill(selfBillId);
-  if (installments.length === 0) return;
+  if (installments.length === 0) {
+    throw new Error("No partner installments found for this self-bill.");
+  }
 
   const amountPaid = Math.round(Number(partnerPaidTotal ?? 0) * 100) / 100;
   const netPayout = Math.round(Number(sb.net_payout ?? 0) * 100) / 100;

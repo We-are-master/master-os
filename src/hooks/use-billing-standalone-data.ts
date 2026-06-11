@@ -367,6 +367,11 @@ export function useBillingStandaloneData() {
       .channel("billing_standalone")
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "self_bills" }, schedule)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "self_bill_payment_installments" },
+        schedule,
+      )
       .on("postgres_changes", { event: "*", schema: "public", table: "job_payments" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "bills" }, schedule)
       .subscribe();

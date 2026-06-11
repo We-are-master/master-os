@@ -306,10 +306,7 @@ export async function fetchBillsForBilling(bounds: YmdBounds | null): Promise<Bi
 export async function fetchSelfBillInstallmentsForBilling(
   selfBills: SelfBill[],
 ): Promise<Record<string, SelfBillPaymentInstallment[]>> {
-  const ids = selfBills
-    .filter((sb) => sb.payment_plan_active || sb.status !== "paid")
-    .map((sb) => sb.id)
-    .filter(Boolean);
+  const ids = selfBills.map((sb) => sb.id).filter(Boolean);
   if (ids.length === 0) return {};
 
   const out: Record<string, SelfBillPaymentInstallment[]> = {};
@@ -322,7 +319,12 @@ export async function fetchSelfBillInstallmentsForBilling(
       .in("self_bill_id", slice)
       .order("sequence", { ascending: true });
     if (error) {
-      if (isSupabaseMissingColumnError(error)) return {};
+      if (isSupabaseMissingColumnError(error)) {
+        console.warn(
+          "billing: self_bill_payment_installments unavailable — apply migration 235 for partner payout plans",
+        );
+        return {};
+      }
       throw error;
     }
     for (const row of (data ?? []) as SelfBillPaymentInstallment[]) {
