@@ -121,7 +121,7 @@ export function selfBillWisePayAmount(
   fallbackAmount: number,
 ): number {
   if (sb.bill_origin === "internal") return fallbackAmount;
-  if (!sb.payment_plan_active || !hasActiveSelfBillPaymentPlan(installments)) {
+  if (!hasActiveSelfBillPaymentPlan(installments)) {
     return fallbackAmount;
   }
   const next = nextOpenSelfBillInstallment(installments);
@@ -161,7 +161,7 @@ export function selfBillIsInstallmentDueForWisePay(
   todayYmd: string,
 ): boolean {
   if (sb.bill_origin === "internal") return true;
-  if (!sb.payment_plan_active || !hasActiveSelfBillPaymentPlan(installments)) {
+  if (!hasActiveSelfBillPaymentPlan(installments)) {
     return true;
   }
   const next = nextOpenSelfBillInstallment(installments);

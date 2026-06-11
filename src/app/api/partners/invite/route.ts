@@ -22,14 +22,10 @@ function normalizePhone(raw: unknown): string | null {
   return phone.length > 0 ? phone.slice(0, 40) : null;
 }
 
-function placeholderFromEmail(email: string): { company_name: string; contact_name: string } {
-  const local = email.split("@")[0]?.replace(/[._+-]+/g, " ").trim() || "Partner";
-  const words = local.split(/\s+/).filter(Boolean);
-  const titled = words
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
-  const name = titled || "Invited partner";
-  return { company_name: name, contact_name: name };
+function normalizePartnerName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.trim().replace(/\s+/g, " ").slice(0, 120);
+  return name.length > 0 ? name : null;
 }
 
 export async function POST(req: NextRequest) {
@@ -50,11 +46,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden", message: "Staff role required" }, { status: 403 });
     }
 
-    let body: { email?: unknown; phone?: unknown; sendEmail?: unknown } = {};
+    let body: { name?: unknown; email?: unknown; phone?: unknown; sendEmail?: unknown } = {};
     try {
       body = await req.json();
     } catch {
       body = {};
+    }
+
+    const name = normalizePartnerName(body.name);
+    if (!name) {
+      return NextResponse.json({ error: "Partner name is required" }, { status: 400 });
     }
 
     const email = normalizeEmail(body.email);
@@ -104,14 +105,17 @@ export async function POST(req: NextRequest) {
       const patch: Record<string, unknown> = {};
       if (phone && phone !== (existing.phone?.trim() ?? "")) patch.phone = phone;
       if (existing.status !== "onboarding") patch.status = "onboarding";
+      if (name !== (existing.contact_name?.trim() ?? "")) {
+        patch.contact_name = name;
+        if (!(existing.company_name?.trim() ?? "")) patch.company_name = name;
+      }
       if (Object.keys(patch).length > 0) {
         await supabase.from("partners").update(patch).eq("id", partnerId);
       }
     } else {
-      const placeholder = placeholderFromEmail(email);
       const insertRow = {
-        company_name: placeholder.company_name,
-        contact_name: placeholder.contact_name,
+        company_name: name,
+        contact_name: name,
         email,
         phone,
         trade: GENERAL_MAINTENANCE_LABEL,

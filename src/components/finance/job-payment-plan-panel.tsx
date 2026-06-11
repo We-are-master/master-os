@@ -21,6 +21,7 @@ import {
   updateSelfBillPaymentPlan,
   cancelSelfBillPaymentPlan,
   listInstallmentsForSelfBill,
+  repairSelfBillPaymentPlanActiveFlag,
   syncSelfBillPaymentPlanFromPartnerPaid,
 } from "@/services/self-bill-payment-plan";
 import { validateInstallmentsSum, paymentPlanProgressLabel } from "@/lib/invoice-payment-plan";
@@ -64,7 +65,15 @@ export function JobPaymentPlanPanel(props: Props) {
       if (props.kind === "client") {
         setInstallments(await listInstallmentsForInvoice(props.entityId));
       } else {
-        setInstallments(await listInstallmentsForSelfBill(props.entityId));
+        const rows = await listInstallmentsForSelfBill(props.entityId);
+        if (rows.length > 0) {
+          try {
+            await repairSelfBillPaymentPlanActiveFlag(props.entityId);
+          } catch (e) {
+            console.warn("JobPaymentPlanPanel repair payment_plan_active", e);
+          }
+        }
+        setInstallments(rows);
       }
     } catch (e) {
       console.error("JobPaymentPlanPanel load", e);
