@@ -70,7 +70,12 @@ import {
 } from "@/lib/billing-selfbill-actions";
 import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
-import { isSelfBillClosed, isSelfBillPayoutVoided, listJobsForSelfBill } from "@/services/self-bills";
+import {
+  isSelfBillClosed,
+  isSelfBillPayoutVoided,
+  jobContributesToSelfBillPayout,
+  listJobsForSelfBill,
+} from "@/services/self-bills";
 import { getSupabase } from "@/services/base";
 import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-bar";
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
@@ -1458,6 +1463,9 @@ function BillingStandaloneInner() {
                           onSelectionChange={setMoneyOutSelectedIds}
                           partnerDueCtx={data.partnerDueCtx}
                           partnerAvatarById={data.partnerAvatarById}
+                          jobsBySelfBillId={data.jobsBySelfBillId}
+                          partnerPaidByJobId={data.partnerPaidByJobId}
+                          installmentsBySelfBillId={data.installmentsBySelfBillId}
                           onOpen={(sb) => void openSelfBill(sb)}
                           onMarkPaid={async () => {}}
                           collapsiblePartners={{
@@ -1671,6 +1679,9 @@ function BillingStandaloneInner() {
                           onSelectionChange={setSelectedSbIds}
                           partnerDueCtx={data.partnerDueCtx}
                           partnerAvatarById={data.partnerAvatarById}
+                          jobsBySelfBillId={data.jobsBySelfBillId}
+                          partnerPaidByJobId={data.partnerPaidByJobId}
+                          installmentsBySelfBillId={data.installmentsBySelfBillId}
                           onOpen={(sb) => void openSelfBill(sb)}
                           onMarkPaid={async () => {}}
                           emptyLabel={
@@ -1737,6 +1748,9 @@ function BillingStandaloneInner() {
                           onSelectionChange={setSelectedSbIds}
                           partnerDueCtx={data.partnerDueCtx}
                           partnerAvatarById={data.partnerAvatarById}
+                          jobsBySelfBillId={data.jobsBySelfBillId}
+                          partnerPaidByJobId={data.partnerPaidByJobId}
+                          installmentsBySelfBillId={data.installmentsBySelfBillId}
                           onOpen={(sb) => void openSelfBill(sb)}
                           onMarkPaid={async (id) => {
                             await markSelfBillsPaid([id]);
@@ -2158,6 +2172,34 @@ function invoiceLedgerAmounts(
   return { total, paid, outstanding };
 }
 
+function selfBillLedgerAmounts(
+  sb: SelfBill,
+  jobs: SelfBillJobLine[] | undefined,
+  partnerPaidByJobId: Record<string, number>,
+  installments?: SelfBillPaymentInstallment[] | null,
+) {
+  const total = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  const outstanding = computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId, installments);
+  let paid = 0;
+  if (!isSelfBillPayoutVoided(sb)) {
+    if (sb.bill_origin === "internal") {
+      if (sb.status === "paid" || sb.wise_paid_at) paid = total;
+    } else {
+      const list = jobs ?? [];
+      if (list.length === 0) {
+        paid = Math.max(0, Math.round((total - outstanding) * 100) / 100);
+      } else {
+        for (const j of list) {
+          if (!jobContributesToSelfBillPayout(j)) continue;
+          paid += Number(partnerPaidByJobId[j.id] ?? 0);
+        }
+        paid = Math.round(paid * 100) / 100;
+      }
+    }
+  }
+  return { total, paid, outstanding };
+}
+
 function InvoiceLedgerRow({
   inv,
   todayYmd,
@@ -2210,9 +2252,11 @@ function InvoiceLedgerRow({
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
         <p className="font-semibold">{displayBillingReference(inv.reference)}</p>
-        <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
+        <p className="text-xs text-text-tertiary">
+          {inv.job_reference ?? "—"}
+          {inv.due_date ? ` · Due ${formatDate(inv.due_date)}` : ""}
+        </p>
       </td>
-      <td className={cn("text-xs", compact ? "px-4 py-2" : "px-3 py-2")}>{formatDate(inv.due_date)}</td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
         <InvoiceStatusPill status={st} />
       </td>
@@ -2232,7 +2276,7 @@ function InvoiceLedgerRow({
         {outstanding > 0 ? formatCurrency(outstanding) : "—"}
       </td>
       <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
-        <div className="flex gap-1">
+        <div className="flex justify-end gap-1">
           {canMarkPaid ? (
             <button
               type="button"
@@ -2255,10 +2299,12 @@ function InvoiceLedgerRow({
           >
             PDF
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>
-            Open
-          </Button>
         </div>
+      </td>
+      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>
+          Open
+        </Button>
       </td>
     </tr>
   );
@@ -2389,12 +2435,12 @@ function InvoiceGroupedLedger({
                     <tr>
                       <th className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} />
                       <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Invoice</th>
-                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Due</th>
                       <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Status</th>
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Total</th>
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Paid</th>
                       <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Outstanding</th>
                       <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")} />
+                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Open</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-light">
@@ -2453,6 +2499,9 @@ function SelfBillGroupedLedger({
   onSelectionChange,
   partnerDueCtx,
   partnerAvatarById,
+  jobsBySelfBillId,
+  partnerPaidByJobId,
+  installmentsBySelfBillId,
   onOpen,
   onMarkPaid,
   onSendBills,
@@ -2478,6 +2527,9 @@ function SelfBillGroupedLedger({
   onSelectionChange: (ids: Set<string>) => void;
   partnerDueCtx: (partnerId: string | null | undefined) => SelfBillDueResolveContext;
   partnerAvatarById: Record<string, string | null>;
+  jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
+  partnerPaidByJobId: Record<string, number>;
+  installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>;
   onOpen: (sb: SelfBill) => void;
   onMarkPaid: (id: string) => Promise<void>;
   /** Send the given self-bill ids — handler decides cycle kind from scope. */
@@ -2674,6 +2726,27 @@ function SelfBillGroupedLedger({
               )}
               {partnerOpen ? (
               <div>
+                    <div
+                      className={cn(
+                        "bl-sb-row__colhead hidden px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-tertiary sm:grid",
+                        compact ? "sm:pl-12" : "sm:pl-12",
+                      )}
+                    >
+                      <span className="sm:col-start-2">Status</span>
+                      <span className="text-right">Total</span>
+                      <span className="text-right">Paid</span>
+                      <span className="text-right">Outstanding</span>
+                      <span className="text-center">
+                        {approveQueue
+                          ? "Approve & Send"
+                          : draftQueue
+                            ? "Ready"
+                            : payQueue
+                              ? "Pay"
+                              : "Action"}
+                      </span>
+                      <span className="text-right">Open</span>
+                    </div>
                     {partner.rows.map((sb) => {
                       const canSelect = payQueue
                         ? !!sb.approved_at && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb)
@@ -2686,17 +2759,23 @@ function SelfBillGroupedLedger({
                               : !isSelfBillPayoutVoided(sb) && sb.status !== "paid";
                       const overdue = isSelfBillOverdue(sb, todayYmd, partnerDueCtx(sb.partner_id));
                       const label = sb.status === "paid" ? "Paid" : overdue ? "Overdue" : selfBillCountsAsReady(sb) ? "Ready" : "Draft";
+                      const { total, paid, outstanding } = selfBillLedgerAmounts(
+                        sb,
+                        jobsBySelfBillId[sb.id],
+                        partnerPaidByJobId,
+                        installmentsBySelfBillId[sb.id],
+                      );
                       const rowAlt = ledgerRowIndex % 2 === 1;
                       ledgerRowIndex += 1;
                       return (
                         <div
                           key={sb.id}
                           className={cn(
-                            "bl-ledger-row bl-sb-row flex w-full min-w-0 flex-col gap-2 px-4 py-2.5 sm:flex-row sm:items-center sm:gap-4",
+                            "bl-ledger-row bl-sb-row flex w-full min-w-0 flex-col gap-2 px-4 py-2.5 sm:grid sm:items-center sm:gap-x-3",
                             rowAlt && "bl-ledger-row--alt",
                           )}
                         >
-                          <div className="flex min-w-0 flex-1 items-center gap-3 sm:max-w-[55%]">
+                          <div className="bl-sb-row__identity flex min-w-0 items-center gap-3">
                             <div className="flex w-8 shrink-0 justify-center">
                               {canSelect ? (
                                 <input
@@ -2743,10 +2822,21 @@ function SelfBillGroupedLedger({
                                 )
                               ) : null}
                             </div>
-                            <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
                           </div>
-                          <div className="bl-sb-row__trail sm:max-w-[45%] sm:flex-1">
-                            <span className="bl-sb-row__amount text-sm">{formatCurrency(Number(sb.net_payout ?? 0))}</span>
+                          <div className="bl-sb-row__cols">
+                            <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                            <span className="bl-sb-row__amount text-sm tabular-nums">{formatCurrency(total)}</span>
+                            <span className="bl-sb-row__paid text-sm tabular-nums text-emerald-700">
+                              {paid > 0.02 ? formatCurrency(paid) : "—"}
+                            </span>
+                            <span
+                              className={cn(
+                                "bl-sb-row__outstanding text-sm font-medium tabular-nums",
+                                outstanding > 0.02 ? "text-amber-800" : "text-text-tertiary",
+                              )}
+                            >
+                              {outstanding > 0.02 ? formatCurrency(outstanding) : "—"}
+                            </span>
                             <div className="bl-sb-row__actions">
                               {showRowMarkPaid && canSelect ? (
                                 <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => void onMarkPaid(sb.id)}>
