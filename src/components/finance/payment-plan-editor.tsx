@@ -91,81 +91,125 @@ export function PaymentPlanEditor({
     onRowsChange(updated);
   }, [rows, accountPaymentTerms, orgCtx, onRowsChange]);
 
+  const drift = Math.round((totalAmount - sum) * 100) / 100;
+
   return (
-    <div className={cn("space-y-2.5", className)}>
-      <div className="flex items-center justify-between gap-2">
-        <label className="inline-flex items-center gap-2 text-sm font-medium text-text-primary cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => onEnabledChange(e.target.checked)}
-            className="rounded border-border"
-          />
-          Payment plan
-        </label>
-        {enabled ? (
-          <span className={cn("text-xs tabular-nums", sumOk ? "text-text-tertiary" : "text-red-600 font-medium")}>
-            {formatCurrency(sum)} / {formatCurrency(totalAmount)}
+    <div className={cn("space-y-2", className)}>
+      <label className="inline-flex items-center gap-1.5 text-xs font-medium text-text-primary cursor-pointer">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onEnabledChange(e.target.checked)}
+          className="rounded border-border h-3.5 w-3.5"
+        />
+        Payment plan
+      </label>
+
+      {enabled ? (
+        <div className="grid grid-cols-[5.75rem_max-content] gap-x-2 gap-y-0.5 text-[10px] leading-snug">
+          <span className="text-text-tertiary">Installments:</span>
+          <span
+            className={cn("font-semibold tabular-nums", sumOk ? "text-text-primary" : "text-red-600")}
+            title="Sum of installment amounts below"
+          >
+            {formatCurrency(sum)}
           </span>
-        ) : null}
-      </div>
+          <span className="text-text-tertiary">Total</span>
+          <span className="font-semibold tabular-nums text-text-primary" title="Fixed bill / invoice total">
+            {formatCurrency(totalAmount)}
+          </span>
+          <span className="text-text-tertiary">Difference:</span>
+          <span
+            className={cn(
+              "font-semibold tabular-nums",
+              sumOk ? "text-emerald-700 dark:text-emerald-400" : "text-red-600",
+            )}
+          >
+            {sumOk ? formatCurrency(0) : formatCurrency(drift)}
+          </span>
+        </div>
+      ) : null}
 
       {enabled ? (
         <>
-          <div className="flex flex-wrap gap-1.5">
-            <Button type="button" variant="ghost" size="sm" onClick={addRow} icon={<Plus className="h-3.5 w-3.5" />}>
-              Add installment
+          <div className="flex flex-wrap gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={addRow}
+              icon={<Plus className="h-3 w-3" />}
+            >
+              Add
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={splitEqual}>
+            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={splitEqual}>
               Split equally
             </Button>
             {accountPaymentTerms?.trim() ? (
-              <Button type="button" variant="ghost" size="sm" onClick={applyAccountTerms}>
-                Standard account terms
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={applyAccountTerms}
+              >
+                Account terms
               </Button>
             ) : null}
           </div>
 
-          <div className="rounded-lg border border-border-light bg-surface-hover/30 max-h-52 overflow-y-auto divide-y divide-border-light">
-            {rows.map((row, idx) => (
-              <div key={row.key} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                <span className="text-[10px] font-semibold text-text-tertiary w-5 shrink-0 tabular-nums">
-                  {idx + 1}
-                </span>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  className="flex-1 min-w-[5rem] max-w-[8rem]"
-                  value={row.amount === 0 ? "" : row.amount}
-                  onChange={(e) =>
-                    updateRow(row.key, { amount: Math.max(0, Number(e.target.value) || 0) })
-                  }
-                  placeholder="£"
-                  aria-label={`Installment ${idx + 1} amount`}
-                />
-                <Input
-                  type="date"
-                  className="flex-1 min-w-[8rem] max-w-[11rem]"
-                  value={row.due_date}
-                  onChange={(e) => updateRow(row.key, { due_date: e.target.value })}
-                  aria-label={`Installment ${idx + 1} due date`}
-                />
-                <button
-                  type="button"
-                  disabled={rows.length <= 1}
-                  onClick={() => removeRow(row.key)}
-                  className="p-1.5 text-text-tertiary hover:text-red-600 disabled:opacity-30"
-                  aria-label={`Remove installment ${idx + 1}`}
+          <div className="rounded-md border border-border-light bg-surface-hover/30 max-h-44 overflow-y-auto">
+            <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_1.25rem] gap-1 px-2 py-1 border-b border-border-light/80 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+              <span>#</span>
+              <span>Amount</span>
+              <span>Due</span>
+              <span />
+            </div>
+            <div className="divide-y divide-border-light/80">
+              {rows.map((row, idx) => (
+                <div
+                  key={row.key}
+                  className="grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_1.25rem] gap-1 items-center px-2 py-1.5"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
+                  <span className="text-[10px] font-semibold text-text-tertiary tabular-nums">{idx + 1}</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    className="h-8 min-w-0 text-xs px-2"
+                    value={row.amount === 0 ? "" : row.amount}
+                    onChange={(e) =>
+                      updateRow(row.key, { amount: Math.max(0, Number(e.target.value) || 0) })
+                    }
+                    placeholder="£"
+                    aria-label={`Installment ${idx + 1} amount`}
+                  />
+                  <Input
+                    type="date"
+                    className="h-8 min-w-0 text-xs px-1.5"
+                    value={row.due_date}
+                    onChange={(e) => updateRow(row.key, { due_date: e.target.value })}
+                    aria-label={`Installment ${idx + 1} due date`}
+                  />
+                  <button
+                    type="button"
+                    disabled={rows.length <= 1}
+                    onClick={() => removeRow(row.key)}
+                    className="p-0.5 text-text-tertiary hover:text-red-600 disabled:opacity-30 justify-self-center"
+                    aria-label={`Remove installment ${idx + 1}`}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           {!sumOk ? (
-            <p className="text-[11px] text-red-600">Installments must sum to {formatCurrency(totalAmount)}.</p>
+            <p className="text-[10px] text-red-600 leading-snug">
+              Adjust installments — difference must be {formatCurrency(0)}.
+            </p>
           ) : null}
         </>
       ) : null}

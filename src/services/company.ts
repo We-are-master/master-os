@@ -40,6 +40,10 @@ export interface CompanySettings {
   partner_cancellation_fee_gbp?: number | null;
   /** Fallback suggested client cancellation fee (£) when account default is unset (office cancel modal). */
   default_client_cancel_fee_gbp?: number | null;
+  /** Default £ Fixfy pays partner when cancel is account fault (mig 237). */
+  default_account_fault_partner_comp_gbp?: number | null;
+  /** Default £ charged to account when cancel is account fault (mig 237). */
+  default_account_fault_client_charge_gbp?: number | null;
   /** Overview dashboard: monthly pipeline target (GBP), scaled to the selected period. */
   dashboard_sales_goal_monthly?: number | null;
   /**

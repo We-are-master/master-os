@@ -1198,6 +1198,8 @@ function SystemTab() {
     dashboard_sales_goal_monthly: "35000",
     partner_cancellation_fee_gbp: "",
     default_client_cancel_fee_gbp: "",
+    default_account_fault_partner_comp_gbp: "",
+    default_account_fault_client_charge_gbp: "",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [overviewMonthlyOverrideGbp, setOverviewMonthlyOverrideGbp] = useState("");
@@ -1244,6 +1246,16 @@ function SystemTab() {
             const v = (data as { default_client_cancel_fee_gbp?: number | null }).default_client_cancel_fee_gbp;
             return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "";
           })(),
+          default_account_fault_partner_comp_gbp: (() => {
+            const v = (data as { default_account_fault_partner_comp_gbp?: number | null })
+              .default_account_fault_partner_comp_gbp;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "25";
+          })(),
+          default_account_fault_client_charge_gbp: (() => {
+            const v = (data as { default_account_fault_client_charge_gbp?: number | null })
+              .default_account_fault_client_charge_gbp;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "50";
+          })(),
         });
       }
       setLoading(false);
@@ -1258,6 +1270,8 @@ function SystemTab() {
       const supabase = getSupabase();
       const partnerFee = Number(form.partner_cancellation_fee_gbp);
       const clientFallbackFee = Number(form.default_client_cancel_fee_gbp);
+      const accountFaultPartnerComp = Number(form.default_account_fault_partner_comp_gbp);
+      const accountFaultClientCharge = Number(form.default_account_fault_client_charge_gbp);
       const payload = {
         ...form,
         partner_cancellation_fee_gbp:
@@ -1268,6 +1282,18 @@ function SystemTab() {
           form.default_client_cancel_fee_gbp?.trim() !== "" && Number.isFinite(clientFallbackFee) && clientFallbackFee > 0
             ? Math.round(clientFallbackFee * 100) / 100
             : null,
+        default_account_fault_partner_comp_gbp:
+          form.default_account_fault_partner_comp_gbp?.trim() !== "" &&
+          Number.isFinite(accountFaultPartnerComp) &&
+          accountFaultPartnerComp >= 0
+            ? Math.round(accountFaultPartnerComp * 100) / 100
+            : 25,
+        default_account_fault_client_charge_gbp:
+          form.default_account_fault_client_charge_gbp?.trim() !== "" &&
+          Number.isFinite(accountFaultClientCharge) &&
+          accountFaultClientCharge >= 0
+            ? Math.round(accountFaultClientCharge * 100) / 100
+            : 50,
         vat_percent: Number(form.vat_percent) || 20,
         currency: ["GBP", "USD", "EUR", "BRL"].includes(form.currency) ? form.currency : "GBP",
         logo_light_theme_url: form.logo_light_theme_url.trim() || null,
@@ -1380,6 +1406,39 @@ function SystemTab() {
               </div>
             </div>
             <p className="text-[10px] text-text-tertiary mb-1">Used to pre-fill dashboard Cancel job modal (always overridable).</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Account fault — partner comp (£)
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.default_account_fault_partner_comp_gbp}
+                  onChange={(e) => update("default_account_fault_partner_comp_gbp", e.target.value)}
+                  placeholder="25"
+                  disabled={!canEditConfig}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Account fault — client charge (£)
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.default_account_fault_client_charge_gbp}
+                  onChange={(e) => update("default_account_fault_client_charge_gbp", e.target.value)}
+                  placeholder="50"
+                  disabled={!canEditConfig}
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-text-tertiary mb-1">
+              Pre-fill when cancelling a job and &quot;Account fault&quot; is selected.
+            </p>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Custom monthly goal (£) — this browser only

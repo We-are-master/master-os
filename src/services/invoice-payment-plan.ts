@@ -87,6 +87,19 @@ export async function createPaymentPlan(
   return (data ?? []) as InvoicePaymentInstallment[];
 }
 
+/** Replace installment rows when none are paid yet. */
+export async function updatePaymentPlan(
+  invoiceId: string,
+  invoiceAmount: number,
+  drafts: PaymentPlanInstallmentDraft[],
+): Promise<InvoicePaymentInstallment[]> {
+  const existing = await listInstallmentsForInvoice(invoiceId);
+  if (existing.some((i) => i.status === "paid")) {
+    throw new Error("Cannot edit plan after an installment was paid.");
+  }
+  return createPaymentPlan(invoiceId, invoiceAmount, drafts);
+}
+
 export async function cancelPaymentPlan(invoiceId: string): Promise<void> {
   const supabase = getSupabase();
   const existing = await listInstallmentsForInvoice(invoiceId);

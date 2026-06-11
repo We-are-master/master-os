@@ -407,6 +407,35 @@ export function listUpcomingPartnerPayoutSchedule(
   return rows;
 }
 
+/** Effective payout terms: partner override when set, otherwise org standard. */
+function effectivePartnerPayoutTerms(ctx: SelfBillDueResolveContext): string {
+  const partner = ctx.partnerTerms?.trim();
+  if (partner) return partner;
+  return normalizePartnerPayoutStandardTerms(ctx.orgStandardTerms);
+}
+
+/**
+ * Next partner payout cycle strictly after `currentPayoutDueYmd` (self-bill due / payout Friday).
+ * Used when deferring a job from the current weekly self-bill to the following payout window.
+ */
+export function nextPartnerPayoutCycleAfterCurrent(
+  currentPayoutDueYmd: string,
+  ctx: SelfBillDueResolveContext,
+): PartnerPayoutSchedulePreviewRow | null {
+  const current = normalizeYmd(currentPayoutDueYmd);
+  if (!current) return null;
+  const terms = effectivePartnerPayoutTerms(ctx);
+  const from = parseISO(`${addDaysYmd(current, 1)}T12:00:00`);
+  const rows = listUpcomingPartnerPayoutSchedule(
+    terms,
+    12,
+    isValid(from) ? from : new Date(),
+    ctx.orgReferenceYmd,
+  );
+  const next = rows.find((r) => normalizeYmd(r.payoutDueYmd) > current);
+  return next ?? null;
+}
+
 /** Partner self-bill due: partner terms when set, otherwise org standard (not legacy Friday+5). */
 export function computePartnerSelfBillDueIso(
   weekEndYmd: string,

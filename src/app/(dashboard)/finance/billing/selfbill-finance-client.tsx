@@ -62,11 +62,13 @@ import {
 import {
   cancelSelfBillPaymentPlan,
   createSelfBillPaymentPlan,
+  updateSelfBillPaymentPlan,
   listInstallmentsForSelfBill,
   markAllSelfBillInstallmentsPaid,
   markSelfBillInstallmentPaid,
   syncSelfBillPaymentPlanFromPartnerPaid,
 } from "@/services/self-bill-payment-plan";
+import { validateInstallmentsSum } from "@/lib/invoice-payment-plan";
 import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import { getSupabase } from "@/services/base";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -111,6 +113,10 @@ import {
   selfBillJobPayoutStateLabel,
 } from "@/services/self-bills";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import {
+  selfBillCancellationFeeTotals,
+  selfBillJobCancellationFeeLine,
+} from "@/lib/job-cancel-economics";
 
 const JOB_PAYMENTS_IN_CHUNK = 80;
 
@@ -1737,11 +1743,17 @@ export function SelfBillDetailDrawer({
   const handleOpenPayoutPlanEditor = () => {
     if (!sb) return;
     const total = Math.max(0, Number(sb.net_payout ?? 0));
-    const drafts = defaultSelfBillPayoutPlanRows(total, 4, {
-      partnerTerms: partnerPaymentTerms,
-      orgStandardTerms: partnerPayoutStandardTerms,
-      orgReferenceYmd: partnerPayoutReferenceYmd,
-    });
+    const drafts =
+      installments.length > 0
+        ? installments.map((i) => ({
+            amount: Number(i.amount) || 0,
+            due_date: String(i.due_date).slice(0, 10),
+          }))
+        : defaultSelfBillPayoutPlanRows(total, 4, {
+            partnerTerms: partnerPaymentTerms,
+            orgStandardTerms: partnerPayoutStandardTerms,
+            orgReferenceYmd: partnerPayoutReferenceYmd,
+          });
     setPayoutPlanRows(
       drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })),
     );
@@ -1750,16 +1762,21 @@ export function SelfBillDetailDrawer({
 
   const handleSavePayoutPlan = async () => {
     if (!sb) return;
+    const total = Math.max(0, Number(sb.net_payout ?? 0));
+    if (!validateInstallmentsSum(total, payoutPlanRows)) {
+      toast.error(`Installments must sum to ${formatCurrency(total)}.`);
+      return;
+    }
     setSavingPayoutPlan(true);
     try {
-      const rows = await createSelfBillPaymentPlan(
-        sb.id,
-        Number(sb.net_payout ?? 0),
-        payoutPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
-      );
+      const drafts = payoutPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
+      const rows =
+        installments.length > 0
+          ? await updateSelfBillPaymentPlan(sb.id, total, drafts)
+          : await createSelfBillPaymentPlan(sb.id, total, drafts);
       setInstallments(rows);
       setPayoutPlanEditorOpen(false);
-      toast.success("Payout plan saved");
+      toast.success(installments.length > 0 ? "Payout plan updated" : "Payout plan saved");
       if (onRefresh) await onRefresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save payout plan");
@@ -1894,6 +1911,7 @@ export function SelfBillDetailDrawer({
     return Math.round(due * 100) / 100;
   })();
   const grossTotal = Math.round((Number(sb.job_value ?? 0) + Number(sb.materials ?? 0)) * 100) / 100;
+  const cancelFeeTotals = selfBillCancellationFeeTotals(jobs);
   const workforceBreakdown = sb.bill_origin === "internal" ? sb.payout_breakdown : null;
 
   const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; count?: number }> = [
@@ -2270,6 +2288,18 @@ export function SelfBillDetailDrawer({
                     <p className="text-[12px] text-red-600 tabular-nums">−{formatCurrency(sb.commission)}</p>
                   </div>
                 ) : null}
+                {cancelFeeTotals.clawbackTotal > 0.02 ? (
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                    <p className="text-[12px] text-text-secondary">• Cancellation fees (Cancelled - Fee Applied)</p>
+                    <p className="text-[12px] text-red-600 tabular-nums">−{formatCurrency(cancelFeeTotals.clawbackTotal)}</p>
+                  </div>
+                ) : null}
+                {cancelFeeTotals.compensationTotal > 0.02 ? (
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                    <p className="text-[12px] text-text-secondary">• Cancellation compensation</p>
+                    <p className="text-[12px] text-emerald-700 tabular-nums">+{formatCurrency(cancelFeeTotals.compensationTotal)}</p>
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2.5">
                   <p className="text-[12px] text-text-secondary">Gross total</p>
                   <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(grossTotal)}</p>
@@ -2522,6 +2552,11 @@ export function SelfBillDetailDrawer({
                         </div>
                       ))}
                     </div>
+                    {!isPaid && !installments.some((i) => i.status === "paid") ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={handleOpenPayoutPlanEditor}>
+                        Edit plan
+                      </Button>
+                    ) : null}
                   </>
                 ) : !isPaid ? (
                   <Button type="button" variant="ghost" size="sm" onClick={handleOpenPayoutPlanEditor}>
@@ -2878,36 +2913,55 @@ function JobRow({
     | "property_address"
     | "deleted_at"
     | "partner_cancelled_at"
+    | "partner_cancellation_fee"
+    | "cancellation_fee_partner_gbp"
+    | "partner_cancellation_compensation_gbp"
   >;
   partnerPaid: number;
 }) {
   const payoutNote = selfBillJobPayoutStateLabel(j);
+  const feeLine = selfBillJobCancellationFeeLine(j);
   const cap = jobContributesToSelfBillPayout(j) ? jobLinePartnerGross(j) : 0;
   const due = jobContributesToSelfBillPayout(j) ? Math.max(0, Math.round((cap - partnerPaid) * 100) / 100) : 0;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
-      <div className="min-w-0">
-        <Link href={`/jobs/${j.id}`} className="text-sm font-semibold text-primary hover:underline inline-flex items-center gap-1">
-          {j.reference}
-          <ExternalLink className="h-3 w-3 shrink-0" />
-        </Link>
-        <p className="text-xs text-text-secondary truncate">{j.title}</p>
-        <p className="text-[11px] text-text-tertiary truncate">{j.property_address}</p>
-        {payoutNote ? <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutNote}</p> : null}
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
+        <div className="min-w-0">
+          <Link href={`/jobs/${j.id}`} className="text-sm font-semibold text-primary hover:underline inline-flex items-center gap-1">
+            {j.reference}
+            <ExternalLink className="h-3 w-3 shrink-0" />
+          </Link>
+          <p className="text-xs text-text-secondary truncate">{j.title}</p>
+          <p className="text-[11px] text-text-tertiary truncate">{j.property_address}</p>
+          {payoutNote ? <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutNote}</p> : null}
+        </div>
+        <div className="text-right text-xs space-y-0.5">
+          <p>Labour <span className="font-semibold tabular-nums">{formatCurrency(Number(j.partner_cost) || 0)}</span></p>
+          <p>Mat. <span className="font-semibold tabular-nums">{formatCurrency(Number(j.materials_cost) || 0)}</span></p>
+          {jobContributesToSelfBillPayout(j) ? (
+            <>
+              <p className="text-text-tertiary">Paid <span className="font-semibold tabular-nums text-text-secondary">{formatCurrency(partnerPaid)}</span></p>
+              <p className={due > 0.02 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-emerald-600 dark:text-emerald-400 font-semibold"}>
+                Due <span className="tabular-nums">{formatCurrency(due)}</span>
+              </p>
+            </>
+          ) : null}
+          <Badge variant="default" size="sm">{j.status}</Badge>
+        </div>
       </div>
-      <div className="text-right text-xs space-y-0.5">
-        <p>Labour <span className="font-semibold tabular-nums">{formatCurrency(Number(j.partner_cost) || 0)}</span></p>
-        <p>Mat. <span className="font-semibold tabular-nums">{formatCurrency(Number(j.materials_cost) || 0)}</span></p>
-        {jobContributesToSelfBillPayout(j) ? (
-          <>
-            <p className="text-text-tertiary">Paid <span className="font-semibold tabular-nums text-text-secondary">{formatCurrency(partnerPaid)}</span></p>
-            <p className={due > 0.02 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-emerald-600 dark:text-emerald-400 font-semibold"}>
-              Due <span className="tabular-nums">{formatCurrency(due)}</span>
-            </p>
-          </>
-        ) : null}
-        <Badge variant="default" size="sm">{j.status}</Badge>
-      </div>
+      {feeLine ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-200/80 bg-amber-50/50 dark:border-amber-800/40 dark:bg-amber-950/20 px-3 py-2 text-xs">
+          <span className="font-medium text-amber-900 dark:text-amber-200">{feeLine.label}</span>
+          <span
+            className={cn(
+              "font-semibold tabular-nums",
+              feeLine.signedAmount < 0 ? "text-red-600" : "text-emerald-700 dark:text-emerald-400",
+            )}
+          >
+            ({formatCurrency(Math.abs(feeLine.signedAmount))})
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

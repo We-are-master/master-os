@@ -37,6 +37,14 @@ export type JobModalPaymentPlanProps = {
   totalAmount: number;
   accountPaymentTerms?: string | null;
   orgCtx?: AccountPaymentOrgContext | null;
+  label?: string;
+};
+
+export type JobModalPartnerPaymentPlanProps = JobModalPaymentPlanProps & {
+  customized: boolean;
+  onCustomizedChange: (v: boolean) => void;
+  onSyncFromClient?: () => void;
+  partnerCap: number;
 };
 
 const RECURRING_PAYMENT_PLAN_HINT =
@@ -73,6 +81,8 @@ type Props = {
   hideArrivalSlot?: boolean;
   /** Recurring only — invoice payment plan (Create Job modal). */
   paymentPlan?: JobModalPaymentPlanProps;
+  /** Recurring only — partner payout plan (mirrors client by default). */
+  partnerPaymentPlan?: JobModalPartnerPaymentPlanProps;
 };
 
 /**
@@ -105,6 +115,7 @@ export function JobModalScheduleFields({
   requiredFieldClassName,
   hideArrivalSlot = false,
   paymentPlan,
+  partnerPaymentPlan,
 }: Props) {
   const isOneOff = jobKind === "one_off";
   const isMultiDay = jobKind === "multi_day";
@@ -270,6 +281,7 @@ export function JobModalScheduleFields({
           startDateFooter={startDateFooter}
           requiredFieldClassName={requiredFieldClassName}
           paymentPlan={paymentPlan}
+          partnerPaymentPlan={partnerPaymentPlan}
         />
       )}
     </>
@@ -284,6 +296,7 @@ function RecurringFormFields({
   startDateFooter,
   requiredFieldClassName,
   paymentPlan,
+  partnerPaymentPlan,
 }: {
   scheduledDate: string;
   recurrence?: RecurrenceFormState;
@@ -292,6 +305,7 @@ function RecurringFormFields({
   startDateFooter?: ReactNode;
   requiredFieldClassName?: string;
   paymentPlan?: JobModalPaymentPlanProps;
+  partnerPaymentPlan?: JobModalPartnerPaymentPlanProps;
 }) {
   if (!recurrence || !onRecurrenceChange) {
     return (
@@ -545,7 +559,7 @@ function RecurringFormFields({
       {paymentPlan ? (
         <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3 space-y-2">
           <div className="flex items-center gap-1.5">
-            <p className="text-xs font-medium text-text-secondary">Payment plan</p>
+            <p className="text-xs font-medium text-text-secondary">{paymentPlan.label ?? "Client payment plan"}</p>
             <FixfyHintIcon text={RECURRING_PAYMENT_PLAN_HINT} placement="bottom-end" />
           </div>
           <PaymentPlanEditor
@@ -556,6 +570,45 @@ function RecurringFormFields({
             totalAmount={paymentPlan.totalAmount}
             accountPaymentTerms={paymentPlan.accountPaymentTerms}
             orgCtx={paymentPlan.orgCtx}
+          />
+        </div>
+      ) : null}
+
+      {partnerPaymentPlan && paymentPlan?.enabled ? (
+        <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-text-secondary">Partner payout plan</p>
+            <p className="text-[10px] text-text-tertiary tabular-nums">
+              Partner cap £{partnerPaymentPlan.partnerCap.toFixed(2)}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <button
+              type="button"
+              className="text-primary font-medium hover:underline"
+              onClick={() => partnerPaymentPlan.onSyncFromClient?.()}
+            >
+              Same schedule as client
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "font-medium hover:underline",
+                partnerPaymentPlan.customized ? "text-primary" : "text-text-tertiary",
+              )}
+              onClick={() => partnerPaymentPlan.onCustomizedChange(!partnerPaymentPlan.customized)}
+            >
+              {partnerPaymentPlan.customized ? "Custom partner plan" : "Customize partner plan"}
+            </button>
+          </div>
+          <PaymentPlanEditor
+            enabled={partnerPaymentPlan.enabled}
+            onEnabledChange={partnerPaymentPlan.onEnabledChange}
+            rows={partnerPaymentPlan.rows}
+            onRowsChange={partnerPaymentPlan.onRowsChange}
+            totalAmount={partnerPaymentPlan.partnerCap}
+            accountPaymentTerms={partnerPaymentPlan.accountPaymentTerms}
+            orgCtx={partnerPaymentPlan.orgCtx}
           />
         </div>
       ) : null}

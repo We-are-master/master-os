@@ -87,6 +87,19 @@ export async function createSelfBillPaymentPlan(
   return (data ?? []) as SelfBillPaymentInstallment[];
 }
 
+/** Replace installment rows when none are paid yet. */
+export async function updateSelfBillPaymentPlan(
+  selfBillId: string,
+  netPayout: number,
+  drafts: PaymentPlanInstallmentDraft[],
+): Promise<SelfBillPaymentInstallment[]> {
+  const existing = await listInstallmentsForSelfBill(selfBillId);
+  if (existing.some((i) => i.status === "paid")) {
+    throw new Error("Cannot edit plan after an installment was paid.");
+  }
+  return createSelfBillPaymentPlan(selfBillId, netPayout, drafts);
+}
+
 export async function cancelSelfBillPaymentPlan(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
   const existing = await listInstallmentsForSelfBill(selfBillId);
