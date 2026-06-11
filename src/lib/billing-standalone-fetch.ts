@@ -1,7 +1,10 @@
 import { getSupabase } from "@/services/base";
 import { fetchAllActiveInvoices } from "@/lib/billing-invoice-list-data";
 import { addDaysYmd, type YmdBounds } from "@/lib/billing-standalone-period";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import {
+  isSupabaseMissingColumnError,
+  isSupabaseSelfBillPaymentPlanSchemaMissing,
+} from "@/lib/supabase-schema-compat";
 import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 const PAGE_SIZE = 500;
@@ -319,9 +322,9 @@ export async function fetchSelfBillInstallmentsForBilling(
       .in("self_bill_id", slice)
       .order("sequence", { ascending: true });
     if (error) {
-      if (isSupabaseMissingColumnError(error)) {
+      if (isSupabaseSelfBillPaymentPlanSchemaMissing(error)) {
         console.warn(
-          "billing: self_bill_payment_installments unavailable — apply migration 235 for partner payout plans",
+          "billing: self_bill_payment_installments unavailable — apply migration 235 and NOTIFY pgrst, 'reload schema';",
         );
         return {};
       }
