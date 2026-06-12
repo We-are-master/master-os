@@ -229,11 +229,12 @@ export async function POST(req: NextRequest) {
   }
   const resolvedServiceType = catalogName || serviceType || null;
 
-  // Title: prefer an explicit human title, but never accept the catalog UUID
-  // itself (some integrations send the id in `title`). Fall back to the
-  // resolved service name. quotes.title is NOT NULL, so this must be non-empty.
+  // Title: prefer resolved trade (Type of Work) over free-text title — Zendesk
+  // macros often send ticket.subject in `title`. Fall back to explicit title when
+  // no service_type/catalog name. Never accept the catalog UUID as title.
   const titleIsId = !!title && (title === catalogServiceId || isValidUUID(title));
-  const effectiveTitle = (title && !titleIsId ? title : null) || resolvedServiceType;
+  const explicitTitle = title && !titleIsId ? title : null;
+  const effectiveTitle = resolvedServiceType || explicitTitle;
   if (!effectiveTitle) {
     return NextResponse.json(
       { error: "Could not determine a title: provide `title`, or a `catalog_service_id` that resolves to a service name." },

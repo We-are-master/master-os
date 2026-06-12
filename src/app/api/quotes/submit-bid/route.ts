@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerBidToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import {
+  buildBidNotesJson,
+  normalizePartnerBidPayloadInput,
+  type PartnerBidProposalPayload,
+  validatePartnerBidPayload,
+} from "@/lib/quote-bid-payload";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -20,14 +26,12 @@ function getServiceSupabase() {
  * binds (quoteId, partnerId), so each invited partner has their own link
  * and bids are traceable per partner.
  *
- * Body: { token, bidAmount, jobType?: "fixed"|"hourly", notes? }
+ * Body: { token, bidAmount, jobType?: "fixed"|"hourly", payload: PartnerBidProposalPayload, notes? }
  *
  * Behaviour:
  *   - Quote must be in `bidding` status (else 409).
- *   - Upserts a single row in quote_bids on (quote_id, partner_id) so a
- *     partner can adjust their price before the office picks a winner.
- *     Status is always 'submitted' on this endpoint.
- *   - Idempotent re-submits update the same row instead of stacking.
+ *   - Structured payload is required (labour, materials, two start dates).
+ *   - Upserts a single row in quote_bids on (quote_id, partner_id).
  *   - Rate-limited per IP.
  */
 export async function POST(req: NextRequest) {
@@ -40,7 +44,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { token?: string; bidAmount?: number; jobType?: string; notes?: string };
+  let body: {
+    token?: string;
+    bidAmount?: number;
+    jobType?: string;
+    notes?: string;
+    payload?: PartnerBidProposalPayload;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -55,16 +65,31 @@ export async function POST(req: NextRequest) {
   }
   const { quoteId, partnerId } = verified;
 
+  if (body.payload == null || typeof body.payload !== "object") {
+    return NextResponse.json(
+      { error: "Structured bid details are required (labour, materials, and start dates)." },
+      { status: 400 },
+    );
+  }
+
   const bidAmount = Number(body.bidAmount);
   if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
     return NextResponse.json({ error: "Bid amount must be a positive number." }, { status: 400 });
   }
-  const jobType: "fixed" | "hourly" = body.jobType === "hourly" ? "hourly" : "fixed";
-  const notes = typeof body.notes === "string" ? body.notes.trim().slice(0, 4000) : null;
+
+  const normalizedPayload = normalizePartnerBidPayloadInput(body.payload);
+  const validation = validatePartnerBidPayload(normalizedPayload, bidAmount);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.errors.join(" "), errors: validation.errors }, { status: 400 });
+  }
+
+  const jobType: "fixed" | "hourly" =
+    validation.payload.labour_pricing === "hourly" ? "hourly" : "fixed";
+  const freeformNotes = typeof body.notes === "string" ? body.notes.trim().slice(0, 2000) : "";
+  const notes = buildBidNotesJson(validation.payload, freeformNotes || null).slice(0, 4000);
 
   const supabase = getServiceSupabase();
 
-  // Gate: the quote must be open for bidding right now.
   const { data: quote, error: quoteErr } = await supabase
     .from("quotes")
     .select("id, reference, status")
@@ -81,8 +106,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Look up partner display name once (also lets us 404 the link if the
-  // partner row was removed since the link was issued).
   const { data: partner } = await supabase
     .from("partners")
     .select("id, contact_name, company_name")
@@ -94,8 +117,6 @@ export async function POST(req: NextRequest) {
   const partnerName =
     (partner.company_name?.trim() || partner.contact_name?.trim()) ?? null;
 
-  // Upsert one bid per (quote_id, partner_id). Status stays 'submitted'
-  // — office still has to approve via the existing approve_quote_bid RPC.
   const now = new Date().toISOString();
   const { data: existing } = await supabase
     .from("quote_bids")
