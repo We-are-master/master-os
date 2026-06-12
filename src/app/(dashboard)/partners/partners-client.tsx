@@ -3,6 +3,7 @@
 import type { ListResult } from "@/services/base";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { CatalogShareModal } from "@/components/catalog/catalog-share-modal";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import {
   ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
-  Play, KeyRound, MailPlus,
+  Play, KeyRound, MailPlus, Share2,
   Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus, Pencil, Loader2,
 } from "lucide-react";
 
@@ -989,6 +990,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [invitePhone, setInvitePhone] = useState("");
@@ -1979,6 +1981,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               }}
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center shrink-0 w-full sm:w-auto">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0 whitespace-nowrap w-full sm:w-auto"
+                icon={<Share2 className="h-3.5 w-3.5 shrink-0" />}
+                onClick={() => setShareOpen(true)}
+              >
+                Share rate card
+              </Button>
               {canSendPartnerLinks ? (
                 <Button
                   size="sm"
@@ -2001,6 +2012,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             </div>
           </div>
         </PageHeader>
+
+        <CatalogShareModal
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          variant="partner"
+        />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Active" value={activeCount} format="number" description="Currently taking work" icon={Briefcase} accent="emerald" />

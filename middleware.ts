@@ -43,7 +43,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/portal/auth/") ||
     pathname.startsWith("/trade/login") ||
     pathname.startsWith("/trade/auth/") ||
-    pathname.startsWith("/onboard");
+    pathname.startsWith("/onboard") ||
+    pathname.startsWith("/catalog");
 
   // ─── Detect session cookie without instantiating Supabase client ──────────
   // Supabase sets cookies named `sb-<project-ref>-auth-token*`. We only need to

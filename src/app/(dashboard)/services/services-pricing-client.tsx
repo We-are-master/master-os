@@ -8,7 +8,9 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Share2,
 } from "lucide-react";
+import { CatalogShareModal } from "@/components/catalog/catalog-share-modal";
 import { PageTransition } from "@/components/layout/page-transition";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -511,6 +513,7 @@ export function ServicesPricingClient() {
   });
 
   const editor = useServiceCatalogEditor({ onSaved: refresh });
+  const [shareOpen, setShareOpen] = useState(false);
 
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<ServicesStatusFilter>("active");
@@ -567,10 +570,20 @@ export function ServicesPricingClient() {
           subtitle="What you pay, what you charge, and what you keep — for every service. Click a row to expand add-ons; click edit to change pricing."
         >
           <ViewSegment view={viewMode} onChange={setViewMode} />
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Share2 className="h-3.5 w-3.5" />}
+            onClick={() => setShareOpen(true)}
+          >
+            Share rate card
+          </Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={editor.openCreate}>
             New service
           </Button>
         </PageHeader>
+
+        <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
