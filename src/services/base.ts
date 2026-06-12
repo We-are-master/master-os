@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
+import { applyQuotesNewTabFilter, applyQuotesReadyToSendTabFilter } from "@/lib/quote-list-filters";
 import { getJobStatusCountsByChunkedSelect, getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
 
 export type SortDirection = "asc" | "desc";
@@ -55,6 +56,10 @@ export interface ListParams {
    * or `billing_week_start` is null and `created_at` falls in the local-day UTC window.
    */
   invoicePeriodBounds?: { from: string; to: string; startIso: string; endIso: string };
+  /** Quotes list **New** tab — draft routing / partner before bid (virtual bucket). */
+  quotesNewTab?: boolean;
+  /** Quotes list **Ready to send** tab — manual draft, not yet emailed (virtual bucket). */
+  quotesReadyToSendTab?: boolean;
 }
 
 /**
@@ -161,6 +166,10 @@ export async function queryList<T>(
     const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
     const bookedNoPartner = `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,or(partner_ids.is.null,partner_ids.eq.{}))`;
     query = query.or(`status.in.(unassigned,auto_assigning),${bookedNoPartner}`);
+  } else if (table === "quotes" && params.quotesNewTab) {
+    query = applyQuotesNewTabFilter(query);
+  } else if (table === "quotes" && params.quotesReadyToSendTab) {
+    query = applyQuotesReadyToSendTabFilter(query);
   } else if (params.statusIn && params.statusIn.length > 0) {
     query = query.in("status", params.statusIn);
   } else if (params.status && params.status !== "all") {

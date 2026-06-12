@@ -16,6 +16,8 @@ import {
   resolvePartnerPayoutReferenceYmd,
   resolvePartnerPayoutStandardTerms,
   resolvePartnerLevelThresholds,
+  resolvePartnerExtraPresets,
+  resolvePartnerDeductionPresets,
   type AccessFees,
   type MarginThresholds,
   type PartnerLevelThresholds,
@@ -57,6 +59,8 @@ export function useFrontendSetup() {
     () => resolvePartnerLevelThresholds(setup),
     [setup],
   );
+  const partnerExtraPresets = useMemo(() => resolvePartnerExtraPresets(setup), [setup]);
+  const partnerDeductionPresets = useMemo(() => resolvePartnerDeductionPresets(setup), [setup]);
 
   return {
     loading,
@@ -72,6 +76,8 @@ export function useFrontendSetup() {
     partnerPayoutStandardTerms,
     partnerPayoutReferenceYmd,
     partnerLevelThresholds,
+    partnerExtraPresets,
+    partnerDeductionPresets,
     refetch: load,
   };
 }

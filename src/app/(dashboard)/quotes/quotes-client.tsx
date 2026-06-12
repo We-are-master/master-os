@@ -53,6 +53,10 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, JobKind, Account, QuoteDurationUnit, QuoteEngagementKind, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import { bucketDraftQuoteRows, isQuoteListNew, isQuoteReadyToSend, type QuoteFunnelTabCounts } from "@/lib/quote-list-buckets";
+import { rpcGetQuoteMetricsBundle } from "@/lib/quote-funnel-rpc";
+import { QUOTES_NEW_TAB_OR_FILTER } from "@/lib/quote-list-filters";
+import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import {
   ZENDESK_QUOTE_TICKET_FORM_ID,
   ZENDESK_FIELD_SCOPE,
@@ -87,7 +91,7 @@ import {
   type QuoteBid,
 } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
-import { getStatusCounts, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
+import { getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -509,6 +513,20 @@ async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>>
       statusIn: ["bidding", "in_survey"],
     });
   }
+  if (status === "draft") {
+    return listQuotes({
+      ...rest,
+      status: undefined,
+      quotesNewTab: true,
+    });
+  }
+  if (status === "ready_to_send") {
+    return listQuotes({
+      ...rest,
+      status: undefined,
+      quotesReadyToSendTab: true,
+    });
+  }
   return listQuotes({ ...params });
 }
 
@@ -764,12 +782,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const searchParams = useSearchParams();
   const {
     data, loading, page, totalPages, totalItems,
-    setPage, search, setSearch, status, setStatus, refreshSilent,
+    setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
     /** No realtime auto-refresh — avoids fetch loops; list reloads use `refreshSilent` / `refreshWithKpis` (no `refresh()`). */
     initialStatus: "draft",
     initialData,
+    refetchWhenInitialEmpty: true,
   });
 
   /** Latest list rows for deep-link / effects — avoids re-running quoteId logic on every `data` reference change. */
@@ -780,6 +799,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [quoteFunnelCounts, setQuoteFunnelCounts] = useState<QuoteFunnelTabCounts>({
+    draft: 0,
+    ready_to_send: 0,
+  });
   const [kpiSummary, setKpiSummary] = useState({
     /** Approval + Payment: soma `total_value` de todos quotes nesses statuses (ativo — alinha com badges das abas). */
     totalSentToCustomerValue: 0,
@@ -791,6 +814,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [viewMode, setViewMode] = useState("list");
   const [biddingSlaRollup, setBiddingSlaRollup] = useState<BiddingSlaRollup | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [manualReviewOpen, setManualReviewOpen] = useState(false);
+  const [manualReviewQuote, setManualReviewQuote] = useState<Quote | null>(null);
+  const [manualReviewSnapshot, setManualReviewSnapshot] = useState<ManualQuoteReviewSnapshot | null>(null);
+  const [manualReviewSending, setManualReviewSending] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
@@ -828,6 +855,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [routingCreateEntry, setRoutingCreateEntry] = useState<"quote" | "bidding">("quote");
   const [drawerPendingOpenInviteQuoteId, setDrawerPendingOpenInviteQuoteId] = useState<string | null>(null);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const virtualTabHealAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    virtualTabHealAttemptedRef.current = false;
+  }, [status]);
 
   useEffect(() => {
     if (!buFilter.selectedBuId) {
@@ -918,6 +950,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         if (q.status !== "converted_to_job" && q.status !== "rejected") return false;
       } else if (status === "bidding") {
         if (q.status !== "bidding" && q.status !== "in_survey") return false;
+      } else if (status === "draft") {
+        if (!isQuoteListNew(q)) return false;
+      } else if (status === "ready_to_send") {
+        if (!isQuoteReadyToSend(q)) return false;
       } else if (q.status !== status) {
         return false;
       }
@@ -983,6 +1019,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (!listSortKey) return;
     const allowedSets: Partial<Record<string, Set<string>>> = {
       draft: new Set(["reference", "client_name", "service_type", "__created_at"]),
+      ready_to_send: new Set([
+        "reference",
+        "client_name",
+        "service_type",
+        "total_value",
+        "deposit_required",
+        "margin_percent",
+        "__created_at",
+      ]),
       bidding: new Set(["reference", "client_name", "service_type", "avg_bid", "bidding_sla", "__created_at"]),
       awaiting_customer: new Set([
         "reference",
@@ -1080,44 +1125,63 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         },
       ];
     }
-    const ids = ["draft", "bidding", "awaiting_customer", "awaiting_payment"];
+    const ids = ["draft", "ready_to_send", "bidding", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
-      title: statusLabels[id] ?? id,
-      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
-      items: filteredQuotes.filter((q) =>
-        id === "bidding" ? q.status === "bidding" || q.status === "in_survey" : q.status === id,
-      ),
+      title: id === "ready_to_send" ? "Ready to send" : (statusLabels[id] ?? id),
+      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : id === "ready_to_send" ? "bg-fx-coral" : "bg-primary",
+      items: filteredQuotes.filter((q) => {
+        if (id === "bidding") return q.status === "bidding" || q.status === "in_survey";
+        if (id === "draft") return isQuoteListNew(q);
+        if (id === "ready_to_send") return isQuoteReadyToSend(q);
+        return q.status === id;
+      }),
     }));
   }, [filteredQuotes, status]);
 
   const KPI_QUOTE_PAGE = 1000;
 
-  const loadCounts = useCallback(async () => {
-    try {
-      const counts = await getStatusCounts("quotes", [...QUOTE_STATUSES]);
-      setStatusCounts(counts);
-    } catch { /* cosmetic */ }
-  }, []);
+  /** KPIs, tab badges, and funnel counts — single RPC when available; chunked fallback. */
+  const reloadQuoteMetrics = useCallback(async () => {
+    const supabase = getSupabase();
 
-  /** Headline currency/conversion KPIs — same universe as tab badges (`getStatusCounts`): all non-deleted quotes, chunked to beat the default row cap. */
-  const reloadQuoteKpis = useCallback(async () => {
     try {
-      const supabase = getSupabase();
-      const rows: Array<{ status: string; total_value?: number | null }> = [];
-      for (let offset = 0; ; offset += KPI_QUOTE_PAGE) {
-        const { data, error } = await supabase
-          .from("quotes")
-          .select("status,total_value")
-          .is("deleted_at", null)
-          .range(offset, offset + KPI_QUOTE_PAGE - 1);
-        if (error) throw error;
-        const chunk = (data ?? []) as typeof rows;
-        rows.push(...chunk);
-        if (chunk.length < KPI_QUOTE_PAGE) break;
+      const bundle = await rpcGetQuoteMetricsBundle(supabase);
+      const counts: Record<string, number> = {};
+      for (const st of QUOTE_STATUSES) counts[st] = bundle.status_counts[st] ?? 0;
+      setStatusCounts(counts);
+      setQuoteFunnelCounts(bundle.funnel_counts);
+      setKpiSummary({
+        totalSentToCustomerValue: bundle.total_sent_to_customer_value,
+        awaitingCustomerValue: bundle.awaiting_customer_value,
+        conversionPct: bundle.conversion_pct,
+        convertedCount: bundle.converted_count,
+        totalCount: bundle.total_count,
+      });
+      return;
+    } catch (rpcErr) {
+      console.warn(
+        "[quotes] get_quote_metrics_bundle unavailable, using chunked fallback:",
+        postgrestFullErrorText(rpcErr),
+      );
+    }
+
+    type CoreRow = { status: string; total_value?: number | null };
+    type FunnelRow = Pick<
+      Quote,
+      "status" | "draft_route_completed" | "quote_type" | "customer_pdf_sent_at" | "total_value"
+    >;
+
+    const applyCoreMetrics = (rows: CoreRow[]) => {
+      const counts: Record<string, number> = {};
+      for (const st of QUOTE_STATUSES) counts[st] = 0;
+      for (const row of rows) {
+        if (row.status) counts[row.status] = (counts[row.status] ?? 0) + 1;
       }
-      const sumBy = (status: string) => rows
-        .filter((r) => r.status === status)
+      setStatusCounts(counts);
+
+      const sumBy = (st: string) => rows
+        .filter((r) => r.status === st)
         .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
       const totalSentToCustomerValue = rows
         .filter((r) => r.status === "awaiting_customer" || r.status === "awaiting_payment")
@@ -1133,7 +1197,83 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         convertedCount,
         totalCount,
       });
-    } catch {
+    };
+
+    const loadFunnelCountsViaFilters = async (): Promise<QuoteFunnelTabCounts> => {
+      const [newRes, rtsRes] = await Promise.all([
+        supabase
+          .from("quotes")
+          .select("id", { count: "exact", head: true })
+          .is("deleted_at", null)
+          .eq("status", "draft")
+          .or(QUOTES_NEW_TAB_OR_FILTER),
+        supabase
+          .from("quotes")
+          .select("id", { count: "exact", head: true })
+          .is("deleted_at", null)
+          .eq("status", "draft")
+          .eq("draft_route_completed", true)
+          .or("quote_type.is.null,quote_type.neq.partner")
+          .is("customer_pdf_sent_at", null)
+          .gt("total_value", 0),
+      ]);
+      if (newRes.error) throw newRes.error;
+      if (rtsRes.error) throw rtsRes.error;
+      return { draft: newRes.count ?? 0, ready_to_send: rtsRes.count ?? 0 };
+    };
+
+    try {
+      const rows: CoreRow[] = [];
+      for (let offset = 0; ; offset += KPI_QUOTE_PAGE) {
+        const { data, error } = await supabase
+          .from("quotes")
+          .select("status,total_value")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: true })
+          .range(offset, offset + KPI_QUOTE_PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as CoreRow[];
+        rows.push(...chunk);
+        if (chunk.length < KPI_QUOTE_PAGE) break;
+      }
+      applyCoreMetrics(rows);
+
+      try {
+        const draftRows: FunnelRow[] = [];
+        for (let offset = 0; ; offset += KPI_QUOTE_PAGE) {
+          const { data, error } = await supabase
+            .from("quotes")
+            .select("status,draft_route_completed,quote_type,customer_pdf_sent_at,total_value")
+            .eq("status", "draft")
+            .is("deleted_at", null)
+            .order("created_at", { ascending: true })
+            .range(offset, offset + KPI_QUOTE_PAGE - 1);
+          if (error) throw error;
+          const chunk = (data ?? []) as FunnelRow[];
+          draftRows.push(...chunk);
+          if (chunk.length < KPI_QUOTE_PAGE) break;
+        }
+        setQuoteFunnelCounts(bucketDraftQuoteRows(draftRows));
+      } catch (funnelErr) {
+        console.warn(
+          "[quotes] funnel column load failed, using filter counts:",
+          postgrestFullErrorText(funnelErr),
+        );
+        try {
+          setQuoteFunnelCounts(await loadFunnelCountsViaFilters());
+        } catch (filterErr) {
+          console.warn(
+            "[quotes] funnel filter counts failed, using draft status total:",
+            postgrestFullErrorText(filterErr),
+          );
+          const draftTotal = rows.filter((r) => r.status === "draft").length;
+          setQuoteFunnelCounts({ draft: draftTotal, ready_to_send: 0 });
+        }
+      }
+    } catch (err) {
+      console.error("[quotes] reloadQuoteMetrics failed:", postgrestFullErrorText(err), err);
+      setStatusCounts({});
+      setQuoteFunnelCounts({ draft: 0, ready_to_send: 0 });
       setKpiSummary({
         totalSentToCustomerValue: 0,
         awaitingCustomerValue: 0,
@@ -1144,10 +1284,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     }
   }, []);
 
-  // Load corporate accounts for the filter popover Account picker.
+  // Load corporate accounts for the filter popover — deferred until after first paint.
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
       const supabase = getSupabase();
       const { data } = await supabase
         .from("accounts")
@@ -1160,9 +1300,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
           .filter((a) => a.id && a.name),
       );
-    })();
+    };
+    const run = () => {
+      if (!cancelled) void load();
+    };
+    const idleId =
+      typeof requestIdleCallback !== "undefined"
+        ? requestIdleCallback(run, { timeout: 2500 })
+        : null;
+    const timeoutId = idleId == null ? window.setTimeout(run, 150) : null;
     return () => {
       cancelled = true;
+      if (idleId != null && typeof cancelIdleCallback !== "undefined") {
+        cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) window.clearTimeout(timeoutId);
     };
   }, []);
 
@@ -1186,17 +1338,54 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [biddingSlaMs]);
 
   useEffect(() => {
-    void loadBiddingSlaRollup();
+    const run = () => void loadBiddingSlaRollup();
+    const idleId =
+      typeof requestIdleCallback !== "undefined"
+        ? requestIdleCallback(run, { timeout: 3000 })
+        : null;
+    const timeoutId = idleId == null ? window.setTimeout(run, 200) : null;
     const id = window.setInterval(() => {
       void loadBiddingSlaRollup();
     }, 30_000);
-    return () => window.clearInterval(id);
+    return () => {
+      if (idleId != null && typeof cancelIdleCallback !== "undefined") {
+        cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      window.clearInterval(id);
+    };
   }, [loadBiddingSlaRollup, statusCounts.bidding, statusCounts.in_survey]);
 
   useEffect(() => {
-    void loadCounts();
-    void reloadQuoteKpis();
-  }, [loadCounts, reloadQuoteKpis]);
+    void reloadQuoteMetrics();
+  }, [reloadQuoteMetrics]);
+
+  /** Heal list/badge drift once — show skeleton while refetching. */
+  useEffect(() => {
+    if (loading || virtualTabHealAttemptedRef.current) return;
+    const virtualTab = status === "draft" || status === "ready_to_send";
+    if (!virtualTab) return;
+    const badgeCount =
+      status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
+    if (badgeCount > 0 && data.length === 0) {
+      virtualTabHealAttemptedRef.current = true;
+      refresh();
+    }
+  }, [
+    loading,
+    status,
+    quoteFunnelCounts.draft,
+    quoteFunnelCounts.ready_to_send,
+    data.length,
+    refresh,
+  ]);
+
+  const isVirtualFunnelTab = status === "draft" || status === "ready_to_send";
+  const virtualTabBadgeCount =
+    status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
+  const showListLoading =
+    loading ||
+    (isVirtualFunnelTab && data.length === 0 && totalItems === 0 && virtualTabBadgeCount > 0);
 
   useEffect(() => () => {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
@@ -1207,11 +1396,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     refreshSilent();
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
     kpiRefreshTimerRef.current = setTimeout(() => {
-      void loadCounts();
-      void reloadQuoteKpis();
+      void reloadQuoteMetrics();
       void loadBiddingSlaRollup();
     }, delayMs);
-  }, [refreshSilent, loadCounts, reloadQuoteKpis, loadBiddingSlaRollup]);
+  }, [refreshSilent, reloadQuoteMetrics, loadBiddingSlaRollup]);
 
   /** After send-pdf marks the quote `awaiting_customer` — switch list tab and refresh counts (mirrors create flow). */
   const onPromotionToApprovalTab = useCallback(() => {
@@ -1219,18 +1407,19 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     refreshWithKpis();
   }, [setStatus, refreshWithKpis]);
 
-  /** Underline + count badges — funnel: New → Bidding → Approval → Payment → Closed (Win + Lost). */
+  /** Underline + count badges — funnel: New → Ready to send → Bidding → Approval → Payment → Closed. */
   const quoteStageTabs = useMemo(() => {
     const closed =
       (statusCounts.converted_to_job ?? 0) + (statusCounts.rejected ?? 0);
     return [
-      { id: "draft", label: "New", count: statusCounts.draft ?? 0 },
+      { id: "draft", label: "New", count: quoteFunnelCounts.draft },
+      { id: "ready_to_send", label: "Ready to send", count: quoteFunnelCounts.ready_to_send },
       { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
       { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
       { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
       { id: "closed", label: "Closed", count: closed },
     ];
-  }, [statusCounts]);
+  }, [statusCounts, quoteFunnelCounts]);
 
   /** Share of all non-deleted quotes that became jobs (`converted_to_job`). */
   const quoteToJobConversion = useMemo(
@@ -1241,8 +1430,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const handleCreate = useCallback(
     async (
       formData: Partial<Quote> & { __createZendeskTicket?: boolean },
-      options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean },
-    ): Promise<boolean> => {
+      options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean; generateOnly?: boolean },
+    ): Promise<Quote | boolean> => {
       const perfStart = performance.now();
       // ─── Zendesk: open a new ticket when the modal asked us to ────────
       // Done BEFORE the duplicate-check so we don't burn ticket numbers on
@@ -1350,9 +1539,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           Boolean(options?.sendToCustomer) &&
           (formData.quote_type ?? "internal") === "internal" &&
           !isOneShotBidding;
+        const generateOnly = Boolean(options?.generateOnly) && !isOneShotBidding;
 
-        if (wantsSendCustomer && !(options?.manualLineItems?.length)) {
-          toast.error("Add at least one line item before sending.");
+        if ((wantsSendCustomer || generateOnly) && !(options?.manualLineItems?.length)) {
+          toast.error("Add at least one line item before generating.");
           return false;
         }
 
@@ -1450,11 +1640,24 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             .catch((err) => console.error("[quotes/create] zendesk sync failed:", err));
         }
 
-        // Close create modal immediately so it never stacks over the drawer; drawer stays hidden while createOpen.
-        setCreateOpen(false);
-        createQuoteIntentRef.current = "full";
-        setCreateFormVariant("full");
-        setRoutingCreateEntry("quote");
+        // Close create modal unless we're in generate-only (stay open for PDF preview).
+        if (!generateOnly) {
+          setCreateOpen(false);
+          createQuoteIntentRef.current = "full";
+          setCreateFormVariant("full");
+          setRoutingCreateEntry("quote");
+        }
+
+        if (generateOnly) {
+          refreshWithKpis();
+          setStatus("ready_to_send");
+          trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
+            quoteType: "internal",
+            lineItems: manualLines?.length ?? 0,
+            generateOnly: true,
+          });
+          return result;
+        }
 
         if (isOneShotBidding) {
           const patched = result;
@@ -1618,6 +1821,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               setDrawerPendingOpenInviteQuoteId(result.id);
             }
           }
+          setStatus(isQuoteReadyToSend(result) ? "ready_to_send" : "draft");
         }
 
         refreshWithKpis();
@@ -2353,6 +2557,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (status === "draft") {
       return [...leadCore, newTabStageColumn, ticketColumn, actionsColumnTail];
     }
+    if (status === "ready_to_send") {
+      return [...leadCore, amountColumn, marginColumn, depositColumn, ticketColumn, actionsColumnTail];
+    }
     return [...leadApprovalPayment, amountColumn, marginColumn, ticketColumn, actionsColumnTail];
   }, [status, avgBidByQuoteId, biddingSlaMs, biddingSlaHoursLabelPretty]);
 
@@ -2365,7 +2572,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             "Headline KPIs reflect all active (non-deleted) quotes — the same pool as the stage tab counts.\n\n" +
             "Total Quoted sums quote value for Approval + Payment (with the customer). Bidding shows the same count as the Bidding tab.\n\n" +
             "SLA overdue counts open Bidding quotes past the configured SLA window (Settings → Setup).\n\n" +
-            "Tabs: New → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row)."
+            "Tabs: New → Ready to send → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row)."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2374,8 +2581,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               size="sm"
               icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
               onClick={() => {
-                void loadCounts();
-                void reloadQuoteKpis();
+                void reloadQuoteMetrics();
                 void loadBiddingSlaRollup();
                 refreshSilent();
               }}
@@ -2475,7 +2681,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <DateRangeFilter variant="chip" value={dateFilter} onChange={setDateFilter} />
+              <DateRangeFilter variant="chip" compactQuickOptions value={dateFilter} onChange={setDateFilter} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
@@ -2578,7 +2784,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               columnConfigKey="quotes-columns"
               columnConfigScope={status}
               getRowId={(item) => item.id}
-              loading={loading}
+              loading={showListLoading}
               selectedId={selectedQuote?.id}
               onRowClick={setSelectedQuote}
               page={page}
@@ -2602,7 +2808,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           )}
           {viewMode === "kanban" && (
             <div className="min-h-[400px]">
-              {loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : (
+              {showListLoading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : (
                 <KanbanBoard columns={quoteKanbanColumns} getCardId={(q) => q.id} onCardClick={setSelectedQuote}
                   renderCard={(q) => (
                     <div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors">
@@ -2627,6 +2833,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       <QuoteDetailDrawer
         key={selectedQuote.id}
         quote={selectedQuote}
+        listStatus={status}
         pendingInitialTab={drawerPendingTab}
         onConsumePendingInitialTab={consumeDrawerPendingTab}
         pendingOpenInviteForQuoteId={drawerPendingOpenInviteQuoteId}
@@ -2821,6 +3028,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             variant={createFormVariant}
             routingCollectTrade={routingCreateEntry === "bidding"}
             onSubmit={handleCreate}
+            onManualQuoteGenerated={(quote, snapshot) => {
+              setManualReviewQuote(quote);
+              setManualReviewSnapshot(snapshot);
+              setCreateOpen(false);
+              setManualReviewOpen(true);
+              setStatus("ready_to_send");
+              toast.success(`Quote ${quote.reference} saved — review the PDF, then send when ready.`);
+            }}
             onCancel={() => {
               setCreateOpen(false);
               createQuoteIntentRef.current = "routing_invite";
@@ -2832,6 +3047,43 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         </div>
         </div>
       </Modal>
+      <ManualQuoteReviewModal
+        open={manualReviewOpen}
+        quote={manualReviewQuote}
+        snapshot={manualReviewSnapshot}
+        sending={manualReviewSending}
+        onClose={() => {
+          setManualReviewOpen(false);
+          setManualReviewQuote(null);
+          setManualReviewSnapshot(null);
+          if (manualReviewQuote) {
+            setSelectedQuote(manualReviewQuote);
+            setStatus("ready_to_send");
+          }
+        }}
+        onSend={async () => {
+          if (!manualReviewQuote || !manualReviewSnapshot) return;
+          setManualReviewSending(true);
+          try {
+            const refreshed = await executeManualQuoteSend(manualReviewQuote, manualReviewSnapshot);
+            setManualReviewOpen(false);
+            setManualReviewQuote(null);
+            setManualReviewSnapshot(null);
+            createQuoteIntentRef.current = "full";
+            setCreateFormVariant("full");
+            setRoutingCreateEntry("quote");
+            setDrawerPendingOpenInviteQuoteId(null);
+            setDrawerPendingTab(null);
+            setSelectedQuote(refreshed);
+            if (refreshed.status === "awaiting_customer") setStatus("awaiting_customer");
+            refreshWithKpis();
+          } catch (err) {
+            toast.error(getErrorMessage(err, "Failed to send quote to customer — open it to retry."));
+          } finally {
+            setManualReviewSending(false);
+          }
+        }}
+      />
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
@@ -2861,36 +3113,34 @@ function PartnerBidMiniDash({
 }) {
   return (
     <div
-      className="rounded-xl border border-border-light/70 bg-border-light/40 dark:bg-border p-px overflow-hidden shadow-sm"
+      className="grid grid-cols-2 min-[400px]:grid-cols-4 overflow-hidden rounded-lg border border-fx-line bg-fx-paper dark:bg-surface-secondary/30"
       role="region"
       aria-label="Partner figures: cost or average bid, bids received, invited and quoted partners"
     >
-      <div className="grid grid-cols-2 min-[400px]:grid-cols-4 gap-px">
-        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
-          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">{primaryLabel}</p>
-          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight truncate">
-            {bidsLoading ? "…" : primaryValue != null ? formatCurrency(primaryValue) : "—"}
-          </p>
-        </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0" title="Partner submissions on this quote">
-          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Bids</p>
-          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight">{bidsReceivedCount}</p>
-        </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
-          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Invited</p>
-          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight">{invitedPartnersCount}</p>
-        </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
-          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Quoted</p>
-          <p
-            className={cn(
-              "mt-0.5 text-base font-bold tabular-nums leading-tight",
-              quotedPartnersCount === 0 ? "text-[#6B6B70]" : "text-primary",
-            )}
-          >
-            {quotedPartnersCount}
-          </p>
-        </div>
+      <div className="min-w-0 border-b border-r border-fx-line px-3.5 py-2.5 min-[400px]:border-b-0">
+        <p className="text-[10px] uppercase tracking-[0.06em] text-fx-mute leading-tight">{primaryLabel}</p>
+        <p className="mt-0.5 truncate text-base font-semibold tabular-nums leading-tight text-fx-ink">
+          {bidsLoading ? "…" : primaryValue != null ? formatCurrency(primaryValue) : "—"}
+        </p>
+      </div>
+      <div className="min-w-0 border-b border-fx-line px-3.5 py-2.5 min-[400px]:border-b-0 min-[400px]:border-r" title="Partner submissions on this quote">
+        <p className="text-[10px] uppercase tracking-[0.06em] text-fx-mute leading-tight">Bids</p>
+        <p className="mt-0.5 text-base font-semibold tabular-nums leading-tight text-fx-ink">{bidsReceivedCount}</p>
+      </div>
+      <div className="min-w-0 border-r border-fx-line px-3.5 py-2.5">
+        <p className="text-[10px] uppercase tracking-[0.06em] text-fx-mute leading-tight">Invited</p>
+        <p className="mt-0.5 text-base font-semibold tabular-nums leading-tight text-fx-ink">{invitedPartnersCount}</p>
+      </div>
+      <div className="min-w-0 px-3.5 py-2.5">
+        <p className="text-[10px] uppercase tracking-[0.06em] text-fx-mute leading-tight">Quoted</p>
+        <p
+          className={cn(
+            "mt-0.5 text-base font-semibold tabular-nums leading-tight",
+            quotedPartnersCount === 0 ? "text-fx-mute font-medium" : "text-fx-ink",
+          )}
+        >
+          {quotedPartnersCount}
+        </p>
       </div>
     </div>
   );
@@ -2904,10 +3154,8 @@ const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string
   { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
 
-const QUOTE_NAVY = "#020040";
-
-/** Horizontal pipeline stepper — compact, navy active/completed, grey future. */
-function QuotePipelineStepper({ status }: { status: string }) {
+/** Segment progress — New → Bids → Approval → Payment. */
+function QuoteDrawerProgress({ status }: { status: string }) {
   const legacyMap: Record<string, number> = {
     draft: 0,
     in_survey: 1,
@@ -2922,110 +3170,122 @@ function QuotePipelineStepper({ status }: { status: string }) {
 
   if (current === -1) {
     return (
-      <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
-        <div className="flex items-center gap-2.5 px-3 py-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400">
-            <XCircle className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">Lost</p>
-            <p className="text-[10px] text-text-tertiary">Marked as rejected</p>
-          </div>
+      <div className="mt-3 flex items-center gap-2.5" aria-label="Quote stage">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+          <XCircle className="h-3.5 w-3.5" />
         </div>
-      </section>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text-primary">Lost</p>
+          <p className="text-[10px] text-fx-mute">Marked as rejected</p>
+        </div>
+      </div>
     );
   }
 
   if (current === 5) {
     return (
-      <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
-        <div className="flex items-center gap-2.5 px-3 py-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-hover text-text-secondary">
-            <Briefcase className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">Win</p>
-            <p className="text-[10px] text-text-tertiary">Converted to job · continue in Jobs</p>
-          </div>
+      <div className="mt-3 flex items-center gap-2.5" aria-label="Quote stage">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fx-paper-2 text-fx-slate">
+          <Briefcase className="h-3.5 w-3.5" />
         </div>
-      </section>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text-primary">Win</p>
+          <p className="text-[10px] text-fx-mute">Converted to job · continue in Jobs</p>
+        </div>
+      </div>
     );
   }
 
   const flowStep = Math.min(Math.max(current, 0), n - 1);
-  const headline = statusLabels[status] ?? QUOTE_DRAWER_PIPELINE[flowStep]?.label ?? "Progress";
+  const stepLabel = statusLabels[status] ?? QUOTE_DRAWER_PIPELINE[flowStep]?.label ?? "Progress";
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
-      <div className="border-b border-border-light px-2.5 py-1.5 sm:px-3">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-          <p className="truncate text-sm font-semibold text-text-primary">{headline}</p>
-          <span className="shrink-0 text-[10px] font-medium tabular-nums text-text-tertiary">
-            Step {flowStep + 1} of {n}
-          </span>
-        </div>
+    <div className="mt-3 flex items-center gap-2.5" aria-label="Quote stage">
+      <div className="flex flex-1 gap-1" role="list">
+        {QUOTE_DRAWER_PIPELINE.map((step, idx) => {
+          const isPast = idx < flowStep;
+          const isCurrent = idx === flowStep;
+          return (
+            <div
+              key={step.id}
+              role="listitem"
+              aria-current={isCurrent ? "step" : undefined}
+              className={cn(
+                "h-[3px] flex-1 rounded-full",
+                isPast && "bg-fx-coral",
+                isCurrent && "bg-[linear-gradient(to_right,var(--color-fx-coral)_50%,var(--color-fx-paper-2)_50%)] dark:bg-[linear-gradient(to_right,var(--color-fx-coral)_50%,rgba(255,255,255,0.1)_50%)]",
+                !isPast && !isCurrent && "bg-fx-paper-2 dark:bg-white/10",
+              )}
+            />
+          );
+        })}
       </div>
-      <div className="px-1 py-1.5 sm:px-1.5">
-        <ol
-          className="flex w-full items-start gap-0 overflow-x-auto pb-0.5 [scrollbar-width:thin] min-[400px]:grid min-[400px]:grid-cols-4 min-[400px]:overflow-visible"
-          role="list"
-        >
-          {QUOTE_DRAWER_PIPELINE.map((step, idx) => {
-            const isPast = idx < flowStep;
-            const isCurrent = idx === flowStep;
-            const Icon = step.icon;
-            return (
-              <li
-                key={step.id}
-                className="relative flex min-w-[3rem] flex-1 flex-col items-center px-0.5 text-center min-[400px]:min-w-0"
-                aria-current={isCurrent ? "step" : undefined}
-              >
-                {idx > 0 ? (
-                  <div
-                    className="absolute left-0 top-[10px] hidden h-px w-1/2 -translate-x-1/2 bg-border min-[400px]:block"
-                    aria-hidden
-                  />
-                ) : null}
-                <div className="relative z-[1] flex flex-col items-center gap-0.5">
-                  {isPast ? (
-                    <span
-                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 text-white shadow-sm"
-                      style={{ borderColor: QUOTE_NAVY, backgroundColor: QUOTE_NAVY }}
-                    >
-                      <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
-                    </span>
-                  ) : (
-                    <span
-                      className={cn(
-                        "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 transition-colors",
-                        isCurrent ? "text-white shadow-sm" : "border-[#D1D5DB] bg-transparent text-text-tertiary dark:border-neutral-600",
-                      )}
-                      style={isCurrent ? { borderColor: QUOTE_NAVY, backgroundColor: QUOTE_NAVY } : undefined}
-                    >
-                      <Icon className="h-2.5 w-2.5 shrink-0" strokeWidth={2} aria-hidden />
-                    </span>
-                  )}
-                  <span
-                    className={cn(
-                      "max-w-[5rem] text-[10px] leading-tight text-balance min-[400px]:max-w-none",
-                      isCurrent ? "font-semibold" : isPast ? "font-medium" : "font-medium text-text-tertiary",
-                    )}
-                    style={
-                      isCurrent || isPast
-                        ? { color: QUOTE_NAVY }
-                        : undefined
-                    }
-                  >
-                    {step.short}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-    </section>
+      <p className="shrink-0 whitespace-nowrap text-[11px] uppercase tracking-wide text-fx-mute">
+        Step <b className="font-semibold text-fx-coral">{flowStep + 1}</b> · {stepLabel}
+      </p>
+    </div>
   );
+}
+
+/** 3-column pricing summary strip (Total / Your cost / Margin). */
+function QuoteDrawerStatStrip({
+  totalPrice,
+  partnerCost,
+  marginPct,
+}: {
+  totalPrice: number;
+  partnerCost: number;
+  marginPct: number;
+}) {
+  return (
+    <div
+      className="grid shrink-0 grid-cols-[1.25fr_1fr_1fr] border-b border-fx-line bg-fx-paper dark:bg-surface-secondary/30"
+      role="region"
+      aria-label="Proposal summary"
+    >
+      <div className="min-w-0 border-r border-fx-line px-7 py-3">
+        <p className="text-[10.5px] uppercase tracking-[0.06em] text-fx-mute">Total Price</p>
+        <p className="mt-0.5 flex items-baseline gap-1.5 text-[19px] font-semibold tabular-nums tracking-tight text-fx-ink">
+          {formatCurrency(totalPrice)}
+          <span className="self-center rounded-full bg-fx-green-50 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-fx-green dark:bg-emerald-950/40 dark:text-emerald-300">
+            Inc VAT
+          </span>
+        </p>
+      </div>
+      <div className="min-w-0 border-r border-fx-line px-5 py-3">
+        <p className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.06em] text-fx-mute">
+          <Wallet className="h-3 w-3 opacity-70" aria-hidden />
+          Your cost
+        </p>
+        <p className="mt-0.5 text-[19px] font-semibold tabular-nums tracking-tight text-fx-ink">
+          {formatCurrency(partnerCost)}
+        </p>
+      </div>
+      <div className="min-w-0 px-5 py-3">
+        <p className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.06em] text-fx-mute">
+          <Percent className="h-3 w-3 opacity-70" aria-hidden />
+          Margin %
+        </p>
+        <p
+          className={cn(
+            "mt-0.5 text-[19px] font-semibold tabular-nums tracking-tight",
+            marginPct > 0
+              ? "text-fx-green dark:text-emerald-400"
+              : marginPct === 0
+                ? "text-fx-amber dark:text-amber-400"
+                : "text-fx-red dark:text-red-400",
+          )}
+        >
+          {marginPct}%
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** @deprecated Use QuoteDrawerProgress — kept as alias during migration. */
+function QuotePipelineStepper({ status }: { status: string }) {
+  return <QuoteDrawerProgress status={status} />;
 }
 
 /** Draft drawer: routing intake until user opens Partner bids or Manual build modal. */
@@ -3036,6 +3296,7 @@ function isDraftRoutingPhase(q: Quote): boolean {
 /* ========== QUOTE DETAIL DRAWER ========== */
 function QuoteDetailDrawer({
   quote,
+  listStatus,
   pendingInitialTab,
   onConsumePendingInitialTab,
   pendingOpenInviteForQuoteId,
@@ -3047,6 +3308,8 @@ function QuoteDetailDrawer({
   onApproveQuote,
 }: {
   quote: Quote;
+  /** Active quotes list tab — drives simplified Ready to send footer. */
+  listStatus?: string;
   pendingInitialTab?: "overview" | "bids" | null;
   onConsumePendingInitialTab?: () => void;
   /** After “New bidding”, open Invite Partners once this drawer shows the newly created routing draft (`quote.id` matches). */
@@ -3815,9 +4078,18 @@ function QuoteDetailDrawer({
         ]
       : [
           { id: "overview", label: "Review & Send" },
-          { id: "bids", label: "Bids" },
+          {
+            id: "bids",
+            label: "Bids",
+            ...(bidsReceivedCount > 0 ? { count: bidsReceivedCount } : {}),
+          },
           { id: "history", label: "History" },
         ];
+
+  const showProposalStatStrip =
+    !routingDraft &&
+    tab === "overview" &&
+    ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status);
 
   const saveRoutingJobDetails = useCallback(async (): Promise<boolean> => {
     const title = normalizeTypeOfWork(routingTitleDraft).trim();
@@ -4465,17 +4737,19 @@ function QuoteDetailDrawer({
             ` Lines 1–2: partner unit costs come from the selected bid (locked); customer unit sell defaults to ${Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell. Use the scale below to adjust sell; edit rows directly if needed.`,
           );
 
+  const readyToSendContext = listStatus === "ready_to_send" || isQuoteReadyToSend(quote);
+
   /** Pinned below scroll — avoids flex “dead space” above actions. */
   const quoteDrawerFooter =
     routingDraft && tab === "overview" ? (
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Choose how to continue</p>
-        <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+        <p className="mb-2.5 text-[11px] font-medium uppercase tracking-[0.07em] text-fx-mute">Choose how to continue</p>
+        <div className="flex flex-col gap-2.5">
+          <div className="grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-2">
             <Button
               type="button"
               size="sm"
-              className="border-0 bg-[#ED4B00] text-white hover:bg-[#d84300]"
+              className="border-0 bg-fx-coral text-white hover:bg-fx-coral-h"
               icon={<Users className="h-3.5 w-3.5" />}
               onClick={() => void prepareSendToBid()}
             >
@@ -4519,40 +4793,77 @@ function QuoteDetailDrawer({
           </Button>
         </div>
       </div>
+    ) : readyToSendContext && tab === "overview" && !routingDraft ? (
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="text-fx-ink sm:min-w-[9rem]"
+          icon={<Download className="h-3.5 w-3.5" />}
+          onClick={() => {
+            const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+            const a = document.createElement("a");
+            a.href = url;
+            a.rel = "noopener";
+            a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          }}
+        >
+          Download PDF
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          className="border-0 bg-fx-coral hover:bg-fx-coral-h sm:min-w-[9rem]"
+          disabled={sendState === "sending" || proposalSaving || !sendStep1Ready || !sendStep2Ready || !sendStep3Ready}
+          icon={
+            sendState === "sending" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )
+          }
+          onClick={() => void handleSendToCustomer()}
+        >
+          {sendState === "sending" ? "Sending…" : "Send to customer"}
+        </Button>
+      </div>
     ) : (tab === "overview" || tab === "bids") && !routingDraft ? (
-      <div className="space-y-3">
+      <div className="space-y-3.5">
         {quote.request_id &&
         !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
-          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5 dark:bg-card/40">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-fx-line bg-fx-paper px-3 py-2.5 dark:bg-surface-secondary/30">
             <input
               type="checkbox"
               checked={emailAttachRequestPhotos}
               onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
-              className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
+              className="h-4 w-4 shrink-0 rounded border-fx-line text-fx-coral focus:ring-fx-coral/20"
             />
-            <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
+            <span className="min-w-0 flex-1 text-[13px] font-medium text-fx-ink">Attach request site photos to customer email</span>
             <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
           </label>
         ) : null}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border-light bg-card dark:bg-card/80">
-              <FileText className="h-4 w-4 text-text-tertiary" aria-hidden />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-semibold text-text-primary">Customer PDF</p>
-                <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
-              </div>
-              <p className="text-[11px] text-text-tertiary">Uses saved figures</p>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-fx-line bg-fx-paper dark:bg-surface-secondary/40">
+            <FileText className="h-4 w-4 text-fx-slate" aria-hidden />
           </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1">
+              <p className="text-[13.5px] font-medium text-fx-ink">Customer PDF</p>
+              <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
+            </div>
+            <p className="text-xs text-fx-mute">Uses saved figures</p>
+          </div>
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="text-text-primary"
+              className="text-fx-ink"
               onClick={() => {
                 window.open(
                   `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
@@ -4567,7 +4878,7 @@ function QuoteDetailDrawer({
               type="button"
               variant="outline"
               size="sm"
-              className="text-text-primary"
+              className="text-fx-ink"
               icon={<Download className="h-3.5 w-3.5" />}
               onClick={() => {
                 const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
@@ -4584,12 +4895,11 @@ function QuoteDetailDrawer({
             </Button>
           </div>
         </div>
-        <div className="space-y-2 pb-0.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Move this quote</p>
+        <div className="space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-fx-mute">Move this quote</p>
           <div
             className={cn(
-              "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",
-              "[scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
+              "flex flex-wrap items-center gap-2",
               "[&_button]:shrink-0",
             )}
           >
@@ -4676,6 +4986,7 @@ function QuoteDetailDrawer({
       open={!!quote}
       onClose={onClose}
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
+      titleClassName="font-mono text-[17px] font-medium tracking-tight"
       titleAddon={
         quote.external_source === "zendesk" && quote.external_ref?.trim() ? (
           <ZendeskTicketBadge
@@ -4687,81 +4998,41 @@ function QuoteDetailDrawer({
         ) : null
       }
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
-      width="w-full max-w-[440px]"
+      headerExtra={!routingDraft ? <QuoteDrawerProgress status={quote.status} /> : null}
+      headerPadding="wide"
+      width="w-full max-w-[620px]"
       footer={quoteDrawerFooter}
-      footerClassName="bg-card px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-surface-secondary/40"
+      footerClassName="bg-surface px-7 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(2,0,64,0.04)] dark:bg-surface-secondary/40"
     >
-      <div className="min-w-0">
-        <Tabs
-          tabs={drawerTabs}
-          activeTab={tab}
-          onChange={setTab}
-          className="px-4 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-[13px]"
-        />
-        {tab === "bids" && quote.quote_type === "partner" && quote.status === "bidding" && (
-          <div
-            className="mx-4 mt-2 rounded-xl border border-border-light bg-card/90 px-2.5 py-2.5 dark:bg-surface-secondary/30"
-            role="region"
-            aria-label="Proposal summary"
-          >
-            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
-              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
-                <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] tabular-nums text-text-tertiary">
-                  <span className="shrink-0 whitespace-nowrap rounded-sm bg-emerald-100 px-1 py-[1px] text-[8px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                    Inc VAT
-                  </span>
-                </p>
-              </div>
-              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                <div className="flex items-center gap-1 text-text-tertiary">
-                  <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                  <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                </div>
-                <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary">
-                  {formatCurrency(effectiveProposalPartnerTotal)}
-                </p>
-              </div>
-              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                <div className="flex items-center gap-1 text-text-tertiary">
-                  <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                  <span className="text-[9px] font-medium uppercase tracking-wide">Margin %</span>
-                </div>
-                <p
-                  className={cn(
-                    "mt-0.5 text-base font-bold tabular-nums",
-                    proposalSummaryMarginPct > 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : proposalSummaryMarginPct === 0
-                        ? "text-amber-600 dark:text-amber-400"
-                        : "text-red-600 dark:text-red-400",
-                  )}
-                >
-                  {proposalSummaryMarginPct}%
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} variant="quote-drawer" />
+        {showProposalStatStrip ? (
+          <QuoteDrawerStatStrip
+            totalPrice={lineTotal}
+            partnerCost={effectiveProposalPartnerTotal}
+            marginPct={proposalSummaryMarginPct}
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
         {/* OVERVIEW TAB: Status + Details together */}
         {tab === "overview" && (
-            <div className="space-y-3 p-3 sm:p-4">
-              {!routingDraft ? <QuotePipelineStepper status={quote.status} /> : null}
+            <div className="space-y-0">
               {quote.status === "rejected" && quote.rejection_reason?.trim() ? (
-                <div className="rounded-lg border border-red-200/80 bg-red-50/70 px-3 py-2 text-xs leading-snug text-text-secondary dark:border-red-900/40 dark:bg-red-950/25">
-                  {quote.rejection_reason}
+                <div className="border-b border-fx-line px-7 py-4">
+                  <div className="rounded-lg border border-red-200/80 bg-red-50/70 px-3 py-2 text-xs leading-snug text-text-secondary dark:border-red-900/40 dark:bg-red-950/25">
+                    {quote.rejection_reason}
+                  </div>
                 </div>
               ) : null}
 
               <div
                 key={`client-on-quote-${quote.id}`}
-                className="rounded-lg border border-border-light bg-card shadow-sm dark:border-border dark:bg-card"
+                className="border-b border-fx-line px-7 py-5"
               >
-                <div className="flex items-start gap-2 px-2.5 pt-2.5 pb-1 sm:px-3">
+                <div className="mb-3.5 flex items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Account on this quote</p>
+                      <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-fx-mute">Account on this quote</p>
                       <FixfyHintIcon
                         text={
                           quote.status === "awaiting_customer"
@@ -4770,15 +5041,10 @@ function QuoteDetailDrawer({
                         }
                       />
                     </div>
-                    <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
-                      {quote.status === "awaiting_customer"
-                        ? "PDF will be sent to the account below."
-                        : "This quote will be sent to the account email below."}
-                    </p>
                   </div>
                   <button
                     type="button"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border-light bg-card px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-surface-hover"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12.5px] font-medium text-fx-slate transition-colors hover:bg-fx-paper-2 hover:text-fx-ink"
                     aria-expanded={clientOnQuoteOpen}
                     aria-label={clientOnQuoteOpen ? "Hide change account" : "Change account or property"}
                     onClick={() => setClientOnQuoteOpen((o) => !o)}
@@ -4791,52 +5057,57 @@ function QuoteDetailDrawer({
                   </button>
                 </div>
 
-                <div className="px-2.5 pb-2.5 sm:px-3">
-                  <div className="min-w-0 rounded-md border border-border-light/90 bg-surface-hover/35 px-2 py-2 dark:bg-surface-secondary/20">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Account</p>
-                    <div className="mt-1.5 flex items-start gap-2">
-                      <div
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
-                        aria-hidden
-                      >
-                        <Building2 className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        {accountOnQuoteHeader.mode === "resolved" ? (
-                          <>
-                            <p className="truncate text-sm font-semibold leading-tight text-text-primary">
-                              {accountOnQuoteHeader.companyName}
-                            </p>
-                            <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{accountOnQuoteHeader.email}</p>
-                            {accountOnQuoteHeader.financeEmail &&
-                            accountOnQuoteHeader.financeEmail.toLowerCase() !== accountOnQuoteHeader.email.toLowerCase() ? (
-                              <p className="mt-1 text-[10px] leading-snug text-text-tertiary">
-                                Finance · <span className="text-text-secondary break-all">{accountOnQuoteHeader.financeEmail}</span>
-                              </p>
-                            ) : null}
-                          </>
-                        ) : accountOnQuoteHeader.mode === "denorm" ? (
-                          <>
-                            <p className="truncate text-sm font-semibold leading-tight text-text-primary">{accountOnQuoteHeader.title}</p>
-                            {accountOnQuoteHeader.email ? (
-                              <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{accountOnQuoteHeader.email}</p>
-                            ) : null}
-                          </>
-                        ) : (
-                          <p className="text-[11px] italic text-text-tertiary">No linked account</p>
-                        )}
-                        <p className="mt-1.5 break-words border-t border-border-light/70 pt-1.5 text-[11px] leading-snug text-text-secondary">
-                          {bidPayloadTrimmedString(quoteClientPick.property_address as unknown) ||
-                            bidPayloadTrimmedString(quote.property_address as unknown) ||
-                            "—"}
+                <div className="flex items-start gap-3">
+                  <div
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-fx-coral-50 text-sm font-semibold text-fx-coral-p dark:bg-fx-coral-50/20"
+                    aria-hidden
+                  >
+                    {accountOnQuoteHeader.mode === "resolved"
+                      ? accountOnQuoteHeader.companyName.slice(0, 2).toUpperCase()
+                      : accountOnQuoteHeader.mode === "denorm"
+                        ? accountOnQuoteHeader.title.slice(0, 2).toUpperCase()
+                        : <Building2 className="h-4 w-4" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {accountOnQuoteHeader.mode === "resolved" ? (
+                      <>
+                        <p className="truncate text-[15px] font-semibold tracking-tight text-fx-ink">
+                          {accountOnQuoteHeader.companyName}
                         </p>
-                      </div>
-                    </div>
+                        <p className="mt-0.5 break-all text-[13px] leading-snug text-fx-slate">{accountOnQuoteHeader.email}</p>
+                        {accountOnQuoteHeader.financeEmail &&
+                        accountOnQuoteHeader.financeEmail.toLowerCase() !== accountOnQuoteHeader.email.toLowerCase() ? (
+                          <p className="mt-1 text-[12.5px] leading-snug text-fx-mute">
+                            Finance · <span className="break-all text-fx-slate">{accountOnQuoteHeader.financeEmail}</span>
+                          </p>
+                        ) : null}
+                      </>
+                    ) : accountOnQuoteHeader.mode === "denorm" ? (
+                      <>
+                        <p className="truncate text-[15px] font-semibold tracking-tight text-fx-ink">{accountOnQuoteHeader.title}</p>
+                        {accountOnQuoteHeader.email ? (
+                          <p className="mt-0.5 break-all text-[13px] leading-snug text-fx-slate">{accountOnQuoteHeader.email}</p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="text-[13px] italic text-fx-mute">No linked account</p>
+                    )}
+                    <p className="mt-2.5 break-words text-[13px] leading-snug text-fx-slate">
+                      {bidPayloadTrimmedString(quoteClientPick.property_address as unknown) ||
+                        bidPayloadTrimmedString(quote.property_address as unknown) ||
+                        "—"}
+                    </p>
+                    <p className="mt-2.5 flex items-center gap-1.5 text-[12px] text-fx-mute">
+                      <Mail className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+                      {quote.status === "awaiting_customer"
+                        ? "PDF will be sent to the account above."
+                        : "This quote will be sent to the account email above."}
+                    </p>
                   </div>
                 </div>
 
                 {clientOnQuoteOpen ? (
-                  <div className="space-y-3 border-t border-dashed border-border-light px-2.5 pb-3 pt-2.5 sm:px-3 dark:border-border">
+                  <div className="mt-4 space-y-3 border-t border-dashed border-fx-line pt-4">
                     <div className="flex items-center gap-1.5">
                       <p className="text-[11px] font-medium text-text-secondary">Change account, client or property</p>
                       <FixfyHintIcon text="Pick a different account. You can optionally attach a contact client; otherwise we save just the site address." />
@@ -5041,7 +5312,7 @@ function QuoteDetailDrawer({
               </div>
 
               {routingDraft ? (
-                <div className="rounded-xl border border-border-light bg-card/90 p-3 space-y-3 dark:bg-surface-secondary/25">
+                <div className="space-y-3 border-b border-fx-line px-7 py-5">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Job on this draft</p>
                     <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
@@ -5279,7 +5550,7 @@ function QuoteDetailDrawer({
               )}
 
               {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
-                <div className="space-y-3 rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-2.5">
+                <div className="space-y-4 border-b border-fx-line px-7 py-5">
                   {quote.status === "awaiting_customer" && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
@@ -5303,10 +5574,10 @@ function QuoteDetailDrawer({
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#020040]" aria-hidden />
-                    <span className="text-xs font-semibold text-text-primary">Customer proposal</span>
+                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-fx-navy" aria-hidden />
+                    <span className="text-sm font-semibold text-fx-ink">Customer proposal</span>
                     {["draft", "in_survey", "bidding"].includes(quote.status) ? (
-                      <span className="rounded-full bg-[#ED4B00]/12 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#C4461F]">
+                      <span className="rounded-full bg-fx-coral-50 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-fx-coral-p">
                         Required before send
                       </span>
                     ) : quote.status === "awaiting_payment" ? (
@@ -5322,57 +5593,12 @@ function QuoteDetailDrawer({
                     ) : null}
                   </div>
 
-                  <div
-                    className="rounded-xl border border-border-light bg-card/90 px-2.5 py-2.5 dark:bg-surface-secondary/30"
-                    role="region"
-                    aria-label="Quote summary"
-                  >
-                    <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
-                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                        <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
-                        <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
-                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] tabular-nums text-text-tertiary">
-                          <span className="shrink-0 whitespace-nowrap rounded-sm bg-emerald-100 px-1 py-[1px] text-[8px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                            Inc VAT
-                          </span>
-                        </p>
-                      </div>
-                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                        <div className="flex items-center gap-1 text-text-tertiary">
-                          <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                          <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                        </div>
-                        <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary">
-                          {formatCurrency(effectiveProposalPartnerTotal)}
-                        </p>
-                      </div>
-                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                        <div className="flex items-center gap-1 text-text-tertiary">
-                          <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                          <span className="text-[9px] font-medium uppercase tracking-wide">Margin %</span>
-                        </div>
-                        <p
-                          className={cn(
-                            "mt-0.5 text-base font-bold tabular-nums",
-                            proposalSummaryMarginPct > 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : proposalSummaryMarginPct === 0
-                                ? "text-amber-600 dark:text-amber-400"
-                                : "text-red-600 dark:text-red-400",
-                          )}
-                        >
-                          {proposalSummaryMarginPct}%
-                        </p>
-                      </div>
+                  <div className="rounded-lg border border-fx-line bg-fx-paper px-4 py-3.5 dark:bg-surface-secondary/30">
+                    <div className="mb-3 flex items-baseline gap-2">
+                      <p className="text-[13px] font-medium text-fx-slate">Customer sell scale</p>
+                      <span className="ml-auto font-mono text-sm font-medium tabular-nums text-fx-ink">{proposalScalePercent}%</span>
                     </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-xl border border-border-light bg-card/80 p-2.5 dark:bg-surface-secondary/30">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Customer sell scale</p>
-                      <span className="text-xs font-bold tabular-nums text-[#020040]">{proposalScalePercent}%</span>
-                    </div>
-                    <p className="text-[10px] text-text-tertiary">
+                    <p className="mb-3 text-xs text-fx-mute">
                       {Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin baseline
                     </p>
                     <input
@@ -5387,11 +5613,12 @@ function QuoteDetailDrawer({
                         setProposalScalePercent(v);
                         recalcCustomerLinePricesFromPartnerScale(v);
                       }}
-                      className="h-2 w-full cursor-pointer appearance-none rounded-full bg-border accent-[#020040] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-700"
+                      className="quote-drawer-range block w-full"
+                      style={{ "--qd-fill": `${(proposalScalePercent / 1000) * 100}%` } as React.CSSProperties}
                     />
                     <div
                       className={cn(
-                        "grid grid-cols-1 gap-2 pt-1",
+                        "mt-3 grid grid-cols-1 gap-2 pt-1",
                         lineItems.length > 1 ? "sm:grid-cols-2" : "sm:grid-cols-1",
                       )}
                     >
@@ -5443,15 +5670,16 @@ function QuoteDetailDrawer({
                   <button
                     type="button"
                     onClick={() => setProposalDetailsExpanded((v) => !v)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-dashed border-border-light bg-surface-hover/40 px-3 py-2.5 text-left text-xs font-medium text-text-secondary hover:bg-surface-hover/80 transition-colors"
+                    className="flex w-full items-center gap-2.5 py-1 text-left"
                     aria-expanded={proposalDetailsExpanded}
                   >
-                    <span>
+                    <span className="text-sm font-semibold tracking-tight text-fx-ink">
                       {proposalDetailsExpanded ? "Hide" : "Show"} scope, line items, dates &amp; email
                     </span>
+                    <span className="text-xs text-fx-mute">Proposal details</span>
                     <ChevronDown
                       className={cn(
-                        "h-4 w-4 shrink-0 text-text-tertiary transition-transform",
+                        "ml-auto h-4 w-4 shrink-0 text-fx-mute transition-transform",
                         proposalDetailsExpanded && "rotate-180",
                       )}
                       aria-hidden
@@ -5726,7 +5954,7 @@ function QuoteDetailDrawer({
                       disabled={proposalSaving}
                       loading={proposalSaving}
                       onClick={() => void saveProposalDraft()}
-                      className="!bg-[#C4461F] hover:!bg-[#a83a19] !shadow-md !shadow-[#C4461F]/25 focus-visible:!ring-[#C4461F]/40 border-0"
+                      className="!bg-fx-coral hover:!bg-fx-coral-h !shadow-md !shadow-fx-coral/25 focus-visible:!ring-fx-coral/40 border-0"
                       icon={proposalSaving ? undefined : <Save className="h-3.5 w-3.5" />}
                     >
                       {proposalSaving ? "Saving…" : "Save Quote"}
@@ -5758,7 +5986,7 @@ function QuoteDetailDrawer({
 
           {/* BIDS TAB — Partner bids; click one to fill customer proposal (no partner notify) */}
           {tab === "bids" && (
-            <div className="space-y-3 p-3 sm:p-4">
+            <div className="space-y-4 px-7 py-5">
               {quote.quote_type === "partner" ? (
                 <PartnerBidMiniDash
                   bidsLoading={bidsLoading}
@@ -5769,7 +5997,7 @@ function QuoteDetailDrawer({
                   quotedPartnersCount={quotedPartnersCount}
                 />
               ) : null}
-              <div className="flex flex-col sm:flex-row gap-2 w-full">
+              <div className="flex flex-col gap-2.5 sm:flex-row">
                 <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="flex-1">
                   Invite more partners
                 </Button>
@@ -5908,7 +6136,7 @@ function QuoteDetailDrawer({
                     <div
                       key={bid.id}
                       className={cn(
-                        "rounded-lg border bg-surface-hover border-border-light px-1.5 py-1 transition-shadow",
+                        "rounded-lg border border-fx-line bg-surface px-4 py-3 transition-shadow",
                         isSelectedForReview &&
                           (bid.status === "submitted" || bid.status === "approved") &&
                           "border-emerald-500/45 bg-emerald-500/[0.07] ring-2 ring-emerald-500/35 shadow-sm dark:bg-emerald-950/20 dark:border-emerald-500/30",
@@ -6053,7 +6281,7 @@ function QuoteDetailDrawer({
 
           {/* DETAILS TAB — read-only snapshot of the quote sent to the customer (late-stage statuses only) */}
           {tab === "details" && (
-            <div className="space-y-4 p-3 sm:p-4">
+            <div className="space-y-4 px-7 py-5">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={statusConfig[quote.status]?.variant ?? "default"} dot>
@@ -6258,8 +6486,11 @@ function QuoteDetailDrawer({
 
         {/* HISTORY TAB */}
         {tab === "history" && (
-          <div className="p-6"><AuditTimeline entityType="quote" entityId={quote.id} /></div>
+          <div className="px-7 py-5">
+            <AuditTimeline entityType="quote" entityId={quote.id} variant="quote-drawer" />
+          </div>
         )}
+        </div>
       </div>
 
       <Modal
@@ -7639,24 +7870,50 @@ function MarginCalculator({
   };
 
   const sliderShown = Math.min(MARGIN_SLIDER_MAX_MARKUP_PCT, Math.max(5, markupPct));
+  const marginTone =
+    grossMarginPct >= 40
+      ? "text-emerald-600 dark:text-emerald-400"
+      : grossMarginPct >= 10
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-red-600 dark:text-red-400";
 
   return (
-    <div className="p-4 rounded-xl border border-border-light bg-surface-tertiary/70 dark:bg-surface-secondary dark:border-border">
-      <div className="flex items-center gap-2 mb-3">
-        <SlidersHorizontal className="h-4 w-4 text-text-secondary" />
-        <label className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">Margin calculator</label>
+    <div className="rounded-xl border border-border-light bg-gradient-to-b from-surface-hover/40 to-card p-4 dark:border-[#323a46] dark:from-[#161b24] dark:to-card/95">
+      <div className="mb-3.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border-light bg-card text-text-secondary dark:bg-[#101621]">
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+          </span>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary truncate">
+            Margin calculator
+          </p>
+        </div>
+        <FixfyHintIcon
+          text={`Drag the slider (${5}–${MARGIN_SLIDER_MAX_MARKUP_PCT}% markup on partner cost) or type a sell price. Minimum +5% markup. Margin % on sell updates as you adjust.`}
+        />
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-        <div><p className="text-[10px] text-text-secondary uppercase">Partner cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
-        <div>
-          <p className="text-[10px] text-text-secondary uppercase mb-1">Sell price</p>
+
+      <div className="mb-3.5 grid grid-cols-3 gap-2 sm:gap-2.5">
+        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-border-light/80 bg-card/90 px-2.5 py-2 sm:px-3 dark:border-[#2f3642] dark:bg-[#101621]/90">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+            Partner cost
+          </p>
+          <p className="text-base font-bold tabular-nums leading-none text-text-primary sm:text-lg">
+            {formatCurrency(cost)}
+          </p>
+        </div>
+
+        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-[#ED4B00]/25 bg-[#ED4B00]/[0.05] px-2.5 py-2 ring-1 ring-inset ring-[#ED4B00]/10 sm:px-3 dark:border-[#ED4B00]/30 dark:bg-[#ED4B00]/[0.08]">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+            Sell price
+          </p>
           {cost <= 0 ? (
-            <p className="text-sm font-bold text-primary">—</p>
+            <p className="text-base font-bold tabular-nums leading-none text-text-tertiary sm:text-lg">—</p>
           ) : (
             <Input
               type="text"
               inputMode="decimal"
-              className="text-sm font-bold h-9"
+              className="h-8 min-h-0 border-0 bg-transparent p-0 text-base font-bold tabular-nums leading-none text-text-primary shadow-none focus-visible:ring-0 sm:text-lg"
               disabled={cost <= 0}
               value={sellDraft !== null ? sellDraft : sellPrice === 0 ? "" : String(sellPrice)}
               placeholder="0.00"
@@ -7668,22 +7925,28 @@ function MarginCalculator({
               }}
             />
           )}
-          <p className="text-[10px] text-text-secondary dark:text-text-tertiary mt-1 leading-snug">
-            Slider up to +{MARGIN_SLIDER_MAX_MARKUP_PCT}% markup; you can type a higher sell price — margin % updates below (min +5% on cost).
+        </div>
+
+        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-emerald-200/70 bg-emerald-50/50 px-2.5 py-2 sm:px-3 dark:border-emerald-500/25 dark:bg-emerald-950/25">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+            Margin
+          </p>
+          <p className={cn("text-base font-bold tabular-nums leading-none sm:text-lg", marginTone)}>
+            {formatCurrency(marginValue)}
           </p>
         </div>
-        <div><p className="text-[10px] text-text-secondary uppercase">Margin</p><p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(marginValue)}</p></div>
       </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <span className="text-xs font-medium text-text-secondary">Markup on partner cost</span>
-          <span className="text-[10px] text-text-secondary">
-            Margin on sell:{" "}
-            <span className={`font-bold ${grossMarginPct >= 40 ? "text-primary" : grossMarginPct >= 10 ? "text-amber-600 dark:text-amber-400" : "text-red-500 dark:text-red-400"}`}>
-              {Math.round(grossMarginPct * 10) / 10}%
-            </span>
-            <span className="text-text-secondary font-semibold"> · {Math.round(markupPct * 10) / 10}% markup</span>
+
+      <div className="space-y-2.5 rounded-lg border border-border-light/70 bg-background/60 px-3 py-3 dark:border-[#2f3642] dark:bg-[#0f1115]/50">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary shrink-0">
+            Markup on cost
           </span>
+          <p className="text-right text-[11px] tabular-nums text-text-secondary leading-snug">
+            <span className={cn("font-bold", marginTone)}>{Math.round(grossMarginPct * 10) / 10}%</span>
+            <span className="text-text-tertiary"> on sell · </span>
+            <span className="font-semibold text-text-primary">{Math.round(markupPct * 10) / 10}% markup</span>
+          </p>
         </div>
         <input
           type="range"
@@ -7693,22 +7956,24 @@ function MarginCalculator({
           value={sliderShown}
           onChange={(e) => handleSliderChange(Number(e.target.value))}
           disabled={cost <= 0}
-          className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-50 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
+          className="block h-2 w-full cursor-pointer appearance-none rounded-full bg-border accent-[#ED4B00] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-700"
         />
-        <div className="flex justify-between text-[10px] text-text-secondary gap-1 flex-wrap">
-          <span className="tabular-nums">5%</span>
-          <span className="text-amber-600 dark:text-amber-400 font-medium">10% min margin</span>
-          <span className="text-primary font-medium">40% target margin</span>
-          <span className="tabular-nums">{MARGIN_SLIDER_MAX_MARKUP_PCT}%</span>
+        <div className="grid grid-cols-4 items-center gap-1 text-[9px] font-medium leading-none">
+          <span className="tabular-nums text-text-tertiary">5%</span>
+          <span className="text-center text-amber-600 dark:text-amber-400">10% min</span>
+          <span className="text-center text-[#ED4B00]">40% target</span>
+          <span className="text-right tabular-nums text-text-tertiary">{MARGIN_SLIDER_MAX_MARKUP_PCT}%</span>
         </div>
-        {markupPct > MARGIN_SLIDER_MAX_MARKUP_PCT && (
-          <p className="text-[10px] text-text-secondary">
-            Markup is above the slider range ({Math.round(markupPct * 10) / 10}%); drag the slider to bring it back to {MARGIN_SLIDER_MAX_MARKUP_PCT}% or less.
+        {markupPct > MARGIN_SLIDER_MAX_MARKUP_PCT ? (
+          <p className="text-[10px] leading-snug text-text-tertiary">
+            Markup above slider range ({Math.round(markupPct * 10) / 10}%) — drag back to {MARGIN_SLIDER_MAX_MARKUP_PCT}% or less.
           </p>
-        )}
-        {grossMarginPct < 40 && cost > 0 && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin on sell (40%)</p>
-        )}
+        ) : null}
+        {grossMarginPct < 40 && cost > 0 ? (
+          <p className="text-[10px] font-medium leading-snug text-amber-600 dark:text-amber-400">
+            Below standard margin on sell (40%)
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -7735,10 +8000,383 @@ function toggleCreateQuotePartnerSelection(
   });
 }
 
+/** Snapshot passed to the post-generate review modal (create form may unmount). */
+type ManualQuoteReviewSnapshot = {
+  lineItems: ProposalLineRow[];
+  scopeText: string;
+  startDate1: string;
+  startDate2: string;
+  depositRequiredEnabled: boolean;
+  depositPercent: string;
+  depositInputMode: "percent" | "amount";
+  depositAmountInput: string;
+  formTitle: string;
+  clientAddress: ClientAndAddressValue;
+  addContactClient: boolean;
+  manualSiteAddress: string;
+  selectedAccountId: string;
+  selectedAccountLabel: string;
+  marginPct: number;
+  lineSellTotal: number;
+  linePartnerTotal: number;
+};
+
+async function executeManualQuoteSend(quote: Quote, snapshot: ManualQuoteReviewSnapshot): Promise<Quote> {
+  if (!snapshot.lineItems.length) {
+    throw new Error("Add at least one line item before sending.");
+  }
+  const scopeFromLineItems = snapshot.lineItems
+    .map((li) => li.description.trim())
+    .filter(Boolean)
+    .join("\n");
+  const scopeSend =
+    bidPayloadTrimmedString(snapshot.scopeText as unknown).trim() || scopeFromLineItems.trim();
+  if (!scopeSend) {
+    throw new Error("Add scope or line descriptions before sending.");
+  }
+  if (!normalizeCalendarDateToYmd(snapshot.startDate1) && !normalizeCalendarDateToYmd(snapshot.startDate2)) {
+    throw new Error("Choose at least one proposed start date before sending.");
+  }
+  let depPctSend = 0;
+  let depAmtSend = 0;
+  if (snapshot.depositRequiredEnabled) {
+    if (snapshot.depositInputMode === "amount") {
+      const raw = Math.max(0, Number(snapshot.depositAmountInput) || 0);
+      depAmtSend =
+        snapshot.lineSellTotal > 0
+          ? Math.min(snapshot.lineSellTotal, Math.round(raw * 100) / 100)
+          : 0;
+      depPctSend = inferDepositPercentFromLegacy(depAmtSend, snapshot.lineSellTotal);
+    } else {
+      depPctSend = clampDepositPercent(Number(snapshot.depositPercent));
+      depAmtSend = depositAmountFromPercent(snapshot.lineSellTotal, depPctSend);
+    }
+    if (!Number.isFinite(depPctSend) || depPctSend < 0 || depPctSend > 100) {
+      throw new Error("Set a valid deposit before sending.");
+    }
+  }
+
+  const accountDisplayName = snapshot.selectedAccountLabel || "Account";
+  const noClientAddress = snapshot.addContactClient
+    ? snapshot.clientAddress.property_address
+    : snapshot.manualSiteAddress.trim();
+  const patch: Partial<Quote> = {
+    title: normalizeTypeOfWork(snapshot.formTitle),
+    ...(snapshot.addContactClient
+      ? {
+          client_id: snapshot.clientAddress.client_id,
+          client_address_id: snapshot.clientAddress.client_address_id,
+          client_name: snapshot.clientAddress.client_name,
+          client_email: snapshot.clientAddress.client_email ?? "",
+          property_address: noClientAddress,
+        }
+      : {
+          client_name: accountDisplayName,
+          client_email: "",
+          property_address: noClientAddress,
+          ...(snapshot.selectedAccountId.trim() ? { source_account_id: snapshot.selectedAccountId.trim() } : {}),
+        }),
+    total_value: snapshot.lineSellTotal > 0 ? snapshot.lineSellTotal : snapshot.linePartnerTotal,
+    cost: snapshot.linePartnerTotal,
+    partner_cost: snapshot.linePartnerTotal,
+    sell_price: snapshot.lineSellTotal > 0 ? snapshot.lineSellTotal : snapshot.linePartnerTotal,
+    margin_percent: snapshot.marginPct,
+    scope: scopeSend,
+    start_date_option_1: snapshot.startDate1 || undefined,
+    start_date_option_2: snapshot.startDate2 || undefined,
+    deposit_percent: depPctSend,
+    deposit_required: depAmtSend,
+    ...(snapshot.formTitle.trim() ? { service_type: snapshot.formTitle.trim() } : {}),
+    draft_route_completed: true,
+    quote_type: "internal",
+  };
+
+  const supabase = getSupabase();
+  await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
+  const rows = snapshot.lineItems.map((li, i) => ({
+    quote_id: quote.id,
+    description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
+    quantity: Number(li.quantity) || 1,
+    unit_price: Number(li.unitPrice) || 0,
+    partner_unit_cost: Number(li.partnerUnitCost) || 0,
+    sort_order: i,
+    notes: bidPayloadTrimmedString(li.notes as unknown) || null,
+  }));
+  await insertQuoteLineItemsResilient(supabase, rows);
+
+  let rowForSend = await updateQuote(quote.id, patch);
+  const recipient = bidPayloadTrimmedString(
+    (
+      await getQuoteProposalRecipientEmail(supabase, {
+        clientId: rowForSend.client_id?.trim() || null,
+        propertyId: rowForSend.property_id?.trim() || null,
+        accountId: rowForSend.source_account_id?.trim() || null,
+        fallbackName: rowForSend.client_name ?? null,
+        fallbackEmail: rowForSend.client_email ?? null,
+      })
+    ) as unknown,
+  );
+  if (!recipient.includes("@")) {
+    throw new Error(
+      'No customer inbox found — pick a contact with email, add a Billing email on the account, or set Billing on Accounts to route quotes to “This account” with a Finance email.',
+    );
+  }
+  if (recipient !== bidPayloadTrimmedString(rowForSend.client_email as unknown)) {
+    rowForSend = await updateQuote(rowForSend.id, { client_email: recipient });
+  }
+
+  const items = snapshot.lineItems.map((li, idx) => {
+    const qty = Number(li.quantity) || 1;
+    const unit = Number(li.unitPrice) || 0;
+    return {
+      description: lineItemDescriptionForCustomer(li, idx),
+      quantity: qty,
+      unitPrice: unit,
+      total: qty * unit,
+    };
+  });
+  const resp = await fetch("/api/quotes/send-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      quoteId: rowForSend.id,
+      recipientEmail: recipient,
+      recipientName: bidPayloadTrimmedString(rowForSend.client_name as unknown),
+      items,
+      scope: scopeSend,
+      attachRequestPhotos: false,
+    }),
+  });
+  const data = (await resp.json()) as { emailSent?: boolean; reason?: string; error?: string };
+  if (!resp.ok) {
+    throw new Error(typeof data.error === "string" ? data.error : "Failed to send quote email");
+  }
+  if (!data.emailSent) {
+    toast.warning(data.reason ?? "Quote saved — email was not sent. Open the quote to resend.");
+  } else {
+    toast.success(
+      `Quote ${rowForSend.reference} — PDF sent to ${recipient} (routing follows the account Billing setting).`,
+    );
+  }
+  return (await getQuote(rowForSend.id)) ?? rowForSend;
+}
+
+function downloadCustomerQuotePdf(quote: Quote) {
+  const refLabel = bidPayloadTrimmedString(quote.reference as unknown) || "quote";
+  const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noopener";
+  a.download = `${refLabel.replace(/\//g, "-")}_quote.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function ManualQuoteReviewModal({
+  open,
+  quote,
+  snapshot,
+  sending,
+  onClose,
+  onSend,
+}: {
+  open: boolean;
+  quote: Quote | null;
+  snapshot: ManualQuoteReviewSnapshot | null;
+  sending: boolean;
+  onClose: () => void;
+  onSend: () => void | Promise<void>;
+}) {
+  if (!quote || !snapshot) return null;
+
+  const refLabel = bidPayloadTrimmedString(quote.reference as unknown) || "quote";
+  const scopeFromLineItems = snapshot.lineItems
+    .map((li) => li.description.trim())
+    .filter(Boolean)
+    .join("\n");
+  const scopeDisplay =
+    bidPayloadTrimmedString(snapshot.scopeText as unknown).trim() || scopeFromLineItems.trim() || "—";
+  const clientLabel = snapshot.addContactClient
+    ? snapshot.clientAddress.client_name?.trim() || "—"
+    : snapshot.selectedAccountLabel || "Account";
+  const addressLabel = snapshot.addContactClient
+    ? snapshot.clientAddress.property_address?.trim() || "—"
+    : snapshot.manualSiteAddress.trim() || "—";
+  const start1 = normalizeCalendarDateToYmd(snapshot.startDate1);
+  const start2 = normalizeCalendarDateToYmd(snapshot.startDate2);
+  const depositLabel = snapshot.depositRequiredEnabled
+    ? snapshot.depositInputMode === "amount"
+      ? formatCurrency(Math.max(0, Number(snapshot.depositAmountInput) || 0))
+      : `${clampDepositPercent(Number(snapshot.depositPercent))}% (${formatCurrency(
+          depositAmountFromPercent(snapshot.lineSellTotal, Number(snapshot.depositPercent)),
+        )})`
+    : "None — converts to job on accept";
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Review & send · ${refLabel}`}
+      subtitle="Check the summary and customer PDF, then email the proposal when ready."
+      size="lg"
+      scrollBody={false}
+      layout="wizard"
+      className="!max-h-[min(92dvh,880px)]"
+      footer={
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:flex-wrap">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={sending} className="w-full sm:w-auto">
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            icon={<Download className="h-3.5 w-3.5" />}
+            disabled={sending}
+            className="w-full sm:w-auto"
+            onClick={() => downloadCustomerQuotePdf(quote)}
+          >
+            Download PDF
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            icon={<MailCheck className="h-3.5 w-3.5" />}
+            loading={sending}
+            disabled={sending}
+            onClick={() => void onSend()}
+            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+          >
+            Send to customer
+          </Button>
+        </div>
+      }
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1 space-y-4">
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-3 dark:bg-card/40">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Quote summary</p>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client</dt>
+              <dd className="mt-0.5 font-medium text-text-primary">{clientLabel}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Site</dt>
+              <dd className="mt-0.5 text-text-primary leading-snug">{addressLabel}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Type of work</dt>
+              <dd className="mt-0.5 font-medium text-text-primary">{normalizeTypeOfWork(snapshot.formTitle) || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Deposit</dt>
+              <dd className="mt-0.5 text-text-primary">{depositLabel}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Scope</dt>
+              <dd className="mt-0.5 text-text-primary whitespace-pre-wrap leading-snug">{scopeDisplay}</dd>
+            </div>
+            {(start1 || start2) ? (
+              <div className="sm:col-span-2">
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Start dates</dt>
+                <dd className="mt-0.5 text-text-primary">
+                  {[start1 ? formatYmdUkDisplay(start1) : null, start2 ? formatYmdUkDisplay(start2) : null]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+
+          <div className="overflow-x-auto rounded-lg border border-border-light/80 bg-card/80">
+            <table className="w-full min-w-[320px] text-xs">
+              <thead>
+                <tr className="border-b border-border-light bg-muted/40 text-left text-[10px] uppercase tracking-wide text-text-tertiary">
+                  <th className="px-3 py-2 font-semibold">Line</th>
+                  <th className="px-3 py-2 font-semibold text-right">Qty</th>
+                  <th className="px-3 py-2 font-semibold text-right">Sell</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.lineItems.map((li, idx) => {
+                  const qty = Number(li.quantity) || 1;
+                  const unit = Number(li.unitPrice) || 0;
+                  return (
+                    <tr key={idx} className="border-b border-border-light/60 last:border-0">
+                      <td className="px-3 py-2 text-text-primary">{li.description.trim() || "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-text-secondary">{qty}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium text-text-primary">
+                        {formatCurrency(qty * unit)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-border-light pt-2.5">
+            <span className="text-sm font-semibold text-text-primary">Total (client)</span>
+            <span className="text-base font-bold tabular-nums text-[#ED4B00]">
+              {formatCurrency(snapshot.lineSellTotal > 0 ? snapshot.lineSellTotal : snapshot.linePartnerTotal)}
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border-light bg-card overflow-hidden dark:bg-card/90">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-light px-3.5 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border-light bg-surface-hover/50">
+                <FileText className="h-4 w-4 text-text-tertiary" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text-primary">Customer PDF</p>
+                <p className="text-[11px] text-text-tertiary">{refLabel} · saved figures</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  window.open(
+                    `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                }}
+              >
+                Open in tab
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                icon={<Download className="h-3.5 w-3.5" />}
+                onClick={() => downloadCustomerQuotePdf(quote)}
+              >
+                Download
+              </Button>
+            </div>
+          </div>
+          <iframe
+            title={`Quote PDF ${refLabel}`}
+            src={`/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`}
+            className="block h-[min(42dvh,400px)] w-full bg-muted/20"
+          />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({
   onSubmit,
   onCancel,
+  onManualQuoteGenerated,
   continuationQuote,
   onContinueManualDraft,
   variant = "full",
@@ -7747,9 +8385,10 @@ function CreateQuoteForm({
 }: {
   onSubmit?: (
     d: Partial<Quote>,
-    options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean },
-  ) => void | boolean | Promise<void | boolean>;
+    options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean; generateOnly?: boolean },
+  ) => void | boolean | Quote | Promise<void | boolean | Quote>;
   onCancel: () => void;
+  onManualQuoteGenerated?: (quote: Quote, snapshot: ManualQuoteReviewSnapshot) => void;
   continuationQuote?: Quote | null;
   onContinueManualDraft?: (
     quoteId: string,
@@ -8313,10 +8952,32 @@ function CreateQuoteForm({
     try {
       const second =
         quoteType === "internal"
-          ? { manualLineItems: lineItems, sendToCustomer: true }
+          ? { manualLineItems: lineItems, generateOnly: true }
           : undefined;
-      const ok = await Promise.resolve(onSubmit(payload, second));
-      if (ok === false) return;
+      const result = await Promise.resolve(onSubmit(payload, second));
+      if (result === false) return;
+      if (quoteType === "internal" && result && typeof result === "object" && "id" in result) {
+        onManualQuoteGenerated?.(result as Quote, {
+          lineItems,
+          scopeText,
+          startDate1,
+          startDate2,
+          depositRequiredEnabled,
+          depositPercent,
+          depositInputMode,
+          depositAmountInput,
+          formTitle: form.title,
+          clientAddress,
+          addContactClient,
+          manualSiteAddress,
+          selectedAccountId,
+          selectedAccountLabel,
+          marginPct,
+          lineSellTotal,
+          linePartnerTotal,
+        });
+        return;
+      }
       inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
       setForm({ title: "", total_value: "", catalog_service_id: "" });
       setSelectedAccountId("");
@@ -8344,6 +9005,8 @@ function CreateQuoteForm({
   };
 
   const routingInviteLayout = variant === "routing_minimal" && !continuationQuote;
+  const manualTwoPhase =
+    variant === "full" && quoteType === "internal" && !continuationQuote;
 
   return (
     <form
@@ -9052,6 +9715,7 @@ function CreateQuoteForm({
               onMarginChange={setMarginPct}
             />
           )}
+
         </>
       ) : quoteType === "partner" && variant !== "routing_minimal" ? (
         <>
@@ -9186,7 +9850,12 @@ function CreateQuoteForm({
             size="sm"
             onClick={onCancel}
             type="button"
-            disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+            disabled={
+              uploadingPhotos ||
+              continuationSubmitting ||
+              routingInviteBusy ||
+              submitBusy
+            }
             className="w-full sm:w-auto"
           >
             Cancel
@@ -9198,7 +9867,12 @@ function CreateQuoteForm({
               size="sm"
               icon={<MailCheck className="h-3.5 w-3.5" />}
               onClick={() => void submitManualContinuation("mark_sent_external")}
-              disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+              disabled={
+                uploadingPhotos ||
+                continuationSubmitting ||
+                routingInviteBusy ||
+                submitBusy
+              }
               className="w-full sm:w-auto"
               title="Save the manual quote, move to Approval, and record that you already delivered the PDF (no email from this app)"
             >
@@ -9209,7 +9883,12 @@ function CreateQuoteForm({
             type="submit"
             size="sm"
             loading={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
-            disabled={uploadingPhotos || continuationSubmitting || routingInviteBusy || submitBusy}
+            disabled={
+              uploadingPhotos ||
+              continuationSubmitting ||
+              routingInviteBusy ||
+              submitBusy
+            }
             className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
           >
             {continuationQuote
@@ -9218,8 +9897,8 @@ function CreateQuoteForm({
                 ? routingCollectTrade
                   ? "Create & notify partners"
                   : "Create & open draft"
-                : quoteType === "internal"
-                  ? "Send quote to customer"
+                : manualTwoPhase || quoteType === "internal"
+                  ? "Generate quote"
                   : "Create quote"}
           </Button>
         </div>

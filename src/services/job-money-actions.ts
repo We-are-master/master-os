@@ -15,6 +15,7 @@ import {
   isJobExtraDiscountExtraType,
   partnerDiscountAllocationFromExtraType,
 } from "@/lib/job-extra-discount";
+import { isPartnerCancellationFeeExtraType } from "@/lib/partner-extra-presets";
 
 function isMissingJobExtraEntriesTableError(err: unknown): boolean {
   if (typeof err !== "object" || err == null) return false;
@@ -68,6 +69,8 @@ export type ExecuteJobMoneyActionInput = {
   actorUserName?: string;
   /** Link multiple extras added from one UI action. */
   linkedGroupId?: string;
+  /** Partner drawer deduction section — always claw back from self-bill (even if extra_type label omits “Discount”). */
+  partnerDeduction?: boolean;
 };
 
 function resolveJobId(job: Job): string {
@@ -238,11 +241,21 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     } catch (err) {
       if (!isMissingJobExtraEntriesTableError(err)) throw err;
     }
-    const partnerDiscountRow = isJobExtraDiscountExtraType(extraTypeTrim);
+    const partnerDiscountRow =
+      Boolean(input.partnerDeduction) || isJobExtraDiscountExtraType(extraTypeTrim);
     try {
       const patch = partnerDiscountRow
         ? reversePartnerExtraPatch(job, a, allocation)
         : applyPartnerExtraPatch(job, a, allocation);
+      if (isPartnerCancellationFeeExtraType(extraTypeTrim)) {
+        const prevFee = Math.max(
+          0,
+          Number(job.cancellation_fee_partner_gbp ?? job.partner_cancellation_fee ?? 0),
+        );
+        Object.assign(patch, {
+          cancellation_fee_partner_gbp: Math.round((prevFee + a) * 100) / 100,
+        });
+      }
       try {
         const updated = await updateJob(jobId, patch);
         await syncSelfBillAfterJobChange(updated);

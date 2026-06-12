@@ -5,14 +5,21 @@ import type { CatalogAddonChargeOption } from "@/lib/catalog-line-pricing";
 import { Drawer } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Select, type SelectOptionGroup } from "@/components/ui/select";
 import type { Invoice, JobPaymentMethod } from "@/types/database";
 import { cn, formatCurrency } from "@/lib/utils";
-import { Copy, ExternalLink } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { Copy, ExternalLink, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
 import { isJobExtraDiscountExtraType } from "@/lib/job-extra-discount";
 import { parseMoneyInput } from "@/lib/parse-money-input";
+import {
+  isPartnerCancellationFeeExtraType,
+  partnerAddOnlySelectOptions,
+  partnerPresetSelectOptions,
+  type PartnerExtraPresetRow,
+} from "@/lib/partner-extra-presets";
 
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
@@ -44,6 +51,8 @@ export type JobMoneySubmitPayload = {
   clientPayApplyAs?: ClientPayApplyAs;
   /** Optional; prefixed into payment note for history only. */
   paymentLedgerLabel?: string;
+  /** Partner extra drawer: submitted from the deduction section (always reduces self-bill). */
+  partnerDeduction?: boolean;
 };
 
 /** Deposit scheduled vs still owed (for payment type UI). */
@@ -52,10 +61,16 @@ export type JobMoneyDrawerClientCashContext = {
   depositRemaining: number;
 };
 
+function buildPartnerDeductTypeOptions(partnerDeductionPresets: PartnerExtraPresetRow[]): { value: string; label: string }[] {
+  return partnerPresetSelectOptions(partnerDeductionPresets);
+}
+
 type Props = {
   open: boolean;
   flow: JobMoneyDrawerFlow | null;
   initialExtraType?: string;
+  partnerExtraPresets?: PartnerExtraPresetRow[];
+  partnerDeductionPresets?: PartnerExtraPresetRow[];
   onClose: () => void;
   onSubmit: (payload: JobMoneySubmitPayload) => Promise<void>;
   submitting: boolean;
@@ -124,7 +139,14 @@ const CLIENT_MATERIALS_REASON_PRESETS: { value: string; label: string }[] = [
   { value: "__other__", label: "Other (type manually)" },
 ];
 
-/** Match Cash Out partner extras — same labels as Finance Summary “CASH OUT — PARTNER”. */
+const PARTNER_CANCELLATION_FEE_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Partner no-show or late cancellation fee", label: "Partner no-show or late cancellation fee" },
+  { value: "Agreed clawback — partner fault", label: "Agreed clawback — partner fault" },
+  { value: "__other__", label: "Other (type manually)" },
+];
+
+/** @deprecated Use setup-driven partner extra presets. */
 const PARTNER_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "Labour", label: "Labour" },
   { value: "CCZ", label: "CCZ" },
@@ -173,12 +195,15 @@ function flowTitle(flow: JobMoneyDrawerFlow, extraType?: string): string {
     case "client_extra":
       return isJobExtraDiscountExtraType(extraType) ? "Add client discount" : "Add extra charge";
     case "partner_extra":
-      return isJobExtraDiscountExtraType(extraType) ? "Add partner discount" : "Add extra payout";
+      return "Extra & deduction";
   }
 }
 
 function flowSubmitLabel(flow: JobMoneyDrawerFlow, extraType?: string): string {
   if (flow === "client_pay" || flow === "partner_pay") return "Record Payment";
+  if (flow === "partner_extra") {
+    return isJobExtraDiscountExtraType(extraType) ? "Add deduction" : "Add extra";
+  }
   return flowTitle(flow, extraType);
 }
 
@@ -209,7 +234,7 @@ function buildExtraTypeOptions(
   flow: JobMoneyDrawerFlow,
   catalogAddons?: CatalogAddonChargeOption[],
 ): { value: string; label: string }[] {
-  const base = flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS;
+  const base = CLIENT_EXTRA_TYPE_OPTIONS;
   if (!catalogAddons?.length) return base;
   const seen = new Set(base.map((o) => o.value.trim().toUpperCase()));
   const catalogOpts: { value: string; label: string }[] = [];
@@ -226,10 +251,92 @@ function buildExtraTypeOptions(
   return [...base.slice(0, otherIdx), ...catalogOpts, ...base.slice(otherIdx)];
 }
 
+type PartnerReasonPresetState = {
+  showPresetSelect: boolean;
+  presetOptions: { value: string; label: string }[];
+};
+
+function resolvePartnerReasonPresets(extraType: string, side: "add" | "deduct"): PartnerReasonPresetState {
+  const typeUpper = extraType.trim().toUpperCase();
+  const isDiscount = isJobExtraDiscountExtraType(extraType);
+
+  if (side === "deduct") {
+    const showCancellationFee = isPartnerCancellationFeeExtraType(extraType);
+    const showDiscountMaterials = isDiscount && typeUpper.includes("MATERIAL");
+    const showDiscountGeneric = isDiscount && !showDiscountMaterials && !showCancellationFee;
+    const showPresetSelect = showCancellationFee || showDiscountMaterials || showDiscountGeneric;
+    const presetOptions = showCancellationFee
+      ? PARTNER_CANCELLATION_FEE_REASON_PRESETS
+      : showDiscountMaterials
+        ? PARTNER_MATERIALS_REASON_PRESETS
+        : showDiscountGeneric
+          ? PARTNER_EXTRA_DISCOUNT_REASON_PRESETS
+          : [];
+    return {
+      showPresetSelect,
+      presetOptions,
+    };
+  }
+
+  const showMaterials = typeUpper === "MATERIALS";
+  const showLabour = typeUpper === "LABOUR";
+  const showPresetSelect = showMaterials || showLabour;
+  return {
+    showPresetSelect,
+    presetOptions: showMaterials ? PARTNER_MATERIALS_REASON_PRESETS : PARTNER_EXTRA_REASON_PRESETS,
+  };
+}
+
+function isPartnerSectionComplete(
+  type: string,
+  amountStr: string,
+  reason: string,
+  reasonPreset: string,
+  side: "add" | "deduct",
+): boolean {
+  if (!type.trim()) return false;
+  if (!(amountStr.trim() !== "" && parseMoneyInput(amountStr) > 0)) return false;
+  const { showPresetSelect } = resolvePartnerReasonPresets(type, side);
+  const quickReasonOk = !showPresetSelect || reasonPreset.trim().length > 0;
+  const requiresManualReason = !showPresetSelect || reasonPreset === "__other__";
+  const reasonOk = !requiresManualReason || reason.trim().length > 0;
+  return quickReasonOk && reasonOk;
+}
+
+function clearPartnerAddFields(
+  setters: {
+    setType: (v: string) => void;
+    setAmount: (v: string) => void;
+    setReason: (v: string) => void;
+    setReasonPreset: (v: string) => void;
+  },
+) {
+  setters.setType("");
+  setters.setAmount("");
+  setters.setReason("");
+  setters.setReasonPreset("");
+}
+
+function clearPartnerDeductFields(
+  setters: {
+    setType: (v: string) => void;
+    setAmount: (v: string) => void;
+    setReason: (v: string) => void;
+    setReasonPreset: (v: string) => void;
+  },
+) {
+  setters.setType("");
+  setters.setAmount("");
+  setters.setReason("");
+  setters.setReasonPreset("");
+}
+
 export function JobMoneyDrawer({
   open,
   flow,
   initialExtraType,
+  partnerExtraPresets = [],
+  partnerDeductionPresets = [],
   onClose,
   onSubmit,
   submitting,
@@ -251,6 +358,14 @@ export function JobMoneyDrawer({
   const [linkedPartnerAmount, setLinkedPartnerAmount] = useState("");
   const [linkedPartnerType, setLinkedPartnerType] = useState("Labour");
   const [linkedPartnerReason, setLinkedPartnerReason] = useState("");
+  const [partnerAddType, setPartnerAddType] = useState("");
+  const [partnerAddAmount, setPartnerAddAmount] = useState("");
+  const [partnerAddReason, setPartnerAddReason] = useState("");
+  const [partnerAddReasonPreset, setPartnerAddReasonPreset] = useState("");
+  const [partnerDeductType, setPartnerDeductType] = useState("");
+  const [partnerDeductAmount, setPartnerDeductAmount] = useState("");
+  const [partnerDeductReason, setPartnerDeductReason] = useState("");
+  const [partnerDeductReasonPreset, setPartnerDeductReasonPreset] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
 
   const depositRemaining = clientCashContext?.depositRemaining ?? 0;
@@ -264,16 +379,32 @@ export function JobMoneyDrawer({
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
     setPaymentLedgerLabel("");
-    setExtraType(initialExtraType?.trim() || "Labour");
+    setExtraType(initialExtraType?.trim() || (flow === "partner_extra" ? "" : "Labour"));
     setExtraReason("");
     setExtraReasonPreset("");
+    setPartnerAddType(
+      flow === "partner_extra" && initialExtraType?.trim() && !isJobExtraDiscountExtraType(initialExtraType)
+        ? initialExtraType.trim()
+        : "",
+    );
+    setPartnerAddAmount("");
+    setPartnerAddReason("");
+    setPartnerAddReasonPreset("");
+    setPartnerDeductType(
+      flow === "partner_extra" && initialExtraType?.trim() && isJobExtraDiscountExtraType(initialExtraType)
+        ? initialExtraType.trim()
+        : "",
+    );
+    setPartnerDeductAmount("");
+    setPartnerDeductReason("");
+    setPartnerDeductReasonPreset("");
     setExtraClientProofConfirmed(false);
     setAddLinkedPartnerExtra(false);
     setLinkedPartnerAmount("");
     setLinkedPartnerType("Labour");
     setLinkedPartnerReason("");
     if (isPayFlow(flow)) {
-      setMethod(readSavedMethod(flow));
+      setMethod(flow === "client_pay" ? "bank_transfer" : readSavedMethod(flow));
     } else {
       setMethod(isClientFlow(flow) ? "bank_transfer" : "other");
     }
@@ -284,7 +415,7 @@ export function JobMoneyDrawer({
       amountRef.current?.focus();
     });
     return () => cancelAnimationFrame(id);
-  }, [open, flow, canRecordDeposit, initialExtraType]);
+  }, [open, flow, canRecordDeposit, initialExtraType, partnerExtraPresets, partnerDeductionPresets]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -295,17 +426,65 @@ export function JobMoneyDrawer({
 
   const isExtraFlowUi = flow === "client_extra" || flow === "partner_extra";
   const extraTypeOptions = useMemo(
-    () => (flow && isExtraFlowUi ? buildExtraTypeOptions(flow, catalogAddonOptions) : []),
+    () => (flow && isExtraFlowUi && flow !== "partner_extra" ? buildExtraTypeOptions(flow, catalogAddonOptions) : []),
     [flow, isExtraFlowUi, catalogAddonOptions],
+  );
+
+  const partnerBaseAddTypeOptions = useMemo(
+    () => partnerPresetSelectOptions(partnerExtraPresets),
+    [partnerExtraPresets],
+  );
+
+  const partnerExtraSelectGroups = useMemo((): SelectOptionGroup[] => {
+    const groups: SelectOptionGroup[] = [
+      {
+        label: "Standard",
+        options: [{ value: "", label: "Select extra type" }, ...partnerBaseAddTypeOptions],
+      },
+    ];
+    if (catalogAddonOptions.length > 0) {
+      groups.push({
+        label: "Service catalog",
+        options: catalogAddonOptions.map((addon) => ({
+          value: addon.label.trim(),
+          label: `${addon.label.trim()} — ${formatCurrency(addon.partnerAmount)}`,
+        })),
+      });
+    }
+    return groups;
+  }, [partnerBaseAddTypeOptions, catalogAddonOptions]);
+
+  const partnerDeductTypeOptions = useMemo(
+    () => buildPartnerDeductTypeOptions(partnerDeductionPresets),
+    [partnerDeductionPresets],
+  );
+
+  const linkedPartnerTypeOptions = useMemo(
+    () => partnerAddOnlySelectOptions(partnerExtraPresets),
+    [partnerExtraPresets],
   );
 
   if (!flow) return null;
 
-  const catalogAddonsForFlow = isExtraFlowUi && catalogAddonOptions.length > 0 ? catalogAddonOptions : [];
+  const catalogAddonsForFlow =
+    isExtraFlowUi && catalogAddonOptions.length > 0 && flow === "client_extra" ? catalogAddonOptions : [];
 
   const applyCatalogAddon = (addon: CatalogAddonChargeOption) => {
     const label = addon.label.trim();
     const amt = flow === "client_extra" ? addon.clientAmount : addon.partnerAmount;
+    if (flow === "partner_extra") {
+      clearPartnerDeductFields({
+        setType: setPartnerDeductType,
+        setAmount: setPartnerDeductAmount,
+        setReason: setPartnerDeductReason,
+        setReasonPreset: setPartnerDeductReasonPreset,
+      });
+      setPartnerAddType(label);
+      setPartnerAddAmount(amt > 0 ? String(Math.round(amt * 100) / 100) : "");
+      setPartnerAddReason(`Service catalog additional — ${label}`);
+      setPartnerAddReasonPreset("");
+      return;
+    }
     setExtraType(label);
     setAmount(amt > 0 ? String(Math.round(amt * 100) / 100) : "");
     setExtraReason(`Service catalog additional — ${label}`);
@@ -324,47 +503,89 @@ export function JobMoneyDrawer({
   const n = parseMoneyInput(amount);
   const amountOk = amount.trim() !== "" && n > 0;
   const isExtraFlow = !isPayFlow(flow);
+  const isPartnerExtraFlow = flow === "partner_extra";
   const extraTypeUpper = extraType.trim().toUpperCase();
-  const discountMode = isExtraFlow && isJobExtraDiscountExtraType(extraType);
+  const discountMode = isExtraFlow && !isPartnerExtraFlow && isJobExtraDiscountExtraType(extraType);
   const showDiscountMaterialsPresets = discountMode && extraTypeUpper.includes("MATERIAL");
-  const showMaterialsReasonPresets = isExtraFlow && !discountMode && extraTypeUpper === "MATERIALS";
-  const showLabourReasonPresets = isExtraFlow && !discountMode && extraTypeUpper === "LABOUR";
-  const showDiscountGenericPresets = discountMode && !showDiscountMaterialsPresets;
+  const showMaterialsReasonPresets = isExtraFlow && !isPartnerExtraFlow && !discountMode && extraTypeUpper === "MATERIALS";
+  const showLabourReasonPresets = isExtraFlow && !isPartnerExtraFlow && !discountMode && extraTypeUpper === "LABOUR";
+  const showCancellationFeeReasonPresets = false;
+  const showDiscountGenericPresets = discountMode && !showDiscountMaterialsPresets && !showCancellationFeeReasonPresets;
   const showExtraPresetReasonSelect =
-    showLabourReasonPresets ||
-    showMaterialsReasonPresets ||
-    showDiscountMaterialsPresets ||
-    showDiscountGenericPresets;
+    !isPartnerExtraFlow &&
+    (showLabourReasonPresets ||
+      showMaterialsReasonPresets ||
+      showDiscountMaterialsPresets ||
+      showDiscountGenericPresets);
   const activePresetOptions = showDiscountMaterialsPresets
-    ? (flow === "partner_extra" ? PARTNER_MATERIALS_REASON_PRESETS : CLIENT_MATERIALS_REASON_PRESETS)
+    ? CLIENT_MATERIALS_REASON_PRESETS
     : showMaterialsReasonPresets
-      ? (flow === "partner_extra" ? PARTNER_MATERIALS_REASON_PRESETS : CLIENT_MATERIALS_REASON_PRESETS)
+      ? CLIENT_MATERIALS_REASON_PRESETS
       : showDiscountGenericPresets
-        ? (flow === "partner_extra" ? PARTNER_EXTRA_DISCOUNT_REASON_PRESETS : CLIENT_EXTRA_DISCOUNT_REASON_PRESETS)
+        ? CLIENT_EXTRA_DISCOUNT_REASON_PRESETS
         : showLabourReasonPresets
-          ? (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS)
-          : (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS);
+          ? CLIENT_EXTRA_REASON_PRESETS
+          : CLIENT_EXTRA_REASON_PRESETS;
   const quickReasonOk = !showExtraPresetReasonSelect || extraReasonPreset.trim().length > 0;
   const requiresManualExtraReason =
     !showExtraPresetReasonSelect || extraReasonPreset === "__other__";
-  const extraTypeOk = !isExtraFlow || extraType.trim().length > 0;
-  const extraReasonOk = !isExtraFlow || (requiresManualExtraReason ? extraReason.trim().length > 0 : true);
+  const extraTypeOk = !isExtraFlow || isPartnerExtraFlow || extraType.trim().length > 0;
+  const extraReasonOk =
+    !isExtraFlow || isPartnerExtraFlow || (requiresManualExtraReason ? extraReason.trim().length > 0 : true);
   const extraClientProofOk = flow !== "client_extra" || discountMode || extraClientProofConfirmed;
   const linkedPartnerAmountNum = parseMoneyInput(linkedPartnerAmount);
   const linkedPartnerAmountOk =
     !addLinkedPartnerExtra || (linkedPartnerAmount.trim() !== "" && linkedPartnerAmountNum > 0);
   const linkedPartnerTypeOk = !addLinkedPartnerExtra || linkedPartnerType.trim().length > 0;
   const linkedPartnerReasonOk = !addLinkedPartnerExtra || linkedPartnerReason.trim().length > 0;
-  const canSubmit =
-    !isClientStripe &&
-    amountOk &&
-    extraTypeOk &&
-    quickReasonOk &&
-    extraReasonOk &&
-    extraClientProofOk &&
-    linkedPartnerAmountOk &&
-    linkedPartnerTypeOk &&
-    linkedPartnerReasonOk;
+
+  const partnerAddComplete = isPartnerSectionComplete(
+    partnerAddType,
+    partnerAddAmount,
+    partnerAddReason,
+    partnerAddReasonPreset,
+    "add",
+  );
+  const partnerDeductComplete = isPartnerSectionComplete(
+    partnerDeductType,
+    partnerDeductAmount,
+    partnerDeductReason,
+    partnerDeductReasonPreset,
+    "deduct",
+  );
+  const canSubmitPartner =
+    (partnerAddComplete && !partnerDeductComplete) || (!partnerAddComplete && partnerDeductComplete);
+  const partnerSubmitLabel =
+    partnerAddComplete && !partnerDeductComplete
+      ? "Add extra"
+      : partnerDeductComplete && !partnerAddComplete
+        ? "Add deduction"
+        : "Extra & deduction";
+
+  const partnerDeductAmountNum = parseMoneyInput(partnerDeductAmount);
+  const partnerDeductAmountOk = partnerDeductAmount.trim() !== "" && partnerDeductAmountNum > 0;
+  const partnerAddActive =
+    Boolean(partnerAddType.trim()) ||
+    Boolean(partnerAddAmount.trim()) ||
+    Boolean(partnerAddReason.trim()) ||
+    Boolean(partnerAddReasonPreset.trim());
+  const partnerDeductActive =
+    Boolean(partnerDeductType.trim()) ||
+    Boolean(partnerDeductAmount.trim()) ||
+    Boolean(partnerDeductReason.trim()) ||
+    Boolean(partnerDeductReasonPreset.trim());
+
+  const canSubmit = isPartnerExtraFlow
+    ? canSubmitPartner
+    : !isClientStripe &&
+      amountOk &&
+      extraTypeOk &&
+      quickReasonOk &&
+      extraReasonOk &&
+      extraClientProofOk &&
+      linkedPartnerAmountOk &&
+      linkedPartnerTypeOk &&
+      linkedPartnerReasonOk;
 
   const handleMethodChange = (m: JobPaymentMethod) => {
     setMethod(m);
@@ -374,6 +595,29 @@ export function JobMoneyDrawer({
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
+
+    if (isPartnerExtraFlow) {
+      if (partnerAddComplete && partnerDeductComplete) {
+        toast.error("Fill only the extra section or the deduction section, not both");
+        return;
+      }
+      const isDeduct = partnerDeductComplete;
+      const submitType = isDeduct ? partnerDeductType : partnerAddType;
+      const submitAmount = isDeduct ? partnerDeductAmountNum : parseMoneyInput(partnerAddAmount);
+      const submitReason = isDeduct ? partnerDeductReason : partnerAddReason;
+      await onSubmit({
+        flow: "partner_extra",
+        amount: submitAmount,
+        paymentDate: new Date().toISOString().slice(0, 10),
+        method: "other",
+        note: `${submitType.trim()}${submitReason.trim() ? ` — ${submitReason.trim()}` : ""}`,
+        extraType: submitType.trim(),
+        extraReason: submitReason.trim(),
+        partnerDeduction: isDeduct,
+      });
+      return;
+    }
+
     const pay = isPayFlow(flow);
     const submitMethod = pay ? method : isClientFlow(flow) ? "bank_transfer" : "other";
     const applyForSubmit: ClientPayApplyAs | undefined =
@@ -419,17 +663,120 @@ export function JobMoneyDrawer({
 
   const stripeLinks = stripeInvoices.filter((i) => i.stripe_payment_link_url);
 
-  const helpExtra = (
-    <p className="text-[11px] text-text-tertiary leading-relaxed">
-      {discountMode
-        ? flow === "client_extra"
+  const helpExtra =
+    flow === "partner_extra" ? null : (
+      <p className="text-[11px] text-text-tertiary leading-relaxed">
+        {discountMode
           ? "Reduces what the client is charged (quote / extras / materials line you picked). Not a payment — no money received yet."
-          : "Reduces partner labour or materials on the job and on the linked self-bill. Use when they should earn less (e.g. damage, rework agreed)."
-        : flow === "client_extra"
-          ? "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."
-          : "Positive partner cost: increases Total to pay, self-bill gross for this job, and amount due. Not a cash-out row — use Record Payment when you send money to the partner."}
-    </p>
-  );
+          : "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."}
+      </p>
+    );
+
+  const handlePartnerAddSelect = (next: string) => {
+    clearPartnerDeductFields({
+      setType: setPartnerDeductType,
+      setAmount: setPartnerDeductAmount,
+      setReason: setPartnerDeductReason,
+      setReasonPreset: setPartnerDeductReasonPreset,
+    });
+    if (!next) {
+      setPartnerAddType("");
+      setPartnerAddAmount("");
+      setPartnerAddReason("");
+      setPartnerAddReasonPreset("");
+      return;
+    }
+    const addon = catalogAddonOptions.find((a) => a.label.trim() === next.trim());
+    if (addon) {
+      applyCatalogAddon(addon);
+      return;
+    }
+    setPartnerAddType(next);
+    setPartnerAddAmount("");
+    setPartnerAddReason("");
+    const normalized = next.trim().toUpperCase();
+    const usePresetRow = normalized === "LABOUR" || normalized === "MATERIALS";
+    setPartnerAddReasonPreset(usePresetRow ? "" : "");
+  };
+
+  const handlePartnerDeductSelect = (next: string) => {
+    clearPartnerAddFields({
+      setType: setPartnerAddType,
+      setAmount: setPartnerAddAmount,
+      setReason: setPartnerAddReason,
+      setReasonPreset: setPartnerAddReasonPreset,
+    });
+    if (!next) {
+      setPartnerDeductType("");
+      setPartnerDeductAmount("");
+      setPartnerDeductReason("");
+      setPartnerDeductReasonPreset("");
+      return;
+    }
+    setPartnerDeductType(next);
+    setPartnerDeductAmount("");
+    setPartnerDeductReason("");
+    const isDiscount = isJobExtraDiscountExtraType(next);
+    const normalized = next.trim().toUpperCase();
+    const usePresetRow = isDiscount || normalized === "MATERIALS";
+    setPartnerDeductReasonPreset(usePresetRow ? "" : "");
+  };
+
+  const renderPartnerReasonFields = (
+    extraType: string,
+    side: "add" | "deduct",
+    reasonPreset: string,
+    reason: string,
+    onPresetChange: (preset: string) => void,
+    onReasonChange: (text: string) => void,
+  ) => {
+    const { showPresetSelect, presetOptions } = resolvePartnerReasonPresets(extraType, side);
+    const requiresManualReason = !showPresetSelect || reasonPreset === "__other__";
+    return (
+      <div>
+        {showPresetSelect ? (
+          <Select
+            label="Reason *"
+            value={reasonPreset}
+            onChange={(e) => {
+              const preset = e.target.value.trim();
+              onPresetChange(preset);
+              if (!preset || preset === "__other__") {
+                onReasonChange("");
+                return;
+              }
+              onReasonChange(preset);
+            }}
+            options={presetOptions}
+            className="h-10"
+          />
+        ) : null}
+        {requiresManualReason ? (
+          <>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5 mt-2">
+              Reason <span className="text-red-500">*</span>
+            </label>
+            <Input
+              value={reason}
+              onChange={(e) => onReasonChange(e.target.value)}
+              placeholder={
+                side === "deduct"
+                  ? "Why is this amount being deducted?"
+                  : extraType.trim().toLowerCase() === "other"
+                    ? "Describe this extra in detail"
+                    : "Why did this extra happen?"
+              }
+              className="h-10"
+              required
+            />
+            <p className="mt-1 text-[11px] text-text-tertiary">Mandatory for tracking and future audit.</p>
+          </>
+        ) : showPresetSelect ? (
+          <p className="mt-1 text-[11px] text-text-tertiary">Using selected quick reason.</p>
+        ) : null}
+      </div>
+    );
+  };
 
   const clientPayTypeOptions = [
     {
@@ -447,7 +794,7 @@ export function JobMoneyDrawer({
     <Drawer
       open={open && !!flow}
       onClose={onClose}
-      title={flowTitle(flow, extraType)}
+      title={flowTitle(flow, isPartnerExtraFlow ? undefined : extraType)}
       width="w-[min(100vw,400px)]"
       className="bg-surface"
       footer={
@@ -462,11 +809,17 @@ export function JobMoneyDrawer({
             <Button
               type="submit"
               form="job-money-drawer-form"
-              className="w-full h-10"
+              className={cn(
+                "w-full h-10",
+                isPartnerExtraFlow &&
+                  partnerDeductComplete &&
+                  !partnerAddComplete &&
+                  "border-rose-300/90 bg-rose-700 text-white hover:bg-rose-800 dark:border-rose-500/50 dark:bg-rose-800 dark:hover:bg-rose-700",
+              )}
               loading={submitting}
               disabled={!canSubmit}
             >
-              {flowSubmitLabel(flow, extraType)}
+              {isPartnerExtraFlow ? partnerSubmitLabel : flowSubmitLabel(flow, extraType)}
             </Button>
           </div>
         )
@@ -503,18 +856,16 @@ export function JobMoneyDrawer({
           </div>
         ) : null}
 
-        {isPayFlow(flow) ? (
+        {flow === "partner_pay" ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Method</label>
             <Select
               value={method}
               onChange={(e) => handleMethodChange(e.target.value as JobPaymentMethod)}
-              options={isClientFlow(flow) ? CLIENT_METHODS : PARTNER_METHODS}
+              options={PARTNER_METHODS}
               className="h-10"
             />
-            {flow === "partner_pay" ? (
-              <p className="text-[11px] text-text-tertiary mt-1.5">How you sent money to the partner (ledger record only).</p>
-            ) : null}
+            <p className="text-[11px] text-text-tertiary mt-1.5">How you sent money to the partner (ledger record only).</p>
           </div>
         ) : null}
 
@@ -605,7 +956,131 @@ export function JobMoneyDrawer({
                 </div>
               </div>
             ) : null}
-            {!isPayFlow(flow) ? (
+            {!isPayFlow(flow) && flow === "partner_extra" ? (
+              <div className="space-y-3">
+                <p className="text-[11px] text-text-tertiary leading-relaxed">
+                  Fill <span className="font-medium text-text-secondary">one section only</span> — extra or deduction.
+                  Neither is a cash-out payment; use Record partner payment when you send money.
+                </p>
+
+                <div
+                  className={cn(
+                    "rounded-xl border p-3.5 space-y-3 transition-shadow",
+                    "border-rose-200/80 bg-rose-50/40 dark:border-rose-500/25 dark:bg-rose-950/20",
+                    partnerAddComplete && "ring-2 ring-rose-400/40 dark:ring-rose-500/35",
+                    partnerDeductActive && !partnerAddActive && "opacity-60",
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-rose-300/80 bg-rose-100 text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/50 dark:text-rose-200">
+                      <Plus className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-800 dark:text-rose-300">
+                          Extra · Extra Payment to Partner
+                        </p>
+                        <FixfyHintIcon text="Raises partner cost and self-bill gross for this job." />
+                      </div>
+                    </div>
+                  </div>
+                  <Select
+                    label="Type"
+                    value={partnerAddType}
+                    onChange={(e) => handlePartnerAddSelect(e.target.value)}
+                    optionGroups={partnerExtraSelectGroups}
+                    className="h-10"
+                  />
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
+                    <Input
+                      ref={amountRef}
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerAddAmount}
+                      onChange={(e) => setPartnerAddAmount(e.target.value)}
+                      className="h-10 text-sm font-medium tabular-nums bg-card"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  {partnerAddType.trim()
+                    ? renderPartnerReasonFields(
+                        partnerAddType,
+                        "add",
+                        partnerAddReasonPreset,
+                        partnerAddReason,
+                        setPartnerAddReasonPreset,
+                        setPartnerAddReason,
+                      )
+                    : null}
+                </div>
+
+                <div className="flex items-center gap-2 px-1">
+                  <div className="h-px flex-1 bg-border-light dark:bg-[#2f3642]" />
+                  <span className="text-[9px] font-semibold uppercase tracking-widest text-text-tertiary">or</span>
+                  <div className="h-px flex-1 bg-border-light dark:bg-[#2f3642]" />
+                </div>
+
+                <div
+                  className={cn(
+                    "rounded-xl border p-3.5 space-y-3 transition-shadow",
+                    "border-rose-300/70 bg-rose-50/25 dark:border-rose-500/30 dark:bg-rose-950/15",
+                    partnerDeductComplete && "ring-2 ring-rose-500/45 dark:ring-rose-400/30",
+                    partnerAddActive && !partnerDeductActive && "opacity-60",
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-rose-400/70 bg-rose-200/50 text-rose-900 dark:border-rose-500/50 dark:bg-rose-950/60 dark:text-rose-100">
+                      <Minus className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-900 dark:text-rose-200">
+                          Deduction · reduces partner pay
+                        </p>
+                        <FixfyHintIcon text="Clawback from self-bill and labour cap — not money sent to the partner." />
+                      </div>
+                    </div>
+                  </div>
+                  <Select
+                    label="Type"
+                    value={partnerDeductType}
+                    onChange={(e) => handlePartnerDeductSelect(e.target.value)}
+                    options={[{ value: "", label: "Select deduction type" }, ...partnerDeductTypeOptions]}
+                    className="h-10"
+                  />
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount to deduct</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerDeductAmount}
+                      onChange={(e) => setPartnerDeductAmount(e.target.value)}
+                      className="h-10 text-sm font-medium tabular-nums bg-card"
+                      placeholder="0.00"
+                    />
+                    {partnerDeductAmountOk ? (
+                      <p className="text-[11px] font-medium text-rose-800 dark:text-rose-300 mt-1.5 tabular-nums">
+                        −{formatCurrency(partnerDeductAmountNum)} from partner payout
+                      </p>
+                    ) : null}
+                  </div>
+                  {partnerDeductType.trim()
+                    ? renderPartnerReasonFields(
+                        partnerDeductType,
+                        "deduct",
+                        partnerDeductReasonPreset,
+                        partnerDeductReason,
+                        setPartnerDeductReasonPreset,
+                        setPartnerDeductReason,
+                      )
+                    : null}
+                </div>
+              </div>
+            ) : null}
+            {!isPayFlow(flow) && flow !== "partner_extra" ? (
               <div>
                 <Select
                   label="Extra type"
@@ -626,26 +1101,28 @@ export function JobMoneyDrawer({
                 />
               </div>
             ) : null}
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-              <Input
-                ref={amountRef}
-                type="number"
-                min={0}
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="h-10 text-sm font-medium tabular-nums"
-                placeholder="0.00"
-              />
-            </div>
+            {(isPayFlow(flow) || flow === "client_extra") ? (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
+                <Input
+                  ref={amountRef}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="h-10 text-sm font-medium tabular-nums"
+                  placeholder="0.00"
+                />
+              </div>
+            ) : null}
             {isPayFlow(flow) ? (
               <div>
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
                 <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
               </div>
             ) : null}
-            {!isPayFlow(flow) ? (
+            {!isPayFlow(flow) && flow !== "partner_extra" ? (
               <div>
                 {showExtraPresetReasonSelect ? (
                   <Select
@@ -736,7 +1213,7 @@ export function JobMoneyDrawer({
                       label="Partner extra type"
                       value={linkedPartnerType}
                       onChange={(e) => setLinkedPartnerType(e.target.value)}
-                      options={PARTNER_EXTRA_TYPE_OPTIONS}
+                      options={linkedPartnerTypeOptions.length > 0 ? linkedPartnerTypeOptions : PARTNER_EXTRA_TYPE_OPTIONS.filter((o) => !o.value.startsWith("Discount"))}
                       className="h-10"
                     />
                     <div>

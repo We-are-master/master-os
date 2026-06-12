@@ -16,7 +16,7 @@ interface TabsProps {
   tabs: Tab[];
   activeTab: string;
   onChange: (id: string) => void;
-  variant?: "default" | "pills";
+  variant?: "default" | "pills" | "quote-drawer";
   className?: string;
 }
 
@@ -75,6 +75,48 @@ const TAB_ACCENT: Record<
 };
 
 export function Tabs({ tabs, activeTab, onChange, variant = "default", className }: TabsProps) {
+  if (variant === "quote-drawer") {
+    return (
+      <div
+        className={cn(
+          "flex shrink-0 gap-1 border-b border-fx-line px-7 pt-2.5",
+          className,
+        )}
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onChange(tab.id)}
+            className={cn(
+              "relative inline-flex items-center gap-1.5 rounded-t-md px-3 pb-2.5 pt-2 text-[13.5px] font-medium transition-colors",
+              activeTab === tab.id ? "text-fx-ink" : "text-fx-mute hover:text-fx-ink",
+            )}
+          >
+            {tab.label}
+            {tab.count !== undefined ? (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 font-mono text-[10.5px] leading-none",
+                  activeTab === tab.id ? "bg-fx-coral-50 text-fx-coral-p" : "bg-fx-paper-2 text-fx-slate",
+                )}
+              >
+                {tab.count}
+              </span>
+            ) : null}
+            {activeTab === tab.id ? (
+              <motion.div
+                layoutId="quote-drawer-tab-underline"
+                className="absolute bottom-0 left-2.5 right-2.5 h-0.5 rounded-sm bg-fx-coral"
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              />
+            ) : null}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   if (variant === "pills") {
     return (
       <div
