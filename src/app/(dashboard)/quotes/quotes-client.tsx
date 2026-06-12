@@ -8433,7 +8433,7 @@ function CreateQuoteForm({
   const [accountRows, setAccountRows] = useState<Account[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [addContactClient, setAddContactClient] = useState(true);
+  const [addContactClient, setAddContactClient] = useState(false);
   /** Free-text work address when there is no contact on the quote — stored only on the quote row, not as an account property. */
   const [manualSiteAddress, setManualSiteAddress] = useState("");
   /** Mandatory Zendesk-ticket linkage — either paste an id or auto-create a new ticket. */
@@ -8805,7 +8805,7 @@ function CreateQuoteForm({
         inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
         setForm({ title: "", total_value: "", catalog_service_id: "" });
         setSelectedAccountId("");
-        setAddContactClient(true);
+        setAddContactClient(false);
         setManualSiteAddress("");
         setClientAddress({ client_name: "", property_address: "" });
         setLineItems(seedManualProposalLines(""));
@@ -8981,7 +8981,7 @@ function CreateQuoteForm({
       inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
       setForm({ title: "", total_value: "", catalog_service_id: "" });
       setSelectedAccountId("");
-      setAddContactClient(true);
+      setAddContactClient(false);
       setManualSiteAddress("");
       setClientAddress({ client_name: "", property_address: "" });
       setLineItems(seedManualProposalLines(""));
@@ -9020,6 +9020,80 @@ function CreateQuoteForm({
     >
       <div className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
         <div className="space-y-4">
+      {!continuationQuote ? (
+        <div className="space-y-3 rounded-xl border-2 border-primary/25 bg-surface-hover/50 p-4 shadow-sm">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">Account</p>
+          <Select
+            label="Account *"
+            value={selectedAccountId}
+            onChange={(e) => setSelectedAccountId(e.target.value)}
+            disabled={accountsLoading}
+            options={[
+              { value: "", label: accountsLoading ? "Loading accounts…" : "Select account…" },
+              ...accountRows.map((a) => ({
+                value: a.id,
+                label:
+                  bidPayloadTrimmedString(a.company_name as unknown) ||
+                  bidPayloadTrimmedString(a.contact_name as unknown) ||
+                  a.id,
+              })),
+            ]}
+          />
+          <label
+            className={cn(
+              "flex cursor-pointer gap-2 rounded-lg border border-border-light bg-card text-sm text-text-primary",
+              addContactClient ? "items-start px-3 py-2.5" : "items-center px-2.5 py-1.5",
+            )}
+          >
+            <input
+              type="checkbox"
+              className={cn(
+                "h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20",
+                addContactClient ? "mt-0.5" : "",
+              )}
+              checked={addContactClient}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setAddContactClient(on);
+                if (!on) {
+                  setClientAddress((p) => ({
+                    ...p,
+                    client_id: undefined,
+                    client_address_id: undefined,
+                    client_email: undefined,
+                  }));
+                }
+              }}
+            />
+            <span className="font-medium leading-tight">Add a contact client on this quote</span>
+          </label>
+          {addContactClient ? (
+            selectedAccountId.trim() ? (
+              <ClientAddressPicker
+                value={clientAddress}
+                onChange={setClientAddress}
+                loadAllClientsOnOpen
+                restrictToSourceAccountId={selectedAccountId.trim()}
+                restrictToSourceAccountLabel={selectedAccountLabel || undefined}
+              />
+            ) : (
+              <p className="rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100/90">
+                Select an account above to choose a contact and property address.
+              </p>
+            )
+          ) : (
+            <div className="space-y-1.5 rounded-md border border-border-light bg-surface-hover/25 px-2 py-1.5 dark:bg-surface-secondary/20">
+              <AddressAutocomplete
+                label="Property address *"
+                value={manualSiteAddress}
+                onChange={(v) => setManualSiteAddress(v)}
+                onSelect={(parts: AddressParts) => setManualSiteAddress(parts.full_address)}
+                placeholder="Start typing the work address…"
+              />
+            </div>
+          )}
+        </div>
+      ) : null}
       {!continuationQuote ? (
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
           <ZendeskTicketField value={zendesk} onChange={setZendesk} />
@@ -9062,79 +9136,6 @@ function CreateQuoteForm({
           }}
         />
       )}
-      {!continuationQuote ? (
-        <>
-      <Select
-        label={addContactClient ? "Account *" : "Account"}
-        value={selectedAccountId}
-        onChange={(e) => setSelectedAccountId(e.target.value)}
-        disabled={accountsLoading}
-        options={[
-          { value: "", label: accountsLoading ? "Loading accounts…" : "Select account…" },
-          ...accountRows.map((a) => ({
-            value: a.id,
-            label:
-              bidPayloadTrimmedString(a.company_name as unknown) ||
-              bidPayloadTrimmedString(a.contact_name as unknown) ||
-              a.id,
-          })),
-        ]}
-      />
-      <label
-        className={cn(
-          "flex cursor-pointer gap-2 rounded-lg border border-border-light bg-card text-sm text-text-primary",
-          addContactClient ? "items-start px-3 py-2.5" : "items-center px-2.5 py-1.5",
-        )}
-      >
-        <input
-          type="checkbox"
-          className={cn(
-            "h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20",
-            addContactClient ? "mt-0.5" : "",
-          )}
-          checked={addContactClient}
-          onChange={(e) => {
-            const on = e.target.checked;
-            setAddContactClient(on);
-            if (!on) {
-              setClientAddress((p) => ({
-                ...p,
-                client_id: undefined,
-                client_address_id: undefined,
-                client_email: undefined,
-              }));
-            }
-          }}
-        />
-        <span className="font-medium leading-tight">Add a contact client on this quote</span>
-      </label>
-      {addContactClient ? (
-        selectedAccountId.trim() ? (
-          <ClientAddressPicker
-            value={clientAddress}
-            onChange={setClientAddress}
-            loadAllClientsOnOpen
-            restrictToSourceAccountId={selectedAccountId.trim()}
-            restrictToSourceAccountLabel={selectedAccountLabel || undefined}
-          />
-        ) : (
-          <p className="rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100/90">
-            Select an account above to choose a contact and property address.
-          </p>
-        )
-      ) : (
-        <div className="space-y-1.5 rounded-md border border-border-light bg-surface-hover/25 px-2 py-1.5 dark:bg-surface-secondary/20">
-          <AddressAutocomplete
-            label="Property address *"
-            value={manualSiteAddress}
-            onChange={(v) => setManualSiteAddress(v)}
-            onSelect={(parts: AddressParts) => setManualSiteAddress(parts.full_address)}
-            placeholder="Start typing the work address…"
-          />
-        </div>
-      )}
-        </>
-      ) : null}
       {variant === "routing_minimal" && !continuationQuote ? (
         <>
           <div>

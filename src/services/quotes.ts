@@ -1,5 +1,8 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Quote, QuoteLineItem } from "@/types/database";
+import { bucketDraftQuoteRows, type QuoteFunnelTabCounts } from "@/lib/quote-list-buckets";
+import { rpcGetQuoteFunnelBundle } from "@/lib/quote-funnel-rpc";
+import { fetchVirtualTabQuotes } from "@/lib/quote-virtual-tab-list";
 import {
   isSupabaseMissingColumnError,
   parsePostgrestUnknownColumnName,
@@ -150,6 +153,28 @@ export async function listQuotes(params: ListParams): Promise<ListResult<Quote>>
   const page     = params.page ?? 1;
   const pageSize = params.pageSize ?? 10;
 
+  /** Virtual funnel tabs — fast RPC (same SQL logic as tab badges). */
+  if (params.quotesNewTab || params.quotesReadyToSendTab) {
+    const tab = params.quotesNewTab ? "new" : "ready_to_send";
+    try {
+      const result = await rpcGetQuoteFunnelBundle(supabase, tab, {
+        page,
+        pageSize,
+        search: params.search,
+      });
+      const enriched = await enrichQuotesWithAccountNames(result.data);
+      return { ...result, data: enriched };
+    } catch {
+      const result = await fetchVirtualTabQuotes(supabase, tab, {
+        page,
+        pageSize,
+        search: params.search,
+      });
+      const enriched = await enrichQuotesWithAccountNames(result.data);
+      return { ...result, data: enriched };
+    }
+  }
+
   /** `get_quotes_list_bundle` only accepts one status — use PostgREST for `statusIn`. */
   if (params.statusIn && params.statusIn.length > 0) {
     const result = await queryList<Quote>("quotes", params, {
@@ -190,6 +215,29 @@ export async function listQuotes(params: ListParams): Promise<ListResult<Quote>>
   });
   const enriched = await enrichQuotesWithAccountNames(result.data);
   return { ...result, data: enriched };
+}
+
+/** Counts for virtual **New** / **Ready to send** tabs (subset of `status = draft`). */
+export async function loadQuoteFunnelTabCounts(): Promise<QuoteFunnelTabCounts> {
+  const supabase = getSupabase();
+  const pageSize = 1000;
+  const rows: Pick<
+    Quote,
+    "status" | "draft_route_completed" | "quote_type" | "customer_pdf_sent_at" | "total_value"
+  >[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("quotes")
+      .select("status,draft_route_completed,quote_type,customer_pdf_sent_at,total_value")
+      .eq("status", "draft")
+      .is("deleted_at", null)
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as typeof rows;
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return bucketDraftQuoteRows(rows);
 }
 
 export async function getQuote(id: string): Promise<Quote | null> {

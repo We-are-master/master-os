@@ -2293,15 +2293,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         <div className="px-4 sm:px-6 py-4 space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-name">
-              Name *
+              Company or personal name *
             </label>
             <Input
               id="invite-partner-name"
               type="text"
               value={inviteName}
               onChange={(e) => setInviteName(e.target.value)}
-              placeholder="e.g. João Silva"
-              autoComplete="name"
+              placeholder="e.g. Apex Plumbing Ltd"
+              autoComplete="organization"
               required
             />
           </div>
