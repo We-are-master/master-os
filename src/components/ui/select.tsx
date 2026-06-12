@@ -4,14 +4,18 @@ import { cn } from "@/lib/utils";
 import { ChevronDown } from "lucide-react";
 import { forwardRef } from "react";
 
+export type SelectOption = { value: string; label: string; disabled?: boolean };
+export type SelectOptionGroup = { label: string; options: SelectOption[] };
+
 interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   error?: string;
-  options: { value: string; label: string; disabled?: boolean }[];
+  options?: SelectOption[];
+  optionGroups?: SelectOptionGroup[];
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, label, error, options, ...props }, ref) => {
+  ({ className, label, error, options = [], optionGroups, ...props }, ref) => {
     return (
       <div className="w-full min-w-0">
         {label && (
@@ -33,6 +37,15 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             )}
             {...props}
           >
+            {optionGroups?.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map((opt) => (
+                  <option key={`${group.label}-${opt.value}`} value={opt.value} disabled={opt.disabled}>
+                    {opt.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
             {options.map((opt) => (
               <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                 {opt.label}

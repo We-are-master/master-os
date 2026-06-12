@@ -284,6 +284,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
+import { clientMaterialsMisallocationPatch } from "@/lib/repair-client-materials-allocation";
 import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -830,6 +831,11 @@ function formatSignedCurrency(signed: number): string {
   return signed < -0.009 ? `−${core}` : signed > 0.009 ? `+${core}` : core;
 }
 
+function isPartnerNonMaterialsExtraRow(row: Pick<ExtraHistoryEntry, "extraType" | "allocation">): boolean {
+  const bucket = extraHistoryBucket(row.extraType);
+  return bucket !== "materials" && row.allocation !== "materials";
+}
+
 function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string): string {
   if (entries.length === 0) return emptyText;
   return entries
@@ -1025,6 +1031,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     accessFees,
     partnerPayoutStandardTerms,
     partnerPayoutReferenceYmd,
+    partnerExtraPresets,
+    partnerDeductionPresets,
   } = useFrontendSetup();
   const cancelJob = useCancelJob();
   const putOnHoldReasonOptions = useMemo(
@@ -1069,7 +1077,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
   const [moneyDrawerInitialExtraType, setMoneyDrawerInitialExtraType] = useState<string | undefined>(undefined);
   const [moneyDrawerAccountPrice, setMoneyDrawerAccountPrice] = useState<AccountServicePrice | null>(null);
-  const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
+  const [financeHubOpen, setFinanceHubOpen] = useState(false);
+  const [financeHubTab, setFinanceHubTab] = useState<"client" | "partner">("client");
+  const [financeHubBaseEditSide, setFinanceHubBaseEditSide] = useState<"client" | "partner" | null>(null);
+  const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState("");
+  const [savingFinanceHubBase, setSavingFinanceHubBase] = useState(false);
   const [extraManagerFocusBucket, setExtraManagerFocusBucket] = useState<ExtraHistoryBucket | null>(null);
   const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
   const [editExtraAmount, setEditExtraAmount] = useState("");
@@ -1311,6 +1323,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const ownerKeepUnassignedRef = useRef<Set<string>>(new Set());
   const autoInvoiceEnsureRef = useRef<Set<string>>(new Set());
   const autoSelfBillEnsureRef = useRef<Set<string>>(new Set());
+  const materialsRepairAttemptedRef = useRef<string | null>(null);
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
@@ -2201,6 +2214,38 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     void loadExtraHistory(job.id);
   }, [job?.id, loadExtraHistory]);
+
+  useEffect(() => {
+    if (!job?.id || extraHistory.length === 0) return;
+    const repairKey = `${job.id}:${job.materials_cost}:${job.extras_amount}:${extraHistory.length}`;
+    if (materialsRepairAttemptedRef.current === repairKey) return;
+    const patch = clientMaterialsMisallocationPatch(
+      job,
+      extraHistory.map((row) => ({
+        side: row.side,
+        extra_type: row.extraType,
+        amount: row.amount,
+        allocation: row.allocation,
+      })),
+    );
+    if (!patch) return;
+    materialsRepairAttemptedRef.current = repairKey;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const updated = await updateJob(job.id, patch);
+        if (cancelled) return;
+        setJob(updated);
+        void loadJobInvoices(updated);
+        void loadJobSelfBill(updated);
+      } catch {
+        materialsRepairAttemptedRef.current = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job, extraHistory, loadJobInvoices, loadJobSelfBill]);
 
   useEffect(() => {
     if (!job?.id) {
@@ -3255,6 +3300,55 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setSavingFixedInlineRates(false);
     }
   }, [job, fixedInlineClientRate, fixedInlinePartnerCost, handleJobUpdate, refreshJobFinance]);
+
+  const saveFinanceHubInitialBalance = useCallback(
+    async (side: "client" | "partner") => {
+      if (!job) return;
+      const amount = Math.max(0, Math.round((Number(financeHubBaseDraft) || 0) * 100) / 100);
+      const patch: Partial<Job> =
+        side === "client"
+          ? {
+              client_price: amount,
+              customer_final_payment:
+                Math.round(
+                  Math.max(0, amount + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+                ) / 100,
+            }
+          : { partner_cost: amount };
+      setSavingFinanceHubBase(true);
+      try {
+        const updated = await handleJobUpdate(job.id, patch, { silent: true });
+        if (!updated) return;
+        await logFieldChanges(
+          "job",
+          job.id,
+          job.reference,
+          job as unknown as Record<string, unknown>,
+          patch as Record<string, unknown>,
+          profile?.id,
+          profile?.full_name,
+        );
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        await syncSelfBillAfterJobChange(updated);
+        try {
+          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
+        } catch {
+          /* non-blocking */
+        }
+        await refreshJobFinance();
+        setFinanceHubBaseEditSide(null);
+        setFinanceHubBaseDraft("");
+        toast.success(
+          side === "client" ? "Client initial balance updated" : "Partner initial balance updated",
+        );
+      } catch {
+        toast.error("Could not update initial balance");
+      } finally {
+        setSavingFinanceHubBase(false);
+      }
+    },
+    [job, financeHubBaseDraft, handleJobUpdate, profile?.id, profile?.full_name, refreshJobFinance],
+  );
 
   const saveAccessFeeFlags = useCallback(
     async (patch: Partial<Pick<Job, "in_ccz" | "has_free_parking">>) => {
@@ -4403,6 +4497,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ...(actionPayload.paymentLedgerLabel?.trim()
               ? { paymentLedgerLabel: actionPayload.paymentLedgerLabel.trim() }
               : {}),
+            ...(actionPayload.flow === "partner_extra" && actionPayload.partnerDeduction
+              ? { partnerDeduction: true }
+              : {}),
           });
           if (
             isJobExtraEntriesTableUnavailable() &&
@@ -4415,7 +4512,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 idRaw: localId,
                 side: actionPayload.flow === "client_extra" ? "client" : "partner",
                 amount: actionPayload.amount,
-                extraType: actionPayload.extraType?.trim() || "Extra",
+                extraType: (() => {
+                  const et = actionPayload.extraType?.trim() || "Extra";
+                  if (
+                    actionPayload.flow === "partner_extra" &&
+                    actionPayload.partnerDeduction &&
+                    !isJobExtraDiscountExtraType(et)
+                  ) {
+                    return `Discount — ${et}`;
+                  }
+                  return et;
+                })(),
                 reason: actionPayload.extraReason?.trim() || "",
                 clientConfirmed:
                   actionPayload.flow === "client_extra"
@@ -4431,7 +4538,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   }
                   return actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
                     ? "materials"
-                    : isJobExtraDiscountExtraType(et)
+                    : actionPayload.partnerDeduction || isJobExtraDiscountExtraType(et)
                       ? partnerDiscountAllocationFromExtraType(et)
                       : "partner_cost";
                 })(),
@@ -4442,7 +4549,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
           if (actionPayload.flow === "client_extra") {
             const et = actionPayload.extraType?.trim() ?? "";
-            if (customerExtraLedgerAllocation(et) === "extras") {
+            const alloc = customerExtraLedgerAllocation(et);
+            if (alloc === "extras" || alloc === "materials") {
               const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
               setClientExtrasUiValue((v) => Math.round((v + delta) * 100) / 100);
             }
@@ -4452,7 +4560,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             const isMaterials =
               typeUpper === "MATERIALS" || (isJobExtraDiscountExtraType(et) && typeUpper.includes("MATERIAL"));
             if (!isMaterials) {
-              const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
+              const delta =
+                actionPayload.partnerDeduction
+                  ? -Math.abs(Number(actionPayload.amount) || 0)
+                  : signedLedgerDisplayAmount(et, actionPayload.amount);
               setPartnerExtrasUiValue((v) => Math.round((v + delta) * 100) / 100);
             }
             /* Materials line reads from job.materials_cost after save — do not fold into extra/ccz/parking breakdown. */
@@ -4463,7 +4574,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   : typeUpper === "PARKING"
                     ? "parking"
                     : "extra";
-              const delta = signedLedgerDisplayAmount(et, actionPayload.amount);
+              const delta =
+                actionPayload.partnerDeduction
+                  ? -Math.abs(Number(actionPayload.amount) || 0)
+                  : signedLedgerDisplayAmount(et, actionPayload.amount);
               setPartnerExtraBreakdownUi((prev) => ({
                 ...prev,
                 [type]: Math.round(((prev[type] ?? 0) + delta) * 100) / 100,
@@ -4517,8 +4631,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   : "Extra charge added"
                 : payload.flow === "partner_pay"
                   ? "Payout recorded"
-                  : isJobExtraDiscountExtraType(payload.extraType)
-                    ? "Partner discount saved"
+                  : payload.partnerDeduction || isJobExtraDiscountExtraType(payload.extraType)
+                    ? "Partner deduction saved"
                     : "Extra payout added";
         toast.success(toastMsg);
         setMoneyDrawerOpen(false);
@@ -4564,9 +4678,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
 
-  const openExtraManager = useCallback((side: "client" | "partner", focus?: ExtraHistoryBucket) => {
-    setExtraManagerSide(side);
+  const openFinanceHub = useCallback((side: "client" | "partner", focus?: ExtraHistoryBucket) => {
+    setFinanceHubTab(side);
     setExtraManagerFocusBucket(focus ?? null);
+    setFinanceHubOpen(true);
+  }, []);
+
+  const openMoneyFlowFromHub = useCallback((flow: JobMoneyDrawerFlow, extraType?: string) => {
+    setFinanceHubOpen(false);
+    setExtraManagerFocusBucket(null);
+    setMoneyDrawerInitialExtraType(extraType);
+    setMoneyDrawerFlow(flow);
+    setMoneyDrawerOpen(true);
   }, []);
 
   const bucketHasLedgerEntries = useCallback(
@@ -4829,7 +4952,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       await refreshJobFinance();
       toast.success("Extra updated");
       setEditExtraTarget(null);
-      setExtraManagerSide(null);
       setExtraManagerFocusBucket(null);
     } catch {
       toast.error("Could not update extra");
@@ -5627,7 +5749,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
    */
   const clientExtrasFromLedger = extraHistory.reduce((acc, row) => {
     if (row.side !== "client") return acc;
-    if (extraHistoryBucket(row.extraType) === "materials") return acc;
     return acc + extraHistorySignedAmount(row);
   }, 0);
   const partnerExtrasFromLedger = extraHistory.reduce((acc, row) => {
@@ -5636,7 +5757,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return acc + extraHistorySignedAmount(row);
   }, 0);
   const clientExtrasFromLedgerRounded = Math.max(0, Math.round(clientExtrasFromLedger * 100) / 100);
-  const partnerExtrasFromLedgerRounded = Math.max(0, Math.round(partnerExtrasFromLedger * 100) / 100);
+  const partnerExtrasFromLedgerRounded = Math.round(partnerExtrasFromLedger * 100) / 100;
   const clientPriceClamp = Math.max(0, Number(job.client_price ?? 0));
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
   const billableRevenue = Math.max(
@@ -5677,12 +5798,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     Number(partnerExtraBreakdownUi.parking ?? 0);
   const partnerExtraResidual = Math.max(0, Math.round((partnerExtraDisplay - partnerExtraBreakdownTotal) * 100) / 100);
   const partnerExtraLine = Math.round((Number(partnerExtraBreakdownUi.extra ?? 0) + partnerExtraResidual) * 100) / 100;
-  const partnerMaterialsLine = Math.max(0, Number(job.materials_cost ?? 0));
+  const partnerMaterialsFromLedger = extraHistory.reduce((acc, row) => {
+    if (row.side !== "partner") return acc;
+    if (row.allocation !== "materials" && extraHistoryBucket(row.extraType) !== "materials") return acc;
+    return acc + extraHistorySignedAmount(row);
+  }, 0);
+  const partnerMaterialsLedgerRounded = Math.max(0, Math.round(partnerMaterialsFromLedger * 100) / 100);
+  const partnerHasMaterialsLedger = extraHistory.some(
+    (row) =>
+      row.side === "partner" &&
+      (row.allocation === "materials" || extraHistoryBucket(row.extraType) === "materials"),
+  );
+  const partnerMaterialsLine = partnerHasMaterialsLedger
+    ? partnerMaterialsLedgerRounded
+    : Math.max(0, Number(job.materials_cost ?? 0));
   const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
-      ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
-      : partnerPaymentCap(job) + Number(job.materials_cost ?? 0);
+      ? hourlyAutoBilling.partnerTotal + partnerMaterialsLine
+      : partnerPaymentCap(job) + partnerMaterialsLine;
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -5783,20 +5917,37 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     ? Math.round(partnerExtraEntriesSignedTotal * 100) / 100
     : Math.max(partnerExtraLine, Math.round(partnerExtraEntriesSignedTotal * 100) / 100);
   const partnerExtraPlainDisplay = partnerItemizedExtras
-    ? Math.round(partnerExtraTypeTotals.extra * 100) / 100
-    : Math.max(partnerExtraLine, Math.round(partnerExtraTypeTotals.extra * 100) / 100);
+    ? Math.max(0, Math.round(partnerExtraTypeTotals.extra * 100) / 100)
+    : Math.max(partnerExtraLine, Math.max(0, Math.round(partnerExtraTypeTotals.extra * 100) / 100));
   const partnerExtraCczDisplay = Math.max(
     Math.round(Number(partnerExtraBreakdownUi.ccz ?? 0) * 100) / 100,
-    Math.round(partnerExtraTypeTotals.ccz * 100) / 100,
+    Math.max(0, Math.round(partnerExtraTypeTotals.ccz * 100) / 100),
   );
   const partnerExtraParkingDisplay = Math.max(
     Math.round(Number(partnerExtraBreakdownUi.parking ?? 0) * 100) / 100,
-    Math.round(partnerExtraTypeTotals.parking * 100) / 100,
+    Math.max(0, Math.round(partnerExtraTypeTotals.parking * 100) / 100),
   );
-  const partnerExtraTotalDisplay = Math.max(
-    0,
-    Math.round((partnerExtraPlainDisplay + partnerExtraCczDisplay + partnerExtraParkingDisplay + partnerMaterialsLine) * 100) / 100,
-  );
+  const partnerNonMaterialsDeductionEntries = partnerExtraHistory.filter((row) => {
+    if (!isPartnerNonMaterialsExtraRow(row)) return false;
+    return extraHistorySignedAmount(row) < -0.02;
+  });
+  const partnerDeductionsTotal = Math.round(
+    partnerNonMaterialsDeductionEntries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0) * 100,
+  ) / 100;
+  const hasPartnerDeductions = partnerDeductionsTotal < -0.02;
+  const partnerExtrasAddsTotal = partnerItemizedExtras
+    ? Math.round(
+        partnerExtraHistory
+          .filter((row) => isPartnerNonMaterialsExtraRow(row) && extraHistorySignedAmount(row) > 0.02)
+          .reduce((sum, row) => sum + extraHistorySignedAmount(row), 0) * 100,
+      ) / 100
+    : Math.max(
+        0,
+        Math.round(
+          (partnerExtraPlainDisplay + partnerExtraCczDisplay + partnerExtraParkingDisplay) * 100,
+        ) / 100,
+      );
+  const partnerExtraTotalDisplay = partnerExtrasAddsTotal;
   /**
    * Locked partner "Initial balance" — defensive against legacy schemas.
    *
@@ -5814,9 +5965,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     })
     .reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
   const partnerExtrasEffectiveAgainstCost = Math.max(
+    0,
     Math.round(Number(job.partner_extras_amount ?? 0) * 100) / 100,
-    Math.round(partnerPartnerCostLedgerTotal * 100) / 100,
-    Math.round(partnerExtrasUiValue * 100) / 100,
+    Math.max(0, Math.round(partnerPartnerCostLedgerTotal * 100) / 100),
+    Math.max(0, Math.round(partnerExtrasUiValue * 100) / 100),
   );
   const partnerInitialBalance = Math.max(
     0,
@@ -5860,25 +6012,255 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           allocation: row.allocation,
         })))
     : [];
-  const extraManagerEntries = extraManagerSide === "client"
-    ? (clientExtraHistory.length > 0 ? clientExtraHistory : clientFallbackEntries)
-    : (partnerExtraHistory.length > 0 ? partnerExtraHistory : partnerFallbackEntries);
-  const extraManagerTitle = extraManagerSide === "client" ? "Manage client extras" : "Manage partner extras";
-  const extraManagerEmptyText =
-    extraManagerSide === "client"
-      ? "No client charges or discounts recorded yet."
-      : "No partner payouts or discounts recorded yet.";
-  const extraManagerGroups: { key: ExtraHistoryBucket; label: string; entries: ExtraHistoryEntry[] }[] = [
-    { key: "extra", label: "Labour", entries: [] },
-    { key: "materials", label: "Materials", entries: [] },
-    { key: "ccz", label: "CCZ", entries: [] },
-    { key: "parking", label: "Parking", entries: [] },
-  ];
-  for (const entry of extraManagerEntries) {
-    const bucket = extraHistoryBucket(entry.extraType);
-    const g = extraManagerGroups.find((row) => row.key === bucket);
-    if (g) g.entries.push(entry);
-  }
+  const getExtraManagerData = (side: "client" | "partner") => {
+    const entries =
+      side === "client"
+        ? clientExtraHistory.length > 0
+          ? clientExtraHistory
+          : clientFallbackEntries
+        : partnerExtraHistory.length > 0
+          ? partnerExtraHistory
+          : partnerFallbackEntries;
+    const emptyText =
+      side === "client"
+        ? "No client charges or discounts recorded yet."
+        : "No partner payouts or discounts recorded yet.";
+    const groups: { key: ExtraHistoryBucket; label: string; entries: ExtraHistoryEntry[] }[] = [
+      { key: "extra", label: "Labour", entries: [] },
+      { key: "materials", label: "Materials", entries: [] },
+      { key: "ccz", label: "CCZ", entries: [] },
+      { key: "parking", label: "Parking", entries: [] },
+    ];
+    for (const entry of entries) {
+      const bucket = extraHistoryBucket(entry.extraType);
+      const g = groups.find((row) => row.key === bucket);
+      if (g) g.entries.push(entry);
+    }
+    return { entries, groups, emptyText };
+  };
+
+  const renderExtraManagerPanel = (side: "client" | "partner", focusBucket: ExtraHistoryBucket | null) => {
+    const { entries, groups, emptyText } = getExtraManagerData(side);
+    const clientSide = side === "client";
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs text-text-tertiary leading-snug max-w-[58%]">
+            Tap edit or remove on any listed extra. Add new lines with the button on the right.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            disabled={job.status === "cancelled" || job.status === "deleted" || (!clientSide && !job.partner_id?.trim())}
+            onClick={() => openMoneyFlowFromHub(clientSide ? "client_extra" : "partner_extra")}
+          >
+            {clientSide ? "Charge or discount" : "Extra & deduction"}
+          </Button>
+        </div>
+        <div className="max-h-[36vh] space-y-3 overflow-y-auto pr-1">
+          {entries.length === 0 ? <p className="text-xs text-text-tertiary">{emptyText}</p> : null}
+          {entries.length > 0
+            ? groups
+                .filter((group) => group.entries.length > 0)
+                .map((group) => {
+                  const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
+                  const groupHasEditableEntries = group.entries.some((row) => !isFallbackExtraEntry(row));
+                  const groupFocused = focusBucket === group.key;
+                  return (
+                    <div
+                      key={group.key}
+                      className={cn(
+                        "rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]",
+                        groupFocused && "ring-2 ring-primary/35",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2 pb-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
+                          {!groupHasEditableEntries ? (
+                            <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
+                          ) : null}
+                        </div>
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold tabular-nums",
+                            clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
+                          )}
+                        >
+                          {formatSignedCurrency(groupTotal)}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {group.entries.map((entry) => (
+                          <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
+                                {entry.side === "client" && !isJobExtraDiscountExtraType(entry.extraType) ? (
+                                  <Badge
+                                    variant={
+                                      entry.clientConfirmed == null
+                                        ? "outline"
+                                        : entry.clientConfirmed
+                                          ? "success"
+                                          : "warning"
+                                    }
+                                    size="sm"
+                                  >
+                                    {entry.clientConfirmed == null
+                                      ? "Confirmation unknown"
+                                      : entry.clientConfirmed
+                                        ? "Client confirmed"
+                                        : "Not confirmed"}
+                                  </Badge>
+                                ) : null}
+                                {entry.createdAt ? (
+                                  <span className="text-[10px] text-text-tertiary">
+                                    · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                                  </span>
+                                ) : null}
+                                {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
+                              </div>
+                              {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={cn(
+                                  "text-xs font-semibold tabular-nums",
+                                  clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
+                                )}
+                              >
+                                {formatSignedCurrency(extraHistorySignedAmount(entry))}
+                              </span>
+                              {!isFallbackExtraEntry(entry) ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditExtra(entry)}
+                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
+                                    className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
+                                    title="Edit amount or reason"
+                                    aria-label="Edit extra"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteExtraEntry(entry)}
+                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
+                                    className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
+                                    title="Remove this extra"
+                                    aria-label="Remove extra"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+            : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderFinanceHubInitialBalanceRow = (
+    side: "client" | "partner",
+    displayAmount: number,
+    editSourceAmount: number,
+  ) => {
+    const editing = financeHubBaseEditSide === side;
+    const jobLocked = job.status === "cancelled" || job.status === "deleted";
+    const partnerLocked = side === "partner" && !job.partner_id?.trim();
+    const canEdit = !jobLocked && !partnerLocked;
+
+    return (
+      <div className="rounded-md border border-border-light/70 bg-background/60 px-2.5 py-2 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-text-primary">Initial balance</span>
+            <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+          </div>
+          {editing ? (
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={financeHubBaseDraft}
+                onChange={(e) => setFinanceHubBaseDraft(e.target.value)}
+                className="h-8 w-[7.5rem] text-xs tabular-nums"
+                autoFocus
+                disabled={savingFinanceHubBase}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2 text-xs"
+                disabled={savingFinanceHubBase}
+                onClick={() => {
+                  setFinanceHubBaseEditSide(null);
+                  setFinanceHubBaseDraft("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 px-2 text-xs"
+                loading={savingFinanceHubBase}
+                onClick={() => void saveFinanceHubInitialBalance(side)}
+              >
+                Save
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="font-semibold tabular-nums text-text-primary">
+                {formatCurrency(Math.max(0, displayAmount))}
+              </span>
+              {canEdit ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 px-2.5 text-[11px] font-medium"
+                  title="Edit initial balance"
+                  aria-label="Edit initial balance"
+                  onClick={() => {
+                    setFinanceHubBaseEditSide(side);
+                    setFinanceHubBaseDraft(String(Math.max(0, Math.round(editSourceAmount * 100) / 100)));
+                  }}
+                >
+                  <Pencil className="h-3 w-3" />
+                  Edit balance
+                </Button>
+              ) : null}
+            </div>
+          )}
+        </div>
+        {side === "partner" && Math.abs(displayAmount - editSourceAmount) > 0.02 ? (
+          <p className="mt-1 text-[10px] text-text-tertiary leading-snug">
+            Labour cap stored on job: {formatCurrency(Math.max(0, editSourceAmount))}
+          </p>
+        ) : null}
+        {editing ? (
+          <p className="mt-1.5 text-[10px] text-text-tertiary leading-snug">
+            {side === "client"
+              ? "Updates the base client price. Extras and payment history are unchanged."
+              : "Updates the agreed subcontract labour cap. Extras and payouts are unchanged."}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderExtraCategoryPencil = (
     side: "client" | "partner",
     bucket: ExtraHistoryBucket,
@@ -5891,7 +6273,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         className="text-text-tertiary transition-colors hover:text-text-primary"
         title="Edit or remove"
         aria-label="Edit or remove extras in this category"
-        onClick={() => openExtraManager(side, bucketHasLedgerEntries(side, bucket) ? bucket : undefined)}
+        onClick={() => openFinanceHub(side, bucketHasLedgerEntries(side, bucket) ? bucket : undefined)}
       >
         <Pencil className="h-3 w-3" />
       </button>
@@ -6164,10 +6546,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">Total Extras</span>
-              <span className={cn("font-semibold tabular-nums", hasPartnerExtra ? "text-rose-700" : "text-text-tertiary")}>
-                {hasPartnerExtra ? `-${formatCurrency(partnerExtraDisplay)}` : formatCurrency(0)}
+              <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                {partnerExtraTotalDisplay > 0.02 ? `-${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
               </span>
             </div>
+            {hasPartnerDeductions ? (
+              <div className="flex items-center justify-between">
+                <span className="text-text-secondary">Deductions</span>
+                <span className="font-semibold tabular-nums text-emerald-700">
+                  {formatSignedCurrency(partnerDeductionsTotal)}
+                </span>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
               <span className="text-text-secondary">Materials</span>
               <span className="font-semibold tabular-nums">-{formatCurrency(Math.max(0, Number(job.materials_cost ?? 0)))}</span>
@@ -8287,9 +8677,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             {/* FINANCIAL COMPLETION */}
             <div className="rounded-lg border border-border-light bg-card p-3 shadow-sm space-y-2.5 dark:border-[#2b313d] dark:bg-[#141922]">
-              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1">
-                <CreditCard className="h-3 w-3" /> Finance summary
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1">
+                  <CreditCard className="h-3 w-3" /> Finance summary
+                </p>
+                <button
+                  type="button"
+                  className="text-text-tertiary transition-colors hover:text-text-primary"
+                  title="Edit job finances"
+                  aria-label="Edit job finances"
+                  onClick={() => openFinanceHub("client")}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
               {/* CLIENT cash in */}
               <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
@@ -8333,7 +8734,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="flex items-center gap-1.5">
                       <JobCardHint
                         title="View all client extras"
-                        onClick={() => openExtraManager("client")}
+                        onClick={() => openFinanceHub("client")}
                         className="focus:ring-emerald-400"
                       />
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
@@ -8350,7 +8751,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             className="text-text-tertiary transition-colors hover:text-text-primary"
                             title="Edit or remove extras"
                             aria-label="Edit or remove client extras"
-                            onClick={() => openExtraManager("client")}
+                            onClick={() => openFinanceHub("client")}
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
@@ -8493,6 +8894,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </Button>
                 </div>
                 {(() => {
+                  if (job.job_kind !== "recurring") return null;
                   const primaryInv =
                     (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
                     jobInvoices[0];
@@ -8569,7 +8971,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="flex items-center gap-1.5">
                       <JobCardHint
                         title="View all partner extras"
-                        onClick={() => openExtraManager("partner")}
+                        onClick={() => openFinanceHub("partner")}
                         className="focus:ring-rose-400"
                       />
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
@@ -8584,7 +8986,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <button
                             type="button"
                             className="text-text-tertiary transition-colors hover:text-text-primary"
-                            onClick={() => openExtraManager("partner")}
+                            onClick={() => openFinanceHub("partner")}
                             title="Edit or remove extras"
                             aria-label="Edit or remove partner extras"
                           >
@@ -8620,6 +9022,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {renderExtraCategoryPencil("partner", "parking", partnerExtraParkingDisplay > 0.02 || bucketHasLedgerEntries("partner", "parking"))}
                       </div>
                     </div>
+                    {hasPartnerDeductions ? (
+                      <div className="space-y-1 border-t border-border-light/70 pt-2 mt-1 dark:border-[#323a46]">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Deductions</p>
+                        <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                          <span className="text-text-secondary">Total deductions</span>
+                          <span className="font-semibold tabular-nums text-emerald-700">
+                            {formatSignedCurrency(partnerDeductionsTotal)}
+                          </span>
+                        </div>
+                        {partnerNonMaterialsDeductionEntries.map((entry) => (
+                          <div key={entry.id} className="flex items-center justify-between gap-2 py-0.5 text-xs pl-1">
+                            <span className="text-text-tertiary truncate">{entry.extraType}</span>
+                            <span className="font-semibold tabular-nums text-emerald-700 shrink-0">
+                              {formatSignedCurrency(extraHistorySignedAmount(entry))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Materials</span>
                       <div className="flex items-center gap-1.5">
@@ -8814,14 +9235,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     disabled={!job.partner_id?.trim() || job.status === "cancelled"}
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
+                      setMoneyDrawerInitialExtraType(undefined);
                       setMoneyDrawerFlow("partner_extra");
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Payout or discount
+                    Extra &amp; deduction
                   </Button>
                 </div>
-                {job.self_bill_id?.trim() && job.partner_id?.trim() && job.status !== "cancelled" ? (
+                {job.job_kind === "recurring" &&
+                job.self_bill_id?.trim() &&
+                job.partner_id?.trim() &&
+                job.status !== "cancelled" ? (
                   <div className="mt-2">
                     <JobPaymentPlanPanel
                       kind="partner"
@@ -8829,11 +9254,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       totalAmount={Math.max(0, Number(jobSelfBill?.net_payout ?? partnerCashOutTotal))}
                       amountPaid={partnerPaidTotal}
                       canEdit={!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status)}
-                      multiJobWarning={
-                        jobSelfBill && Number(jobSelfBill.jobs_count) > 1
-                          ? `This self-bill includes ${jobSelfBill.jobs_count} jobs — plan total is ${formatCurrency(Number(jobSelfBill.net_payout))}. Your job cap is ${formatCurrency(partnerCap)}.`
-                          : null
-                      }
                       onUpdated={refreshJobFinance}
                     />
                   </div>
@@ -9868,147 +10288,249 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </Modal>
 
       <Modal
-        open={extraManagerSide != null}
+        open={financeHubOpen}
         onClose={() => {
-          setExtraManagerSide(null);
+          setFinanceHubOpen(false);
           setExtraManagerFocusBucket(null);
+          setFinanceHubBaseEditSide(null);
+          setFinanceHubBaseDraft("");
         }}
-        title={extraManagerTitle}
+        title="Edit job finances"
+        size="lg"
       >
         <div className="p-4 space-y-4">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-xs text-text-tertiary leading-snug max-w-[60%]">
-              Tap edit or remove on any listed extra. Use the pencil on Finance Summary to open this list.
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              icon={<Plus className="h-3.5 w-3.5" />}
+          <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]">
+            <button
+              type="button"
               onClick={() => {
-                if (extraManagerSide === "client") {
-                  setMoneyDrawerInitialExtraType(undefined);
-                  setMoneyDrawerFlow("client_extra");
-                } else {
-                  setMoneyDrawerFlow("partner_extra");
-                }
-                setExtraManagerSide(null);
-                setMoneyDrawerOpen(true);
+                setFinanceHubTab("client");
+                setExtraManagerFocusBucket(null);
+                setFinanceHubBaseEditSide(null);
+                setFinanceHubBaseDraft("");
               }}
+              className={cn(
+                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
+                financeHubTab === "client"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
             >
-              {extraManagerSide === "client" ? "Charge or discount" : "Payout or discount"}
-            </Button>
+              Cash in — client
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFinanceHubTab("partner");
+                setExtraManagerFocusBucket(null);
+                setFinanceHubBaseEditSide(null);
+                setFinanceHubBaseDraft("");
+              }}
+              className={cn(
+                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
+                financeHubTab === "partner"
+                  ? "bg-rose-600 text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              Cash out — partner
+            </button>
           </div>
 
-          <div className="max-h-[56vh] space-y-3 overflow-y-auto pr-1">
-            {extraManagerEntries.length === 0 ? (
-              <p className="text-xs text-text-tertiary">{extraManagerEmptyText}</p>
-            ) : null}
-            {extraManagerEntries.length > 0
-              ? extraManagerGroups
-                  .filter((group) => group.entries.length > 0)
-                  .map((group) => {
-                    const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
-                    const groupHasEditableEntries = group.entries.some((row) => !isFallbackExtraEntry(row));
-                    const groupFocused = extraManagerFocusBucket === group.key;
+          {financeHubTab === "client" ? (
+            <div className="space-y-4 rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 dark:border-emerald-500/25 dark:bg-emerald-950/15">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Client total</span>
+                  <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm">
+                    {amountDue > 0.02 ? "Pending" : "Settled"}
+                  </Badge>
+                </div>
+                <span className="text-base font-bold tabular-nums">{formatCurrency(billableRevenue)}</span>
+              </div>
+              {renderFinanceHubInitialBalanceRow(
+                "client",
+                Math.max(0, Number(job.client_price ?? 0)),
+                Math.max(0, Number(job.client_price ?? 0)),
+              )}
+              {isAdmin ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<Plus className="h-3.5 w-3.5" />}
+                  disabled={job.status === "cancelled" || job.status === "deleted"}
+                  onClick={() => openMoneyFlowFromHub("client_pay")}
+                >
+                  Record payment
+                </Button>
+              ) : null}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
+                {renderExtraManagerPanel("client", extraManagerFocusBucket)}
+              </div>
+              <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
+                {customerPayments.length === 0 ? (
+                  <p className="text-xs text-text-tertiary">No payments recorded yet.</p>
+                ) : (
+                  customerPayments.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
                     return (
-                      <div
-                        key={group.key}
-                        className={cn(
-                          "rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]",
-                          groupFocused && "ring-2 ring-primary/35",
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-2 pb-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
-                            {!groupHasEditableEntries ? (
-                              <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
-                            ) : null}
+                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">
+                              {ledgerTag ?? (p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance")}
+                            </span>
+                            <span className="text-[10px] text-text-tertiary">
+                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                            </span>
                           </div>
-                          <span
-                            className={cn(
-                              "text-[11px] font-semibold tabular-nums",
-                              extraManagerSide === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                            )}
-                          >
-                            {formatSignedCurrency(groupTotal)}
-                          </span>
+                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
                         </div>
-                        <div className="space-y-1.5">
-                          {group.entries.map((entry) => (
-                            <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                                  {entry.side === "client" && !isJobExtraDiscountExtraType(entry.extraType) ? (
-                                    <Badge
-                                      variant={
-                                        entry.clientConfirmed == null
-                                          ? "outline"
-                                          : entry.clientConfirmed
-                                            ? "success"
-                                            : "warning"
-                                      }
-                                      size="sm"
-                                    >
-                                      {entry.clientConfirmed == null
-                                        ? "Confirmation unknown"
-                                        : entry.clientConfirmed
-                                          ? "Client confirmed"
-                                          : "Not confirmed"}
-                                    </Badge>
-                                  ) : null}
-                                  {entry.createdAt ? (
-                                    <span className="text-[10px] text-text-tertiary">
-                                      · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                                    </span>
-                                  ) : null}
-                                  {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
-                                </div>
-                                {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span
-                                  className={cn(
-                                    "text-xs font-semibold tabular-nums",
-                                    entry.side === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                                  )}
-                                >
-                                  {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                                </span>
-                                {!isFallbackExtraEntry(entry) ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEditExtra(entry)}
-                                      disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                      className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
-                                      title="Edit amount or reason"
-                                      aria-label="Edit extra"
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteExtraEntry(entry)}
-                                      disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                      className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
-                                      title="Remove this extra"
-                                      aria-label="Remove extra"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                            {formatCurrencyPrecise(-Number(p.amount))}
+                          </span>
+                          {isAdmin ? (
+                            <button
+                              type="button"
+                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
+                              className="text-text-tertiary hover:text-red-500 transition-colors"
+                              aria-label="Remove payment"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );
                   })
-              : null}
-          </div>
+                )}
+                <div className="flex items-center justify-between pt-1 text-xs">
+                  <span className={cn("font-semibold", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
+                    {amountDue > 0.02 ? "Amount due" : "Fully collected"}
+                  </span>
+                  <span className={cn("font-bold tabular-nums", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
+                    {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 rounded-lg border border-rose-200/80 bg-rose-50/40 p-3 dark:border-rose-500/25 dark:bg-rose-950/15">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Partner total</span>
+                  <Badge
+                    variant={
+                      partnerUsesClawbackUi
+                        ? partnerClawbackOwed > 0.02
+                          ? "warning"
+                          : "success"
+                        : partnerPayRemaining > 0.02
+                          ? "warning"
+                          : "success"
+                    }
+                    size="sm"
+                  >
+                    {partnerUsesClawbackUi
+                      ? partnerClawbackOwed > 0.02
+                        ? "Pending"
+                        : "Settled"
+                      : partnerPayRemaining > 0.02
+                        ? "Pending"
+                        : "Settled"}
+                  </Badge>
+                </div>
+                <span className="text-base font-bold tabular-nums">{formatCurrencyPrecise(partnerCashOutSummaryAmount)}</span>
+              </div>
+              {renderFinanceHubInitialBalanceRow(
+                "partner",
+                partnerInitialBalance,
+                Math.max(0, Number(job.partner_cost ?? 0)),
+              )}
+              {isAdmin ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<Plus className="h-3.5 w-3.5" />}
+                  disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                  onClick={() => openMoneyFlowFromHub("partner_pay")}
+                >
+                  Record partner payment
+                </Button>
+              ) : null}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
+                {renderExtraManagerPanel("partner", extraManagerFocusBucket)}
+              </div>
+              {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
+                <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
+                  {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
+                    <p className="text-xs text-text-tertiary">No payouts recorded yet.</p>
+                  ) : null}
+                  {partnerPayoutLedgerRows.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                    return (
+                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">{ledgerTag ?? "Partner payout"}</span>
+                            <span className="text-[10px] text-text-tertiary">
+                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                            </span>
+                          </div>
+                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-xs font-semibold tabular-nums text-rose-700 dark:text-rose-300">
+                            {formatCurrencyPrecise(-Number(p.amount))}
+                          </span>
+                          {isAdmin ? (
+                            <button
+                              type="button"
+                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
+                              className="text-text-tertiary hover:text-red-500 transition-colors"
+                              aria-label="Remove payment"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {partnerLegacyCostAsPayoutRows.map((p) => {
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                    return (
+                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md border border-orange-500/20 bg-surface-hover/40 px-2.5 py-2">
+                        <div className="min-w-0">
+                          <Badge variant="warning" size="sm">Extra cost</Badge>
+                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate mt-1">{noteRest}</p> : null}
+                        </div>
+                        <span className="text-xs font-semibold tabular-nums text-orange-700 dark:text-orange-400">
+                          +{formatCurrencyPrecise(Number(p.amount))}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {!partnerUsesClawbackUi ? (
+                    <div className="flex items-center justify-between pt-1 text-xs">
+                      <span className={cn("font-semibold", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
+                        {partnerPayRemaining > 0.02 ? "Amount due" : "Fully paid out"}
+                      </span>
+                      <span className={cn("font-bold tabular-nums", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
+                        {partnerPayRemaining > 0.02 ? formatCurrency(partnerPayRemaining) : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -10202,6 +10724,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         stripeInvoices={jobInvoices}
         clientCashContext={jobMoneyClientCashContext}
         initialExtraType={moneyDrawerInitialExtraType}
+        partnerExtraPresets={partnerExtraPresets}
+        partnerDeductionPresets={partnerDeductionPresets}
         catalogAddonOptions={moneyDrawerCatalogAddonOptions}
       />
 

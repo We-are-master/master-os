@@ -360,6 +360,49 @@ body {
   color: var(--color-fx-mute);
 }
 
+/* Quote drawer — sell scale range with coral fill */
+.quote-drawer-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--color-fx-coral) var(--qd-fill, 50%),
+    var(--color-fx-line) var(--qd-fill, 50%)
+  );
+  outline: none;
+  cursor: pointer;
+}
+.quote-drawer-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--color-fx-line-strong, #CDCDD8);
+  box-shadow: 0 1px 3px rgba(2, 0, 64, 0.08);
+  cursor: grab;
+}
+.quote-drawer-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  border-color: var(--color-fx-coral);
+}
+.quote-drawer-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--color-fx-line-strong, #CDCDD8);
+  box-shadow: 0 1px 3px rgba(2, 0, 64, 0.08);
+  cursor: grab;
+}
+.quote-drawer-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 /* Live indicator (pulsing coral dot) — wrap a span with .fx-live-dot
    inside any element. */
 .fx-live-dot {

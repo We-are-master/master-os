@@ -21,6 +21,10 @@ interface DrawerProps {
   footer?: React.ReactNode;
   /** Applied to the fixed footer wrapper (padding, tint). */
   footerClassName?: string;
+  /** Optional class for the title element (e.g. mono reference). */
+  titleClassName?: string;
+  /** Wider header padding (quote drawer). */
+  headerPadding?: "default" | "wide";
   width?: string;
   className?: string;
 }
@@ -36,6 +40,8 @@ export function Drawer({
   children,
   footer,
   footerClassName,
+  titleClassName,
+  headerPadding = "default",
   width = "w-[440px]",
   className,
 }: DrawerProps) {
@@ -64,12 +70,17 @@ export function Drawer({
           >
             {title && (
               <div className="shrink-0 border-b border-fx-line sticky top-0 bg-surface z-[2]">
-                <div className="flex items-start justify-between gap-3 px-5 py-3.5">
+                <div
+                  className={cn(
+                    "flex items-start justify-between gap-3",
+                    headerPadding === "wide" ? "px-7 py-5" : "px-5 py-3.5",
+                  )}
+                >
                   <div className="min-w-0 flex-1 flex items-start gap-3">
                     {headerLeading ? <div className="shrink-0">{headerLeading}</div> : null}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 min-w-0">
-                        <h3 className="text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em] min-w-0">
+                        <h3 className={cn("text-[15px] font-semibold text-text-primary truncate tracking-[-0.005em] min-w-0", titleClassName)}>
                           {title}
                         </h3>
                         {titleAddon ? <span className="shrink-0">{titleAddon}</span> : null}
@@ -88,7 +99,9 @@ export function Drawer({
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                {headerExtra ? <div className="px-5 pb-3">{headerExtra}</div> : null}
+                {headerExtra ? (
+                  <div className={cn(headerPadding === "wide" ? "px-7 pb-4" : "px-5 pb-3")}>{headerExtra}</div>
+                ) : null}
               </div>
             )}
             <div className="flex flex-1 flex-col min-h-0">

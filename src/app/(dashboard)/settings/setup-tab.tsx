@@ -64,7 +64,13 @@ import {
   type PartnerLevelGoalMode,
   type OfficeJobCancellationPresetRow,
   type PulseRevenueGoalMode,
+  type PartnerExtraPresetRow,
 } from "@/lib/frontend-setup";
+import {
+  MAX_PARTNER_EXTRA_PRESET_LABEL_LEN,
+  normalizePartnerDeductionPresets,
+  normalizePartnerExtraPresets,
+} from "@/lib/partner-extra-presets";
 import {
   computePulseRevenueGoalSuggestions,
   resolvePulseMonthlyRevenueGoal,
@@ -157,6 +163,13 @@ export function SetupTab() {
 
   const [officeCancelPresets, setOfficeCancelPresets] = useState<OfficeJobCancellationPresetRow[]>(() =>
     normalizeOfficeJobCancellationPresets(null),
+  );
+
+  const [partnerExtraPresets, setPartnerExtraPresets] = useState<PartnerExtraPresetRow[]>(() =>
+    normalizePartnerExtraPresets(null),
+  );
+  const [partnerDeductionPresets, setPartnerDeductionPresets] = useState<PartnerExtraPresetRow[]>(() =>
+    normalizePartnerDeductionPresets(null),
   );
 
   const [workingDays, setWorkingDays] = useState<Set<number>>(() => new Set(DEFAULT_WORKING_DAYS));
@@ -338,6 +351,8 @@ export function SetupTab() {
       setBiddingSlaHoursStr(String(parsed.bidding_sla_hours ?? 8));
       setOnHoldPresets([...normalizeJobOnHoldPresets(parsed.job_on_hold_presets ?? null)]);
       setOfficeCancelPresets([...(parsed.office_job_cancellation_presets ?? normalizeOfficeJobCancellationPresets(null))]);
+      setPartnerExtraPresets([...normalizePartnerExtraPresets(parsed.partner_extra_presets ?? null)]);
+      setPartnerDeductionPresets([...normalizePartnerDeductionPresets(parsed.partner_deduction_presets ?? null)]);
       setWorkingDays(new Set(parsed.working_days ?? DEFAULT_WORKING_DAYS));
       setWorkStartStr(parsed.working_hours?.start ?? DEFAULT_WORKING_HOURS.start);
       setWorkEndStr(parsed.working_hours?.end ?? DEFAULT_WORKING_HOURS.end);
@@ -595,6 +610,8 @@ export function SetupTab() {
         bidding_sla_hours: hours,
         job_on_hold_presets: onHoldPresets,
         office_job_cancellation_presets: officeCancelPresets,
+        partner_extra_presets: partnerExtraPresets,
+        partner_deduction_presets: partnerDeductionPresets,
         working_days: [...workingDays],
         working_hours: { start: workStartStr, end: workEndStr },
         sla_arrival_grace_hours: slaArrival,
@@ -1306,6 +1323,120 @@ export function SetupTab() {
             After save, reasons auto-sync when the cancellation field id is set (Integrations or ZENDESK_CANCELLATION_REASON_FIELD_ID env).
             Zendesk tag = <code className="text-[11px]">cancel_</code> + id (e.g. <code className="text-[11px]">cancel_client_requested</code>).
           </p>
+        </div>
+      </Card>
+
+      <Card padding="none">
+        <CardHeader className="px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-text-tertiary" />
+            <CardTitle>Jobs · Partner extras &amp; deductions</CardTitle>
+            <FixfyHintIcon text="Labels for Extra &amp; deduction on job Finance. Internal ids and stored extra_type values stay fixed — rename labels to match your team." />
+          </div>
+        </CardHeader>
+        <div className="space-y-6 px-6 pb-6">
+          <div className="space-y-2 max-w-xl">
+            <MicroLabel>Partner extras</MicroLabel>
+            {partnerExtraPresets.map((row, idx) => (
+              <div key={row.id} className="flex items-start gap-2">
+                <div className="flex-1 min-w-0 space-y-1">
+                  <label className="block text-[10px] font-medium text-text-tertiary truncate" title={row.id}>
+                    id: <code className="text-[11px]">{row.id}</code>
+                  </label>
+                  <Input
+                    value={row.label}
+                    maxLength={MAX_PARTNER_EXTRA_PRESET_LABEL_LEN}
+                    placeholder="Label shown to staff"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPartnerExtraPresets((prev) => prev.map((p, i) => (i === idx ? { ...p, label: v } : p)));
+                    }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card mt-5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-8 rounded-none px-0"
+                    disabled={!canEditConfig || idx === 0}
+                    onClick={() => setPartnerExtraPresets((prev) => moveArrayItem(prev, idx, -1))}
+                    aria-label="Move partner extra type up"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-8 rounded-none px-0"
+                    disabled={!canEditConfig || idx >= partnerExtraPresets.length - 1}
+                    onClick={() => setPartnerExtraPresets((prev) => moveArrayItem(prev, idx, 1))}
+                    aria-label="Move partner extra type down"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2 max-w-xl">
+            <MicroLabel>Partner deductions</MicroLabel>
+            {partnerDeductionPresets.map((row, idx) => (
+              <div key={row.id} className="flex items-start gap-2">
+                <div className="flex-1 min-w-0 space-y-1">
+                  <label className="block text-[10px] font-medium text-text-tertiary truncate" title={row.id}>
+                    id: <code className="text-[11px]">{row.id}</code>
+                  </label>
+                  <Input
+                    value={row.label}
+                    maxLength={MAX_PARTNER_EXTRA_PRESET_LABEL_LEN}
+                    placeholder="Label shown to staff"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPartnerDeductionPresets((prev) => prev.map((p, i) => (i === idx ? { ...p, label: v } : p)));
+                    }}
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col border border-border rounded-md overflow-hidden divide-y divide-border bg-card mt-5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-8 rounded-none px-0"
+                    disabled={!canEditConfig || idx === 0}
+                    onClick={() => setPartnerDeductionPresets((prev) => moveArrayItem(prev, idx, -1))}
+                    aria-label="Move partner deduction type up"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-8 rounded-none px-0"
+                    disabled={!canEditConfig || idx >= partnerDeductionPresets.length - 1}
+                    onClick={() => setPartnerDeductionPresets((prev) => moveArrayItem(prev, idx, 1))}
+                    aria-label="Move partner deduction type down"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!canEditConfig || saving}
+            icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+          >
+            {saving ? "Saving…" : "Save setup"}
+          </Button>
         </div>
       </Card>
         </>

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { AuditLog, AuditEntityType } from "@/types/database";
 import { getAuditLogs } from "@/services/audit";
+import { cn } from "@/lib/utils";
 
 const actionConfig: Record<string, { icon: typeof Plus; color: string; label: string }> = {
   created: { icon: Plus, color: "bg-emerald-100 text-emerald-600", label: "Created" },
@@ -86,6 +87,8 @@ interface AuditTimelineProps {
   entityType: AuditEntityType;
   entityId: string;
   className?: string;
+  /** Compact dot timeline styling for quote drawer. */
+  variant?: "default" | "quote-drawer";
   /** When true, audit logs are fetched only after the block enters the viewport (lighter initial page load). */
   deferUntilVisible?: boolean;
 }
@@ -94,6 +97,7 @@ export function AuditTimeline({
   entityType,
   entityId,
   className = "",
+  variant = "default",
   deferUntilVisible = false,
 }: AuditTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -186,7 +190,27 @@ export function AuditTimeline({
               const Icon = config.icon;
               const isLast = idx === items.length - 1;
 
-              return (
+              return variant === "quote-drawer" ? (
+                <motion.div key={log.id} variants={staggerItem} className="relative flex gap-3.5 pb-5 last:pb-0">
+                  <div
+                    className={cn(
+                      "mt-1 h-[11px] w-[11px] shrink-0 rounded-full border-2 bg-surface",
+                      log.action === "created" || log.action === "status_changed"
+                        ? "border-fx-coral bg-fx-coral"
+                        : "border-fx-line-strong",
+                    )}
+                    aria-hidden
+                  />
+                  {!isLast ? (
+                    <div className="absolute left-[5px] top-4 bottom-0 w-px bg-fx-line" aria-hidden />
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13.5px] font-medium text-fx-ink">{getLogTitle(log)}</p>
+                    <p className="mt-0.5 text-xs text-fx-mute">{getLogDescription(log)}</p>
+                    <p className="mt-1 text-xs text-fx-mute">{timeAgo(log.created_at)}</p>
+                  </div>
+                </motion.div>
+              ) : (
                 <motion.div key={log.id} variants={staggerItem} className="flex gap-3">
                   {/* Timeline line + icon */}
                   <div className="flex flex-col items-center">

@@ -23,6 +23,8 @@ interface UseSupabaseListOptions<T> {
    * the hook's contract identical.
    */
   initialData?: ListResult<T> | null;
+  /** When true, still run the first client fetch if SSR hydrated with count 0. */
+  refetchWhenInitialEmpty?: boolean;
 }
 
 interface UseSupabaseListReturn<T> {
@@ -51,6 +53,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     initialStatus = "all",
     listParams,
     initialData,
+    refetchWhenInitialEmpty = false,
   } = options;
   const fetcherRef = useRef(fetcher);
   const listParamsRef = useRef(listParams);
@@ -73,7 +76,9 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const [status, setStatusRaw] = useState(initialStatus);
   const [tick, setTick] = useState(0);
   const skipLoadingRef = useRef(false);
-  const skipFirstFetchRef = useRef(initialData != null);
+  const skipFirstFetchRef = useRef(
+    initialData != null && !(refetchWhenInitialEmpty && (initialData.count ?? 0) === 0),
+  );
 
   const scheduleRangeKey = listParams?.scheduleRange
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`

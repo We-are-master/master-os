@@ -28,6 +28,13 @@ import {
   type PartnerLevelGoalMode,
   resolvePartnerLevelThresholds,
 } from "@/lib/partner-revenue-goal";
+import {
+  normalizePartnerDeductionPresets,
+  normalizePartnerExtraPresets,
+  type PartnerExtraPresetRow,
+} from "@/lib/partner-extra-presets";
+
+export type { PartnerExtraPresetRow };
 
 /**
  * Parsed from `company_settings.frontend_setup` (Settings → Setup).
@@ -42,6 +49,10 @@ export type FrontendSetup = {
    * Office cancel preset list: same fixed ids as code defaults; order and label text are configurable in Settings → Setup.
    */
   office_job_cancellation_presets?: OfficeJobCancellationPresetRow[];
+  /** Partner Cash Out — positive extra types (job money drawer). */
+  partner_extra_presets?: PartnerExtraPresetRow[];
+  /** Partner Cash Out — deductions including cancellation fee (job money drawer). */
+  partner_deduction_presets?: PartnerExtraPresetRow[];
   /**
    * Active working weekdays. 0=Sun, 1=Mon, …, 6=Sat. Default Mon-Sat = [1,2,3,4,5,6].
    * Drives how monthly overhead (workforce + recurring bills) is allocated to days
@@ -428,6 +439,8 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   const base: FrontendSetup = { ...DEFAULT_FRONTEND_SETUP };
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
     base.office_job_cancellation_presets = normalizeOfficeJobCancellationPresets(null);
+    base.partner_extra_presets = normalizePartnerExtraPresets(null);
+    base.partner_deduction_presets = normalizePartnerDeductionPresets(null);
     base.working_days = [...DEFAULT_WORKING_DAYS];
     base.working_hours = { ...DEFAULT_WORKING_HOURS };
     base.partner_document_rules = mergePartnerDocumentRules(null);
@@ -438,6 +451,8 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (o.bidding_sla_hours !== undefined) base.bidding_sla_hours = clampBiddingSlaHours(o.bidding_sla_hours);
   if (o.job_on_hold_presets !== undefined) base.job_on_hold_presets = normalizeJobOnHoldPresets(o.job_on_hold_presets);
   base.office_job_cancellation_presets = normalizeOfficeJobCancellationPresets(o.office_job_cancellation_presets);
+  base.partner_extra_presets = normalizePartnerExtraPresets(o.partner_extra_presets);
+  base.partner_deduction_presets = normalizePartnerDeductionPresets(o.partner_deduction_presets);
   base.working_days = normalizeWorkingDays(o.working_days);
   base.working_hours = normalizeWorkingHours(o.working_hours);
   base.sla_arrival_grace_hours = clampSlaHours(o.sla_arrival_grace_hours, DEFAULT_SLA_ARRIVAL_GRACE_HOURS);
@@ -576,6 +591,12 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.job_on_hold_presets !== undefined) base.job_on_hold_presets = normalizeJobOnHoldPresets(patch.job_on_hold_presets);
   if (patch.office_job_cancellation_presets !== undefined) {
     base.office_job_cancellation_presets = normalizeOfficeJobCancellationPresets(patch.office_job_cancellation_presets);
+  }
+  if (patch.partner_extra_presets !== undefined) {
+    base.partner_extra_presets = normalizePartnerExtraPresets(patch.partner_extra_presets);
+  }
+  if (patch.partner_deduction_presets !== undefined) {
+    base.partner_deduction_presets = normalizePartnerDeductionPresets(patch.partner_deduction_presets);
   }
   if (patch.working_days !== undefined) base.working_days = normalizeWorkingDays(patch.working_days);
   if (patch.working_hours !== undefined) base.working_hours = normalizeWorkingHours(patch.working_hours);
@@ -865,6 +886,14 @@ export function resolveOfficeJobCancellationPresets(
   setup?: FrontendSetup | null,
 ): readonly OfficeJobCancellationPresetRow[] {
   return normalizeOfficeJobCancellationPresets(setup?.office_job_cancellation_presets ?? null);
+}
+
+export function resolvePartnerExtraPresets(setup?: FrontendSetup | null): PartnerExtraPresetRow[] {
+  return normalizePartnerExtraPresets(setup?.partner_extra_presets ?? null);
+}
+
+export function resolvePartnerDeductionPresets(setup?: FrontendSetup | null): PartnerExtraPresetRow[] {
+  return normalizePartnerDeductionPresets(setup?.partner_deduction_presets ?? null);
 }
 
 export function resolveBiddingSlaHours(setup?: FrontendSetup | null): number {

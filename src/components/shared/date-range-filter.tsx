@@ -16,6 +16,8 @@ type Props = {
   onChange: (next: DateFilterValue) => void;
   /** "segment" matches Pulse's pill-group look. "chip" matches Beacon/Jobs outline-chip look. */
   variant?: Variant;
+  /** When true, only the "All" chip stays visible; Today/Tomorrow/Week/Month/QTD move into the … menu. */
+  compactQuickOptions?: boolean;
   className?: string;
 };
 
@@ -24,9 +26,21 @@ type Props = {
  * overflow button that opens a popover with the Custom range pickers. Same
  * presentation on Pulse / Live View / Jobs / Quotes / Schedule.
  */
-export function DateRangeFilter({ value, onChange, variant = "segment", className }: Props) {
+export function DateRangeFilter({
+  value,
+  onChange,
+  variant = "segment",
+  compactQuickOptions = false,
+  className,
+}: Props) {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inlineQuickOptions = compactQuickOptions
+    ? DATE_FILTER_QUICK_OPTIONS.filter((opt) => opt.id === "all")
+    : DATE_FILTER_QUICK_OPTIONS;
+  const overflowQuickOptions = compactQuickOptions
+    ? DATE_FILTER_QUICK_OPTIONS.filter((opt) => opt.id !== "all")
+    : [];
 
   useEffect(() => {
     if (!overflowOpen) return;
@@ -46,7 +60,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
   if (variant === "chip") {
     return (
       <div ref={wrapRef} className={cn("relative inline-flex items-center gap-1 flex-wrap", className)}>
-        {DATE_FILTER_QUICK_OPTIONS.map((opt) => (
+        {inlineQuickOptions.map((opt) => (
           <button
             key={opt.id}
             type="button"
@@ -67,7 +81,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
           onClick={() => setOverflowOpen((v) => !v)}
           className={cn(
             "rounded-md px-2 py-1 text-[12px] font-medium transition-colors border inline-flex items-center justify-center",
-            isCustom
+            isCustom || overflowQuickOptions.some((opt) => value.mode === opt.id)
               ? "bg-fx-coral text-white border-fx-coral"
               : "bg-card border-fx-line text-text-primary hover:bg-fx-paper",
           )}
@@ -79,6 +93,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
             value={value}
             onChange={onChange}
             onClose={() => setOverflowOpen(false)}
+            quickOptions={overflowQuickOptions}
           />
         )}
       </div>
@@ -89,7 +104,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
   return (
     <div ref={wrapRef} className={cn("relative inline-flex items-center", className)}>
       <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
-        {DATE_FILTER_QUICK_OPTIONS.map((opt) => (
+        {inlineQuickOptions.map((opt) => (
           <button
             key={opt.id}
             type="button"
@@ -110,7 +125,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
           onClick={() => setOverflowOpen((v) => !v)}
           className={cn(
             "px-2 py-[5px] rounded text-[12.5px] font-medium transition-colors inline-flex items-center justify-center",
-            isCustom
+            isCustom || overflowQuickOptions.some((opt) => value.mode === opt.id)
               ? "bg-card text-text-primary shadow-fx-1"
               : "bg-transparent text-fx-mute hover:text-text-primary",
           )}
@@ -123,6 +138,7 @@ export function DateRangeFilter({ value, onChange, variant = "segment", classNam
           value={value}
           onChange={onChange}
           onClose={() => setOverflowOpen(false)}
+          quickOptions={overflowQuickOptions}
         />
       )}
     </div>
@@ -133,14 +149,38 @@ function OverflowPopover({
   value,
   onChange,
   onClose,
+  quickOptions = [],
 }: {
   value: DateFilterValue;
   onChange: (next: DateFilterValue) => void;
   onClose: () => void;
+  quickOptions?: { id: Exclude<DateFilterMode, "custom">; label: string }[];
 }) {
   const isCustom = value.mode === "custom";
   return (
     <div className="absolute right-0 top-full mt-1.5 z-50 w-[260px] rounded-xl border border-fx-line bg-card shadow-fx-2 p-3 space-y-2.5">
+      {quickOptions.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {quickOptions.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => {
+                onChange({ ...value, mode: opt.id });
+                onClose();
+              }}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors border",
+                value.mode === opt.id
+                  ? "bg-fx-coral text-white border-fx-coral"
+                  : "bg-card border-fx-line text-text-primary hover:bg-fx-paper",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <button
         type="button"
         onClick={() => {

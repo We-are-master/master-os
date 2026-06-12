@@ -1,7 +1,11 @@
 import type { Job } from "@/types/database";
 import { deriveStoredJobFinancials } from "@/lib/job-financials";
 
-/** Where the customer’s extra charge lands on the job row (maps to Finance summary lines). */
+/**
+ * Where the customer’s extra charge lands on the job row (maps to Finance summary lines).
+ * Client materials bill to the customer via `extras_amount` (billable revenue), not `materials_cost`
+ * (partner reimbursement only).
+ */
 export type CustomerExtraAllocation = "labour" | "extras" | "materials";
 
 /**
@@ -13,11 +17,10 @@ export function applyCustomerExtraPatch(job: Job, amount: number, allocation: Cu
   if (a <= 0) return {};
   let client_price = Number(job.client_price ?? 0);
   let extras_amount = Number(job.extras_amount ?? 0);
-  let materials_cost = Number(job.materials_cost ?? 0);
+  const materials_cost = Number(job.materials_cost ?? 0);
   const customer_deposit = Number(job.customer_deposit ?? 0);
   if (allocation === "labour") client_price += a;
-  else if (allocation === "extras") extras_amount += a;
-  else materials_cost += a;
+  else extras_amount += a;
   const customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
   const merged = { ...job, client_price, extras_amount, materials_cost, customer_final_payment } as Job;
   return {
@@ -50,11 +53,10 @@ export function reverseCustomerExtraPatch(job: Job, amount: number, allocation: 
   if (a <= 0) return {};
   let client_price = Number(job.client_price ?? 0);
   let extras_amount = Number(job.extras_amount ?? 0);
-  let materials_cost = Number(job.materials_cost ?? 0);
+  const materials_cost = Number(job.materials_cost ?? 0);
   const customer_deposit = Number(job.customer_deposit ?? 0);
   if (allocation === "labour") client_price = Math.max(0, client_price - a);
-  else if (allocation === "extras") extras_amount = Math.max(0, extras_amount - a);
-  else materials_cost = Math.max(0, materials_cost - a);
+  else extras_amount = Math.max(0, extras_amount - a);
   const customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
   const merged = { ...job, client_price, extras_amount, materials_cost, customer_final_payment } as Job;
   return {

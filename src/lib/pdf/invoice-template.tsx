@@ -29,84 +29,186 @@ export interface InvoicePdfData {
   requestPercent?: number;
 }
 
-/* Brand palette — mirrors the Statement of Charges email
- * (src/lib/email-templates/invoice-client.html). */
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
 const LILAC = "#F2F0FA";
 const TEXT = "#1A1A1A";
 const MUTED = "#4A4A55";
-const LABEL = "#9A9AA8";
+const LABEL = "#6B6E7B";
 const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
 const FOOTER_INFO = "#AAAAD0";
-const PAD = 32;
-const FOOTER_RESERVE = 76;
+const PAD = 36;
+const FOOTER_HEIGHT = 68;
 
 const styles = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: FOOTER_RESERVE },
+  page: {
+    fontFamily: "Helvetica",
+    fontSize: 10,
+    color: NAVY,
+    paddingBottom: FOOTER_HEIGHT + 8,
+  },
 
-  // Header
-  headerBand: { backgroundColor: NAVY, paddingVertical: 14, alignItems: "center" },
-  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 20, color: "#FFFFFF", letterSpacing: 0.5 },
+  headerBand: {
+    backgroundColor: NAVY,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  wordmark: { fontFamily: "Helvetica-Bold", fontSize: 18, color: "#FFFFFF", letterSpacing: 0.5 },
   accentBar: { backgroundColor: ORANGE, height: 4 },
 
   body: { paddingHorizontal: PAD, paddingTop: 18 },
 
-  eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 6 },
-  docTitle: { marginBottom: 10 },
-  docRef: { fontFamily: "Helvetica-Bold", fontSize: 14, color: ORANGE, marginBottom: 3 },
-  docClient: { fontFamily: "Helvetica-Bold", fontSize: 16, color: NAVY, lineHeight: 1.25 },
-  headline: { fontFamily: "Helvetica-Bold", fontSize: 14, color: NAVY, marginBottom: 6 },
-  intro: { fontSize: 10.5, lineHeight: 1.45, color: MUTED, marginBottom: 12 },
+  hero: { marginBottom: 14 },
+  eyebrow: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8.5,
+    letterSpacing: 2.2,
+    color: ORANGE,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  docTitle: { marginBottom: 8 },
+  docRef: { fontFamily: "Helvetica-Bold", fontSize: 13, color: ORANGE, marginBottom: 4 },
+  docClient: { fontFamily: "Helvetica-Bold", fontSize: 15, color: NAVY, lineHeight: 1.3 },
+  headline: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 13,
+    color: NAVY,
+    marginBottom: 6,
+    lineHeight: 1.25,
+  },
+  intro: { fontSize: 10, lineHeight: 1.5, color: MUTED },
 
-  sectionLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1.6, color: NAVY, textTransform: "uppercase", marginBottom: 8 },
+  sectionLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8.5,
+    letterSpacing: 1.5,
+    color: NAVY,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  sectionGap: { marginBottom: 14 },
 
-  // Reference bar
-  refBar: { backgroundColor: LILAC, borderRadius: 8, padding: 12, marginBottom: 14 },
-  refRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 5 },
-  refRowLast: { flexDirection: "row", justifyContent: "space-between" },
-  refKey: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 1, color: LABEL, textTransform: "uppercase" },
-  refVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY },
-  refValDue: { fontFamily: "Helvetica-Bold", fontSize: 11, color: ORANGE },
+  refBar: { backgroundColor: LILAC, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 14 },
+  refRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 5,
+  },
+  refRowLast: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  refKey: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8,
+    letterSpacing: 1,
+    color: LABEL,
+    textTransform: "uppercase",
+    flexShrink: 0,
+  },
+  refVal: { fontFamily: "Helvetica-Bold", fontSize: 10.5, color: NAVY, textAlign: "right" as const },
+  refValDue: { fontFamily: "Helvetica-Bold", fontSize: 10.5, color: ORANGE, textAlign: "right" as const },
 
-  // Cards
   card: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, marginBottom: 14 },
-  cardHead: { padding: 12, borderBottomWidth: 1, borderBottomColor: BORDER },
-  cardHeadText: { fontFamily: "Helvetica-Bold", fontSize: 13, color: NAVY },
-  infoRow: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 8 },
+  cardHead: { paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: BORDER },
+  cardHeadText: { fontFamily: "Helvetica-Bold", fontSize: 12, color: NAVY, lineHeight: 1.35 },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
   infoDivider: { borderTopWidth: 1, borderTopColor: HAIRLINE },
-  infoKey: { width: "35%", fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 0.8, color: LABEL, textTransform: "uppercase" },
-  infoVal: { flex: 1, fontSize: 10.5, color: TEXT, lineHeight: 1.35 },
+  infoKey: {
+    width: 72,
+    flexShrink: 0,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8,
+    letterSpacing: 0.8,
+    color: LABEL,
+    textTransform: "uppercase",
+    paddingTop: 1,
+  },
+  infoVal: { flex: 1, fontSize: 10, color: TEXT, lineHeight: 1.45 },
   infoValMuted: { color: MUTED },
 
-  // Breakdown
-  lineRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
-  lineLabel: { fontSize: 10.5, color: TEXT },
-  lineVal: { fontFamily: "Helvetica-Bold", fontSize: 10.5, color: NAVY },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: LILAC, paddingHorizontal: 12, paddingVertical: 11 },
-  totalLabel: { fontFamily: "Helvetica-Bold", fontSize: 10, letterSpacing: 1, color: NAVY, textTransform: "uppercase" },
-  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 17, color: NAVY },
+  lineRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: HAIRLINE,
+  },
+  lineLabel: { flex: 1, fontSize: 10, color: TEXT, lineHeight: 1.4 },
+  lineVal: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 10,
+    color: NAVY,
+    minWidth: 68,
+    textAlign: "right" as const,
+    flexShrink: 0,
+  },
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: LILAC,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  totalLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9,
+    letterSpacing: 0.8,
+    color: NAVY,
+    textTransform: "uppercase",
+  },
+  totalVal: { fontFamily: "Helvetica-Bold", fontSize: 16, color: NAVY },
 
-  // Notes
-  paidNote: { backgroundColor: "#E8F5EF", borderRadius: 8, padding: 11, marginBottom: 12 },
-  paidNoteText: { fontSize: 10.5, color: "#0F6B45", fontFamily: "Helvetica-Bold" },
-  vatNote: { backgroundColor: "#FFF1EA", borderLeftWidth: 4, borderLeftColor: ORANGE, borderRadius: 4, padding: 11, marginBottom: 12 },
-  vatEyebrow: { fontFamily: "Helvetica-Bold", fontSize: 8, letterSpacing: 2, color: ORANGE, textTransform: "uppercase", marginBottom: 3 },
-  vatText: { fontSize: 9.5, lineHeight: 1.4, color: NAVY },
+  paidNote: { backgroundColor: "#E8F5EF", borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 14 },
+  paidNoteText: { fontSize: 10, color: "#0F6B45", fontFamily: "Helvetica-Bold", lineHeight: 1.4 },
+  vatNote: {
+    backgroundColor: "#FFF1EA",
+    borderLeftWidth: 3,
+    borderLeftColor: ORANGE,
+    borderRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  vatEyebrow: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8,
+    letterSpacing: 1.5,
+    color: ORANGE,
+    textTransform: "uppercase",
+    marginBottom: 3,
+  },
+  vatText: { fontSize: 9, lineHeight: 1.45, color: NAVY },
 
-  // Footer (pinned to bottom — mirrors quote-template.tsx)
   footer: {
     position: "absolute" as const,
     bottom: 0,
     left: 0,
     right: 0,
+    height: FOOTER_HEIGHT,
     backgroundColor: NAVY,
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: PAD,
     alignItems: "center",
+    justifyContent: "center",
   },
-  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 13, color: "#FFFFFF", marginBottom: 6 },
+  footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 12, color: "#FFFFFF", marginBottom: 5 },
   footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
 
@@ -125,8 +227,6 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
   const intro = isPaid
     ? "Thank you — your payment has been received. This statement is for your records."
     : "Your job is complete. Below is your statement of charges. This statement PDF is for your records.";
-  // Partial-payment-request aware totals (a request can ask for less than the
-  // full balance — e.g. a deposit). Falls back to the full balance otherwise.
   const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
   const requestedDue =
     !isPaid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
@@ -147,20 +247,21 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Header */}
         <View style={styles.headerBand}>
           <Text style={styles.wordmark}>Fixfy</Text>
         </View>
         <View style={styles.accentBar} />
 
         <View style={styles.body}>
-          <Text style={styles.eyebrow}>{eyebrow}</Text>
-          <View style={styles.docTitle} wrap={false}>
-            <Text style={styles.docRef}>{displayBillingReference(data.reference)}</Text>
-            <Text style={styles.docClient}>{data.clientName.trim() || "Client"}</Text>
+          <View style={styles.hero} wrap={false}>
+            <Text style={styles.eyebrow}>{eyebrow}</Text>
+            <View style={styles.docTitle}>
+              <Text style={styles.docRef}>{displayBillingReference(data.reference)}</Text>
+              <Text style={styles.docClient}>{data.clientName.trim() || "Client"}</Text>
+            </View>
+            <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
+            <Text style={styles.intro}>{intro}</Text>
           </View>
-          <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
-          <Text style={styles.intro}>{intro}</Text>
 
           {isPaid ? (
             <View style={styles.paidNote} wrap={false}>
@@ -171,8 +272,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
             </View>
           ) : null}
 
-          {/* Reference bar */}
-          <View style={styles.refBar} wrap={false}>
+          <View style={[styles.refBar, styles.sectionGap]} wrap={false}>
             <View style={styles.refRow}>
               <Text style={styles.refKey}>Issue date</Text>
               <Text style={styles.refVal}>{data.issueDate}</Text>
@@ -198,60 +298,61 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
             ) : null}
           </View>
 
-          {/* Job completed */}
-          <Text style={styles.sectionLabel}>{isPaid ? "Job" : "Job completed"}</Text>
-          <View style={styles.card} wrap={false}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardHeadText}>{data.jobTitle}</Text>
-            </View>
-            {data.serviceType ? (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoKey}>Service</Text>
-                <Text style={styles.infoVal}>{data.serviceType}</Text>
+          <View style={styles.sectionGap} wrap={false}>
+            <Text style={styles.sectionLabel}>{isPaid ? "Job" : "Job completed"}</Text>
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardHeadText}>{data.jobTitle}</Text>
               </View>
-            ) : null}
-            {data.propertyAddress ? (
+              {data.serviceType ? (
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoKey}>Service</Text>
+                  <Text style={styles.infoVal}>{data.serviceType}</Text>
+                </View>
+              ) : null}
+              {data.propertyAddress ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>Site</Text>
+                  <Text style={styles.infoVal}>{data.propertyAddress}</Text>
+                </View>
+              ) : null}
+              {data.completionDate ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>Completed on</Text>
+                  <Text style={styles.infoVal}>{data.completionDate}</Text>
+                </View>
+              ) : null}
               <View style={[styles.infoRow, styles.infoDivider]}>
-                <Text style={styles.infoKey}>Site</Text>
-                <Text style={styles.infoVal}>{data.propertyAddress}</Text>
+                <Text style={styles.infoKey}>Job ref</Text>
+                <Text style={[styles.infoVal, styles.infoValMuted]}>{data.jobReference || "—"}</Text>
               </View>
-            ) : null}
-            {data.completionDate ? (
-              <View style={[styles.infoRow, styles.infoDivider]}>
-                <Text style={styles.infoKey}>Completed on</Text>
-                <Text style={styles.infoVal}>{data.completionDate}</Text>
-              </View>
-            ) : null}
-            <View style={[styles.infoRow, styles.infoDivider]}>
-              <Text style={styles.infoKey}>Job ref</Text>
-              <Text style={[styles.infoVal, styles.infoValMuted]}>{data.jobReference || "—"}</Text>
             </View>
           </View>
 
-          {/* Charges breakdown */}
-          <Text style={styles.sectionLabel}>Charges breakdown</Text>
-          <View style={styles.card} wrap={false}>
-            <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Trade services</Text>
-              <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
-            </View>
-            <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Fixfy platform fee</Text>
-              <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
-            </View>
-            {data.partial && !isPaid ? (
-              <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Already paid</Text>
-                <Text style={styles.lineVal}>{money(data.paidAmount)}</Text>
+          <View style={styles.sectionGap}>
+            <Text style={styles.sectionLabel}>Charges breakdown</Text>
+            <View style={styles.card}>
+              <View style={styles.lineRow} wrap={false}>
+                <Text style={styles.lineLabel}>Trade services</Text>
+                <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
               </View>
-            ) : null}
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>{totalLabel}</Text>
-              <Text style={styles.totalVal}>{money(totalAmount)}</Text>
+              <View style={styles.lineRow} wrap={false}>
+                <Text style={styles.lineLabel}>Fixfy platform fee</Text>
+                <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
+              </View>
+              {data.partial && !isPaid ? (
+                <View style={styles.lineRow} wrap={false}>
+                  <Text style={styles.lineLabel}>Already paid</Text>
+                  <Text style={styles.lineVal}>{money(data.paidAmount)}</Text>
+                </View>
+              ) : null}
+              <View style={styles.totalRow} wrap={false}>
+                <Text style={styles.totalLabel}>{totalLabel}</Text>
+                <Text style={styles.totalVal}>{money(totalAmount)}</Text>
+              </View>
             </View>
           </View>
 
-          {/* VAT note */}
           <View style={styles.vatNote} wrap={false}>
             <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
             <Text style={styles.vatText}>
@@ -260,7 +361,6 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           </View>
         </View>
 
-        {/* Footer (navy, pinned) */}
         <View style={styles.footer} fixed>
           <Text style={styles.footerWordmark}>Fixfy</Text>
           <Text style={styles.footerText}>

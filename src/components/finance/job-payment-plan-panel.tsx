@@ -45,7 +45,6 @@ type Props =
       totalAmount: number;
       amountPaid: number;
       canEdit: boolean;
-      multiJobWarning?: string | null;
       onUpdated?: () => void | Promise<void>;
     };
 
@@ -199,9 +198,6 @@ export function JobPaymentPlanPanel(props: Props) {
         </p>
         {progress ? <span className="text-[10px] text-text-tertiary">{progress}</span> : null}
       </div>
-      {props.kind === "partner" && props.multiJobWarning ? (
-        <p className="text-[10px] leading-snug text-amber-800 dark:text-amber-300">{props.multiJobWarning}</p>
-      ) : null}
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
         <span className="text-text-tertiary">
           {billTotalLabel}{" "}
