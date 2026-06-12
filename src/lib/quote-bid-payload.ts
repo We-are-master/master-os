@@ -1,3 +1,5 @@
+import { normalizeCalendarDateToYmd } from "@/lib/utils";
+
 /**
  * Optional JSON the partner app can send in `quote_bids.notes` to pre-fill the customer proposal.
  * Plain text notes still work; JSON can be the whole string or prefixed with BID_JSON:
@@ -29,6 +31,127 @@ export type PartnerBidProposalPayload = {
 
 const BID_JSON_PREFIX = "BID_JSON:";
 
+/** Max difference allowed between bidAmount and labour + materials (£). */
+export const BID_AMOUNT_TOLERANCE = 0.02;
+
+export type ValidatedPartnerBidPayload = PartnerBidProposalPayload & {
+  labour_cost: number;
+  materials_cost: number;
+  labour_pricing: "hourly" | "fixed";
+  materials_pricing: "unit" | "bulk";
+  start_date_option_1: string;
+  start_date_option_2: string;
+};
+
+function finiteNumber(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Coerce loose API/form input into a payload object. */
+export function normalizePartnerBidPayloadInput(raw: unknown): PartnerBidProposalPayload {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  const labourPricing = o.labour_pricing === "hourly" ? "hourly" : o.labour_pricing === "fixed" ? "fixed" : undefined;
+  const materialsPricing = o.materials_pricing === "bulk" ? "bulk" : o.materials_pricing === "unit" ? "unit" : undefined;
+  return {
+    labour_cost: finiteNumber(o.labour_cost) ?? undefined,
+    materials_cost: finiteNumber(o.materials_cost) ?? undefined,
+    labour_description: bidPayloadTrimmedString(o.labour_description) || undefined,
+    materials_description: bidPayloadTrimmedString(o.materials_description) || undefined,
+    labour_pricing: labourPricing,
+    labour_hours: finiteNumber(o.labour_hours) ?? undefined,
+    labour_rate: finiteNumber(o.labour_rate) ?? undefined,
+    materials_pricing: materialsPricing,
+    materials_quantity: finiteNumber(o.materials_quantity) ?? undefined,
+    materials_partner_unit: finiteNumber(o.materials_partner_unit) ?? undefined,
+    start_date_option_1: bidPayloadTrimmedString(o.start_date_option_1) || undefined,
+    start_date_option_2: bidPayloadTrimmedString(o.start_date_option_2) || undefined,
+    deposit_required: finiteNumber(o.deposit_required) ?? undefined,
+    scope: bidPayloadTrimmedString(o.scope) || undefined,
+  };
+}
+
+export function serializePartnerBidPayload(payload: PartnerBidProposalPayload): string {
+  return `${BID_JSON_PREFIX}${JSON.stringify(payload)}`;
+}
+
+/** Parse structured payload from stored bid notes (alias for clarity in forms). */
+export function deserializePartnerBidPayload(notes: string | undefined | null): PartnerBidProposalPayload | null {
+  return parseBidProposalFromNotes(notes);
+}
+
+export function buildBidNotesJson(
+  payload: PartnerBidProposalPayload,
+  freeformNotes?: string | null,
+): string {
+  const json = serializePartnerBidPayload(payload);
+  const extra = bidPayloadTrimmedString(freeformNotes);
+  if (!extra) return json;
+  return `${json}\n\n${extra}`;
+}
+
+export function validatePartnerBidPayload(
+  raw: PartnerBidProposalPayload,
+  bidAmount?: number,
+): { ok: true; payload: ValidatedPartnerBidPayload } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const payload = normalizePartnerBidPayloadInput(raw) as PartnerBidProposalPayload;
+
+  const labourCost = finiteNumber(payload.labour_cost);
+  if (labourCost == null || labourCost < 0) {
+    errors.push("Labour cost is required (enter 0 or more).");
+  }
+
+  const materialsCost = finiteNumber(payload.materials_cost);
+  if (materialsCost == null || materialsCost < 0) {
+    errors.push("Materials cost is required (enter 0 or more).");
+  }
+
+  const labourPricing: "hourly" | "fixed" = payload.labour_pricing === "hourly" ? "hourly" : "fixed";
+  if (labourPricing === "hourly") {
+    const hrs = finiteNumber(payload.labour_hours);
+    const rate = finiteNumber(payload.labour_rate);
+    if (hrs == null || hrs <= 0) errors.push("Labour hours are required for hourly pricing.");
+    if (rate == null || rate <= 0) errors.push("Labour rate (£/hr) is required for hourly pricing.");
+  }
+
+  const materialsPricing: "unit" | "bulk" = payload.materials_pricing === "bulk" ? "bulk" : "unit";
+
+  const d1 = normalizeCalendarDateToYmd(bidPayloadTrimmedString(payload.start_date_option_1));
+  const d2 = normalizeCalendarDateToYmd(bidPayloadTrimmedString(payload.start_date_option_2));
+  if (!d1) errors.push("Start date option 1 is required.");
+  if (!d2) errors.push("Start date option 2 is required.");
+  if (d1 && d2 && d1 === d2) errors.push("Start date options must be different.");
+
+  if (labourCost != null && materialsCost != null && labourCost + materialsCost <= 0) {
+    errors.push("Total bid must be greater than zero.");
+  }
+
+  if (bidAmount != null && labourCost != null && materialsCost != null) {
+    const sum = Math.round((labourCost + materialsCost) * 100) / 100;
+    const amt = Math.round(bidAmount * 100) / 100;
+    if (Math.abs(amt - sum) > BID_AMOUNT_TOLERANCE) {
+      errors.push(`Bid total must equal labour + materials (£${sum.toFixed(2)}).`);
+    }
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  return {
+    ok: true,
+    payload: {
+      ...payload,
+      labour_cost: labourCost!,
+      materials_cost: materialsCost!,
+      labour_pricing: labourPricing,
+      materials_pricing: materialsPricing,
+      start_date_option_1: d1!,
+      start_date_option_2: d2!,
+    },
+  };
+}
+
 /** JSON fields may be numbers or other types from partner apps — never call .trim() on unknown. */
 export function bidPayloadTrimmedString(v: unknown): string {
   if (v == null) return "";
@@ -36,17 +159,41 @@ export function bidPayloadTrimmedString(v: unknown): string {
   return String(v).trim();
 }
 
-export function parseBidProposalFromNotes(notes: string | undefined | null): PartnerBidProposalPayload | null {
+/** Split stored notes into structured payload + optional freeform text. */
+export function splitBidNotes(notes: string | undefined | null): {
+  payload: PartnerBidProposalPayload | null;
+  freeform: string;
+} {
   const t = bidPayloadTrimmedString(notes as unknown);
-  if (!t) return null;
-  const jsonSlice = t.startsWith(BID_JSON_PREFIX) ? t.slice(BID_JSON_PREFIX.length).trim() : t;
-  if (!jsonSlice.startsWith("{")) return null;
-  try {
-    const j = JSON.parse(jsonSlice) as PartnerBidProposalPayload;
-    return j && typeof j === "object" ? j : null;
-  } catch {
-    return null;
+  if (!t) return { payload: null, freeform: "" };
+  if (!t.startsWith(BID_JSON_PREFIX)) return { payload: null, freeform: t };
+  const jsonSlice = t.slice(BID_JSON_PREFIX.length).trim();
+  if (!jsonSlice.startsWith("{")) return { payload: null, freeform: t };
+  let depth = 0;
+  let end = -1;
+  for (let i = 0; i < jsonSlice.length; i++) {
+    const ch = jsonSlice[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
   }
+  if (end < 0) return { payload: null, freeform: t };
+  try {
+    const j = JSON.parse(jsonSlice.slice(0, end)) as PartnerBidProposalPayload;
+    const freeform = jsonSlice.slice(end).trim();
+    return { payload: j && typeof j === "object" ? j : null, freeform };
+  } catch {
+    return { payload: null, freeform: t };
+  }
+}
+
+export function parseBidProposalFromNotes(notes: string | undefined | null): PartnerBidProposalPayload | null {
+  return splitBidNotes(notes).payload;
 }
 
 /** Customer sell = partner labour × (1 + this). */

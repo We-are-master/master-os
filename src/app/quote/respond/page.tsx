@@ -30,7 +30,12 @@ type LinkedJob = {
 
 type BidContext = {
   partnerName: string | null;
-  existingBid: { amount: number; jobType: "fixed" | "hourly"; notes: string | null } | null;
+  existingBid: {
+    amount: number;
+    jobType: "fixed" | "hourly";
+    notes: string | null;
+    payload: Record<string, unknown> | null;
+  } | null;
 };
 
 type QuoteSummary = {

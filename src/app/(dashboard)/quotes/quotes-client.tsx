@@ -2255,9 +2255,17 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
    * extra `get_quotes_list_bundle` / enrichment traffic and could interact badly with effects. The table
    * catches up when the user uses **Refresh** (or creates / bulk-actions / status moves that call `refreshWithKpis`).
    */
-  const handleQuoteDrawerUpdate = useCallback((updated: Quote) => {
-    setSelectedQuote(updated);
-  }, []);
+  const handleQuoteDrawerUpdate = useCallback(
+    (updated: Quote) => {
+      setSelectedQuote((prev) => {
+        if (prev?.id === updated.id && prev.status !== updated.status) {
+          queueMicrotask(() => refreshWithKpis());
+        }
+        return updated;
+      });
+    },
+    [refreshWithKpis],
+  );
 
   const [exportOpen, setExportOpen] = useState(false);
   const quoteVisibleFields = ["reference", "title", "client_name", "service_type", "quote_type", "status", "total_value", "margin_percent"];
@@ -4340,12 +4348,21 @@ function QuoteDetailDrawer({
             `Proposal saved — PDF sent to ${recipient}. Customer can Accept or Reject via the email link.`,
           );
           setQuoteEmailedInSession(true);
-          if (quote.status === "draft" || quote.status === "in_survey" || quote.status === "bidding") {
-            onPromotionToApprovalTab?.();
+        }
+        let refreshed = await getQuote(quote.id);
+        if (refreshed && data.emailSent && refreshed.status === "bidding") {
+          try {
+            refreshed = await updateQuote(quote.id, { status: "awaiting_customer" });
+          } catch {
+            toast.error(
+              "PDF was sent but the quote could not move to Approval. Refresh the page or try again.",
+            );
           }
         }
-        const refreshed = await getQuote(quote.id);
         if (refreshed) onQuoteUpdate?.(refreshed);
+        if (data.emailSent && refreshed?.status === "awaiting_customer") {
+          onPromotionToApprovalTab?.();
+        }
       } catch (e) {
         if (e instanceof Error && /^incomplete_/.test(e.message)) return;
         toast.error(e instanceof Error ? e.message : "Something went wrong");
@@ -4669,14 +4686,21 @@ function QuoteDetailDrawer({
         setQuoteEmailedInSession(true);
       }
       setSendState("sent");
-      if (data.emailSent) {
-        if (quote.status === "draft" || quote.status === "in_survey" || quote.status === "bidding") {
-          onPromotionToApprovalTab?.();
+      let refreshed = await getQuote(quote.id);
+      if (refreshed && data.emailSent && refreshed.status === "bidding") {
+        try {
+          refreshed = await updateQuote(quote.id, { status: "awaiting_customer" });
+        } catch {
+          toast.error(
+            "PDF was sent but the quote could not move to Approval. Refresh the page or try again.",
+          );
         }
-        if (onQuoteUpdate) {
-          const updated = await getQuote(quote.id);
-          if (updated) onQuoteUpdate(updated);
-        }
+      }
+      if (refreshed) onQuoteUpdate?.(refreshed);
+      if (data.emailSent && refreshed?.status === "awaiting_customer") {
+        onPromotionToApprovalTab?.();
+      } else if (data.emailSent && refreshed?.status === "bidding") {
+        toast.error("PDF was sent but the quote is still in Bidding. Try again or contact support.");
       }
     } catch (err) {
       setSendState("idle");

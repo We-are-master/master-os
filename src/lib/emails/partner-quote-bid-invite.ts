@@ -181,6 +181,20 @@ ${partnerEmailLogoHeaderRow("24px 24px 18px 24px")}
         </table>
       </td></tr>
 
+      <tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F0F4FF; border:1px solid #D8DDF5; border-radius:8px;">
+          <tr><td style="padding:14px 18px;">
+            <p style="margin:0 0 8px 0; font-size:12px; font-weight:700; color:#020040; text-transform:uppercase; letter-spacing:0.5px;">Required to submit your bid</p>
+            <ul style="margin:0; padding:0 0 0 18px; font-size:13px; line-height:22px; color:#3A3A55;">
+              <li><strong>Labour</strong> — fixed price or hourly (hours × rate)</li>
+              <li><strong>Materials</strong> — cost (enter £0 if none) and pricing type</li>
+              <li><strong>Two start date options</strong> — when you could begin the job</li>
+            </ul>
+            <p style="margin:10px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Use the button below — incomplete bids cannot be submitted.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+
       <tr><td class="px-mobile" style="padding:0 40px 8px 40px;">
         <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">OPPORTUNITY DETAILS</p>
       </td></tr>
@@ -257,6 +271,7 @@ ${buildPhotoSection(data.photoUrls)}
     `NEW OPPORTUNITY — ${data.quoteReference}\n\n` +
     `Hi ${data.partnerFirstName || "there"},\n\n` +
     `You have been invited to bid. This quote expires in 12 hours — submit by ${deadlineDisplay} (UK time).\n\n` +
+    `Required on the bid form: labour (fixed or hourly), materials cost (can be £0), and two different start date options.\n\n` +
     `Reference: ${data.quoteReference}\n` +
     `Type of work: ${data.typeOfWork}\n` +
     `Client: ${data.clientName || "—"}\n` +

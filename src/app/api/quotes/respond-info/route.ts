@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
 import {
   verifyPartnerBidToken,
   verifyPartnerReportToken,
@@ -163,7 +164,15 @@ export async function GET(req: NextRequest) {
   // partner has already submitted (so the form preloads / shows "you've
   // already bid X, update?").
   let bidContext:
-    | { partnerName: string | null; existingBid: { amount: number; jobType: "fixed" | "hourly"; notes: string | null } | null }
+    | {
+        partnerName: string | null;
+        existingBid: {
+          amount: number;
+          jobType: "fixed" | "hourly";
+          notes: string | null;
+          payload: ReturnType<typeof parseBidProposalFromNotes>;
+        } | null;
+      }
     | null = null;
 
   if (tokenKind === "partner_bid" && tokenPartnerId && quote.status === "bidding") {
@@ -180,13 +189,15 @@ export async function GET(req: NextRequest) {
       .eq("quote_id", quote.id)
       .eq("partner_id", tokenPartnerId)
       .maybeSingle();
+    const existingNotes = (existing?.notes as string | null) ?? null;
     bidContext = {
       partnerName,
       existingBid: existing
         ? {
             amount:  Number(existing.bid_amount) || 0,
             jobType: (existing.job_type as "fixed" | "hourly") ?? "fixed",
-            notes:   (existing.notes as string | null) ?? null,
+            notes:   existingNotes,
+            payload: parseBidProposalFromNotes(existingNotes),
           }
         : null,
     };

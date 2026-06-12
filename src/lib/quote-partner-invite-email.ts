@@ -6,6 +6,7 @@ import { normalizeEmailAssetUrl } from "@/lib/email-asset-url";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
+import { resolveQuoteTypeOfWorkLabel } from "@/lib/quote-type-of-work-label";
 import { createSideConversation } from "@/lib/zendesk";
 
 export interface SendQuotePartnerInviteEmailsParams {
@@ -68,10 +69,7 @@ export async function sendQuotePartnerInviteEmails(
   }
 
   const invitationScope = quoteScope || requestDescription.trim();
-  const typeOfWork =
-    (typeof quote.title === "string" ? quote.title.trim() : "") ||
-    (typeof quote.service_type === "string" ? quote.service_type.trim() : "") ||
-    "Quote";
+  const typeOfWork = resolveQuoteTypeOfWorkLabel(quote);
   const clientName = typeof quote.client_name === "string" ? quote.client_name.trim() : "";
 
   const { data: partners } = await supabase

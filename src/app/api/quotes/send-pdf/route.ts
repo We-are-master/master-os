@@ -29,6 +29,23 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
   return res;
 }
 
+async function persistQuoteSentToCustomer(
+  supabase: ReturnType<typeof createServiceClient>,
+  quoteId: string,
+  sentAt: string,
+  clientEmail?: string,
+): Promise<{ error: { message: string } | null }> {
+  const patch: Record<string, unknown> = {
+    status: "awaiting_customer",
+    customer_pdf_sent_at: sentAt,
+  };
+  if (clientEmail?.includes("@")) {
+    patch.client_email = clientEmail;
+  }
+  const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
+  return { error: error ? { message: error.message } : null };
+}
+
 function isHttpsUrl(u: string): boolean {
   try {
     return new URL(u).protocol === "https:";
@@ -456,16 +473,28 @@ export async function POST(req: NextRequest) {
       const sentAt = new Date().toISOString();
       const tWrite = nowMs();
       const customerEmailForPersist = recipientTrimmed || pdfClientEmail;
-      await supabase
-        .from("quotes")
-        .update({
-          status: "awaiting_customer",
-          customer_pdf_sent_at: sentAt,
-          // Remember the email we actually sent to, so future sends + the UI
-          // reflect the real customer (not the team@ placeholder).
-          ...(customerEmailForPersist.includes("@") ? { client_email: customerEmailForPersist } : {}),
-        })
-        .eq("id", quoteId);
+      const statusWrite = await persistQuoteSentToCustomer(
+        supabase,
+        quoteId,
+        sentAt,
+        customerEmailForPersist.includes("@") ? customerEmailForPersist : undefined,
+      );
+      if (statusWrite.error) {
+        console.error("[send-pdf] status update failed after Zendesk delivery:", statusWrite.error.message);
+        marks.push(["db_updates", nowMs() - tWrite]);
+        marks.push(["total", nowMs() - startedAt]);
+        return withServerTiming(
+          {
+            error: "Quote delivered but status update failed",
+            emailSent: false,
+            detail: statusWrite.error.message,
+            channel: "zendesk",
+            ticketId: zdTicketId,
+          },
+          500,
+          marks,
+        );
+      }
 
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
@@ -505,6 +534,7 @@ export async function POST(req: NextRequest) {
       return withServerTiming({
         pdfGenerated: true,
         emailSent:    true,
+        status:       "awaiting_customer",
         channel:      "zendesk",
         ticketId:     zdTicketId,
         sentTo:       recipientTrimmed || pdfClientEmail || "",
@@ -598,11 +628,22 @@ export async function POST(req: NextRequest) {
 
     const sentAt = new Date().toISOString();
     const tWrite = nowMs();
-    /** Quote status update is awaited (caller relies on it); audit log is fire-and-forget. */
-    await supabase
-      .from("quotes")
-      .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
-      .eq("id", quoteId);
+    const statusWrite = await persistQuoteSentToCustomer(supabase, quoteId, sentAt, emailTo);
+    if (statusWrite.error) {
+      console.error("[send-pdf] status update failed after Resend delivery:", statusWrite.error.message);
+      marks.push(["db_updates", nowMs() - tWrite]);
+      marks.push(["total", nowMs() - startedAt]);
+      return withServerTiming(
+        {
+          error: "Quote delivered but status update failed",
+          emailSent: false,
+          detail: statusWrite.error.message,
+          sentTo: emailTo,
+        },
+        500,
+        marks,
+      );
+    }
 
     void supabase.from("audit_logs").insert({
       entity_type: "quote",
@@ -634,6 +675,7 @@ export async function POST(req: NextRequest) {
     return withServerTiming({
       pdfGenerated: true,
       emailSent: true,
+      status: "awaiting_customer",
       emailId: emailResult?.id,
       sentTo: emailTo,
     }, 200, marks);
