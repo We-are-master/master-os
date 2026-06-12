@@ -74,7 +74,7 @@ export async function notifyPartnerJobZendesk(
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, scheduled_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
+    .select("id, reference, title, status, client_name, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -87,6 +87,9 @@ export async function notifyPartnerJobZendesk(
     client_name: string | null;
     property_address: string | null;
     scheduled_date: string | null;
+    scheduled_start_at: string | null;
+    scheduled_end_at: string | null;
+    scheduled_finish_date: string | null;
     catalog_service_id: string | null;
     scope: string | null;
     partner_id: string | null;
@@ -161,6 +164,13 @@ export async function notifyPartnerJobZendesk(
       })
     : null;
 
+  const jobScheduleFields = {
+    scheduledDate: job.scheduled_date,
+    scheduledStartAt: job.scheduled_start_at,
+    scheduledEndAt: job.scheduled_end_at,
+    scheduledFinishDate: job.scheduled_finish_date,
+  };
+
   // ─── Email build ──────────────────────────────────────────────────
   let email: { subject: string; html: string; text: string };
   if (kind === "assigned") {
@@ -170,7 +180,7 @@ export async function notifyPartnerJobZendesk(
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
-      scheduledDate: job.scheduled_date,
+      ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
       jobType: isHourly ? "hourly" : "fixed",
       priceDisplay,
@@ -235,7 +245,7 @@ export async function notifyPartnerJobZendesk(
       jobTitle:        job.title || "Maintenance job",
       clientName:      job.client_name || "—",
       propertyAddress: job.property_address || "—",
-      scheduledDate:   job.scheduled_date,
+      ...jobScheduleFields,
       scope:           job.scope || "(no scope provided)",
       priceDisplay,
       partnerNotes,
@@ -251,7 +261,7 @@ export async function notifyPartnerJobZendesk(
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
       propertyAddress: job.property_address || "—",
-      scheduledDate: job.scheduled_date,
+      ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
       jobType: isHourly ? "hourly" : "fixed",
       priceDisplay,
