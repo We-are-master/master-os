@@ -1800,15 +1800,28 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 attachRequestPhotos: formData.email_attach_request_photos ?? false,
               }),
             });
-            const data = (await resp.json()) as { emailSent?: boolean; reason?: string; error?: string };
-            if (!resp.ok) {
-              throw new Error(typeof data.error === "string" ? data.error : "Failed to send quote email");
-            }
-            if (!data.emailSent) {
+            const raw = (await resp.json()) as SendPdfClientResult;
+            const data = normalizeSendPdfResult(resp, raw);
+            if (!data.delivered) {
               toast.warning(data.reason ?? "Quote saved — email was not sent. Open the quote to resend.");
             } else {
-              toast.success(
-                `Quote ${result.reference} — PDF sent to ${resolvedEmail.trim()} (routing follows the account Billing setting).`,
+              if (!resp.ok) {
+                toast.warning("Quote was delivered — syncing Approval status…");
+              } else {
+                toast.success(
+                  `Quote ${result.reference} — PDF sent to ${resolvedEmail.trim()} (routing follows the account Billing setting).`,
+                );
+              }
+              if (data.warning) toast.warning(data.warning);
+            }
+            if (data.emailSent) {
+              await reconcileQuoteAfterSendPdf(
+                result,
+                { ...data, sentTo: data.sentTo ?? resolvedEmail.trim() },
+                {
+                  onQuoteUpdate: (q) => setSelectedQuote(q),
+                  onPromotionToApprovalTab: () => setStatus("awaiting_customer"),
+                },
               );
             }
           } catch (sendErr) {
@@ -2260,11 +2273,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       setSelectedQuote((prev) => {
         if (prev?.id === updated.id && prev.status !== updated.status) {
           queueMicrotask(() => refreshWithKpis());
+          if (
+            updated.status === "awaiting_customer" &&
+            prev.status &&
+            (prev.status === "draft" || prev.status === "in_survey" || prev.status === "bidding")
+          ) {
+            queueMicrotask(() => setStatus("awaiting_customer"));
+          }
         }
         return updated;
       });
     },
-    [refreshWithKpis],
+    [refreshWithKpis, setStatus],
   );
 
   const [exportOpen, setExportOpen] = useState(false);
@@ -3387,6 +3407,7 @@ function QuoteDetailDrawer({
   /** Submitted bid chosen internally for the customer proposal (partners stay submitted until job booked). */
   const [selectedReviewBidId, setSelectedReviewBidId] = useState<string | null>(null);
   const autoSelectedProposalBidQuoteRef = useRef<string | null>(null);
+  const sendPdfHealAttemptedRef = useRef<string | null>(null);
   const quoteRef = useRef(quote);
   quoteRef.current = quote;
   const onQuoteUpdateRef = useRef(onQuoteUpdate);
@@ -3960,7 +3981,16 @@ function QuoteDetailDrawer({
   }, [bidSpotlightEntries]);
   const bidsVisibleInTab = useMemo(() => bidsCollapsedVisible, [bidsCollapsedVisible]);
 
-  const actions = isDraftRoutingPhase(quote) ? [] : getQuoteActions(quote);
+  const drawerQuoteStatus = useMemo(
+    () => effectiveDrawerQuoteStatus(quote, quoteEmailedInSession),
+    [quote, quoteEmailedInSession],
+  );
+  const quoteForDrawer = useMemo(
+    (): Quote => (drawerQuoteStatus === quote.status ? quote : { ...quote, status: drawerQuoteStatus }),
+    [quote, drawerQuoteStatus],
+  );
+
+  const actions = isDraftRoutingPhase(quote) ? [] : getQuoteActions(quoteForDrawer);
   /** Start Bidding lives on the Bids tab, not under Review & Send. Hide Reject until the customer has received the proposal. */
   const overviewActions = actions.filter((a) => {
     if (a.status === "bidding") return false;
@@ -4337,32 +4367,26 @@ function QuoteDetailDrawer({
             attachRequestPhotos: Boolean(rowForSend.email_attach_request_photos),
           }),
         });
-        const data = (await res.json()) as { error?: string; emailSent?: boolean; reason?: string; sentTo?: string };
-        if (!res.ok) {
-          throw new Error(data.error ?? "Failed to send email");
-        }
-        if (!data.emailSent) {
+        const raw = (await res.json()) as SendPdfClientResult;
+        const data = normalizeSendPdfResult(res, raw);
+        if (!data.delivered) {
           toast.warning(data.reason ?? "Quote updated but email was not sent.");
         } else {
-          toast.success(
-            `Proposal saved — PDF sent to ${recipient}. Customer can Accept or Reject via the email link.`,
-          );
-          setQuoteEmailedInSession(true);
-        }
-        let refreshed = await getQuote(quote.id);
-        if (refreshed && data.emailSent && refreshed.status === "bidding") {
-          try {
-            refreshed = await updateQuote(quote.id, { status: "awaiting_customer" });
-          } catch {
-            toast.error(
-              "PDF was sent but the quote could not move to Approval. Refresh the page or try again.",
+          if (!res.ok) {
+            toast.warning("Quote was delivered — syncing Approval status…");
+          } else {
+            toast.success(
+              `Proposal saved — PDF sent to ${recipient}. Customer can Accept or Reject via the email link.`,
             );
           }
+          if (data.warning) toast.warning(data.warning);
+          setQuoteEmailedInSession(true);
         }
-        if (refreshed) onQuoteUpdate?.(refreshed);
-        if (data.emailSent && refreshed?.status === "awaiting_customer") {
-          onPromotionToApprovalTab?.();
-        }
+        await reconcileQuoteAfterSendPdf(
+          rowForSend,
+          { ...data, sentTo: data.sentTo ?? recipient },
+          { onQuoteUpdate, onPromotionToApprovalTab },
+        );
       } catch (e) {
         if (e instanceof Error && /^incomplete_/.test(e.message)) return;
         toast.error(e instanceof Error ? e.message : "Something went wrong");
@@ -4373,7 +4397,28 @@ function QuoteDetailDrawer({
     [quote.id, quote.status, onQuoteUpdate, onStatusChange, onClose, drawerAccountDraftId, onPromotionToApprovalTab],
   );
 
-  const guidance = getStageGuidance(quote.status);
+  const guidance = getStageGuidance(drawerQuoteStatus);
+
+  useEffect(() => {
+    sendPdfHealAttemptedRef.current = null;
+  }, [quote.id]);
+
+  /** PDF already sent (`customer_pdf_sent_at`) but row still `bidding` — heal once per open. */
+  useEffect(() => {
+    if (sendPdfHealAttemptedRef.current === quote.id) return;
+    if (quote.status !== "bidding") return;
+    if (!bidPayloadTrimmedString(quote.customer_pdf_sent_at as unknown)) return;
+    sendPdfHealAttemptedRef.current = quote.id;
+    void (async () => {
+      try {
+        const healed = await updateQuote(quote.id, { status: "awaiting_customer" });
+        onQuoteUpdate?.(healed);
+        onPromotionToApprovalTab?.();
+      } catch {
+        // `effectiveDrawerQuoteStatus` still shows Approval in the drawer.
+      }
+    })();
+  }, [quote.id, quote.status, quote.customer_pdf_sent_at, onQuoteUpdate, onPromotionToApprovalTab]);
 
   const addLineItem = () =>
     setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }]);
@@ -4671,37 +4716,29 @@ function QuoteDetailDrawer({
           attachRequestPhotos: emailAttachRequestPhotos,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error ?? "Failed to send email");
-      }
-      if (!data.emailSent) {
+      const raw = (await res.json()) as SendPdfClientResult;
+      const data = normalizeSendPdfResult(res, raw);
+      if (!data.delivered) {
         toast.warning(data.reason ?? "Quote updated but email was not sent");
       } else {
-        toast.success(
-          isResend
-            ? `Proposal saved and updated PDF resent to ${resolved}. Accept / Reject links are unchanged.`
-            : `Proposal saved — PDF sent to ${resolved}. Customer can Accept or Reject via the email link.`,
-        );
+        if (!res.ok) {
+          toast.warning("Quote was delivered — syncing Approval status…");
+        } else {
+          toast.success(
+            isResend
+              ? `Proposal saved and updated PDF resent to ${resolved}. Accept / Reject links are unchanged.`
+              : `Proposal saved — PDF sent to ${resolved}. Customer can Accept or Reject via the email link.`,
+          );
+        }
+        if (data.warning) toast.warning(data.warning);
         setQuoteEmailedInSession(true);
       }
       setSendState("sent");
-      let refreshed = await getQuote(quote.id);
-      if (refreshed && data.emailSent && refreshed.status === "bidding") {
-        try {
-          refreshed = await updateQuote(quote.id, { status: "awaiting_customer" });
-        } catch {
-          toast.error(
-            "PDF was sent but the quote could not move to Approval. Refresh the page or try again.",
-          );
-        }
-      }
-      if (refreshed) onQuoteUpdate?.(refreshed);
-      if (data.emailSent && refreshed?.status === "awaiting_customer") {
-        onPromotionToApprovalTab?.();
-      } else if (data.emailSent && refreshed?.status === "bidding") {
-        toast.error("PDF was sent but the quote is still in Bidding. Try again or contact support.");
-      }
+      await reconcileQuoteAfterSendPdf(
+        { ...quote, client_email: resolved },
+        { ...data, sentTo: data.sentTo ?? resolved },
+        { onQuoteUpdate, onPromotionToApprovalTab },
+      );
     } catch (err) {
       setSendState("idle");
       toast.error(err instanceof Error ? err.message : "Failed to send");
@@ -4762,7 +4799,7 @@ function QuoteDetailDrawer({
   };
 
   const customerProposalTitleHint =
-    quote.status === "awaiting_customer"
+    drawerQuoteStatus === "awaiting_customer"
       ? "The customer's Accept / Reject links stay the same; they receive the latest PDF each time you send or resend."
       : [guidance.headline, guidance.detail]
           .filter(Boolean)
@@ -4937,7 +4974,7 @@ function QuoteDetailDrawer({
               "[&_button]:shrink-0",
             )}
           >
-            {(quote.status === "awaiting_customer" || quote.status === "awaiting_payment") && (
+            {(drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment") && (
               <Button
                 type="button"
                 variant="outline"
@@ -4952,7 +4989,7 @@ function QuoteDetailDrawer({
                 }
                 onClick={() => void handleSendToCustomer()}
                 title={
-                  quote.status === "awaiting_payment"
+                  drawerQuoteStatus === "awaiting_payment"
                     ? "Saves the latest figures and emails the updated PDF to the customer"
                     : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
                 }
@@ -4971,7 +5008,8 @@ function QuoteDetailDrawer({
                 await handleSendToCustomer();
               };
               const showMarkAsSent =
-                action.status === "awaiting_customer" && ["draft", "in_survey", "bidding"].includes(quote.status);
+                action.status === "awaiting_customer" &&
+                ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
               return (
                 <Fragment key={action.status}>
                   <Button
@@ -5032,7 +5070,7 @@ function QuoteDetailDrawer({
         ) : null
       }
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
-      headerExtra={!routingDraft ? <QuoteDrawerProgress status={quote.status} /> : null}
+      headerExtra={!routingDraft ? <QuoteDrawerProgress status={drawerQuoteStatus} /> : null}
       headerPadding="wide"
       width="w-full max-w-[620px]"
       footer={quoteDrawerFooter}
@@ -7065,6 +7103,101 @@ function quoteCustomerHasReceivedProposal(quote: Quote, emailedInSession: boolea
   return false;
 }
 
+/** Drawer stage when PDF was sent but the row is still pre-approval (stale status / heal pending). */
+function effectiveDrawerQuoteStatus(quote: Quote, emailedInSession: boolean): Quote["status"] {
+  if (
+    quoteCustomerHasReceivedProposal(quote, emailedInSession) &&
+    (quote.status === "bidding" || quote.status === "draft" || quote.status === "in_survey")
+  ) {
+    return "awaiting_customer";
+  }
+  return quote.status;
+}
+
+type SendPdfClientResult = {
+  emailSent?: boolean;
+  delivered?: boolean;
+  pdfGenerated?: boolean;
+  channel?: string;
+  sentTo?: string;
+  sentAt?: string;
+  warning?: string;
+  reason?: string;
+  error?: string;
+  detail?: string;
+};
+
+/** Normalize send-pdf JSON — throws unless delivery succeeded or legacy partial failure (delivered, status write failed). */
+function normalizeSendPdfResult(
+  res: Response,
+  data: SendPdfClientResult,
+): SendPdfClientResult & { delivered: boolean } {
+  const partialLegacyFailure =
+    !res.ok &&
+    data.pdfGenerated === true &&
+    (data.channel === "zendesk" || data.delivered === true);
+  if (!res.ok && !partialLegacyFailure) {
+    const msg = data.detail
+      ? `${data.error ?? "Failed to send email"}: ${data.detail}`
+      : (data.error ?? "Failed to send email");
+    throw new Error(msg);
+  }
+  const delivered = data.emailSent === true || partialLegacyFailure;
+  return {
+    ...data,
+    emailSent: delivered,
+    delivered,
+  };
+}
+
+/** Optimistic Approval promotion + server reconcile after send-pdf succeeds. */
+async function reconcileQuoteAfterSendPdf(
+  quote: Quote,
+  data: SendPdfClientResult,
+  handlers: {
+    onQuoteUpdate?: (updated: Quote) => void;
+    onPromotionToApprovalTab?: () => void;
+  },
+): Promise<Quote | null> {
+  const { onQuoteUpdate, onPromotionToApprovalTab } = handlers;
+  if (!data.emailSent) {
+    const refreshed = await getQuote(quote.id);
+    if (refreshed) onQuoteUpdate?.(refreshed);
+    return refreshed;
+  }
+
+  const sentAt =
+    typeof data.sentAt === "string" && data.sentAt.trim() ? data.sentAt.trim() : new Date().toISOString();
+  const sentTo = bidPayloadTrimmedString(data.sentTo as unknown);
+  const optimistic: Quote = {
+    ...quote,
+    status: "awaiting_customer",
+    customer_pdf_sent_at: sentAt,
+    ...(sentTo.includes("@") ? { client_email: sentTo } : {}),
+  };
+  onQuoteUpdate?.(optimistic);
+  onPromotionToApprovalTab?.();
+
+  let refreshed = await getQuote(quote.id);
+  if (refreshed && refreshed.status === "bidding") {
+    try {
+      refreshed = await updateQuote(quote.id, {
+        status: "awaiting_customer",
+        customer_pdf_sent_at: sentAt,
+        ...(sentTo.includes("@") ? { client_email: sentTo } : {}),
+      });
+    } catch {
+      return optimistic;
+    }
+  }
+  const final = refreshed ?? optimistic;
+  onQuoteUpdate?.(final);
+  if (final.status === "bidding") {
+    toast.error("PDF was sent but the quote is still in Bidding. Try again or contact support.");
+  }
+  return final;
+}
+
 function getQuoteActions(quote: Quote) {
   const isManual = (quote.quote_type ?? "internal") === "internal";
   switch (quote.status) {
@@ -8181,16 +8314,27 @@ async function executeManualQuoteSend(quote: Quote, snapshot: ManualQuoteReviewS
       attachRequestPhotos: false,
     }),
   });
-  const data = (await resp.json()) as { emailSent?: boolean; reason?: string; error?: string };
-  if (!resp.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : "Failed to send quote email");
-  }
-  if (!data.emailSent) {
+  const raw = (await resp.json()) as SendPdfClientResult;
+  const data = normalizeSendPdfResult(resp, raw);
+  if (!data.delivered) {
     toast.warning(data.reason ?? "Quote saved — email was not sent. Open the quote to resend.");
   } else {
-    toast.success(
-      `Quote ${rowForSend.reference} — PDF sent to ${recipient} (routing follows the account Billing setting).`,
+    if (!resp.ok) {
+      toast.warning("Quote was delivered — syncing Approval status…");
+    } else {
+      toast.success(
+        `Quote ${rowForSend.reference} — PDF sent to ${recipient} (routing follows the account Billing setting).`,
+      );
+    }
+    if (data.warning) toast.warning(data.warning);
+  }
+  if (data.emailSent) {
+    const reconciled = await reconcileQuoteAfterSendPdf(
+      rowForSend,
+      { ...data, sentTo: data.sentTo ?? recipient },
+      {},
     );
+    return reconciled ?? rowForSend;
   }
   return (await getQuote(rowForSend.id)) ?? rowForSend;
 }
