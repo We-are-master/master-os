@@ -9,7 +9,7 @@ const DRAFT_CHUNK_SIZE = 1000;
 
 /** Fallback select — list columns without scanning wide JSON blobs. */
 const DRAFT_LIST_SELECT =
-  "id,reference,title,client_id,client_name,client_email,property_id,source_account_id,status,quote_type,draft_route_completed,customer_pdf_sent_at,total_value,deposit_required,margin_percent,service_type,created_at,updated_at,bidding_started_at,zendesk_ticket_id";
+  "id,reference,title,client_id,client_name,client_email,property_id,source_account_id,status,quote_type,draft_route_completed,customer_pdf_sent_at,total_value,deposit_required,margin_percent,service_type,created_at,updated_at,bidding_started_at,external_source,external_ref";
 
 const VIRTUAL_TAB_SEARCH_COLUMNS = ["reference", "title", "client_name", "client_email"] as const;
 

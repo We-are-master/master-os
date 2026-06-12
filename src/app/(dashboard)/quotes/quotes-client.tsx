@@ -856,9 +856,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [drawerPendingOpenInviteQuoteId, setDrawerPendingOpenInviteQuoteId] = useState<string | null>(null);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const virtualTabHealAttemptedRef = useRef(false);
+  const [virtualTabHealDone, setVirtualTabHealDone] = useState(false);
 
   useEffect(() => {
     virtualTabHealAttemptedRef.current = false;
+    setVirtualTabHealDone(false);
   }, [status]);
 
   useEffect(() => {
@@ -1367,9 +1369,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (!virtualTab) return;
     const badgeCount =
       status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
-    if (badgeCount > 0 && data.length === 0) {
+    if (badgeCount > 0 && data.length === 0 && !virtualTabHealAttemptedRef.current) {
       virtualTabHealAttemptedRef.current = true;
       refresh();
+      return;
+    }
+    if (virtualTabHealAttemptedRef.current && !loading) {
+      setVirtualTabHealDone(true);
     }
   }, [
     loading,
@@ -1385,7 +1391,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
   const showListLoading =
     loading ||
-    (isVirtualFunnelTab && data.length === 0 && totalItems === 0 && virtualTabBadgeCount > 0);
+    (isVirtualFunnelTab &&
+      !virtualTabHealDone &&
+      data.length === 0 &&
+      totalItems === 0 &&
+      virtualTabBadgeCount > 0);
 
   useEffect(() => () => {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
