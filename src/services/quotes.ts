@@ -156,22 +156,30 @@ export async function listQuotes(params: ListParams): Promise<ListResult<Quote>>
   /** Virtual funnel tabs — fast RPC (same SQL logic as tab badges). */
   if (params.quotesNewTab || params.quotesReadyToSendTab) {
     const tab = params.quotesNewTab ? "new" : "ready_to_send";
+    const virtualOpts = { page, pageSize, search: params.search };
+
+    async function loadVirtualTab() {
+      const result = await fetchVirtualTabQuotes(supabase, tab, virtualOpts);
+      const enriched = await enrichQuotesWithAccountNames(result.data);
+      return { ...result, data: enriched };
+    }
+
     try {
-      const result = await rpcGetQuoteFunnelBundle(supabase, tab, {
-        page,
-        pageSize,
-        search: params.search,
-      });
-      const enriched = await enrichQuotesWithAccountNames(result.data);
-      return { ...result, data: enriched };
-    } catch {
-      const result = await fetchVirtualTabQuotes(supabase, tab, {
-        page,
-        pageSize,
-        search: params.search,
-      });
-      const enriched = await enrichQuotesWithAccountNames(result.data);
-      return { ...result, data: enriched };
+      const result = await rpcGetQuoteFunnelBundle(supabase, tab, virtualOpts);
+      if ((result.data?.length ?? 0) > 0 || (result.count ?? 0) === 0) {
+        const enriched = await enrichQuotesWithAccountNames(result.data);
+        return { ...result, data: enriched };
+      }
+      console.warn(
+        `[quotes] get_quote_funnel_bundle returned 0 rows for tab=${tab} (total=${result.count}); using client fallback`,
+      );
+      return await loadVirtualTab();
+    } catch (rpcErr) {
+      console.warn(
+        "[quotes] get_quote_funnel_bundle unavailable, using client fallback:",
+        rpcErr instanceof Error ? rpcErr.message : rpcErr,
+      );
+      return await loadVirtualTab();
     }
   }
 
