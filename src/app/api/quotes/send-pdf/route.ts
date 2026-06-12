@@ -14,6 +14,7 @@ import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachm
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
+import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
 
 function nowMs() {
   return performance.now();
@@ -27,23 +28,6 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
   const res = NextResponse.json(body, { status });
   if (metric) res.headers.set("Server-Timing", metric);
   return res;
-}
-
-async function persistQuoteSentToCustomer(
-  supabase: ReturnType<typeof createServiceClient>,
-  quoteId: string,
-  sentAt: string,
-  clientEmail?: string,
-): Promise<{ error: { message: string } | null }> {
-  const patch: Record<string, unknown> = {
-    status: "awaiting_customer",
-    customer_pdf_sent_at: sentAt,
-  };
-  if (clientEmail?.includes("@")) {
-    patch.client_email = clientEmail;
-  }
-  const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
-  return { error: error ? { message: error.message } : null };
 }
 
 function isHttpsUrl(u: string): boolean {
@@ -490,9 +474,15 @@ export async function POST(req: NextRequest) {
             detail: statusWrite.error.message,
             channel: "zendesk",
             ticketId: zdTicketId,
+            pdfGenerated: true,
           },
           500,
           marks,
+        );
+      }
+      if (!statusWrite.customerPdfSentAtRecorded) {
+        console.warn(
+          "[send-pdf] quotes.customer_pdf_sent_at missing — status updated without sent timestamp (apply migration 069).",
         );
       }
 
@@ -533,11 +523,20 @@ export async function POST(req: NextRequest) {
       marks.push(["total", nowMs() - startedAt]);
       return withServerTiming({
         pdfGenerated: true,
-        emailSent:    true,
-        status:       "awaiting_customer",
-        channel:      "zendesk",
-        ticketId:     zdTicketId,
-        sentTo:       recipientTrimmed || pdfClientEmail || "",
+        emailSent: true,
+        delivered: true,
+        status: "awaiting_customer",
+        customerPdfSentAtRecorded: statusWrite.customerPdfSentAtRecorded,
+        ...(!statusWrite.customerPdfSentAtRecorded
+          ? {
+              warning:
+                "Quote sent via Zendesk and moved to Approval, but sent timestamp could not be saved (database migration pending).",
+            }
+          : {}),
+        channel: "zendesk",
+        ticketId: zdTicketId,
+        sentTo: recipientTrimmed || pdfClientEmail || "",
+        sentAt,
       }, 200, marks);
     }
 
@@ -639,9 +638,16 @@ export async function POST(req: NextRequest) {
           emailSent: false,
           detail: statusWrite.error.message,
           sentTo: emailTo,
+          pdfGenerated: true,
+          delivered: true,
         },
         500,
         marks,
+      );
+    }
+    if (!statusWrite.customerPdfSentAtRecorded) {
+      console.warn(
+        "[send-pdf] quotes.customer_pdf_sent_at missing — status updated without sent timestamp (apply migration 069).",
       );
     }
 
@@ -675,9 +681,18 @@ export async function POST(req: NextRequest) {
     return withServerTiming({
       pdfGenerated: true,
       emailSent: true,
+      delivered: true,
       status: "awaiting_customer",
+      customerPdfSentAtRecorded: statusWrite.customerPdfSentAtRecorded,
+      ...(!statusWrite.customerPdfSentAtRecorded
+        ? {
+            warning:
+              "Quote emailed and moved to Approval, but sent timestamp could not be saved (database migration pending).",
+          }
+        : {}),
       emailId: emailResult?.id,
       sentTo: emailTo,
+      sentAt,
     }, 200, marks);
   } catch (err) {
     console.error("Quote PDF/send error:", err);
