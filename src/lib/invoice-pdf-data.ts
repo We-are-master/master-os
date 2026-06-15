@@ -2,8 +2,17 @@ import { format, isValid, parseISO } from "date-fns";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
-import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { splitInvoiceTradeAndFee } from "@/lib/invoice-trade-fee-split";
 import { displayBillingReference } from "@/lib/billing-reference";
+import {
+  parseFrontendSetup,
+  resolveInvoicePlatformFeePct,
+  resolveInvoiceStatementLogoUrl,
+} from "@/lib/frontend-setup";
+import {
+  DEFAULT_INVOICE_PDF_LOGO_URL,
+  resolveLogoDataUri,
+} from "@/lib/pdf/resolve-logo-data-uri";
 import type { InvoicePdfData } from "@/lib/pdf/invoice-template";
 import type { Invoice, Job } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -13,18 +22,6 @@ function formatDisplayDate(iso?: string | null): string {
   const d = parseISO(iso.length === 10 ? `${iso}T12:00:00` : iso);
   if (!isValid(d)) return iso.slice(0, 10);
   return format(d, "d MMM yyyy");
-}
-
-function splitTradeAndFee(
-  chargedAmount: number,
-  job?: Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost"> | null,
-): { trade: number; fee: number } {
-  const total = Math.max(0, Math.round(chargedAmount * 100) / 100);
-  if (!job || total <= 0) return { trade: total, fee: 0 };
-  const partnerGross = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
-  const trade = Math.max(0, Math.min(total, partnerGross));
-  const fee = Math.max(0, Math.round((total - trade) * 100) / 100);
-  return { trade, fee };
 }
 
 export type LoadInvoicePdfOptions = {
@@ -54,7 +51,7 @@ export async function loadInvoicePdfData(
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, property_address, service_type, completed_date, quote_id, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -82,7 +79,19 @@ export async function loadInvoicePdfData(
   const balanceDue = invoiceBalanceDue(inv);
   const paid = isInvoicePaymentVerified(inv);
   const partial = !paid && paidAmt > 0.02;
-  const { trade, fee } = splitTradeAndFee(invAmt, job);
+  const { data: company } = await admin
+    .from("company_settings")
+    .select("logo_url, frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  const companyRow = company as { logo_url?: string | null; frontend_setup?: unknown } | null;
+  const setup = parseFrontendSetup(companyRow?.frontend_setup);
+  const platformFeePct = resolveInvoicePlatformFeePct(setup);
+  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, { defaultPlatformFeePct: platformFeePct });
+
+  const logoSource =
+    resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
+  const logoUrl = (await resolveLogoDataUri(logoSource)) ?? undefined;
 
   return {
     reference: displayBillingReference(inv.reference),
@@ -106,6 +115,7 @@ export async function loadInvoicePdfData(
     completionDate: job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
     tradeAmount: trade,
     feeAmount: fee,
+    logoUrl,
     amountDueNow: opts?.amountDueNow,
     requestPercent: opts?.requestPercent,
   };

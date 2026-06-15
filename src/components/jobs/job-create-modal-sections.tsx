@@ -137,6 +137,7 @@ type JobCreateModalPricingFieldsProps = {
   hourlyPreview: { clientTotal: number; partnerTotal: number };
   accessSurchargePreview: number;
   estimatedMarginPct: number;
+  showHeading?: boolean;
 };
 
 function pricingModeHint(props: JobCreateModalPricingFieldsProps): string {
@@ -323,6 +324,7 @@ export function JobCreateModalPricingFields(props: JobCreateModalPricingFieldsPr
     hourlyPreview,
     accessSurchargePreview,
     estimatedMarginPct,
+    showHeading = true,
   } = props;
 
   const isHourly = form.job_type === "hourly";
@@ -344,10 +346,12 @@ export function JobCreateModalPricingFields(props: JobCreateModalPricingFieldsPr
 
   return (
     <div className="space-y-3 min-w-0">
-      <div className="flex items-center gap-1.5">
-        <p className="text-sm font-semibold text-text-primary">Pricing</p>
-        <FixfyHintIcon text={modeHint} />
-      </div>
+      {showHeading ? (
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-text-primary">Pricing</p>
+          <FixfyHintIcon text={modeHint} />
+        </div>
+      ) : null}
 
       {isStackablePricing && stackableLinePricing ? (
         <div className="rounded-lg border border-border-light bg-card p-2 space-y-1 text-[11px]">

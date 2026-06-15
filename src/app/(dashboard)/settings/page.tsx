@@ -1544,7 +1544,7 @@ function SystemTab() {
             <BrandingImageUpload
               kind="pdf-logo"
               label="PDF & email logo"
-              description="Used on quote PDFs and customer emails. PNG / JPG / SVG (max 5 MB)."
+              description="Used on quote PDFs and customer emails. Statement/receipt overrides live in Settings → Setup → Finance."
               value={form.logo_url}
               onChange={(v) => update("logo_url", v)}
               placeholder="https://your-domain.com/logo.png"
