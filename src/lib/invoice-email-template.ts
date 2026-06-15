@@ -1,10 +1,10 @@
 import type { Invoice } from "@/types/database";
-import type { Job } from "@/types/database";
 import {
   buildInvoiceClientEmailHTML,
   type InvoiceClientEmailContext,
   type InvoiceEmailOptions,
 } from "@/lib/invoice-client-email-template";
+import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 
 export type { InvoiceClientEmailContext, InvoiceEmailOptions };
 
@@ -15,7 +15,7 @@ export type { InvoiceClientEmailContext, InvoiceEmailOptions };
 export function buildInvoiceEmailHTML(
   invoice: Invoice,
   context: InvoiceClientEmailContext,
-  job?: Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost"> | null,
+  job?: InvoiceTradeFeeJob | null,
   options?: InvoiceEmailOptions,
 ): string {
   return buildInvoiceClientEmailHTML(invoice, context, job, options);

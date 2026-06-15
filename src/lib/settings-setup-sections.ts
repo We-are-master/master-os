@@ -44,7 +44,7 @@ export const SETUP_SECTIONS: SetupSectionMeta[] = [
   {
     id: "finance",
     label: "Finance",
-    description: "Pulse revenue goal and fixed-cost targets.",
+    description: "Statements, platform fee %, and Pulse revenue targets.",
     icon: DollarSign,
   },
   {

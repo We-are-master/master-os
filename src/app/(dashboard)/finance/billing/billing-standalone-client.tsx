@@ -12,6 +12,7 @@ import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
+import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { useBillingStandaloneData } from "@/hooks/use-billing-standalone-data";
 import {
   billingStandaloneFilterDescription,
@@ -29,11 +30,12 @@ import {
   ymdInBounds,
 } from "@/lib/billing-standalone-period";
 import {
-  CASHFLOW_RUNWAY_HINT,
+  cashflowRunwayHintForView,
   cashflowWeekColumnTitle,
   cashflowWeekHasActivity,
   cashflowWeekNet,
   formatCashflowWeekPnl,
+  formatCashRunwayClosing,
 } from "@/lib/billing-cashflow-runway-copy";
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
@@ -43,8 +45,6 @@ import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
   buildInvoiceLedgerAccountGroups,
-  buildCashflowWeekly,
-  buildCashflowWeekBreakdown,
   buildCustomerExposure,
   computeAgingTotals,
   computeBillingKpis,
@@ -53,6 +53,11 @@ import {
   isSelfBillOverdue,
   UNLINKED_ATTENTION_ACCOUNT_KEY,
 } from "@/lib/billing-standalone-metrics";
+import {
+  buildRunwayWeekBreakdown,
+  buildRunwayWeekly,
+  type RunwayViewMode,
+} from "@/lib/billing-runway-views";
 import { invoiceDisplayStatus } from "@/lib/billing-invoice-list-data";
 import type { InvoiceListJobSnapshot } from "@/lib/billing-invoice-list-data";
 import {
@@ -76,6 +81,9 @@ import {
 } from "@/lib/billing-selfbill-actions";
 import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
+import { getCompanySettings, updateCompanySettings } from "@/services/company";
+import { mergeFrontendSetup } from "@/lib/frontend-setup";
+import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import {
   isSelfBillClosed,
   isSelfBillPayoutVoided,
@@ -109,7 +117,7 @@ const SelfBillDetailDrawer = dynamic(
 
 type LedgerTab = "inv" | "sb" | "history";
 
-const CASHFLOW_WINDOW_WEEKS = 8;
+const CASHFLOW_WINDOW_WEEKS = 10;
 
 function BillingContentSkeleton() {
   return (
@@ -160,6 +168,7 @@ function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
+  const { setup: frontendSetup, refetch: refetchFrontendSetup } = useFrontendSetup();
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(defaultBillingStandaloneFilter);
   const data = useBillingStandaloneData();
   const { loadData, hasLoadedOnce, selfBills: billingSelfBills, patchInvoicesPaid, ensureSelfBillJobsEnriched } = data;
@@ -604,7 +613,9 @@ function BillingStandaloneInner() {
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
   const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
+  const [runwayView, setRunwayView] = useState<RunwayViewMode>("accrual");
   const [cashflowDetailWeekStart, setCashflowDetailWeekStart] = useState<string | null>(null);
+  const [savingRunwayOpening, setSavingRunwayOpening] = useState(false);
 
   const todayYmd = invoiceFinanceListTodayYmd();
   const periodBounds = useMemo(() => resolveBillingStandaloneFilterBounds(periodFilter), [periodFilter]);
@@ -823,9 +834,19 @@ function BillingStandaloneInner() {
     return addDaysYmd(monday, cashflowWeekOffset * 7);
   }, [todayYmd, cashflowWeekOffset]);
 
+  const paymentOrgCtx = useMemo(() => orgCtxFromSetup(frontendSetup), [frontendSetup]);
+
+  const runwayCashBalanceOptions = useMemo(
+    () => ({
+      defaultOpening: frontendSetup.finance_opening_cash_gbp ?? 0,
+      weekOverrides: frontendSetup.cash_runway_week_balances ?? {},
+    }),
+    [frontendSetup.finance_opening_cash_gbp, frontendSetup.cash_runway_week_balances],
+  );
+
   const cashflow = useMemo(
     () =>
-      buildCashflowWeekly({
+      buildRunwayWeekly(runwayView, {
         invoices: data.invoices,
         selfBills: data.selfBills,
         bills: data.bills,
@@ -836,11 +857,20 @@ function BillingStandaloneInner() {
         jobsBySelfBillId: data.jobsBySelfBillId,
         partnerPaidByJobId: data.partnerPaidByJobId,
         dueCtx: data.dueCtx,
+        customerPaymentRows: data.customerPaymentRows,
+        payrollRunwayRows: data.payrollRunwayRows,
+        pipelineJobs: data.pipelineJobs,
+        clientIdToAccountId: data.clientIdToAccountId,
+        accountTermsById: data.accountTermsById,
+        paymentOrgCtx,
+        cashBalanceOptions:
+          runwayView === "cash" || runwayView === "accrual" ? runwayCashBalanceOptions : undefined,
         startYmd: periodBounds?.from ?? cashflowWeekStart,
         endYmd: periodBounds?.to,
         weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
       }),
     [
+      runwayView,
       data.invoices,
       data.selfBills,
       data.bills,
@@ -848,9 +878,16 @@ function BillingStandaloneInner() {
       data.installmentsBySelfBillId,
       data.jobsByRef,
       data.customerPaidByJobId,
+      data.customerPaymentRows,
+      data.payrollRunwayRows,
+      data.pipelineJobs,
+      data.clientIdToAccountId,
+      data.accountTermsById,
       data.jobsBySelfBillId,
       data.partnerPaidByJobId,
       data.dueCtx,
+      paymentOrgCtx,
+      runwayCashBalanceOptions,
       periodBounds,
       cashflowWeekStart,
     ],
@@ -871,6 +908,12 @@ function BillingStandaloneInner() {
       installmentsBySelfBillId: data.installmentsBySelfBillId,
       jobsByRef: data.jobsByRef,
       customerPaidByJobId: data.customerPaidByJobId,
+      customerPaymentRows: data.customerPaymentRows,
+      payrollRunwayRows: data.payrollRunwayRows,
+      pipelineJobs: data.pipelineJobs,
+      clientIdToAccountId: data.clientIdToAccountId,
+      accountTermsById: data.accountTermsById,
+      paymentOrgCtx,
       jobsBySelfBillId: data.jobsBySelfBillId,
       partnerPaidByJobId: data.partnerPaidByJobId,
       dueCtx: data.dueCtx,
@@ -883,16 +926,49 @@ function BillingStandaloneInner() {
       data.installmentsBySelfBillId,
       data.jobsByRef,
       data.customerPaidByJobId,
+      data.customerPaymentRows,
+      data.payrollRunwayRows,
+      data.pipelineJobs,
+      data.clientIdToAccountId,
+      data.accountTermsById,
+      paymentOrgCtx,
       data.jobsBySelfBillId,
       data.partnerPaidByJobId,
       data.dueCtx,
     ],
   );
 
+  const cashflowDetailWeek = useMemo(
+    () => (cashflowDetailWeekStart ? cashflow.find((w) => w.weekStart === cashflowDetailWeekStart) : undefined),
+    [cashflow, cashflowDetailWeekStart],
+  );
+
   const cashflowDetailBreakdown = useMemo(() => {
     if (!cashflowDetailWeekStart) return null;
-    return buildCashflowWeekBreakdown(cashflowDetailWeekStart, cashflowBuildArgs);
-  }, [cashflowDetailWeekStart, cashflowBuildArgs]);
+    return buildRunwayWeekBreakdown(runwayView, cashflowDetailWeekStart, cashflowBuildArgs);
+  }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView]);
+
+  const handleSaveRunwayOpeningBalance = useCallback(
+    async (weekStart: string, amount: number) => {
+      setSavingRunwayOpening(true);
+      try {
+        const row = await getCompanySettings();
+        const nextBalances = { ...(frontendSetup.cash_runway_week_balances ?? {}), [weekStart]: amount };
+        const nextSetup = mergeFrontendSetup(row?.frontend_setup, {
+          cash_runway_week_balances: nextBalances,
+        });
+        await updateCompanySettings({ frontend_setup: nextSetup });
+        void refetchFrontendSetup();
+        window.dispatchEvent(new Event("master-os-company-settings"));
+        toast.success("Opening cash saved for this week");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to save opening cash");
+      } finally {
+        setSavingRunwayOpening(false);
+      }
+    },
+    [frontendSetup.cash_runway_week_balances, refetchFrontendSetup],
+  );
 
   const customers = useMemo(
     () =>
@@ -1287,14 +1363,18 @@ function BillingStandaloneInner() {
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                       Cash-Flow Runway
                       <FixfyHintIcon
-                        text={CASHFLOW_RUNWAY_HINT}
+                        text={cashflowRunwayHintForView(runwayView)}
                         placement="bottom-start"
                       />
                     </h2>
                     {cashflowRangeLabel ? (
                       <p className="mt-0.5 text-xs text-text-tertiary tabular-nums">{cashflowRangeLabel}</p>
                     ) : null}
-                    <p className="mt-0.5 text-[11px] text-text-tertiary">Click a week to see what is due in and out</p>
+                    <p className="mt-0.5 text-[11px] text-text-tertiary">
+                      {runwayView === "cash" || runwayView === "accrual"
+                        ? "Click a week to see line items and edit Em caixa (opening balance)"
+                        : "Click a week to see what is due in and out"}
+                    </p>
                   </div>
                   {!periodBounds ? (
                     <button
@@ -1316,28 +1396,75 @@ function BillingStandaloneInner() {
                     </button>
                   ) : null}
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
-                  <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                    <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Weekly P&amp;L
-                  </span>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
+                    <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Accrual" />
+                    <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash" />
+                    <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="P&L" />
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
+                    {runwayView === "cash" ? (
+                      <>
+                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
+                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        </span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Payments in</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Paid / projected out</span>
+                      </>
+                    ) : runwayView === "accrual" ? (
+                      <>
+                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
+                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        </span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Pipeline revenue</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> All costs due</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
+                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Weekly P&amp;L
+                        </span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
-                {cashflow.map((w) => {
+                {cashflow.map((w, idx) => {
                   const ih = w.moneyIn ? Math.max(8, Math.round((w.moneyIn / cfMax) * 72)) : 0;
                   const oh = w.moneyOut ? Math.max(8, Math.round((w.moneyOut / cfMax) * 72)) : 0;
                   const isSelected = cashflowDetailWeekStart === w.weekStart;
                   const weekNet = cashflowWeekNet(w.moneyIn, w.moneyOut);
                   const weekHasActivity = cashflowWeekHasActivity(w.moneyIn, w.moneyOut);
-                  const pnlLabel = formatCashflowWeekPnl(w.moneyIn, w.moneyOut);
+                  const showRunwayBalance = runwayView === "cash" || runwayView === "accrual";
+                  const prevClosing = idx > 0 ? cashflow[idx - 1]?.closingBalance : undefined;
+                  const topLabel =
+                    showRunwayBalance && w.closingBalance !== undefined
+                      ? formatCashRunwayClosing(w.closingBalance)
+                      : formatCashflowWeekPnl(w.moneyIn, w.moneyOut);
+                  const topPositive =
+                    showRunwayBalance && w.closingBalance !== undefined
+                      ? w.closingBalance >= 0
+                      : weekNet >= 0;
+                  const topHasValue =
+                    showRunwayBalance ? w.closingBalance !== undefined : weekHasActivity;
+                  const balanceTrend =
+                    showRunwayBalance && w.closingBalance !== undefined && prevClosing !== undefined
+                      ? w.closingBalance > prevClosing
+                        ? "up"
+                        : w.closingBalance < prevClosing
+                          ? "down"
+                          : "flat"
+                      : null;
+                  const pnlLabel = topLabel;
                   return (
                     <button
                       key={w.weekStart}
                       type="button"
-                      title={cashflowWeekColumnTitle(w.title, w.moneyIn, w.moneyOut)}
-                      aria-label={`${w.title}. Weekly P and L ${pnlLabel}. Receivables ${formatCurrency(w.moneyIn)}. Pay and expenses ${formatCurrency(w.moneyOut)}. View breakdown.`}
+                      title={cashflowWeekColumnTitle(runwayView, w.title, w.moneyIn, w.moneyOut, w.closingBalance)}
+                      aria-label={`${w.title}. ${showRunwayBalance ? `Em caixa ${pnlLabel}` : `Weekly P and L ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}. View breakdown.`}
                       onClick={() => setCashflowDetailWeekStart(w.weekStart)}
                       className={cn(
                         "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px] cursor-pointer transition-colors hover:bg-surface-hover/80",
@@ -1348,9 +1475,9 @@ function BillingStandaloneInner() {
                       <div
                         className={cn(
                           "cf__pnl",
-                          !weekHasActivity && "cf__pnl--zero",
-                          weekHasActivity && weekNet >= 0 && "cf__pnl--pos",
-                          weekHasActivity && weekNet < 0 && "cf__pnl--neg",
+                          !topHasValue && "cf__pnl--zero",
+                          topHasValue && topPositive && "cf__pnl--pos",
+                          topHasValue && !topPositive && "cf__pnl--neg",
                         )}
                       >
                         {pnlLabel}
@@ -1360,6 +1487,18 @@ function BillingStandaloneInner() {
                       <div className="cf__axis" />
                       <div className="cf__well cf__well--out"><div className="cf__bar cf__bar--out" style={{ height: oh }} /></div>
                       <div className={cn("cf__amt cf__amt--out", !w.moneyOut && "is-empty")}>{w.moneyOut ? formatCurrency(w.moneyOut) : "·"}</div>
+                      {showRunwayBalance && balanceTrend ? (
+                        <div
+                          className={cn(
+                            "cf__balance-trend",
+                            balanceTrend === "up" && "cf__balance-trend--up",
+                            balanceTrend === "down" && "cf__balance-trend--down",
+                          )}
+                          aria-hidden
+                        >
+                          {balanceTrend === "up" ? "↑" : balanceTrend === "down" ? "↓" : "→"}
+                        </div>
+                      ) : null}
                       <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
                     </button>
                   );
@@ -1984,7 +2123,14 @@ function BillingStandaloneInner() {
         <CashflowWeekDetailModal
           open={cashflowDetailWeekStart !== null}
           onClose={() => setCashflowDetailWeekStart(null)}
+          view={runwayView}
           breakdown={cashflowDetailBreakdown}
+          openingBalance={cashflowDetailWeek?.openingBalance}
+          closingBalance={cashflowDetailWeek?.closingBalance}
+          onSaveOpeningBalance={
+            runwayView === "cash" || runwayView === "accrual" ? handleSaveRunwayOpeningBalance : undefined
+          }
+          savingOpeningBalance={savingRunwayOpening}
         />
 
         {ledgerTab === "history" ? null : ledgerTab === "inv" ? (
@@ -3176,6 +3322,21 @@ function TabPill({
           {formatCurrency(total)}
         </span>
       ) : null}
+    </button>
+  );
+}
+
+function RunwayTabBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors sm:px-3 sm:text-xs",
+        active ? "bg-[#ED4B00] text-white" : "text-text-secondary hover:bg-white/80",
+      )}
+    >
+      {label}
     </button>
   );
 }

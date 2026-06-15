@@ -3,10 +3,9 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { format, parseISO, isValid } from "date-fns";
 import type { Invoice } from "@/types/database";
-import type { Job } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
-import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTradeFeeOptions } from "@/lib/invoice-trade-fee-split";
 import { displayBillingReference } from "@/lib/billing-reference";
 
 export type InvoiceClientEmailContext = {
@@ -29,6 +28,8 @@ export type InvoiceEmailOptions = {
   amountDueNow?: number;
   /** % of invoice base used for this request (0–100). */
   requestPercent?: number;
+  /** Statement trade/fee split options (platform fee % fallback). */
+  tradeFeeOptions?: SplitInvoiceTradeFeeOptions;
 };
 
 const PAID_INTRO =
@@ -105,20 +106,6 @@ function splitAddressAndPostcode(
 
 function replaceAll(template: string, key: string, value: string): string {
   return template.split(`{{${key}}}`).join(value);
-}
-
-function splitTradeAndFee(
-  chargedAmount: number,
-  job?: Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost"> | null,
-): { trade: number; fee: number } {
-  const total = Math.max(0, Math.round(chargedAmount * 100) / 100);
-  if (!job || total <= 0) {
-    return { trade: total, fee: 0 };
-  }
-  const partnerGross = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
-  const trade = Math.max(0, Math.min(total, partnerGross));
-  const fee = Math.max(0, Math.round((total - trade) * 100) / 100);
-  return { trade, fee };
 }
 
 function buildPaymentReceivedBanner(total: string, paymentDate: string): string {
@@ -278,7 +265,7 @@ function resolveTransactionId(inv: Invoice): string {
 export function buildInvoiceClientEmailHTML(
   invoice: Invoice,
   context: InvoiceClientEmailContext,
-  job?: Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost"> | null,
+  job?: InvoiceTradeFeeJob | null,
   options?: InvoiceEmailOptions,
 ): string {
   const paid = isInvoicePaymentVerified(invoice);
@@ -296,7 +283,7 @@ export function buildInvoiceClientEmailHTML(
     options.amountDueNow > 0.02 &&
     Math.abs(amountDueNow - fullDue) > 0.02;
   const partial = !paid && paidAmt > 0.02;
-  const { trade, fee } = splitTradeAndFee(invAmt, job);
+  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, options?.tradeFeeOptions);
   const { street, outward } = splitAddressAndPostcode(context.propertyAddress, context.postcode);
   const quoteRef = context.quoteReference?.trim()
     ? refForTemplate(context.quoteReference, "QT")

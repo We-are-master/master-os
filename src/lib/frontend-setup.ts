@@ -153,6 +153,21 @@ export type FrontendSetup = {
   partner_payout_standard_terms?: string;
   /** Editable next payout date (YYYY-MM-DD) — anchors biweekly rhythm + Setup display. */
   partner_payout_reference_ymd?: string | null;
+
+  /**
+   * Optional logo override for Statement of Charges / Payment Receipt PDFs and emails.
+   * Falls back to `company_settings.logo_url`, then the Fixfy default mark.
+   */
+  invoice_statement_logo_url?: string;
+  /**
+   * Default Fixfy platform fee % of job billable revenue on customer statements
+   * when margin cannot be derived from the job row. Defaults to `target_margin_pct`.
+   */
+  invoice_platform_fee_pct?: number;
+  /** Default opening cash (£) for Cash-Flow Runway carry-forward. */
+  finance_opening_cash_gbp?: number;
+  /** Per-week opening cash overrides (weekStart YYYY-MM-DD → £). */
+  cash_runway_week_balances?: Record<string, number>;
 };
 
 export type AccessFees = {
@@ -199,6 +214,7 @@ export const DEFAULT_PULSE_TOP_ACCOUNTS_COUNT = 5;
 export const DEFAULT_PULSE_REVENUE_WEEKS = 8;
 export const DEFAULT_PULSE_LOW_MARGIN_PCT = 20;
 export const DEFAULT_TARGET_MARGIN_PCT = 40;
+export const DEFAULT_INVOICE_PLATFORM_FEE_PCT = DEFAULT_TARGET_MARGIN_PCT;
 export const DEFAULT_PULSE_REVENUE_GOAL_MODE: PulseRevenueGoalMode = "healthy";
 export const DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT = 30;
 export const MIN_PULSE_HEALTHY_NET_MARGIN_PCT = 1;
@@ -544,6 +560,33 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   if (o.partner_payout_reference_ymd !== undefined) {
     base.partner_payout_reference_ymd = normalizePartnerPayoutReferenceYmd(o.partner_payout_reference_ymd);
   }
+  if (typeof o.invoice_statement_logo_url === "string") {
+    const url = o.invoice_statement_logo_url.trim();
+    base.invoice_statement_logo_url = url || undefined;
+  }
+  if (o.invoice_platform_fee_pct !== undefined) {
+    base.invoice_platform_fee_pct = clampNum(
+      o.invoice_platform_fee_pct,
+      DEFAULT_INVOICE_PLATFORM_FEE_PCT,
+      0,
+      100,
+    );
+  }
+  if (o.finance_opening_cash_gbp !== undefined) {
+    const n = Number(o.finance_opening_cash_gbp);
+    if (Number.isFinite(n)) base.finance_opening_cash_gbp = Math.round(n * 100) / 100;
+  }
+  if (o.cash_runway_week_balances && typeof o.cash_runway_week_balances === "object") {
+    const balances: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o.cash_runway_week_balances as Record<string, unknown>)) {
+      const ymd = k.trim().slice(0, 10);
+      const n = Number(v);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ymd) && Number.isFinite(n)) {
+        balances[ymd] = Math.round(n * 100) / 100;
+      }
+    }
+    if (Object.keys(balances).length > 0) base.cash_runway_week_balances = balances;
+  }
   return base;
 }
 
@@ -556,6 +599,35 @@ export function resolvePartnerPayoutStandardTerms(setup?: FrontendSetup | null):
 
 export function resolvePartnerPayoutReferenceYmd(setup?: FrontendSetup | null): string | null {
   return normalizePartnerPayoutReferenceYmd(setup?.partner_payout_reference_ymd);
+}
+
+/** Logo URL for customer statements / receipts (Setup → Finance). */
+export function resolveInvoiceStatementLogoUrl(
+  setup?: FrontendSetup | null,
+  companyLogoUrl?: string | null,
+): string | undefined {
+  const override = setup?.invoice_statement_logo_url?.trim();
+  if (override) return override;
+  const company = companyLogoUrl?.trim();
+  return company || undefined;
+}
+
+/** Default platform fee % for statement breakdown when job margin is unknown. */
+export function resolveInvoicePlatformFeePct(setup?: FrontendSetup | null): number {
+  if (setup?.invoice_platform_fee_pct != null) {
+    return clampNum(setup.invoice_platform_fee_pct, DEFAULT_INVOICE_PLATFORM_FEE_PCT, 0, 100);
+  }
+  return clampNum(setup?.target_margin_pct, DEFAULT_TARGET_MARGIN_PCT, 0, 100);
+}
+
+export function resolveFinanceOpeningCashGbp(setup?: FrontendSetup | null): number {
+  const n = setup?.finance_opening_cash_gbp;
+  if (n == null || !Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+export function resolveCashRunwayWeekBalances(setup?: FrontendSetup | null): Record<string, number> {
+  return { ...(setup?.cash_runway_week_balances ?? {}) };
 }
 
 /**
@@ -747,6 +819,37 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   }
   if (patch.partner_payout_reference_ymd !== undefined) {
     base.partner_payout_reference_ymd = normalizePartnerPayoutReferenceYmd(patch.partner_payout_reference_ymd);
+  }
+  if (patch.invoice_statement_logo_url !== undefined) {
+    const url = typeof patch.invoice_statement_logo_url === "string" ? patch.invoice_statement_logo_url.trim() : "";
+    base.invoice_statement_logo_url = url || undefined;
+  }
+  if (patch.invoice_platform_fee_pct !== undefined) {
+    base.invoice_platform_fee_pct = clampNum(
+      patch.invoice_platform_fee_pct,
+      DEFAULT_INVOICE_PLATFORM_FEE_PCT,
+      0,
+      100,
+    );
+  }
+  if (patch.finance_opening_cash_gbp !== undefined) {
+    const n = Number(patch.finance_opening_cash_gbp);
+    base.finance_opening_cash_gbp = Number.isFinite(n) ? Math.round(n * 100) / 100 : undefined;
+  }
+  if (patch.cash_runway_week_balances !== undefined) {
+    if (patch.cash_runway_week_balances == null) {
+      base.cash_runway_week_balances = undefined;
+    } else {
+      const balances: Record<string, number> = {};
+      for (const [k, v] of Object.entries(patch.cash_runway_week_balances)) {
+        const ymd = k.trim().slice(0, 10);
+        const n = Number(v);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ymd) && Number.isFinite(n)) {
+          balances[ymd] = Math.round(n * 100) / 100;
+        }
+      }
+      base.cash_runway_week_balances = balances;
+    }
   }
   return base;
 }

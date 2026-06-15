@@ -9,6 +9,7 @@ import {
   EMPTY_BILLING_ENRICHMENT,
   enrichCriticalBillingRows,
   enrichDeferredBillingRows,
+  enrichRunwayBillingRows,
   enrichSelfBillJobsForIds,
   openSelfBillIdsForEnrichment,
   type BillingEnrichmentState,
@@ -81,9 +82,15 @@ export function useBillingStandaloneData() {
   );
 
   const runDeferredEnrichment = useCallback(
-    async (invRows: Invoice[], sbRows: SelfBill[], generation: number) => {
+    async (invRows: Invoice[], sbRows: SelfBill[], generation: number, bounds: YmdBounds | null) => {
+      const invoiceJobRefs = new Set(
+        invRows.map((i) => i.job_reference?.trim()).filter(Boolean) as string[],
+      );
       try {
-        const deferred = await enrichDeferredBillingRows(invRows, sbRows);
+        const [deferred, runway] = await Promise.all([
+          enrichDeferredBillingRows(invRows, sbRows),
+          enrichRunwayBillingRows(bounds, invoiceJobRefs),
+        ]);
         if (enrichGenerationRef.current !== generation) return;
         setEnrichment((prev) => ({
           ...prev,
@@ -94,6 +101,9 @@ export function useBillingStandaloneData() {
           accountLogoById: deferred.accountLogoById,
           partnerTermsById: deferred.partnerTermsById,
           partnerAvatarById: deferred.partnerAvatarById,
+          payrollRunwayRows: runway.payrollRunwayRows,
+          pipelineJobs: runway.pipelineJobs,
+          clientIdToAccountId: runway.clientIdToAccountId,
         }));
         if (deferred.mapsFailed || deferred.accountMetaFailed) {
           console.warn("Billing loaded partially — some account or job details may be missing.");
@@ -289,6 +299,7 @@ export function useBillingStandaloneData() {
         ...prev,
         jobsByRef: critical.jobsByRef,
         customerPaidByJobId: critical.customerPaidByJobId,
+        customerPaymentRows: critical.customerPaymentRows,
       }));
     } catch (e) {
       console.error("billing critical enrichment failed", e);
@@ -296,7 +307,7 @@ export function useBillingStandaloneData() {
       return;
     }
 
-    void runDeferredEnrichment(invRows, sbRows, generation);
+    void runDeferredEnrichment(invRows, sbRows, generation, bounds);
   }, [runDeferredEnrichment]);
 
   const prefetchFullHistory = useCallback(async () => {
@@ -335,9 +346,10 @@ export function useBillingStandaloneData() {
         ...prev,
         jobsByRef: critical.jobsByRef,
         customerPaidByJobId: critical.customerPaidByJobId,
+        customerPaymentRows: critical.customerPaymentRows,
       }));
 
-      void runDeferredEnrichment(mergedInv, mergedSb, generation);
+      void runDeferredEnrichment(mergedInv, mergedSb, generation, null);
     } catch (e) {
       console.error("billing full history prefetch failed", e);
       setRefreshing(false);
@@ -384,6 +396,10 @@ export function useBillingStandaloneData() {
   const {
     jobsByRef,
     customerPaidByJobId,
+    customerPaymentRows,
+    payrollRunwayRows,
+    pipelineJobs,
+    clientIdToAccountId,
     jobsBySelfBillId,
     partnerPaidByJobId,
     accountNameById,
@@ -421,6 +437,10 @@ export function useBillingStandaloneData() {
       installmentsBySelfBillId,
       jobsByRef,
       customerPaidByJobId,
+      customerPaymentRows,
+      payrollRunwayRows,
+      pipelineJobs,
+      clientIdToAccountId,
       jobsBySelfBillId,
       partnerPaidByJobId,
       accountNameById,
@@ -451,6 +471,10 @@ export function useBillingStandaloneData() {
       installmentsBySelfBillId,
       jobsByRef,
       customerPaidByJobId,
+      customerPaymentRows,
+      payrollRunwayRows,
+      pipelineJobs,
+      clientIdToAccountId,
       jobsBySelfBillId,
       partnerPaidByJobId,
       accountNameById,

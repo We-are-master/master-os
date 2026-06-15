@@ -99,6 +99,57 @@ export async function fetchCustomerPaidSumByJobIds(jobIds: string[]): Promise<Re
   return sums;
 }
 
+export type CustomerPaymentRow = {
+  id: string;
+  jobId: string;
+  amount: number;
+  paymentDate: string;
+  type: string;
+};
+
+export async function fetchCustomerPaymentRowsByJobIds(jobIds: string[]): Promise<CustomerPaymentRow[]> {
+  const unique = [...new Set(jobIds.filter(Boolean))];
+  if (unique.length === 0) return [];
+  const supabase = getSupabase();
+  const rows: CustomerPaymentRow[] = [];
+  const CHUNK = 100;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("job_payments")
+      .select("id, job_id, amount, payment_date, type, note, created_at")
+      .in("job_id", chunk)
+      .in("type", ["customer_deposit", "customer_final"])
+      .is("deleted_at", null);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const p = row as {
+        id?: string;
+        job_id?: string;
+        amount?: number;
+        payment_date?: string | null;
+        type?: string;
+        note?: string | null;
+        created_at?: string | null;
+      };
+      if (isLegacyMisclassifiedCustomerPayment(p as { type: string; note?: string | null })) continue;
+      const jid = p.job_id?.trim();
+      const id = p.id?.trim();
+      if (!jid || !id) continue;
+      const paymentDate = (p.payment_date ?? p.created_at ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) continue;
+      rows.push({
+        id,
+        jobId: jid,
+        amount: Math.round(Number(p.amount ?? 0) * 100) / 100,
+        paymentDate,
+        type: p.type ?? "customer_final",
+      });
+    }
+  }
+  return rows;
+}
+
 export function invoiceListBalanceDue(
   inv: Invoice,
   jobsByRef: Record<string, InvoiceListJobSnapshot>,
