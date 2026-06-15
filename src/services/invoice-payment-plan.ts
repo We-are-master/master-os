@@ -7,9 +7,11 @@ import {
   nextOpenInstallment,
   PAYMENT_PLAN_EPS,
   PAYMENT_PLAN_MAX_INSTALLMENTS,
+  paidInstallmentsTotal,
   pickInstallmentForExtraAllocation,
   type PaymentPlanInstallmentDraft,
   validateInstallmentsSum,
+  validateOpenInstallmentsSum,
 } from "@/lib/invoice-payment-plan";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import type { Invoice, InvoicePaymentInstallment, PaymentPlanTemplate } from "@/types/database";
@@ -94,10 +96,76 @@ export async function updatePaymentPlan(
   drafts: PaymentPlanInstallmentDraft[],
 ): Promise<InvoicePaymentInstallment[]> {
   const existing = await listInstallmentsForInvoice(invoiceId);
-  if (existing.some((i) => i.status === "paid")) {
-    throw new Error("Cannot edit plan after an installment was paid.");
+  const paid = activeInstallments(existing).filter((i) => i.status === "paid");
+  if (paid.length === 0) {
+    return createPaymentPlan(invoiceId, invoiceAmount, drafts);
   }
-  return createPaymentPlan(invoiceId, invoiceAmount, drafts);
+  return updateOpenPaymentPlanInstallments(invoiceId, invoiceAmount, drafts);
+}
+
+/** Replace pending installments only; paid rows stay untouched. */
+export async function updateOpenPaymentPlanInstallments(
+  invoiceId: string,
+  invoiceAmount: number,
+  openDrafts: PaymentPlanInstallmentDraft[],
+): Promise<InvoicePaymentInstallment[]> {
+  if (openDrafts.length < 1) {
+    throw new Error("At least one open installment is required.");
+  }
+  if (openDrafts.length > PAYMENT_PLAN_MAX_INSTALLMENTS) {
+    throw new Error(`Maximum ${PAYMENT_PLAN_MAX_INSTALLMENTS} installments allowed.`);
+  }
+  if (openDrafts.some((d) => !d.due_date?.trim())) {
+    throw new Error("Set a due date for each open installment.");
+  }
+
+  const existing = await listInstallmentsForInvoice(invoiceId);
+  const paid = activeInstallments(existing).filter((i) => i.status === "paid");
+  if (paid.length === 0) {
+    throw new Error("No paid installments — use full plan update instead.");
+  }
+
+  const paidSum = paidInstallmentsTotal(paid);
+  if (!validateOpenInstallmentsSum(invoiceAmount, paidSum, openDrafts)) {
+    throw new Error("Open installments plus paid amount must sum to the invoice total.");
+  }
+
+  const supabase = getSupabase();
+  const pendingIds = activeInstallments(existing)
+    .filter((i) => i.status === "pending")
+    .map((i) => i.id);
+  if (pendingIds.length > 0) {
+    const { error: delErr } = await supabase
+      .from("invoice_payment_installments")
+      .delete()
+      .in("id", pendingIds);
+    if (delErr) throw delErr;
+  }
+
+  const nextSeq = Math.max(...paid.map((p) => p.sequence)) + 1;
+  const rows = openDrafts.map((d, idx) => ({
+    invoice_id: invoiceId,
+    sequence: nextSeq + idx,
+    amount: Math.round(Number(d.amount) * 100) / 100,
+    due_date: d.due_date.slice(0, 10),
+    status: "pending" as const,
+  }));
+
+  const { data, error } = await supabase
+    .from("invoice_payment_installments")
+    .insert(rows)
+    .select();
+  if (error) throw error;
+
+  const inserted = (data ?? []) as InvoicePaymentInstallment[];
+  const all = [...paid, ...inserted].sort((a, b) => a.sequence - b.sequence);
+  const next = nextOpenInstallment(all);
+  await updateInvoice(invoiceId, {
+    due_date: next?.due_date?.slice(0, 10) ?? paid[paid.length - 1]!.due_date.slice(0, 10),
+    payment_plan_active: true,
+  } as Partial<Invoice>);
+
+  return all;
 }
 
 export async function cancelPaymentPlan(invoiceId: string): Promise<void> {

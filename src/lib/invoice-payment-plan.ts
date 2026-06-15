@@ -44,6 +44,27 @@ export function validateInstallmentsSum(
   return Math.abs(sum - invoiceTotal) <= PAYMENT_PLAN_EPS;
 }
 
+/** Open installments + already-paid amount must equal invoice total. */
+export function validateOpenInstallmentsSum(
+  invoiceTotal: number,
+  paidAmount: number,
+  openDrafts: PaymentPlanInstallmentDraft[],
+): boolean {
+  const paid = Math.round(Number(paidAmount ?? 0) * 100) / 100;
+  const openSum = Math.round(openDrafts.reduce((s, d) => s + Number(d.amount ?? 0), 0) * 100) / 100;
+  return Math.abs(paid + openSum - invoiceTotal) <= PAYMENT_PLAN_EPS;
+}
+
+export function paidInstallmentsTotal(
+  installments: { status?: string; amount?: number | null }[],
+): number {
+  return Math.round(
+    activeInstallments(installments as InvoicePaymentInstallment[])
+      .filter((i) => i.status === "paid")
+      .reduce((s, i) => s + Number(i.amount ?? 0), 0) * 100,
+  ) / 100;
+}
+
 export function invoiceEffectiveDueYmd(
   inv: Invoice,
   installments: InvoicePaymentInstallment[] | null | undefined,

@@ -12,6 +12,7 @@ import {
 import {
   createPaymentPlan,
   updatePaymentPlan,
+  updateOpenPaymentPlanInstallments,
   cancelPaymentPlan,
   listInstallmentsForInvoice,
   syncPaymentPlanFromAmountPaid,
@@ -19,12 +20,13 @@ import {
 import {
   createSelfBillPaymentPlan,
   updateSelfBillPaymentPlan,
+  updateOpenSelfBillPaymentPlanInstallments,
   cancelSelfBillPaymentPlan,
   listInstallmentsForSelfBill,
   repairSelfBillPaymentPlanActiveFlag,
   syncSelfBillPaymentPlanFromPartnerPaid,
 } from "@/services/self-bill-payment-plan";
-import { validateInstallmentsSum, paymentPlanProgressLabel } from "@/lib/invoice-payment-plan";
+import { validateInstallmentsSum, paymentPlanProgressLabel, validateOpenInstallmentsSum, paidInstallmentsTotal } from "@/lib/invoice-payment-plan";
 import { selfBillPaymentPlanProgressLabel } from "@/lib/self-bill-payment-plan";
 import { cn, formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -87,6 +89,7 @@ export function JobPaymentPlanPanel(props: Props) {
   }, [load]);
 
   const hasPaid = installments.some((i) => i.status === "paid");
+  const hasOpen = installments.some((i) => i.status === "pending");
   const progress =
     props.kind === "client"
       ? paymentPlanProgressLabel(installments as InvoicePaymentInstallment[])
@@ -99,14 +102,33 @@ export function JobPaymentPlanPanel(props: Props) {
         ? installments.map((i) => ({
             amount: Number(i.amount) || 0,
             due_date: String(i.due_date).slice(0, 10),
+            locked: i.status === "paid",
           }))
-        : defaultPaymentPlanRows(total, 4);
-    setRows(drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })));
+        : defaultPaymentPlanRows(total, 4).map((r) => ({ ...r, locked: false }));
+    setRows(
+      drafts.map((d) => ({
+        ...emptyPaymentPlanRow(d.due_date),
+        amount: d.amount,
+        due_date: d.due_date,
+        locked: d.locked,
+      })),
+    );
     setEditorOpen(true);
   };
 
   const handleSave = async () => {
-    if (!validateInstallmentsSum(props.totalAmount, rows)) {
+    const openRows = rows.filter((r) => !r.locked);
+    const openDrafts = openRows.map(({ amount, due_date }) => ({ amount, due_date }));
+    if (hasPaid) {
+      if (openDrafts.length < 1) {
+        toast.error("At least one open installment is required.");
+        return;
+      }
+      if (!validateOpenInstallmentsSum(props.totalAmount, paidInstallmentsTotal(installments), openDrafts)) {
+        toast.error(`Open installments must sum to ${formatCurrency(props.totalAmount - paidInstallmentsTotal(installments))}.`);
+        return;
+      }
+    } else if (!validateInstallmentsSum(props.totalAmount, rows)) {
       toast.error(`Installments must sum to ${formatCurrency(props.totalAmount)}.`);
       return;
     }
@@ -115,14 +137,18 @@ export function JobPaymentPlanPanel(props: Props) {
       if (props.kind === "client") {
         const updated =
           installments.length > 0
-            ? await updatePaymentPlan(props.entityId, props.totalAmount, rows)
-            : await createPaymentPlan(props.entityId, props.totalAmount, rows);
+            ? hasPaid
+              ? await updateOpenPaymentPlanInstallments(props.entityId, props.totalAmount, openDrafts)
+              : await updatePaymentPlan(props.entityId, props.totalAmount, openDrafts)
+            : await createPaymentPlan(props.entityId, props.totalAmount, openDrafts);
         setInstallments(updated);
       } else {
         const updated =
           installments.length > 0
-            ? await updateSelfBillPaymentPlan(props.entityId, props.totalAmount, rows)
-            : await createSelfBillPaymentPlan(props.entityId, props.totalAmount, rows);
+            ? hasPaid
+              ? await updateOpenSelfBillPaymentPlanInstallments(props.entityId, props.totalAmount, openDrafts)
+              : await updateSelfBillPaymentPlan(props.entityId, props.totalAmount, openDrafts)
+            : await createSelfBillPaymentPlan(props.entityId, props.totalAmount, openDrafts);
         let next = updated;
         if (props.amountPaid > 0) {
           await syncSelfBillPaymentPlanFromPartnerPaid(props.entityId, props.amountPaid);
@@ -259,7 +285,7 @@ export function JobPaymentPlanPanel(props: Props) {
               size="sm"
               className="h-7 text-xs"
               onClick={openEditor}
-              disabled={hasPaid}
+              disabled={!hasOpen && installments.length > 0}
             >
               {installments.length > 0 ? "Edit plan" : "Create plan"}
             </Button>
@@ -283,8 +309,8 @@ export function JobPaymentPlanPanel(props: Props) {
           ) : null}
         </div>
       ) : null}
-      {hasPaid ? (
-        <p className="text-[10px] text-text-tertiary">Cannot edit after an installment was paid.</p>
+      {hasPaid && hasOpen ? (
+        <p className="text-[10px] text-text-tertiary">Paid installments are locked — edit open rows only.</p>
       ) : null}
     </div>
   );

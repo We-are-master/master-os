@@ -7,8 +7,9 @@ import {
   PAYMENT_PLAN_EPS,
   type PaymentPlanInstallmentDraft,
   validateInstallmentsSum,
+  validateOpenInstallmentsSum,
 } from "@/lib/self-bill-payment-plan";
-import { PAYMENT_PLAN_MAX_INSTALLMENTS } from "@/lib/invoice-payment-plan";
+import { PAYMENT_PLAN_MAX_INSTALLMENTS, paidInstallmentsTotal } from "@/lib/invoice-payment-plan";
 import {
   isSupabaseMissingColumnError,
   isSupabaseSelfBillPaymentPlanSchemaMissing,
@@ -127,10 +128,85 @@ export async function updateSelfBillPaymentPlan(
   drafts: PaymentPlanInstallmentDraft[],
 ): Promise<SelfBillPaymentInstallment[]> {
   const existing = await listInstallmentsForSelfBill(selfBillId);
-  if (existing.some((i) => i.status === "paid")) {
-    throw new Error("Cannot edit plan after an installment was paid.");
+  const paid = activeSelfBillInstallments(existing).filter((i) => i.status === "paid");
+  if (paid.length === 0) {
+    return createSelfBillPaymentPlan(selfBillId, netPayout, drafts);
   }
-  return createSelfBillPaymentPlan(selfBillId, netPayout, drafts);
+  return updateOpenSelfBillPaymentPlanInstallments(selfBillId, netPayout, drafts);
+}
+
+/** Replace pending installments only; paid rows stay untouched. */
+export async function updateOpenSelfBillPaymentPlanInstallments(
+  selfBillId: string,
+  netPayout: number,
+  openDrafts: PaymentPlanInstallmentDraft[],
+): Promise<SelfBillPaymentInstallment[]> {
+  if (openDrafts.length < 1) {
+    throw new Error("At least one open installment is required.");
+  }
+  if (openDrafts.length > PAYMENT_PLAN_MAX_INSTALLMENTS) {
+    throw new Error(`Maximum ${PAYMENT_PLAN_MAX_INSTALLMENTS} installments allowed.`);
+  }
+  if (openDrafts.some((d) => !d.due_date?.trim())) {
+    throw new Error("Set a due date for each open installment.");
+  }
+
+  const existing = await listInstallmentsForSelfBill(selfBillId);
+  const paid = activeSelfBillInstallments(existing).filter((i) => i.status === "paid");
+  if (paid.length === 0) {
+    throw new Error("No paid installments — use full plan update instead.");
+  }
+
+  const paidSum = paidInstallmentsTotal(paid);
+  if (!validateOpenInstallmentsSum(netPayout, paidSum, openDrafts)) {
+    throw new Error("Open installments plus paid amount must sum to the net payout.");
+  }
+
+  const supabase = getSupabase();
+  const pendingIds = activeSelfBillInstallments(existing)
+    .filter((i) => i.status === "pending")
+    .map((i) => i.id);
+  if (pendingIds.length > 0) {
+    const { error: delErr } = await supabase
+      .from("self_bill_payment_installments")
+      .delete()
+      .in("id", pendingIds);
+    if (delErr) throw delErr;
+  }
+
+  const nextSeq = Math.max(...paid.map((p) => p.sequence)) + 1;
+  const rows = openDrafts.map((d, idx) => ({
+    self_bill_id: selfBillId,
+    sequence: nextSeq + idx,
+    amount: Math.round(Number(d.amount) * 100) / 100,
+    due_date: d.due_date.slice(0, 10),
+    status: "pending" as const,
+  }));
+
+  const { data, error } = await supabase
+    .from("self_bill_payment_installments")
+    .insert(rows)
+    .select();
+  if (error) throw error;
+
+  const inserted = (data ?? []) as SelfBillPaymentInstallment[];
+  const all = [...paid, ...inserted].sort((a, b) => a.sequence - b.sequence);
+  const next = nextOpenSelfBillInstallment(all);
+  const firstDue = next?.due_date?.slice(0, 10) ?? paid[paid.length - 1]!.due_date.slice(0, 10);
+  const { error: sbErr } = await supabase
+    .from("self_bills")
+    .update({ due_date: firstDue, payment_plan_active: true })
+    .eq("id", selfBillId);
+  if (sbErr) {
+    if (isSupabaseSelfBillPaymentPlanSchemaMissing(sbErr)) {
+      throw new Error(
+        "Installments were saved but self_bills.payment_plan_active is missing — apply migration 235 and run NOTIFY pgrst, 'reload schema'; then save the plan again.",
+      );
+    }
+    throw sbErr;
+  }
+
+  return all;
 }
 
 export async function cancelSelfBillPaymentPlan(selfBillId: string): Promise<void> {

@@ -5,10 +5,11 @@ import {
   splitEqually,
   type PaymentPlanInstallmentDraft,
   validateInstallmentsSum,
+  validateOpenInstallmentsSum,
 } from "@/lib/invoice-payment-plan";
 import { listUpcomingPartnerPayoutSchedule } from "@/lib/partner-payout-schedule";
 
-export { PAYMENT_PLAN_EPS, validateInstallmentsSum };
+export { PAYMENT_PLAN_EPS, validateInstallmentsSum, validateOpenInstallmentsSum };
 export type { PaymentPlanInstallmentDraft };
 
 const READY_STATUSES = new Set<SelfBill["status"]>([

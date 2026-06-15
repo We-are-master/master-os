@@ -33,11 +33,18 @@ import {
   cancelPaymentPlan,
   createPaymentPlan,
   updatePaymentPlan,
+  updateOpenPaymentPlanInstallments,
   listInstallmentsForInvoice,
   markAllInstallmentsPaid,
   markInstallmentPaid,
 } from "@/services/invoice-payment-plan";
-import { nextOpenInstallment, paymentPlanProgressLabel, validateInstallmentsSum } from "@/lib/invoice-payment-plan";
+import {
+  nextOpenInstallment,
+  paymentPlanProgressLabel,
+  paidInstallmentsTotal,
+  validateInstallmentsSum,
+  validateOpenInstallmentsSum,
+} from "@/lib/invoice-payment-plan";
 import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
@@ -2340,10 +2347,16 @@ export function InvoiceDetailDrawer({
         ? installments.map((i) => ({
             amount: Number(i.amount) || 0,
             due_date: String(i.due_date).slice(0, 10),
+            locked: i.status === "paid",
           }))
-        : defaultPaymentPlanRows(total, 4);
+        : defaultPaymentPlanRows(total, 4).map((r) => ({ ...r, locked: false }));
     setPaymentPlanRows(
-      drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })),
+      drafts.map((d) => ({
+        ...emptyPaymentPlanRow(d.due_date),
+        amount: d.amount,
+        due_date: d.due_date,
+        locked: d.locked,
+      })),
     );
     setPaymentPlanEditorOpen(true);
   };
@@ -2351,16 +2364,33 @@ export function InvoiceDetailDrawer({
   const handleSavePaymentPlan = async () => {
     if (!invoice || !onInvoiceUpdated) return;
     const total = Number(invoice.amount ?? 0);
-    if (!validateInstallmentsSum(total, paymentPlanRows)) {
+    const hasPaidInstallments = installments.some((i) => i.status === "paid");
+    const openDrafts = paymentPlanRows
+      .filter((r) => !r.locked)
+      .map(({ amount, due_date }) => ({ amount, due_date }));
+    if (hasPaidInstallments) {
+      if (openDrafts.length < 1) {
+        toast.error("At least one open installment is required.");
+        return;
+      }
+      if (!validateOpenInstallmentsSum(total, paidInstallmentsTotal(installments), openDrafts)) {
+        toast.error("Open installments must sum to the remaining balance.");
+        return;
+      }
+    } else if (!validateInstallmentsSum(total, paymentPlanRows)) {
       toast.error("Installment amounts must sum to invoice total.");
       return;
     }
     setSavingPaymentPlan(true);
     try {
-      const drafts = paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
+      const drafts = hasPaidInstallments
+        ? openDrafts
+        : paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
       const rows =
         installments.length > 0
-          ? await updatePaymentPlan(invoice.id, total, drafts)
+          ? hasPaidInstallments
+            ? await updateOpenPaymentPlanInstallments(invoice.id, total, drafts)
+            : await updatePaymentPlan(invoice.id, total, drafts)
           : await createPaymentPlan(invoice.id, total, drafts);
       setInstallments(rows);
       const { data: fresh } = await getSupabase().from("invoices").select("*").eq("id", invoice.id).maybeSingle();
@@ -2935,7 +2965,8 @@ export function InvoiceDetailDrawer({
                           </div>
                         ))}
                       </div>
-                      {canEditFields && !installments.some((i) => i.status === "paid") ? (
+                      {canEditFields &&
+                      (installments.length === 0 || installments.some((i) => i.status === "pending")) ? (
                         <Button type="button" variant="ghost" size="sm" onClick={handleOpenPaymentPlanEditor}>
                           Edit plan
                         </Button>
