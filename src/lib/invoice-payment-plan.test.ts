@@ -8,6 +8,7 @@ import {
   nextOpenInstallment,
   pickInstallmentForExtraAllocation,
   validateInstallmentsSum,
+  validateOpenInstallmentsSum,
 } from "@/lib/invoice-payment-plan";
 import type { Invoice, InvoicePaymentInstallment } from "@/types/database";
 
@@ -66,6 +67,20 @@ describe("invoice payment plan helpers", () => {
     assert.equal(slices.length, 4);
     assert.equal(slices[0]!.dueYmd, "2026-06-12");
     assert.equal(slices[0]!.amount, 2111);
+  });
+
+  it("validates open installments plus paid amount", () => {
+    assert.equal(
+      validateOpenInstallmentsSum(100, 60, [
+        { amount: 25, due_date: "2026-08-01" },
+        { amount: 15, due_date: "2026-09-01" },
+      ]),
+      true,
+    );
+    assert.equal(
+      validateOpenInstallmentsSum(100, 60, [{ amount: 30, due_date: "2026-08-01" }]),
+      false,
+    );
   });
 
   it("validates installment sum within tolerance", () => {

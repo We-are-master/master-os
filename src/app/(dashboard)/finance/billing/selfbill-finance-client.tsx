@@ -63,12 +63,13 @@ import {
   cancelSelfBillPaymentPlan,
   createSelfBillPaymentPlan,
   updateSelfBillPaymentPlan,
+  updateOpenSelfBillPaymentPlanInstallments,
   listInstallmentsForSelfBill,
   markAllSelfBillInstallmentsPaid,
   markSelfBillInstallmentPaid,
   syncSelfBillPaymentPlanFromPartnerPaid,
 } from "@/services/self-bill-payment-plan";
-import { validateInstallmentsSum } from "@/lib/invoice-payment-plan";
+import { paidInstallmentsTotal, validateInstallmentsSum, validateOpenInstallmentsSum } from "@/lib/invoice-payment-plan";
 import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import { getSupabase } from "@/services/base";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -1748,14 +1749,20 @@ export function SelfBillDetailDrawer({
         ? installments.map((i) => ({
             amount: Number(i.amount) || 0,
             due_date: String(i.due_date).slice(0, 10),
+            locked: i.status === "paid",
           }))
         : defaultSelfBillPayoutPlanRows(total, 4, {
             partnerTerms: partnerPaymentTerms,
             orgStandardTerms: partnerPayoutStandardTerms,
             orgReferenceYmd: partnerPayoutReferenceYmd,
-          });
+          }).map((r) => ({ ...r, locked: false }));
     setPayoutPlanRows(
-      drafts.map((d) => ({ ...emptyPaymentPlanRow(d.due_date), amount: d.amount, due_date: d.due_date })),
+      drafts.map((d) => ({
+        ...emptyPaymentPlanRow(d.due_date),
+        amount: d.amount,
+        due_date: d.due_date,
+        locked: d.locked,
+      })),
     );
     setPayoutPlanEditorOpen(true);
   };
@@ -1763,16 +1770,33 @@ export function SelfBillDetailDrawer({
   const handleSavePayoutPlan = async () => {
     if (!sb) return;
     const total = Math.max(0, Number(sb.net_payout ?? 0));
-    if (!validateInstallmentsSum(total, payoutPlanRows)) {
+    const hasPaidInstallments = installments.some((i) => i.status === "paid");
+    const openDrafts = payoutPlanRows
+      .filter((r) => !r.locked)
+      .map(({ amount, due_date }) => ({ amount, due_date }));
+    if (hasPaidInstallments) {
+      if (openDrafts.length < 1) {
+        toast.error("At least one open installment is required.");
+        return;
+      }
+      if (!validateOpenInstallmentsSum(total, paidInstallmentsTotal(installments), openDrafts)) {
+        toast.error(`Open installments must sum to ${formatCurrency(total - paidInstallmentsTotal(installments))}.`);
+        return;
+      }
+    } else if (!validateInstallmentsSum(total, payoutPlanRows)) {
       toast.error(`Installments must sum to ${formatCurrency(total)}.`);
       return;
     }
     setSavingPayoutPlan(true);
     try {
-      const drafts = payoutPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
+      const drafts = hasPaidInstallments
+        ? openDrafts
+        : payoutPlanRows.map(({ amount, due_date }) => ({ amount, due_date }));
       const rows =
         installments.length > 0
-          ? await updateSelfBillPaymentPlan(sb.id, total, drafts)
+          ? hasPaidInstallments
+            ? await updateOpenSelfBillPaymentPlanInstallments(sb.id, total, drafts)
+            : await updateSelfBillPaymentPlan(sb.id, total, drafts)
           : await createSelfBillPaymentPlan(sb.id, total, drafts);
       setInstallments(rows);
       setPayoutPlanEditorOpen(false);
@@ -2552,7 +2576,7 @@ export function SelfBillDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    {!isPaid && !installments.some((i) => i.status === "paid") ? (
+                    {!isPaid && installments.some((i) => i.status === "pending") ? (
                       <Button type="button" variant="ghost" size="sm" onClick={handleOpenPayoutPlanEditor}>
                         Edit plan
                       </Button>

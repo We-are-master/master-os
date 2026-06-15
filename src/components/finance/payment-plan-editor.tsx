@@ -15,7 +15,11 @@ import { dueDateIsoFromAccountPaymentTerms } from "@/lib/account-payment-due-dat
 import type { AccountPaymentOrgContext } from "@/lib/account-payment-due-date";
 import { Plus, Trash2 } from "lucide-react";
 
-export type PaymentPlanEditorRow = PaymentPlanInstallmentDraft & { key: string };
+export type PaymentPlanEditorRow = PaymentPlanInstallmentDraft & {
+  key: string;
+  /** Paid installments — read-only in partial plan edits. */
+  locked?: boolean;
+};
 
 type Props = {
   enabled: boolean;
@@ -50,6 +54,14 @@ export function PaymentPlanEditor({
     () => Math.round(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100,
     [rows],
   );
+  const lockedSum = useMemo(
+    () =>
+      Math.round(
+        rows.filter((r) => r.locked).reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100,
+      ) / 100,
+    [rows],
+  );
+  const openRows = useMemo(() => rows.filter((r) => !r.locked), [rows]);
   const sumOk = validateInstallmentsSum(totalAmount, rows);
 
   const addRow = useCallback(() => {
@@ -58,38 +70,61 @@ export function PaymentPlanEditor({
 
   const removeRow = useCallback(
     (key: string) => {
-      if (rows.length <= 1) return;
+      const row = rows.find((r) => r.key === key);
+      if (!row || row.locked) return;
+      if (openRows.length <= 1) return;
       onRowsChange(rows.filter((r) => r.key !== key));
     },
-    [rows, onRowsChange],
+    [rows, openRows.length, onRowsChange],
   );
 
   const updateRow = useCallback(
     (key: string, patch: Partial<PaymentPlanInstallmentDraft>) => {
-      onRowsChange(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+      onRowsChange(
+        rows.map((r) => (r.key === key && !r.locked ? { ...r, ...patch } : r)),
+      );
     },
     [rows, onRowsChange],
   );
 
   const splitEqual = useCallback(() => {
-    if (rows.length < 1 || totalAmount <= 0) return;
-    const amounts = splitEqually(totalAmount, rows.length);
-    onRowsChange(rows.map((r, i) => ({ ...r, amount: amounts[i] ?? 0 })));
-  }, [rows, totalAmount, onRowsChange]);
+    const targets = openRows.length > 0 ? openRows : rows;
+    if (targets.length < 1) return;
+    const remainder = Math.max(0, Math.round((totalAmount - lockedSum) * 100) / 100);
+    if (remainder <= 0) return;
+    const amounts = splitEqually(remainder, targets.length);
+    let i = 0;
+    onRowsChange(
+      rows.map((r) => {
+        if (r.locked) return r;
+        const next = { ...r, amount: amounts[i] ?? 0 };
+        i += 1;
+        return next;
+      }),
+    );
+  }, [rows, openRows, totalAmount, lockedSum, onRowsChange]);
 
   const applyAccountTerms = useCallback(() => {
-    if (rows.length < 1) return;
+    const targets = openRows.length > 0 ? openRows : rows;
+    if (targets.length < 1) return;
     const terms = accountPaymentTerms?.trim();
     if (!terms) return;
     const anchor = new Date();
-    const updated = rows.map((r, i) => {
+    let i = 0;
+    const updatedDates = targets.map((_, idx) => {
       const d = new Date(anchor);
-      d.setMonth(d.getMonth() + i);
-      const iso = dueDateIsoFromAccountPaymentTerms(d, terms, orgCtx ?? undefined);
-      return { ...r, due_date: iso.slice(0, 10) };
+      d.setMonth(d.getMonth() + idx);
+      return dueDateIsoFromAccountPaymentTerms(d, terms, orgCtx ?? undefined).slice(0, 10);
     });
-    onRowsChange(updated);
-  }, [rows, accountPaymentTerms, orgCtx, onRowsChange]);
+    onRowsChange(
+      rows.map((r) => {
+        if (r.locked) return r;
+        const due_date = updatedDates[i] ?? r.due_date;
+        i += 1;
+        return { ...r, due_date };
+      }),
+    );
+  }, [rows, openRows, accountPaymentTerms, orgCtx, onRowsChange]);
 
   const drift = Math.round((totalAmount - sum) * 100) / 100;
 
@@ -170,37 +205,52 @@ export function PaymentPlanEditor({
               {rows.map((row, idx) => (
                 <div
                   key={row.key}
-                  className="grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_1.25rem] gap-1 items-center px-2 py-1.5"
+                  className={cn(
+                    "grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_1.25rem] gap-1 items-center px-2 py-1.5",
+                    row.locked && "bg-emerald-50/60 dark:bg-emerald-950/20",
+                  )}
                 >
                   <span className="text-[10px] font-semibold text-text-tertiary tabular-nums">{idx + 1}</span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    className="h-8 min-w-0 text-xs px-2"
-                    value={row.amount === 0 ? "" : row.amount}
-                    onChange={(e) =>
-                      updateRow(row.key, { amount: Math.max(0, Number(e.target.value) || 0) })
-                    }
-                    placeholder="£"
-                    aria-label={`Installment ${idx + 1} amount`}
-                  />
-                  <Input
-                    type="date"
-                    className="h-8 min-w-0 text-xs px-1.5"
-                    value={row.due_date}
-                    onChange={(e) => updateRow(row.key, { due_date: e.target.value })}
-                    aria-label={`Installment ${idx + 1} due date`}
-                  />
-                  <button
-                    type="button"
-                    disabled={rows.length <= 1}
-                    onClick={() => removeRow(row.key)}
-                    className="p-0.5 text-text-tertiary hover:text-red-600 disabled:opacity-30 justify-self-center"
-                    aria-label={`Remove installment ${idx + 1}`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  {row.locked ? (
+                    <>
+                      <span className="text-xs font-medium tabular-nums text-emerald-800 dark:text-emerald-300 px-1">
+                        {formatCurrency(row.amount)}
+                      </span>
+                      <span className="text-xs text-text-secondary px-1">{row.due_date}</span>
+                      <span className="text-[9px] font-semibold uppercase text-emerald-700 justify-self-center">Paid</span>
+                    </>
+                  ) : (
+                    <>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        className="h-8 min-w-0 text-xs px-2"
+                        value={row.amount === 0 ? "" : row.amount}
+                        onChange={(e) =>
+                          updateRow(row.key, { amount: Math.max(0, Number(e.target.value) || 0) })
+                        }
+                        placeholder="£"
+                        aria-label={`Installment ${idx + 1} amount`}
+                      />
+                      <Input
+                        type="date"
+                        className="h-8 min-w-0 text-xs px-1.5"
+                        value={row.due_date}
+                        onChange={(e) => updateRow(row.key, { due_date: e.target.value })}
+                        aria-label={`Installment ${idx + 1} due date`}
+                      />
+                      <button
+                        type="button"
+                        disabled={openRows.length <= 1}
+                        onClick={() => removeRow(row.key)}
+                        className="p-0.5 text-text-tertiary hover:text-red-600 disabled:opacity-30 justify-self-center"
+                        aria-label={`Remove installment ${idx + 1}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
