@@ -79,8 +79,7 @@ export async function POST(request: NextRequest) {
       logoUrl,
     });
 
-    const subject =
-      body.subject?.trim() || `${companyName} — partner rate card (pay rates)`;
+    const subject = body.subject?.trim() || "Your Fixfy Partner Rate Card";
 
     const resend = new Resend(apiKey);
     const fromEmail =

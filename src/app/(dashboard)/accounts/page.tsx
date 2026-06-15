@@ -19,7 +19,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
-  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus, ArrowRight,
+  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus, ArrowRight, Share2,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
@@ -58,6 +58,8 @@ import { listActiveAssignableUsers, type AssignableUser } from "@/services/profi
 import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
 import { AccountServiceRatesTabSection } from "./service-rates-tab";
 import { PartnerAvatarCropModal } from "@/components/partners/partner-avatar-crop-modal";
+import { CatalogShareModal } from "@/components/catalog/catalog-share-modal";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -257,6 +259,8 @@ export default function AccountsPage() {
   }, [accountsDisplayMode]);
 
   const { profile } = useProfile();
+  const { can, loading: configLoading } = useAdminConfig();
+  const canCatalog = can("service_catalog");
   const isAdmin = profile?.role === "admin";
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
 
@@ -271,6 +275,7 @@ export default function AccountsPage() {
 
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const loadKpis = useCallback(async () => {
     try {
@@ -618,6 +623,16 @@ export default function AccountsPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Accounts" subtitle="Corporate clients — billing, jobs, and rate cards in one place.">
+          {!configLoading && canCatalog ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Share2 className="h-3.5 w-3.5" />}
+              onClick={() => setShareOpen(true)}
+            >
+              Share rate card
+            </Button>
+          ) : null}
           {isAdmin && (
             <Button size="sm" variant="outline" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setSyncOpen(true)}>
               Sync due dates
@@ -829,6 +844,8 @@ export default function AccountsPage() {
           </div>
         </div>
       </Modal>
+
+      <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Account" subtitle="Add a new corporate client account.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">

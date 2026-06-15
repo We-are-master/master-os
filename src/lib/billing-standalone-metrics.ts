@@ -521,7 +521,7 @@ export type BuildCashflowWeeklyArgs = {
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
   partnerPaidByJobId: Record<string, number>;
   dueCtx: SelfBillDueResolveContext;
-  bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at">[];
+  bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at" | "paid_at">[];
   installmentsByInvoiceId?: Record<string, InvoicePaymentInstallment[]>;
   installmentsBySelfBillId?: Record<string, SelfBillPaymentInstallment[]>;
   startYmd?: string;

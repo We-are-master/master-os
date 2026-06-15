@@ -39,11 +39,11 @@ export function buildPartnerCatalogEmailHTML(input: PartnerCatalogEmailInput): s
     : "";
 
   const pdfLinkBlock = input.pdfUrl?.trim()
-    ? `<p style="margin:0 0 8px; font-size:14px; line-height:22px; color:#57534E;">
-                Direct PDF link: <a href="${esc(input.pdfUrl.trim())}" style="color:#ED4B00; font-weight:600;">Download PDF</a>
+    ? `<p style="margin:16px 0 0; font-size:13px; line-height:20px; color:#78716C;">
+                A PDF copy is attached. You can also <a href="${esc(input.pdfUrl.trim())}" style="color:#ED4B00; font-weight:600;">download the rate card PDF</a>.
               </p>`
-    : `<p style="margin:0 0 8px; font-size:14px; line-height:22px; color:#57534E;">
-                The rate card PDF is attached to this email.
+    : `<p style="margin:16px 0 0; font-size:13px; line-height:20px; color:#78716C;">
+                A PDF copy of the partner rate card is attached to this email.
               </p>`;
 
   return tpl

@@ -56,7 +56,7 @@ import {
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue } from "@/lib/job-financials";
-import { splitInvoiceTradeAndFee } from "@/lib/invoice-trade-fee-split";
+import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { getSupabase } from "@/services/base";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
@@ -396,6 +396,17 @@ interface LinkedJob {
   scheduled_date?: string;
   completed_date?: string;
   self_bill_id?: string | null;
+}
+
+function linkedJobTradeFeeInput(job: LinkedJob): InvoiceTradeFeeJob {
+  return {
+    client_price: job.client_price,
+    extras_amount: job.extras_amount ?? undefined,
+    commission: job.commission ?? 0,
+    partner_agreed_value: job.partner_agreed_value ?? 0,
+    partner_cost: job.partner_cost,
+    materials_cost: job.materials_cost,
+  };
 }
 
 /** Compare fields job→invoice sync may change — avoids a loop when parent replaces `invoice` after an identical refetch. */
@@ -2098,16 +2109,7 @@ export function InvoiceDetailDrawer({
     const charged = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
     const { trade } = splitInvoiceTradeAndFee(
       charged,
-      linkedJob
-        ? {
-            client_price: linkedJob.client_price,
-            extras_amount: linkedJob.extras_amount,
-            commission: linkedJob.commission,
-            partner_agreed_value: linkedJob.partner_agreed_value,
-            partner_cost: linkedJob.partner_cost,
-            materials_cost: linkedJob.materials_cost,
-          }
-        : null,
+      linkedJob ? linkedJobTradeFeeInput(linkedJob) : null,
       tradeFeeOptions,
     );
     setBreakdownPartnerCost(String(trade));
@@ -2535,16 +2537,7 @@ export function InvoiceDetailDrawer({
   const chargedAmount = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
   const invoiceTradeFeeSplit = splitInvoiceTradeAndFee(
     chargedAmount,
-    linkedJob
-      ? {
-          client_price: linkedJob.client_price,
-          extras_amount: linkedJob.extras_amount,
-          commission: linkedJob.commission,
-          partner_agreed_value: linkedJob.partner_agreed_value,
-          partner_cost: linkedJob.partner_cost,
-          materials_cost: linkedJob.materials_cost,
-        }
-      : null,
+    linkedJob ? linkedJobTradeFeeInput(linkedJob) : null,
     tradeFeeOptions,
   );
   const baselinePartnerCost = invoiceTradeFeeSplit.trade;

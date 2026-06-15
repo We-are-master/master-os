@@ -129,6 +129,13 @@ function pipelineJobExpectedDueYmd(
   return dueDateIsoFromAccountPaymentTerms(new Date(`${sched}T12:00:00`), terms ?? null, orgCtx);
 }
 
+function pipelineJobBillableRevenue(job: PipelineJobRunwayRow): number {
+  return jobBillableRevenue({
+    client_price: job.client_price,
+    extras_amount: job.extras_amount ?? undefined,
+  });
+}
+
 function projectionMoneyInForPipelineJobInWeek(
   job: PipelineJobRunwayRow,
   weekStart: string,
@@ -141,7 +148,7 @@ function projectionMoneyInForPipelineJobInWeek(
     args.paymentOrgCtx,
   );
   if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) return 0;
-  const amount = roundMoney(jobBillableRevenue(job));
+  const amount = roundMoney(pipelineJobBillableRevenue(job));
   return amount > 0.02 ? amount : 0;
 }
 
@@ -343,7 +350,7 @@ export function buildProjectionRunwayWeekBreakdown(
       args.paymentOrgCtx,
     );
     if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) continue;
-    const amount = roundMoney(jobBillableRevenue(job));
+    const amount = roundMoney(pipelineJobBillableRevenue(job));
     if (amount <= 0.02) continue;
     inLines.push({
       id: job.id,
