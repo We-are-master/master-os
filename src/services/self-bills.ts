@@ -22,13 +22,13 @@ import {
 } from "@/lib/supabase-schema-compat";
 
 const JOB_LINE_FOR_SB_FULL =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
 const JOB_LINE_FOR_SB_FULL_WITH_LINK =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, self_bill_id, deleted_at, partner_cancelled_at, partner_cancellation_fee, cancellation_fee_partner_gbp, partner_cancellation_compensation_gbp";
 const JOB_LINE_FOR_SB_LEGACY =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, deleted_at";
 const JOB_LINE_FOR_SB_LEGACY_WITH_LINK =
-  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, self_bill_id, deleted_at";
+  "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, self_bill_id, deleted_at";
 
 export type SelfBillJobLine = Pick<
   Job,
@@ -40,6 +40,10 @@ export type SelfBillJobLine = Pick<
   | "materials_cost"
   | "status"
   | "property_address"
+  | "scheduled_date"
+  | "scheduled_start_at"
+  | "scheduled_end_at"
+  | "scheduled_finish_date"
   | "partner_cancellation_fee"
   | "cancellation_fee_partner_gbp"
   | "partner_cancellation_compensation_gbp"

@@ -21,16 +21,33 @@ import {
 import { moneyIncVatLabel, splitMoneyIncVatParts } from "@/lib/money-display-label";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
+import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 
-export interface PartnerJobConfirmationData {
+export type PartnerJobEmailScheduleFields = {
+  scheduledDate?: string | null;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
+  scheduledFinishDate?: string | null;
+};
+
+/** Body/subject schedule line — same format as partner push notifications. */
+export function formatPartnerJobEmailScheduleLine(fields: PartnerJobEmailScheduleFields): string {
+  const line = formatJobScheduleLine({
+    scheduled_date: fields.scheduledDate,
+    scheduled_start_at: fields.scheduledStartAt,
+    scheduled_end_at: fields.scheduledEndAt,
+    scheduled_finish_date: fields.scheduledFinishDate,
+  });
+  return line?.trim() || "TBC";
+}
+
+export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleFields {
   partnerFirstName: string;
   jobReference: string;
   jobTitle: string;
   clientName: string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress: string;
-  /** YYYY-MM-DD — used in the email subject line. */
-  scheduledDate?: string | null;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
   jobType: "hourly" | "fixed";
@@ -162,12 +179,15 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     propertyAddress: data.propertyAddress,
   });
 
+  const scheduleLine = formatPartnerJobEmailScheduleLine(data);
+
   const safe = {
     name: escapeHtml(data.partnerFirstName || "there"),
     ref: escapeHtml(data.jobReference),
     title: escapeHtml(data.jobTitle),
     client: escapeHtml(data.clientName),
     address: escapeHtml(data.propertyAddress),
+    schedule: escapeHtml(scheduleLine),
     scope: escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 36),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
@@ -232,6 +252,13 @@ ${partnerEmailLogoHeaderRow()}
 
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="info-row">
               <tr>
+                <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Date</td>
+                <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.schedule}</td>
+              </tr>
+              <tr>
+                <td colspan="2" style="padding:0;"><div style="border-top:1px solid #E4E4EC; height:1px; line-height:1px; font-size:1px;">&nbsp;</div></td>
+              </tr>
+              <tr>
                 <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Client</td>
                 <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.client}</td>
               </tr>
@@ -289,6 +316,8 @@ Job #${data.jobReference}
 ${data.jobTitle}
 
 Earnings: ${moneyIncVatLabel(data.priceDisplay)} (${data.jobType === "hourly" ? "Hourly" : "Fixed"})
+
+Date: ${scheduleLine}
 
 Client: ${data.clientName}
 Address: ${data.propertyAddress}
@@ -929,15 +958,13 @@ ${bodyMiddle}
  * (jobId, partnerId). Partner clicks → POST /api/jobs/confirm-acceptance →
  * jobs.partner_confirmed_at stamped → booked email follows.
  */
-export interface PartnerJobConfirmationRequestData {
+export interface PartnerJobConfirmationRequestData extends PartnerJobEmailScheduleFields {
   partnerFirstName: string;
   jobReference:     string;
   jobTitle:         string;
   clientName:       string;
   /** Partner-facing emails NEVER show the customer's phone — only name + address. */
   propertyAddress:  string;
-  /** YYYY-MM-DD — used in the email subject line. */
-  scheduledDate?:   string | null;
   scope:            string;
   /** £ display value (e.g. "£280.00"). */
   priceDisplay:     string;
@@ -965,12 +992,14 @@ export function buildPartnerJobConfirmationRequestEmail(
   });
 
   const postcode = extractUkPostcode(data.propertyAddress) ?? "—";
+  const scheduleLine = formatPartnerJobEmailScheduleLine(data);
 
   const safe = {
     name:    escapeHtml(data.partnerFirstName || "there"),
     ref:     escapeHtml(data.jobReference),
     title:   escapeHtml(data.jobTitle),
     postcode: escapeHtml(postcode),
+    schedule: escapeHtml(scheduleLine),
     scope:   escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 32),
     accept:  escapeHtml(data.acceptUrl),
@@ -1019,6 +1048,10 @@ ${partnerEmailLogoHeaderRow()}
             <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
             <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
             <div style="border-top:1px solid #E4E4EC; padding-top:14px;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Date</p>
+              <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.schedule}</p>
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid #E4E4EC;">
               <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Area</p>
               <p style="margin:0; font-size:14px; color:#0A0A1F; font-weight:500;">${safe.postcode}</p>
             </div>
@@ -1058,6 +1091,7 @@ The faster you accept, the higher your chances of securing the work.
 
 Job #${data.jobReference} — ${data.jobTitle}
 Earnings: ${moneyIncVatLabel(data.priceDisplay)}
+Date:     ${scheduleLine}
 Area:     ${postcode}
 
 Scope:

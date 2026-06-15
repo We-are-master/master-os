@@ -177,7 +177,9 @@ export async function broadcastAutoAssignInvites(
 
   const { data: jobInfo } = await supabase
     .from("jobs")
-    .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id, title")
+    .select(
+      "job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id, title, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date",
+    )
     .eq("id", params.jobId)
     .maybeSingle();
   const ji = jobInfo as {
@@ -187,6 +189,10 @@ export async function broadcastAutoAssignInvites(
     catalog_service_id: string | null;
     catalog_pricing_preset_id: string | null;
     title: string | null;
+    scheduled_date: string | null;
+    scheduled_start_at: string | null;
+    scheduled_end_at: string | null;
+    scheduled_finish_date: string | null;
   } | null;
   const isHourly = ji?.job_type === "hourly";
   const presetId = ji?.catalog_pricing_preset_id ?? null;
@@ -243,7 +249,10 @@ export async function broadcastAutoAssignInvites(
           jobTitle: params.jobTitle,
           clientName: params.clientName,
           propertyAddress: params.propertyAddress,
-          scheduledDate: params.scheduledDate,
+          scheduledDate: ji?.scheduled_date ?? params.scheduledDate,
+          scheduledStartAt: ji?.scheduled_start_at ?? null,
+          scheduledEndAt: ji?.scheduled_end_at ?? null,
+          scheduledFinishDate: ji?.scheduled_finish_date ?? null,
           scope: params.scope,
           priceDisplay,
           partnerNotes,

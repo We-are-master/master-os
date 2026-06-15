@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { responsiveDrawerWidthClass } from "@/lib/responsive-drawer-width";
 import { motion, AnimatePresence } from "framer-motion";
 import { drawerTransition, overlayTransition } from "@/lib/motion";
 import { X } from "lucide-react";
@@ -64,7 +65,7 @@ export function Drawer({
             exit="exit"
             className={cn(
               "fixed right-0 top-0 bottom-0 max-h-[100dvh] bg-surface border-l border-fx-line shadow-modal z-50 flex flex-col",
-              width,
+              responsiveDrawerWidthClass(width),
               className
             )}
           >
