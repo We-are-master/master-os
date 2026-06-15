@@ -1,5 +1,5 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
 
@@ -23,6 +23,8 @@ export interface InvoicePdfData {
   completionDate?: string;
   tradeAmount: number;
   feeAmount: number;
+  /** Data URI or https URL for header logo. */
+  logoUrl?: string;
   /** When set (partial request), amount due now — may be less than full balance. */
   amountDueNow?: number;
   /** % of base requested (for PDF note). */
@@ -55,6 +57,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   wordmark: { fontFamily: "Helvetica-Bold", fontSize: 18, color: "#FFFFFF", letterSpacing: 0.5 },
+  headerLogo: { width: 100, height: 28, objectFit: "contain" as const },
   accentBar: { backgroundColor: ORANGE, height: 4 },
 
   body: { paddingHorizontal: PAD, paddingTop: 18 },
@@ -209,6 +212,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 12, color: "#FFFFFF", marginBottom: 5 },
+  footerLogo: { width: 68, height: 18, objectFit: "contain" as const, marginBottom: 6 },
   footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
 
@@ -248,7 +252,11 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
     <Document>
       <Page size="A4" style={styles.page}>
         <View style={styles.headerBand}>
-          <Text style={styles.wordmark}>Fixfy</Text>
+          {data.logoUrl ? (
+            <Image src={data.logoUrl} style={styles.headerLogo} />
+          ) : (
+            <Text style={styles.wordmark}>Fixfy</Text>
+          )}
         </View>
         <View style={styles.accentBar} />
 
@@ -362,7 +370,11 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
         </View>
 
         <View style={styles.footer} fixed>
-          <Text style={styles.footerWordmark}>Fixfy</Text>
+          {data.logoUrl ? (
+            <Image src={data.logoUrl} style={styles.footerLogo} />
+          ) : (
+            <Text style={styles.footerWordmark}>Fixfy</Text>
+          )}
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
             124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com{"\n"}

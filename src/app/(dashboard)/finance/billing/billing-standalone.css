@@ -191,6 +191,23 @@
   color: #ed4b00;
 }
 
+.bl-standalone .cf__balance-trend {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.bl-standalone .cf__balance-trend--up {
+  color: #059669;
+}
+
+.bl-standalone .cf__balance-trend--down {
+  color: #ed4b00;
+}
+
 /* Ledger rows — zebra + full-width trail */
 .bl-standalone .bl-ledger-row {
   border-bottom: 1px solid rgba(2, 0, 64, 0.06);

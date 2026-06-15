@@ -13,6 +13,7 @@ import {
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
 import { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
 import { invoiceAmountDueForRequest } from "@/lib/invoice-request-amount";
+import { parseFrontendSetup, resolveInvoicePlatformFeePct } from "@/lib/frontend-setup";
 import { loadInvoicePdfData } from "@/lib/invoice-pdf-data";
 import { renderInvoicePdfBufferFromData } from "@/lib/render-invoice-pdf-buffer";
 import { canSendJobInvoiceEmail } from "@/lib/invoice-send-eligibility";
@@ -149,7 +150,16 @@ export async function sendInvoiceEmail(
     return { error: "RESEND_FROM_EMAIL not configured", status: 503 };
   }
 
-  const { data: company } = await admin.from("company_settings").select("email, company_name").limit(1).maybeSingle();
+  const { data: company } = await admin
+    .from("company_settings")
+    .select("email, company_name, frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  const tradeFeeOptions = {
+    defaultPlatformFeePct: resolveInvoicePlatformFeePct(
+      parseFrontendSetup((company as { frontend_setup?: unknown } | null)?.frontend_setup),
+    ),
+  };
   const emailTo = ctx.billing.documentEmail!.trim();
   const ccEmail = resolveInvoiceCcEmail(company?.email);
   const ccList = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
@@ -159,12 +169,15 @@ export async function sendInvoiceEmail(
     options.requestPercent != null
       ? invoiceAmountDueForRequest(inv, options.requestPercent)
       : invoiceAmountDueForRequest(inv, 100);
-  const emailOpts =
+  const emailOptsBase =
     request.percent < 100
       ? { amountDueNow: request.amountDueNow, requestPercent: request.percent }
       : undefined;
+  const emailOpts = emailOptsBase
+    ? { ...emailOptsBase, tradeFeeOptions }
+    : { tradeFeeOptions };
 
-  const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOpts);
+  const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOptsBase);
   if ("error" in pdfResult) {
     return { error: pdfResult.error, status: 500 };
   }
