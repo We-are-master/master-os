@@ -129,7 +129,10 @@ export async function applyOfficeCancellationFees(args: {
   const linkPatch: Partial<Job> = {};
 
   if (hasClientFee) {
-    const dueDate = await getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate);
+    const dueDate = await getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate, undefined, {
+      jobKind: job.job_kind ?? "one_off",
+      scheduleJob: job,
+    });
     const inv = await createOrAppendJobInvoice(
       job,
       {

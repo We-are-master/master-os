@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:period": "npx tsx --test src/lib/billing-standalone-period.test.ts src/lib/partner-payout-schedule.test.ts src/lib/account-payment-due-date.test.ts src/lib/zendesk-reasons-sync.test.ts src/lib/pulse-revenue-goal.test.ts",
+    "test:period": "npx tsx --test src/lib/billing-standalone-period.test.ts src/lib/partner-payout-schedule.test.ts src/lib/account-payment-due-date.test.ts src/lib/job-invoice-due-anchor.test.ts src/lib/zendesk-reasons-sync.test.ts src/lib/pulse-revenue-goal.test.ts",
     "test:zendesk-sync": "npx tsx --test src/lib/zendesk-os-catalog-mapping.test.ts src/lib/zendesk-service-catalog-sync.test.ts src/lib/zendesk-service-bands-sync.test.ts",
     "audit:zendesk-catalog": "node scripts/audit-zendesk-catalog-sync.mjs",
     "verify:zendesk-schema": "node scripts/verify-zendesk-schema.mjs",

@@ -719,9 +719,10 @@ export async function ensureDraftInvoiceForJob(
 
   let dueDateStr = opts?.dueDate;
   if (!dueDateStr) {
-    dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null).catch(
-      () => new Date().toISOString().slice(0, 10),
-    );
+    dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null, new Date(), undefined, {
+      jobKind: job.job_kind ?? "one_off",
+      scheduleJob: job,
+    }).catch(() => new Date().toISOString().slice(0, 10));
   }
 
   let invoiceRef = opts?.invoiceRef;
@@ -780,12 +781,18 @@ export async function createJob(
    *     PATCH lat/lng when it returns. This was the single biggest source
    *     of perceived "Create Job" latency.
    */
+  const scheduleJob = {
+    job_kind: input.job_kind,
+    scheduled_date: input.scheduled_date,
+    scheduled_start_at: input.scheduled_start_at,
+  };
   const [jobRefRes, invRefRes, dueDateStrPre, jobBilling] = await Promise.all([
     supabase.rpc("next_job_ref"),
     supabase.rpc("next_invoice_ref"),
-    getInvoiceDueDateIsoForClient(input.client_id ?? null).catch(
-      () => new Date().toISOString().slice(0, 10),
-    ),
+    getInvoiceDueDateIsoForClient(input.client_id ?? null, new Date(), undefined, {
+      jobKind: input.job_kind ?? "one_off",
+      scheduleJob,
+    }).catch(() => new Date().toISOString().slice(0, 10)),
     resolveNominalBillingParty(supabase, {
       clientId: input.client_id?.trim() ?? "",
       fallbackName: input.client_name,

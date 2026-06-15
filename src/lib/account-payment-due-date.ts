@@ -4,7 +4,7 @@ import {
   resolvePartnerPayoutStandardTerms,
   type FrontendSetup,
 } from "@/lib/frontend-setup";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import { dueDateIsoFromPaymentTerms, isDueOnReceiptTerms } from "@/lib/invoice-payment-terms";
 import {
   isBiweeklyFridayPayoutTerms,
   normalizePartnerPayoutStandardTerms,
@@ -41,6 +41,7 @@ export function isAccountOrgBiweeklyGridTerms(
 ): boolean {
   const raw = paymentTerms?.trim() ?? "";
   if (!raw) return false;
+  if (isDueOnReceiptTerms(raw)) return false;
   if (/every\s+2\s+weeks?\s+cutoff/i.test(raw)) return false;
   if (/every\s+2\s*weeks\s+on\s+friday/i.test(raw)) return true;
   const orgNorm = normalizePartnerPayoutStandardTerms(orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS);
@@ -57,6 +58,10 @@ export function dueDateIsoFromAccountPaymentTerms(
   orgCtx?: AccountPaymentOrgContext | null,
 ): string {
   const raw = paymentTerms?.trim() ?? "";
+
+  if (isDueOnReceiptTerms(raw)) {
+    return dueDateIsoFromPaymentTerms(base, paymentTerms);
+  }
 
   if (/every\s+2\s+weeks?\s+cutoff/i.test(raw) || /monthly\s+cutoff/i.test(raw)) {
     return dueDateIsoFromPaymentTerms(base, paymentTerms);
