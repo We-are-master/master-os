@@ -27,6 +27,10 @@ describe("isAccountOrgBiweeklyGridTerms", () => {
   it("excludes Net 30", () => {
     assert.equal(isAccountOrgBiweeklyGridTerms("Net 30", ORG_CTX.orgStandardTerms), false);
   });
+
+  it("excludes Due on Receipt (not biweekly grid)", () => {
+    assert.equal(isAccountOrgBiweeklyGridTerms("Due on Receipt", ORG_CTX.orgStandardTerms), false);
+  });
 });
 
 describe("dueDateIsoFromAccountPaymentTerms", () => {
@@ -61,5 +65,12 @@ describe("dueDateIsoFromAccountPaymentTerms", () => {
     const due = dueDateIsoFromAccountPaymentTerms(anchor, terms, ORG_CTX);
     const expected = dueDateIsoFromPaymentTerms(anchor, terms);
     assert.equal(due, expected);
+  });
+
+  it("Due on Receipt uses +72h not biweekly grid (JOB-9295 regression)", () => {
+    const anchor = new Date("2026-06-15T12:00:00");
+    const due = dueDateIsoFromAccountPaymentTerms(anchor, "Due on Receipt", ORG_CTX);
+    assert.equal(due, "2026-06-18");
+    assert.notEqual(due, "2026-06-26");
   });
 });

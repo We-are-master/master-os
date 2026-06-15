@@ -49,7 +49,10 @@ export async function createOrAppendJobInvoice(
   const terms = await getPaymentTermsForClient(job.client_id ?? null);
   const accountId = await getSourceAccountIdForClient(job.client_id ?? null);
   const ref = job.reference?.trim();
-  const due = await getInvoiceDueDateIsoForClient(job.client_id ?? null, anchor);
+  const due = await getInvoiceDueDateIsoForClient(job.client_id ?? null, anchor, undefined, {
+    jobKind: job.job_kind ?? "one_off",
+    scheduleJob: job,
+  });
 
   if (!ref) {
     return createInvoice({ ...payload, job_reference: job.reference ?? "", due_date: due });

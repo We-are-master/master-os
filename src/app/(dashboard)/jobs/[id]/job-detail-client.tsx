@@ -1562,7 +1562,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? await fetchPartnerPaymentTermsSafe(job.partner_id)
         : null;
       const [invoiceDue] = await Promise.all([
-        getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate),
+        getInvoiceDueDateIsoForClient(job.client_id ?? null, financeAnchorDate, undefined, {
+          jobKind: job.job_kind ?? "one_off",
+          scheduleJob: job,
+        }),
       ]);
       const partnerDue = job.partner_id?.trim()
         ? computePartnerSelfBillDueIso(
@@ -1751,6 +1754,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (isRecurringSeriesJob) return false;
     return (job?.job_kind ?? "one_off") === "one_off";
   }, [isRecurringSeriesJob, job?.job_kind]);
+
+  /** Payment plan panels: recurring + multi-day (+ series members); hidden only for one-off. */
+  const showsJobPaymentPlan = useMemo(
+    () => isRecurringSeriesJob || (job?.job_kind ?? "one_off") !== "one_off",
+    [isRecurringSeriesJob, job?.job_kind],
+  );
 
   const jobScheduleKindLabel = useMemo(() => {
     if (isRecurringSeriesJob) return "Recurring";
@@ -5103,7 +5112,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const financeAnchorDate = updated.scheduled_date ? new Date(updated.scheduled_date) : new Date();
       const [linked, dueForAnchor, linkedSelfBills] = await Promise.all([
         listInvoicesLinkedToJob(updated.reference, updated.invoice_id),
-        getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate),
+        getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate, undefined, {
+          jobKind: updated.job_kind ?? "one_off",
+          scheduleJob: updated,
+        }),
         updated.partner_id?.trim()
           ? listSelfBillsLinkedToJob(updated.reference, updated.self_bill_id ?? null)
           : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
@@ -8894,7 +8906,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </Button>
                 </div>
                 {(() => {
-                  if (job.job_kind !== "recurring") return null;
+                  if (!showsJobPaymentPlan) return null;
                   const primaryInv =
                     (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
                     jobInvoices[0];
@@ -9243,7 +9255,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Extra &amp; deduction
                   </Button>
                 </div>
-                {job.job_kind === "recurring" &&
+                {showsJobPaymentPlan &&
                 job.self_bill_id?.trim() &&
                 job.partner_id?.trim() &&
                 job.status !== "cancelled" ? (

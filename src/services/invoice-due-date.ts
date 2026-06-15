@@ -6,7 +6,18 @@ import {
   orgCtxFromSetup,
   type AccountPaymentOrgContext,
 } from "@/lib/account-payment-due-date";
+import {
+  dueDateIsoForJobAccountTerms,
+  resolveJobScheduleInstant,
+  type JobScheduleAnchorInput,
+} from "@/lib/job-invoice-due-anchor";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
+import type { JobKind } from "@/types/database";
+
+export type InvoiceDueDateOptions = {
+  jobKind?: JobKind | null;
+  scheduleJob?: JobScheduleAnchorInput | null;
+};
 
 let cachedOrgCtx: AccountPaymentOrgContext | undefined;
 
@@ -24,15 +35,21 @@ async function loadAccountPaymentOrgContext(): Promise<AccountPaymentOrgContext>
 /**
  * Resolves `accounts.payment_terms` for a client linked to `source_account_id`, then returns due date YYYY-MM-DD.
  * Biweekly accounts on the org standard grid use the same reference Friday as partner self-bills (Setup).
+ * One-off Due on Receipt: use `scheduleJob` so due = scheduled finish + 72h.
  */
 export async function getInvoiceDueDateIsoForClient(
   clientId: string | null | undefined,
   baseDate: Date = new Date(),
   orgCtx?: AccountPaymentOrgContext | null,
+  options?: InvoiceDueDateOptions,
 ): Promise<string> {
   const terms = await getPaymentTermsForClient(clientId);
   const ctx = orgCtx ?? (await loadAccountPaymentOrgContext());
-  return dueDateIsoFromAccountPaymentTerms(baseDate, terms, ctx);
+  const scheduleAnchor = options?.scheduleJob ? resolveJobScheduleInstant(options.scheduleJob) : null;
+  return dueDateIsoForJobAccountTerms(baseDate, terms, ctx, {
+    jobKind: options?.jobKind ?? options?.scheduleJob?.job_kind,
+    scheduleAnchor,
+  });
 }
 
 export async function getPaymentTermsForClient(clientId: string | null | undefined): Promise<string | null> {
@@ -75,11 +92,21 @@ export async function getInvoiceDueDateIsoForJobReference(
   const supabase = getSupabase();
   const { data: job, error } = await supabase
     .from("jobs")
-    .select("client_id")
+    .select("client_id, job_kind, scheduled_date, scheduled_start_at")
     .eq("reference", jobReference.trim())
     .is("deleted_at", null)
     .maybeSingle();
   if (error || !job) return null;
-  const clientId = (job as { client_id?: string | null }).client_id;
-  return getInvoiceDueDateIsoForClient(clientId, baseDate);
+  const row = job as {
+    client_id?: string | null;
+    job_kind?: JobKind | null;
+    scheduled_date?: string | null;
+    scheduled_start_at?: string | null;
+  };
+  const scheduleAnchor = resolveJobScheduleInstant(row);
+  const anchor = scheduleAnchor ?? baseDate;
+  return getInvoiceDueDateIsoForClient(row.client_id, anchor, undefined, {
+    jobKind: row.job_kind,
+    scheduleJob: row,
+  });
 }

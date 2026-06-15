@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { dueDateIsoFromAccountPaymentTerms } from "@/lib/account-payment-due-date";
+import { dueDateIsoForJobAccountTerms, resolveJobScheduleInstant } from "@/lib/job-invoice-due-anchor";
 import { loadOrgPartnerPayoutSettings } from "@/lib/org-partner-payout-settings-server";
+import type { JobKind } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,8 @@ export async function POST(req: NextRequest) {
   type JobRow = {
     reference: string;
     client_id: string | null;
+    job_kind: JobKind | null;
+    scheduled_date: string | null;
     completed_date: string | null;
     scheduled_finish_date: string | null;
     scheduled_end_at: string | null;
@@ -87,7 +90,9 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < jobRefs.length; i += CHUNK) {
     const { data: chunk, error: jobErr } = await admin
       .from("jobs")
-      .select("reference, client_id, completed_date, scheduled_finish_date, scheduled_end_at, scheduled_start_at")
+      .select(
+        "reference, client_id, job_kind, scheduled_date, completed_date, scheduled_finish_date, scheduled_end_at, scheduled_start_at",
+      )
       .in("reference", jobRefs.slice(i, i + CHUNK));
     if (jobErr) console.error("[recalculate-due-dates] jobs query error:", jobErr);
     if (chunk) allJobs.push(...(chunk as JobRow[]));
@@ -148,18 +153,24 @@ export async function POST(req: NextRequest) {
 
     // Anchor = actual completion → planned finish → scheduled end → start → invoice created_at
     const job = jobByRef[jobRef];
+    const scheduleAnchor = job ? resolveJobScheduleInstant(job) : null;
     const anchorStr =
-      job?.completed_date?.slice(0, 10) ??
-      job?.scheduled_finish_date?.slice(0, 10) ??
-      (job?.scheduled_end_at ? job.scheduled_end_at.slice(0, 10) : null) ??
-      (job?.scheduled_start_at ? job.scheduled_start_at.slice(0, 10) : null) ??
-      (inv.created_at as string | null) ??
-      new Date().toISOString();
-    const anchor = new Date(anchorStr + (anchorStr.length === 10 ? "T00:00:00" : ""));
+      scheduleAnchor != null
+        ? scheduleAnchor.toISOString()
+        : job?.completed_date?.slice(0, 10) ??
+          job?.scheduled_finish_date?.slice(0, 10) ??
+          (job?.scheduled_end_at ? job.scheduled_end_at.slice(0, 10) : null) ??
+          (job?.scheduled_start_at ? job.scheduled_start_at.slice(0, 10) : null) ??
+          (inv.created_at as string | null) ??
+          new Date().toISOString();
+    const anchor = scheduleAnchor ?? new Date(anchorStr + (anchorStr.length === 10 ? "T00:00:00" : ""));
 
-    const newDueDate = dueDateIsoFromAccountPaymentTerms(anchor, account.payment_terms, {
+    const newDueDate = dueDateIsoForJobAccountTerms(anchor, account.payment_terms, {
       orgStandardTerms: orgCtx.orgStandardTerms,
       orgReferenceYmd: orgCtx.orgReferenceYmd ?? null,
+    }, {
+      jobKind: job?.job_kind,
+      scheduleAnchor,
     });
 
     if (newDueDate !== inv.due_date) {

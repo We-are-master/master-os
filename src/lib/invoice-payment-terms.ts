@@ -4,9 +4,23 @@
  *   - Standard: Net 7/15/30/60/45, Due on Receipt, Every N days, Every Friday, Every 2 weeks on Friday
  *   - Cycle-based: "Monthly cutoff N pay Weekday" and "Every 2 weeks cutoff Weekday pay Weekday"
  * Unknown/empty strings default to Net 30.
+ *
+ * Due on Receipt for one-off jobs uses {@link dueDateIsoAfterHours} from the scheduled finish (see job-invoice-due-anchor).
  */
 
+export const DUE_ON_RECEIPT_HOURS = 72;
+
 const WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+export function isDueOnReceiptTerms(paymentTerms: string | null | undefined): boolean {
+  return /due\s+on\s+receipt/i.test(paymentTerms?.trim() ?? "");
+}
+
+/** YYYY-MM-DD for `base` + `hours` (local calendar day after adding hours). */
+export function dueDateIsoAfterHours(base: Date, hours: number): string {
+  const due = new Date(base.getTime() + hours * 60 * 60 * 1000);
+  return isoDateFromLocalDate(due);
+}
 
 function isoDateFromLocalDate(d: Date): string {
   const y = d.getFullYear();
@@ -39,7 +53,7 @@ export function nextFridayOnOrAfter(base: Date): string {
 export function daysFromPaymentTerms(paymentTerms: string | null | undefined): number {
   const raw = paymentTerms?.trim();
   if (!raw) return 30;
-  if (/due\s+on\s+receipt/i.test(raw)) return 0;
+  if (isDueOnReceiptTerms(raw)) return 0;
   if (/45\s*days/i.test(raw) || /^net\s*45$/i.test(raw.trim())) return 45;
   const every = raw.match(/every\s+(\d+)\s+days/i);
   if (every) {
@@ -65,6 +79,10 @@ export function isWeeklyConsolidatedTerms(paymentTerms: string | null | undefine
 /** YYYY-MM-DD for `base` + payment terms (local calendar). */
 export function dueDateIsoFromPaymentTerms(base: Date, paymentTerms: string | null | undefined): string {
   const raw = paymentTerms?.trim() ?? "";
+
+  if (isDueOnReceiptTerms(raw)) {
+    return dueDateIsoAfterHours(base, DUE_ON_RECEIPT_HOURS);
+  }
 
   // ── Cycle-based: "Monthly cutoff N pay Weekday" ──────────────────────────
   // e.g. "Monthly cutoff 26 pay Friday"

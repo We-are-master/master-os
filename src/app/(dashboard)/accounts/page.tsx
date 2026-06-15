@@ -72,7 +72,7 @@ const INDUSTRY_OPTIONS = [
 ];
 
 const PAYMENT_TERMS_OPTIONS = [
-  { value: "Due on Receipt",          label: "Due on Receipt" },
+  { value: "Due on Receipt",          label: "Due on Receipt (one-off: 72h after scheduled finish)" },
   { value: "Net 7",                   label: "Net 7" },
   { value: "Net 15",                  label: "Net 15" },
   { value: "Net 30",                  label: "Net 30" },
