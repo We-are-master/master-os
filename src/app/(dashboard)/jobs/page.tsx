@@ -15,6 +15,7 @@ import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal
 import {
   JobCreateModalSection,
   JobCreateModalPricingControl,
+  JobCreateModalPricingFields,
   JobCreateModalExtraPayment,
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
@@ -3989,6 +3990,22 @@ function CreateJobModal({ open, onClose, onCreate }: {
               ) : null}
             </div>
 
+            {form.job_type === "fixed" && !isStackablePricing ? (
+              <JobCreateModalPricingFields
+                form={form}
+                update={update}
+                pricing={pricing}
+                pricingResolving={pricingResolving}
+                isStackablePricing={isStackablePricing}
+                stackableLinePricing={stackableLinePricing}
+                stackablePricingLoading={stackablePricingLoading}
+                hourlyPreview={hourlyPreview}
+                accessSurchargePreview={accessSurchargePreview}
+                estimatedMarginPct={estimatedMarginPct}
+                showHeading={false}
+              />
+            ) : null}
+
           {serviceHasStackableAddons && !packagePricingOpen ? (
             <section className="rounded-xl border border-dashed border-border-light bg-surface-hover/10 p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3996,7 +4013,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   <p className="text-[11px] font-semibold text-text-tertiary">Additionals</p>
                   <p className="text-[10.5px] text-text-tertiary leading-snug">
                     {form.job_type === "fixed"
-                      ? "Custom Price keeps prices manual. Add a package and addons if you want to stack them on top."
+                      ? "Optional: stack a property size and addons on top of your client/partner amounts above."
                       : "Optional: pick a property size and addons to layer on top of the smart price."}
                   </p>
                 </div>
@@ -4092,20 +4109,22 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </section>
           ) : null}
 
-            <JobCreateModalPricingControl
-              form={form}
-              update={update}
-              pricing={pricing}
-              pricingResolving={pricingResolving}
-              isStackablePricing={isStackablePricing}
-              stackableLinePricing={stackableLinePricing}
-              stackablePricingLoading={stackablePricingLoading}
-              hourlyPreview={hourlyPreview}
-              accessSurchargePreview={accessSurchargePreview}
-              estimatedMarginPct={estimatedMarginPct}
-              open={pricingOpen}
-              onOpenChange={setPricingOpen}
-            />
+            {form.job_type === "hourly" || isStackablePricing ? (
+              <JobCreateModalPricingControl
+                form={form}
+                update={update}
+                pricing={pricing}
+                pricingResolving={pricingResolving}
+                isStackablePricing={isStackablePricing}
+                stackableLinePricing={stackableLinePricing}
+                stackablePricingLoading={stackablePricingLoading}
+                hourlyPreview={hourlyPreview}
+                accessSurchargePreview={accessSurchargePreview}
+                estimatedMarginPct={estimatedMarginPct}
+                open={pricingOpen}
+                onOpenChange={setPricingOpen}
+              />
+            ) : null}
             {form.job_type === "hourly" ? (
               <JobCreateModalExtraPayment
                 extraPayment={form.extra_payment}

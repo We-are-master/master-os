@@ -370,3 +370,151 @@ export async function fetchInstallmentsForBilling(
   }
   return out;
 }
+
+export type PayrollRunwayRow = {
+  id: string;
+  label: string;
+  amount: number;
+  dueYmd: string;
+};
+
+export type PipelineJobRunwayRow = {
+  id: string;
+  reference: string;
+  client_id: string | null;
+  client_name: string | null;
+  client_price: number;
+  extras_amount: number | null;
+  scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  status: string;
+};
+
+/** Pending payroll lines with due_date in or near the billing runway window. */
+export async function fetchPayrollForBilling(bounds: YmdBounds | null): Promise<PayrollRunwayRow[]> {
+  const supabase = getSupabase();
+  const payrollSelectFull = "id, payee_name, description, amount, due_date, status";
+  const payrollSelectBase = "id, description, amount, due_date, status";
+
+  let query = supabase
+    .from("payroll_internal_costs")
+    .select(payrollSelectFull)
+    .eq("status", "pending")
+    .not("due_date", "is", null)
+    .gt("amount", 0);
+
+  if (bounds) {
+    const from = openItemsRecencyFrom(bounds);
+    query = query.gte("due_date", from).lte("due_date", bounds.to);
+  }
+
+  let { data, error } = await query.order("due_date", { ascending: true });
+  if (error) {
+    const retryQ = supabase
+      .from("payroll_internal_costs")
+      .select(payrollSelectBase)
+      .eq("status", "pending")
+      .not("due_date", "is", null)
+      .gt("amount", 0);
+    const bounded =
+      bounds != null
+        ? retryQ.gte("due_date", openItemsRecencyFrom(bounds)).lte("due_date", bounds.to)
+        : retryQ;
+    const retry = await bounded.order("due_date", { ascending: true });
+    if (retry.error) throw retry.error;
+    data = retry.data as typeof data;
+  }
+
+  const rows: PayrollRunwayRow[] = [];
+  for (const row of data ?? []) {
+    const r = row as {
+      id?: string;
+      payee_name?: string | null;
+      description?: string | null;
+      amount?: number;
+      due_date?: string | null;
+    };
+    const id = r.id?.trim();
+    const dueYmd = r.due_date?.trim().slice(0, 10) ?? "";
+    if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(dueYmd)) continue;
+    const amount = Math.round(Number(r.amount ?? 0) * 100) / 100;
+    if (amount <= 0.02) continue;
+    rows.push({
+      id,
+      label: r.payee_name?.trim() || r.description?.trim() || "Payroll",
+      amount,
+      dueYmd,
+    });
+  }
+  return rows;
+}
+
+const PIPELINE_JOB_STATUSES = [
+  "unassigned",
+  "auto_assigning",
+  "scheduled",
+  "late",
+  "in_progress",
+  "final_check",
+  "awaiting_payment",
+  "need_attention",
+] as const;
+
+const PIPELINE_JOB_SELECT =
+  "id, reference, client_id, client_name, client_price, extras_amount, scheduled_date, scheduled_start_at, status, invoice_id";
+
+/** Pipeline jobs without a linked invoice — revenue projected by expected due date. */
+export async function fetchPipelineJobsForRunway(bounds: YmdBounds | null): Promise<PipelineJobRunwayRow[]> {
+  const supabase = getSupabase();
+
+  let query = supabase
+    .from("jobs")
+    .select(PIPELINE_JOB_SELECT)
+    .in("status", [...PIPELINE_JOB_STATUSES])
+    .is("invoice_id", null)
+    .is("deleted_at", null);
+
+  if (bounds) {
+    const from = openItemsRecencyFrom(bounds);
+    query = query.or(`scheduled_date.gte.${from},scheduled_start_at.gte.${from}T00:00:00`);
+  }
+
+  const { data, error } = await query.limit(2000);
+  if (error) {
+    if (isSupabaseMissingColumnError(error, "invoice_id")) {
+      const fallback = await supabase
+        .from("jobs")
+        .select(
+          "id, reference, client_id, client_name, client_price, extras_amount, scheduled_date, scheduled_start_at, status",
+        )
+        .in("status", [...PIPELINE_JOB_STATUSES])
+        .is("deleted_at", null)
+        .limit(2000);
+      if (fallback.error) throw fallback.error;
+      return (fallback.data ?? []) as PipelineJobRunwayRow[];
+    }
+    throw error;
+  }
+
+  return (data ?? []) as PipelineJobRunwayRow[];
+}
+
+export async function fetchClientIdToAccountId(clientIds: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(clientIds.filter(Boolean))];
+  if (unique.length === 0) return {};
+  const supabase = getSupabase();
+  const map: Record<string, string> = {};
+  const chunk = 100;
+  for (let i = 0; i < unique.length; i += chunk) {
+    const slice = unique.slice(i, i + chunk);
+    const { data, error } = await supabase.from("clients").select("id, source_account_id").in("id", slice);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const r = row as { id?: string; source_account_id?: string | null };
+      const cid = r.id?.trim();
+      const aid = r.source_account_id?.trim();
+      if (cid && aid) map[cid] = aid;
+    }
+  }
+  return map;
+}

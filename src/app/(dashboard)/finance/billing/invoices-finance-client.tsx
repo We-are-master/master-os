@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -54,7 +55,8 @@ import {
 } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
-import { jobBillableRevenue, partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { jobBillableRevenue } from "@/lib/job-financials";
+import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { getSupabase } from "@/services/base";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
@@ -70,6 +72,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { useProfile } from "@/hooks/use-profile";
+import { resolveInvoicePlatformFeePct } from "@/lib/frontend-setup";
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { Modal } from "@/components/ui/modal";
 import {
@@ -388,10 +391,22 @@ interface LinkedJob {
   partner_agreed_value?: number | null;
   partner_extras_amount?: number | null;
   materials_cost: number;
+  commission?: number | null;
   margin_percent: number;
   scheduled_date?: string;
   completed_date?: string;
   self_bill_id?: string | null;
+}
+
+function linkedJobTradeFeeInput(job: LinkedJob): InvoiceTradeFeeJob {
+  return {
+    client_price: job.client_price,
+    extras_amount: job.extras_amount ?? undefined,
+    commission: job.commission ?? 0,
+    partner_agreed_value: job.partner_agreed_value ?? 0,
+    partner_cost: job.partner_cost,
+    materials_cost: job.materials_cost,
+  };
 }
 
 /** Compare fields job→invoice sync may change — avoids a loop when parent replaces `invoice` after an identical refetch. */
@@ -1828,6 +1843,11 @@ export function InvoiceDetailDrawer({
   onInvoiceUpdated?: (invoice: Invoice) => void;
 }) {
   const { profile } = useProfile();
+  const { setup } = useFrontendSetup();
+  const tradeFeeOptions = useMemo(
+    () => ({ defaultPlatformFeePct: resolveInvoicePlatformFeePct(setup) }),
+    [setup],
+  );
   const [tab, setTab] = useState("overview");
   const [linkedJob, setLinkedJob] = useState<LinkedJob | null>(null);
   const [loadingJob, setLoadingJob] = useState(false);
@@ -1882,7 +1902,6 @@ export function InvoiceDetailDrawer({
   const [markingInstallmentId, setMarkingInstallmentId] = useState<string | null>(null);
   const [payingFullBalance, setPayingFullBalance] = useState(false);
   const [accountPaymentTerms, setAccountPaymentTerms] = useState<string | null>(null);
-  const { setup } = useFrontendSetup();
   const paymentOrgCtx = useMemo(() => orgCtxFromSetup(setup), [setup]);
 
   const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
@@ -2088,21 +2107,13 @@ export function InvoiceDetailDrawer({
   useEffect(() => {
     if (!invoice) return;
     const charged = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
-    const partnerCost = linkedJob
-      ? Math.max(
-        0,
-        Math.min(
-          charged,
-          Math.round(
-            partnerSelfBillGrossAmount(
-              linkedJob as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
-            ) * 100,
-          ) / 100,
-        ),
-      )
-      : charged;
-    setBreakdownPartnerCost(String(partnerCost));
-  }, [invoice, linkedJob]);
+    const { trade } = splitInvoiceTradeAndFee(
+      charged,
+      linkedJob ? linkedJobTradeFeeInput(linkedJob) : null,
+      tradeFeeOptions,
+    );
+    setBreakdownPartnerCost(String(trade));
+  }, [invoice, linkedJob, tradeFeeOptions]);
 
   const handleGenerateLink = async () => {
     if (!invoice) return;
@@ -2524,20 +2535,18 @@ export function InvoiceDetailDrawer({
   const accountLinked = Boolean(invoice.source_account_id?.trim());
   const accountPillText = accountName.trim() || accountIdLabel;
   const chargedAmount = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
-  const linkedJobPartnerGross = linkedJob
-    ? Math.round(
-      partnerSelfBillGrossAmount(
-        linkedJob as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
-      ) * 100,
-    ) / 100
-    : chargedAmount;
-  const defaultPartnerGross = linkedJob
-    ? Math.max(0, Math.min(chargedAmount, linkedJobPartnerGross))
-    : chargedAmount;
-  const baselinePartnerCost = defaultPartnerGross;
+  const invoiceTradeFeeSplit = splitInvoiceTradeAndFee(
+    chargedAmount,
+    linkedJob ? linkedJobTradeFeeInput(linkedJob) : null,
+    tradeFeeOptions,
+  );
+  const baselinePartnerCost = invoiceTradeFeeSplit.trade;
+  const baselineFeeAmount = invoiceTradeFeeSplit.fee;
   const rawPartner = editingBreakdown ? Math.max(0, Number(breakdownPartnerCost) || 0) : baselinePartnerCost;
   const partnerCostValue = Math.max(0, Math.min(chargedAmount, Math.round(rawPartner * 100) / 100));
-  const feeAmountValue = Math.max(0, Math.round((chargedAmount - partnerCostValue) * 100) / 100);
+  const feeAmountValue = editingBreakdown
+    ? Math.max(0, Math.round((chargedAmount - partnerCostValue) * 100) / 100)
+    : baselineFeeAmount;
   const vatFromGross = (gross: number) => Math.round((gross / 6) * 100) / 100;
   const feeVatPortion = vatFromGross(feeAmountValue);
   const feeNetPortion = Math.max(0, Math.round((feeAmountValue - feeVatPortion) * 100) / 100);
@@ -2996,6 +3005,12 @@ export function InvoiceDetailDrawer({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Invoice Breakdown</p>
+                    <Link
+                      href="/settings?tab=setup&section=finance"
+                      className="text-[11px] font-medium text-primary hover:underline"
+                    >
+                      Settings
+                    </Link>
                     <button
                       type="button"
                       disabled={savingBreakdown}
@@ -3125,7 +3140,12 @@ export function InvoiceDetailDrawer({
                 <div className="space-y-2 pb-3">
                   <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Quick Actions</p>
                   <div className="grid grid-cols-3 gap-2">
-                    <Button variant="outline" size="sm" className="w-full justify-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-center gap-1.5"
+                      onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, "_blank", "noopener,noreferrer")}
+                    >
                       <FileText className="h-3.5 w-3.5 shrink-0" /> View PDF
                     </Button>
                     <Button variant="outline" size="sm" className="w-full justify-center gap-1.5">

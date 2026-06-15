@@ -489,11 +489,15 @@ export type CashflowWeek = {
   moneyIn: number;
   moneyOut: number;
   isCurrentWeek: boolean;
+  /** Cash runway: balance at week open (manual override or carry-forward). */
+  openingBalance?: number;
+  /** Cash runway: opening + moneyIn − moneyOut. */
+  closingBalance?: number;
 };
 
 export type CashflowBreakdownLine = {
   id: string;
-  kind: "invoice" | "self_bill" | "expense";
+  kind: "invoice" | "self_bill" | "expense" | "payroll";
   label: string;
   detail?: string;
   dueYmd: string;
@@ -517,7 +521,7 @@ export type BuildCashflowWeeklyArgs = {
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
   partnerPaidByJobId: Record<string, number>;
   dueCtx: SelfBillDueResolveContext;
-  bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at">[];
+  bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at" | "paid_at">[];
   installmentsByInvoiceId?: Record<string, InvoicePaymentInstallment[]>;
   installmentsBySelfBillId?: Record<string, SelfBillPaymentInstallment[]>;
   startYmd?: string;
@@ -679,7 +683,7 @@ function isoWeekNumberFromYmd(ymd: string): number {
   return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
-function compactWeekColumnLabels(weekStartYmd: string): { label: string; dayNum: string; title: string } {
+export function compactWeekColumnLabels(weekStartYmd: string): { label: string; dayNum: string; title: string } {
   const title = weekRangeLabel(weekStartYmd, true);
   const s = new Date(`${weekStartYmd}T12:00:00`);
   const e = new Date(s);

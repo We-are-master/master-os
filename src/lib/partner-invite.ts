@@ -13,16 +13,17 @@ export type InvitePartnerFromZeroResult = {
 };
 
 export async function invitePartnerFromZero(input: {
-  name: string;
+  name?: string;
   email: string;
   phone?: string;
   sendEmail?: boolean;
 }): Promise<InvitePartnerFromZeroResult> {
+  const name = input.name?.trim() ?? "";
   const res = await fetch("/api/partners/invite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: input.name.trim(),
+      ...(name ? { name } : {}),
       email: input.email.trim(),
       phone: input.phone?.trim() || undefined,
       sendEmail: input.sendEmail !== false,

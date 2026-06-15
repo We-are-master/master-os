@@ -28,6 +28,19 @@ function normalizePartnerName(raw: unknown): string | null {
   return name.length > 0 ? name : null;
 }
 
+/** Placeholder when staff only shares a link with an email (partner fills name on /join). */
+function derivePartnerNameFromEmail(email: string): string {
+  const local = (email.split("@")[0] ?? "partner").trim();
+  if (!local) return "Partner";
+  const label = local
+    .replace(/[._+-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+  return (label || "Partner").slice(0, 120);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth();
@@ -53,10 +66,7 @@ export async function POST(req: NextRequest) {
       body = {};
     }
 
-    const name = normalizePartnerName(body.name);
-    if (!name) {
-      return NextResponse.json({ error: "Partner name is required" }, { status: 400 });
-    }
+    const nameInput = normalizePartnerName(body.name);
 
     const email = normalizeEmail(body.email);
     if (!email) {
@@ -65,6 +75,13 @@ export async function POST(req: NextRequest) {
 
     const phone = normalizePhone(body.phone);
     const sendEmail = body.sendEmail !== false;
+
+    if (sendEmail && !nameInput) {
+      return NextResponse.json(
+        { error: "Partner name is required to send an email invite." },
+        { status: 400 },
+      );
+    }
     const supabase = createServiceClient();
 
     const { data: existingRows, error: lookupErr } = await supabase
@@ -105,17 +122,18 @@ export async function POST(req: NextRequest) {
       const patch: Record<string, unknown> = {};
       if (phone && phone !== (existing.phone?.trim() ?? "")) patch.phone = phone;
       if (existing.status !== "onboarding") patch.status = "onboarding";
-      if (name !== (existing.contact_name?.trim() ?? "")) {
-        patch.contact_name = name;
-        if (!(existing.company_name?.trim() ?? "")) patch.company_name = name;
+      if (nameInput && nameInput !== (existing.contact_name?.trim() ?? "")) {
+        patch.contact_name = nameInput;
+        if (!(existing.company_name?.trim() ?? "")) patch.company_name = nameInput;
       }
       if (Object.keys(patch).length > 0) {
         await supabase.from("partners").update(patch).eq("id", partnerId);
       }
     } else {
+      const nameForCreate = nameInput ?? derivePartnerNameFromEmail(email);
       const insertRow = {
-        company_name: name,
-        contact_name: name,
+        company_name: nameForCreate,
+        contact_name: nameForCreate,
         email,
         phone,
         trade: GENERAL_MAINTENANCE_LABEL,

@@ -2,7 +2,9 @@
 
 import type { ListResult } from "@/services/base";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { CatalogShareModal } from "@/components/catalog/catalog-share-modal";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -23,8 +25,8 @@ import {
   ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
-  Play, KeyRound, MailPlus,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, Minus, Pencil, Loader2,
+  Play, KeyRound, MailPlus, Share2,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -983,16 +985,180 @@ interface PartnersClientProps {
   initialData?: ListResult<Partner> | null;
 }
 
+function InvitePartnerSplitButton({
+  open,
+  sendDisabled,
+  shareDisabled,
+  busy,
+  busyMode,
+  onSendInvite,
+  onShareLink,
+}: {
+  open: boolean;
+  sendDisabled: boolean;
+  shareDisabled: boolean;
+  busy: boolean;
+  busyMode: "copy" | "send" | null;
+  onSendInvite: () => void;
+  onShareLink: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!open) setMenuOpen(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!menuOpen || !ref.current) {
+      setMenuRect(null);
+      return;
+    }
+    const update = () => {
+      const el = ref.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setMenuRect({ top: rect.bottom + 6, left: rect.right - 184, width: 184 });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [menuOpen]);
+
+  const run = (fn: () => void) => {
+    setMenuOpen(false);
+    fn();
+  };
+
+  const menuDisabled = shareDisabled && sendDisabled;
+  const sendInactive = sendDisabled || busy;
+  const menuInactive = menuDisabled || busy;
+
+  return (
+    <div ref={ref} className="relative w-full min-w-0 sm:w-auto">
+      <div
+        className={cn(
+          "flex w-full overflow-hidden rounded-lg shadow-[0_1px_2px_rgba(237,75,0,0.15)] sm:inline-flex sm:w-auto",
+          sendInactive && menuInactive && "pointer-events-none opacity-50",
+        )}
+      >
+        <button
+          type="button"
+          disabled={sendInactive}
+          onClick={onSendInvite}
+          className={cn(
+            "inline-flex h-9 min-h-9 flex-1 items-center justify-center gap-1.5 border border-r-0 border-primary/25",
+            "bg-primary px-3 text-xs font-semibold text-white transition-colors hover:bg-primary-hover",
+            "whitespace-nowrap sm:flex-initial",
+            sendInactive && "pointer-events-none opacity-50",
+          )}
+        >
+          {busy && busyMode === "send" ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              Sending…
+            </>
+          ) : busy && busyMode === "copy" ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              Copying…
+            </>
+          ) : (
+            <>
+              <Send className="h-3.5 w-3.5 shrink-0" />
+              Send invite
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          disabled={menuInactive}
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label="More invite options"
+          onClick={() => setMenuOpen((v) => !v)}
+          className={cn(
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center border border-primary/25",
+            "bg-primary text-white transition-colors hover:bg-primary-hover",
+            menuInactive && "pointer-events-none opacity-50",
+          )}
+        >
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", menuOpen && "rotate-180")} />
+        </button>
+      </div>
+
+      {menuOpen && menuRect && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{ top: menuRect.top, left: menuRect.left, width: menuRect.width }}
+              className="fixed z-[200] min-w-[11.5rem] overflow-hidden rounded-lg border border-border-light bg-card py-1 shadow-lg"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={sendInactive}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => run(onSendInvite)}
+              >
+                <Send className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                Send invite
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={shareDisabled || busy}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => run(onShareLink)}
+              >
+                <Link2 className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                Share link
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
 export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const { partnerDocumentRules } = useFrontendSetup();
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [invitePhone, setInvitePhone] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteSubmitMode, setInviteSubmitMode] = useState<"copy" | "send" | null>(null);
   const legacyZeroRatingRefreshRef = useRef(new Set<string>());
   const [createWizardStep, setCreateWizardStep] = useState<CreatePartnerWizardStep>("info");
   const [pendingCreateRateDrafts, setPendingCreateRateDrafts] = useState<Record<string, PartnerServiceRateRowDraft>>({});
@@ -1281,52 +1447,67 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
 
-  const handleInvitePartner = useCallback(async () => {
-    const email = inviteEmail.trim();
-    const name = inviteName.trim();
-    if (!name) {
-      toast.error("Partner name is required");
-      return;
-    }
-    if (!email) {
-      toast.error("Email is required");
-      return;
-    }
-    setInviteSubmitting(true);
-    try {
-      const result = await invitePartnerFromZero({
-        name,
-        email,
-        phone: invitePhone.trim() || undefined,
-        sendEmail: true,
-      });
-      if (result.emailError) {
-        toast.error(`Link created but email failed: ${result.emailError}`);
-        await navigator.clipboard.writeText(result.onboardingUrl);
-        toast.message("Onboarding link copied to clipboard");
-      } else if (result.emailSent) {
-        const verb = result.created ? "Invite sent" : "Onboarding link resent";
-        toast.success(`${verb} to ${result.sentTo ?? email}`);
-      } else {
-        await navigator.clipboard.writeText(result.onboardingUrl);
-        toast.success(
-          result.warning ? `Link copied — ${result.warning}` : "Onboarding link copied to clipboard",
-        );
+  const resetInviteForm = useCallback(() => {
+    setInviteOpen(false);
+    setInviteName("");
+    setInviteEmail("");
+    setInvitePhone("");
+  }, []);
+
+  const handleInvitePartner = useCallback(
+    async ({ sendEmail }: { sendEmail: boolean }) => {
+      const email = inviteEmail.trim();
+      const name = inviteName.trim();
+      if (!email) {
+        toast.error("Email is required");
+        return;
       }
-      if (result.warning && result.emailSent) toast.warning(result.warning);
-      setInviteOpen(false);
-      setInviteName("");
-      setInviteEmail("");
-      setInvitePhone("");
-      setStatusFilter("onboarding");
-      refresh();
-      await loadCounts();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not send invite");
-    } finally {
-      setInviteSubmitting(false);
-    }
-  }, [inviteName, inviteEmail, invitePhone, refresh, loadCounts, setStatusFilter]);
+      if (sendEmail && !name) {
+        toast.error("Partner name is required to send an email invite");
+        return;
+      }
+      setInviteSubmitMode(sendEmail ? "send" : "copy");
+      setInviteSubmitting(true);
+      try {
+        const result = await invitePartnerFromZero({
+          ...(name ? { name } : {}),
+          email,
+          phone: invitePhone.trim() || undefined,
+          sendEmail,
+        });
+        if (sendEmail) {
+          if (result.emailError) {
+            toast.error(`Link created but email failed: ${result.emailError}`);
+            await navigator.clipboard.writeText(result.onboardingUrl);
+            toast.message("Onboarding link copied to clipboard");
+          } else if (result.emailSent) {
+            const verb = result.created ? "Invite sent" : "Onboarding link resent";
+            toast.success(`${verb} to ${result.sentTo ?? email}`);
+          } else {
+            await navigator.clipboard.writeText(result.onboardingUrl);
+            toast.success(
+              result.warning ? `Link copied — ${result.warning}` : "Onboarding link copied to clipboard",
+            );
+          }
+          if (result.warning && result.emailSent) toast.warning(result.warning);
+        } else {
+          await navigator.clipboard.writeText(result.onboardingUrl);
+          const verb = result.created ? "Onboarding link copied" : "Onboarding link copied (resent)";
+          toast.success(result.warning ? `${verb} — ${result.warning}` : verb);
+        }
+        resetInviteForm();
+        setStatusFilter("onboarding");
+        refresh();
+        await loadCounts();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not send invite");
+      } finally {
+        setInviteSubmitting(false);
+        setInviteSubmitMode(null);
+      }
+    },
+    [inviteName, inviteEmail, invitePhone, refresh, loadCounts, setStatusFilter, resetInviteForm],
+  );
   useEffect(() => {
     refreshList();
     if (directoryDisplayMode === "kanban") void loadKanbanPartners();
@@ -1979,6 +2160,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               }}
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center shrink-0 w-full sm:w-auto">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0 whitespace-nowrap w-full sm:w-auto"
+                icon={<Share2 className="h-3.5 w-3.5 shrink-0" />}
+                onClick={() => setShareOpen(true)}
+              >
+                Share rate card
+              </Button>
               {canSendPartnerLinks ? (
                 <Button
                   size="sm"
@@ -2001,6 +2191,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             </div>
           </div>
         </PageHeader>
+
+        <CatalogShareModal
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          variant="partner"
+        />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Active" value={activeCount} format="number" description="Currently taking work" icon={Briefcase} accent="emerald" />
@@ -2293,7 +2489,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         <div className="px-4 sm:px-6 py-4 space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-name">
-              Company or personal name *
+              Company or personal name (required for Send invite)
             </label>
             <Input
               id="invite-partner-name"
@@ -2302,7 +2498,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               onChange={(e) => setInviteName(e.target.value)}
               placeholder="e.g. Apex Plumbing Ltd"
               autoComplete="organization"
-              required
             />
           </div>
           <div className="space-y-1.5">
@@ -2338,28 +2533,32 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             so they can sign in or create an account. If this email already exists without a portal account, we resend the link.
           </p>
         </div>
-        <div className="flex flex-col-reverse gap-2 border-t border-border-light px-4 sm:px-6 py-3 sm:flex-row sm:justify-end">
+        <p className="border-t border-border-light px-4 sm:px-6 pt-3 text-[11px] leading-relaxed text-text-tertiary">
+          <span className="font-medium text-text-secondary">Share link</span> creates the partner and copies{" "}
+          <span className="font-medium text-text-secondary">partners.getfixfy.com</span> — no email sent.{" "}
+          <span className="font-medium text-text-secondary">Send invite</span> does the same and emails them the link.
+        </p>
+        <div className="flex flex-col-reverse gap-2 px-4 pb-4 pt-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:pb-3">
           <Button
             variant="outline"
             size="sm"
             disabled={inviteSubmitting}
+            className="w-full shrink-0 sm:w-auto"
             onClick={() => {
-              setInviteOpen(false);
-              setInviteName("");
-              setInviteEmail("");
-              setInvitePhone("");
+              resetInviteForm();
             }}
           >
             Cancel
           </Button>
-          <Button
-            size="sm"
-            disabled={inviteSubmitting || !inviteName.trim() || !inviteEmail.trim()}
-            icon={inviteSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            onClick={() => void handleInvitePartner()}
-          >
-            {inviteSubmitting ? "Sending…" : "Send invite"}
-          </Button>
+          <InvitePartnerSplitButton
+            open={inviteOpen}
+            sendDisabled={!inviteName.trim() || !inviteEmail.trim()}
+            shareDisabled={!inviteEmail.trim()}
+            busy={inviteSubmitting}
+            busyMode={inviteSubmitMode}
+            onSendInvite={() => void handleInvitePartner({ sendEmail: true })}
+            onShareLink={() => void handleInvitePartner({ sendEmail: false })}
+          />
         </div>
       </Modal>
 

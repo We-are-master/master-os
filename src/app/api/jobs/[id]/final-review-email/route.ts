@@ -11,9 +11,10 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
+import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
-import type { Account, Invoice, Job } from "@/types/database";
+import type { Account, Invoice } from "@/types/database";
 
 function escapeHtml(s: string): string {
   return s
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref",
+      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -202,6 +203,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       ? "We could not attach report PDFs (missing files or storage). Your job is finalised; contact us if you need copies."
       : "";
 
+  const tradeFeeJob: InvoiceTradeFeeJob | null =
+    typeof j.client_price === "number"
+      ? {
+          client_price: j.client_price,
+          extras_amount: typeof j.extras_amount === "number" ? j.extras_amount : undefined,
+          commission: typeof j.commission === "number" ? j.commission : 0,
+          partner_agreed_value: typeof j.partner_agreed_value === "number" ? j.partner_agreed_value : 0,
+          partner_cost: typeof j.partner_cost === "number" ? j.partner_cost : 0,
+          materials_cost: typeof j.materials_cost === "number" ? j.materials_cost : 0,
+        }
+      : null;
+
   let html: string;
   if (includeInvoice && invoiceRow) {
     html = buildInvoiceEmailHTML(
@@ -217,7 +230,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             : new Date().toISOString().slice(0, 10),
         quoteReference,
       },
-      j as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
+      tradeFeeJob,
       {
         reportAttachmentCount: includeReport ? attachments.length : 0,
         missingReportNote: missingReportNote || undefined,

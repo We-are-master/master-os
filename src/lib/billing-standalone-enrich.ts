@@ -5,18 +5,30 @@ import {
 } from "@/lib/billing-account-metadata";
 import {
   fetchCustomerPaidSumByJobIds,
+  fetchCustomerPaymentRowsByJobIds,
   fetchJobsByReferences,
 } from "@/lib/billing-invoice-list-data";
 import { buildInvoiceAccountMaps } from "@/lib/billing-invoice-account-resolve";
 import { computeLinkedJobsMapsForSelfBillIds } from "@/lib/billing-selfbill-actions";
 import { isSelfBillClosed } from "@/services/self-bills";
 import type { Invoice, SelfBill } from "@/types/database";
+import type { CustomerPaymentRow } from "@/lib/billing-invoice-list-data";
+import type { PayrollRunwayRow, PipelineJobRunwayRow } from "@/lib/billing-standalone-fetch";
+import {
+  fetchClientIdToAccountId,
+  fetchPayrollForBilling,
+  fetchPipelineJobsForRunway,
+} from "@/lib/billing-standalone-fetch";
 
 const PARTNER_TERMS_CHUNK = 80;
 
 export type BillingEnrichmentState = {
   jobsByRef: Awaited<ReturnType<typeof fetchJobsByReferences>>;
   customerPaidByJobId: Record<string, number>;
+  customerPaymentRows: CustomerPaymentRow[];
+  payrollRunwayRows: PayrollRunwayRow[];
+  pipelineJobs: PipelineJobRunwayRow[];
+  clientIdToAccountId: Record<string, string>;
   jobsBySelfBillId: Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["map"];
   partnerPaidByJobId: Record<string, number>;
   partnerTermsById: Record<string, string | null>;
@@ -31,6 +43,10 @@ export type BillingEnrichmentState = {
 export const EMPTY_BILLING_ENRICHMENT: BillingEnrichmentState = {
   jobsByRef: {},
   customerPaidByJobId: {},
+  customerPaymentRows: [],
+  payrollRunwayRows: [],
+  pipelineJobs: [],
+  clientIdToAccountId: {},
   jobsBySelfBillId: {},
   partnerPaidByJobId: {},
   partnerTermsById: {},
@@ -112,13 +128,16 @@ async function fetchPartnerBillingMeta(partnerIds: string[]): Promise<{
 /** Fast path: jobs + customer paid sums (KPIs, aging, attention balances). */
 export async function enrichCriticalBillingRows(
   invRows: Invoice[],
-): Promise<Pick<BillingEnrichmentState, "jobsByRef" | "customerPaidByJobId">> {
+): Promise<Pick<BillingEnrichmentState, "jobsByRef" | "customerPaidByJobId" | "customerPaymentRows">> {
   const refs = [...new Set(invRows.map((i) => i.job_reference?.trim()).filter(Boolean))] as string[];
   const jobMap = await fetchJobsByReferences(refs);
   const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
-  const paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
+  const [paidMap, paymentRows] = await Promise.all([
+    fetchCustomerPaidSumByJobIds(jobIds),
+    fetchCustomerPaymentRowsByJobIds(jobIds),
+  ]);
   billingPerfMark("billing:critical:end");
-  return { jobsByRef: jobMap, customerPaidByJobId: paidMap };
+  return { jobsByRef: jobMap, customerPaidByJobId: paidMap, customerPaymentRows: paymentRows };
 }
 
 const EMPTY_ACCOUNT_META: BillingAccountMetadata = {
@@ -126,6 +145,30 @@ const EMPTY_ACCOUNT_META: BillingAccountMetadata = {
   accountTermsById: {},
   accountLogoById: {},
 };
+
+/** Background: payroll + pipeline jobs for runway projection. */
+export async function enrichRunwayBillingRows(
+  bounds: import("@/lib/billing-standalone-period").YmdBounds | null,
+  invoiceJobRefs: Set<string>,
+): Promise<
+  Pick<BillingEnrichmentState, "payrollRunwayRows" | "pipelineJobs" | "clientIdToAccountId">
+> {
+  const [payrollRunwayRows, pipelineRaw] = await Promise.all([
+    fetchPayrollForBilling(bounds),
+    fetchPipelineJobsForRunway(bounds),
+  ]);
+
+  const pipelineJobs = pipelineRaw.filter((job) => {
+    const ref = job.reference?.trim();
+    if (!ref) return true;
+    return !invoiceJobRefs.has(ref);
+  });
+
+  const clientIds = pipelineJobs.map((j) => j.client_id).filter(Boolean) as string[];
+  const clientIdToAccountId = await fetchClientIdToAccountId(clientIds);
+
+  return { payrollRunwayRows, pipelineJobs, clientIdToAccountId };
+}
 
 /** Background: account maps, metadata, partner terms/avatars (no self-bill job lines). */
 export async function enrichDeferredBillingRows(

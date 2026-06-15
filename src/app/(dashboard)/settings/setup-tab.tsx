@@ -19,11 +19,13 @@ import {
   SlidersHorizontal,
   PauseCircle,
   Plus,
+  FileText,
   Trash2,
   TrendingUp,
   XCircle,
 } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { MicroLabel } from "@/components/fx/primitives";
 import { toast } from "sonner";
 import { getSupabase } from "@/services/base";
@@ -43,6 +45,7 @@ import {
   DEFAULT_SLA_ARRIVAL_GRACE_HOURS,
   DEFAULT_SLA_FINAL_CHECKS_HOURS,
   DEFAULT_SLA_QUOTE_SEND_HOURS,
+  DEFAULT_INVOICE_PLATFORM_FEE_PCT,
   DEFAULT_TARGET_MARGIN_PCT,
   DEFAULT_WORKING_DAYS,
   DEFAULT_WORKING_HOURS,
@@ -191,6 +194,12 @@ export function SetupTab() {
   const [pulseHealthyNetMarginPctStr, setPulseHealthyNetMarginPctStr] = useState(
     String(DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
   );
+  const [invoiceStatementLogoUrl, setInvoiceStatementLogoUrl] = useState("");
+  const [invoicePlatformFeePctStr, setInvoicePlatformFeePctStr] = useState(
+    String(DEFAULT_INVOICE_PLATFORM_FEE_PCT),
+  );
+  const [financeOpeningCashStr, setFinanceOpeningCashStr] = useState("0");
+  const [companyPdfLogoUrl, setCompanyPdfLogoUrl] = useState("");
   const [fixedCostsSnapshot, setFixedCostsSnapshot] = useState<{
     workforce: number;
     bills: number;
@@ -343,7 +352,11 @@ export function SetupTab() {
     let alive = true;
     void (async () => {
       const supabase = getSupabase();
-      const { data } = await supabase.from("company_settings").select("id, frontend_setup").limit(1).maybeSingle();
+      const { data } = await supabase
+        .from("company_settings")
+        .select("id, frontend_setup, logo_url")
+        .limit(1)
+        .maybeSingle();
       if (!alive) return;
       if (data?.id) setSettingsId(data.id);
       const parsed = parseFrontendSetup(data?.frontend_setup);
@@ -368,6 +381,14 @@ export function SetupTab() {
       setPulseHealthyNetMarginPctStr(
         String(parsed.pulse_healthy_net_margin_pct ?? DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
       );
+      setInvoiceStatementLogoUrl(parsed.invoice_statement_logo_url ?? "");
+      setInvoicePlatformFeePctStr(
+        String(parsed.invoice_platform_fee_pct ?? parsed.target_margin_pct ?? DEFAULT_INVOICE_PLATFORM_FEE_PCT),
+      );
+      setFinanceOpeningCashStr(
+        parsed.finance_opening_cash_gbp != null ? String(parsed.finance_opening_cash_gbp) : "0",
+      );
+      setCompanyPdfLogoUrl((data as { logo_url?: string | null } | null)?.logo_url?.trim() ?? "");
       setZendeskSubdomain(parsed.zendesk_subdomain ?? "");
       setZendeskOnHoldReasonFieldId(
         parsed.zendesk_on_hold_reason_field_id ? String(parsed.zendesk_on_hold_reason_field_id) : "",
@@ -548,6 +569,18 @@ export function SetupTab() {
         setSaving(false);
         return;
       }
+      const invoicePlatformFeePct = Number(invoicePlatformFeePctStr);
+      if (!Number.isFinite(invoicePlatformFeePct) || invoicePlatformFeePct < 0 || invoicePlatformFeePct > 100) {
+        toast.error("Statement platform fee % must be between 0 and 100.");
+        setSaving(false);
+        return;
+      }
+      const financeOpeningCash = financeOpeningCashStr.trim() ? Number(financeOpeningCashStr) : 0;
+      if (!Number.isFinite(financeOpeningCash)) {
+        toast.error("Opening cash must be a valid number.");
+        setSaving(false);
+        return;
+      }
       const manualGoalRaw = pulseRevenueGoalMonthlyStr.trim();
       const manualGoal = manualGoalRaw ? Number(manualGoalRaw) : null;
       if (pulseRevenueGoalMode === "manual") {
@@ -653,6 +686,9 @@ export function SetupTab() {
         partner_level_l3_min_gbp: partnerLevelL3,
         partner_level_l4_min_gbp: partnerLevelL4,
         partner_level_elite_plus_multiplier: partnerLevelElitePlus,
+        invoice_statement_logo_url: invoiceStatementLogoUrl.trim() || undefined,
+        invoice_platform_fee_pct: invoicePlatformFeePct,
+        finance_opening_cash_gbp: financeOpeningCash,
       });
 
       // No row yet → seed one with safe defaults so future Settings work.
@@ -692,6 +728,13 @@ export function SetupTab() {
       );
       setPulseHealthyNetMarginPctStr(
         String(next.pulse_healthy_net_margin_pct ?? DEFAULT_PULSE_HEALTHY_NET_MARGIN_PCT),
+      );
+      setInvoiceStatementLogoUrl(next.invoice_statement_logo_url ?? "");
+      setInvoicePlatformFeePctStr(
+        String(next.invoice_platform_fee_pct ?? next.target_margin_pct ?? DEFAULT_INVOICE_PLATFORM_FEE_PCT),
+      );
+      setFinanceOpeningCashStr(
+        next.finance_opening_cash_gbp != null ? String(next.finance_opening_cash_gbp) : "0",
       );
       setZendeskSubdomain(next.zendesk_subdomain ?? "");
       setZendeskOnHoldReasonFieldId(
@@ -1443,6 +1486,68 @@ export function SetupTab() {
       ) : null}
 
       {activeSection === "finance" ? (
+        <>
+        <Card padding="none">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Statements &amp; receipts</CardTitle>
+              <FixfyHintIcon text="Controls the Fixfy logo and platform fee % on customer Statement of Charges / Payment Receipt PDFs and the Finance → Invoices breakdown." />
+            </div>
+            <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+              Linked to Finance billing. Job-specific commission and margin still take priority when set on the job.
+            </p>
+          </CardHeader>
+          <div className="space-y-4 px-6 pb-6">
+            <BrandingImageUpload
+              kind="pdf-logo"
+              label="Statement / receipt logo"
+              description="White logo on transparent or dark background. Used on statement and receipt PDF headers and footers."
+              value={invoiceStatementLogoUrl}
+              onChange={setInvoiceStatementLogoUrl}
+              placeholder="https://…/fixfy-primary-white.png"
+              previewClass="h-10 w-auto"
+            />
+            {!invoiceStatementLogoUrl.trim() && companyPdfLogoUrl ? (
+              <p className="text-[11px] text-text-tertiary">
+                No override set — falls back to{" "}
+                <span className="font-medium text-text-secondary">Settings → System → PDF &amp; email logo</span>.
+              </p>
+            ) : null}
+            <div className="max-w-xs">
+              <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                Default Fixfy platform fee (%)
+                <FixfyHintIcon text="Used when the job row has no commission and margin cannot be calculated from partner costs. Applied as % of job billable revenue on statements." />
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={invoicePlatformFeePctStr}
+                onChange={(e) => setInvoicePlatformFeePctStr(e.target.value)}
+                disabled={!canEditConfig}
+              />
+              <p className="mt-1 text-[10px] text-text-tertiary">
+                Default {DEFAULT_INVOICE_PLATFORM_FEE_PCT}% (matches target gross margin when unset).
+              </p>
+            </div>
+            <div className="max-w-xs">
+              <label className="block text-xs font-medium text-text-secondary mb-1.5 inline-flex items-center gap-1.5">
+                Default opening cash (£)
+                <FixfyHintIcon text="Starting bank balance for Cash-Flow Runway → Cash view. Per-week overrides can be set in the week breakdown modal." />
+              </label>
+              <Input
+                type="number"
+                step="0.01"
+                value={financeOpeningCashStr}
+                onChange={(e) => setFinanceOpeningCashStr(e.target.value)}
+                disabled={!canEditConfig}
+              />
+            </div>
+          </div>
+        </Card>
+
         <Card padding="none">
           <CardHeader className="px-6 pt-6">
             <div className="flex items-center gap-2">
@@ -1610,6 +1715,7 @@ export function SetupTab() {
             </Button>
           </div>
         </Card>
+        </>
       ) : null}
 
       {activeSection === "partners" ? (
