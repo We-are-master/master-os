@@ -1,5 +1,5 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 
 export interface SelfBillPdfLine {
@@ -39,6 +39,8 @@ export interface SelfBillPdfData {
   /** Explicit flag from server — preferred over inferring from optional text fields. */
   payoutVoided?: boolean;
   billOrigin?: "partner" | "internal";
+  /** Data URI or https URL for header logo (white wordmark on navy). */
+  logoUrl?: string;
   internalBreakdown?: {
     fixedPay: number;
     commissionAmount: number;
@@ -62,15 +64,26 @@ const HAIRLINE = "#F2F0FA";
 const FOOTER_INFO = "#AAAAD0";
 const PAD = 32;
 const FOOTER_RESERVE = 68;
+const BODY_TOP = 18;
+/** Logo band (12+28+12) + orange accent (4) — reserved on every page via `fixed` header. */
+const PAGE_HEADER_HEIGHT = 56;
 
 const styles = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 10, color: NAVY, paddingBottom: FOOTER_RESERVE },
+  page: {
+    fontFamily: "Helvetica",
+    fontSize: 10,
+    color: NAVY,
+    paddingTop: PAGE_HEADER_HEIGHT + BODY_TOP,
+    paddingBottom: FOOTER_RESERVE,
+  },
 
-  headerBand: { backgroundColor: NAVY, paddingVertical: 14, alignItems: "center" },
+  pageHeader: { position: "absolute" as const, top: 0, left: 0, right: 0 },
+  headerBand: { backgroundColor: NAVY, paddingVertical: 12, alignItems: "center" },
   wordmark: { fontFamily: "Helvetica-Bold", fontSize: 20, color: "#FFFFFF", letterSpacing: 0.5 },
+  headerLogo: { width: 100, height: 28, objectFit: "contain" as const },
   accentBar: { backgroundColor: ORANGE, height: 4 },
 
-  body: { paddingHorizontal: PAD, paddingTop: 18 },
+  body: { paddingHorizontal: PAD },
 
   eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.5, color: ORANGE, textTransform: "uppercase", marginBottom: 6 },
   headline: { fontFamily: "Helvetica-Bold", fontSize: 18, color: NAVY, marginBottom: 6 },
@@ -146,6 +159,21 @@ function firstNameOf(name: string): string {
   return t || "there";
 }
 
+function SelfBillPageHeader({ logoUrl }: { logoUrl?: string }) {
+  return (
+    <View style={styles.pageHeader} fixed>
+      <View style={styles.headerBand}>
+        {logoUrl ? (
+          <Image src={logoUrl} style={styles.headerLogo} />
+        ) : (
+          <Text style={styles.wordmark}>Fixfy</Text>
+        )}
+      </View>
+      <View style={styles.accentBar} />
+    </View>
+  );
+}
+
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
@@ -163,11 +191,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Header */}
-        <View style={styles.headerBand}>
-          <Text style={styles.wordmark}>Fixfy</Text>
-        </View>
-        <View style={styles.accentBar} />
+        <SelfBillPageHeader logoUrl={data.logoUrl} />
 
         <View style={styles.body}>
           <Text style={styles.eyebrow}>Self-billing statement</Text>

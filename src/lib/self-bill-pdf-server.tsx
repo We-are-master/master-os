@@ -6,8 +6,26 @@ import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
 import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
+import { parseFrontendSetup, resolveInvoiceStatementLogoUrl } from "@/lib/frontend-setup";
+import {
+  DEFAULT_INVOICE_PDF_LOGO_URL,
+  resolveLogoDataUri,
+} from "@/lib/pdf/resolve-logo-data-uri";
 import type { Job, SelfBill } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<string | undefined> {
+  const { data: company } = await supabase
+    .from("company_settings")
+    .select("logo_url, frontend_setup")
+    .limit(1)
+    .maybeSingle();
+  const companyRow = company as { logo_url?: string | null; frontend_setup?: unknown } | null;
+  const setup = parseFrontendSetup(companyRow?.frontend_setup);
+  const logoSource =
+    resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
+  return (await resolveLogoDataUri(logoSource)) ?? undefined;
+}
 
 export async function renderSelfBillPdfBuffer(
   supabase: SupabaseClient,
@@ -120,6 +138,8 @@ export async function renderSelfBillPdfBuffer(
         }))
       : lines;
 
+  const logoUrl = await resolveSelfBillPdfLogoUrl(supabase);
+
   const buffer = await renderToBuffer(
     <SelfBillPDF
       data={{
@@ -144,6 +164,7 @@ export async function renderSelfBillPdfBuffer(
         payoutVoided: voided,
         billOrigin: billOrigin ?? undefined,
         internalBreakdown,
+        logoUrl,
       }}
     />,
   );
