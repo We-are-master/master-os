@@ -1,7 +1,8 @@
 "use client";
 
 import type { ListResult } from "@/services/base";
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, type RefObject } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { CatalogShareModal } from "@/components/catalog/catalog-share-modal";
 import { PageHeader } from "@/components/layout/page-header";
@@ -984,14 +985,37 @@ interface PartnersClientProps {
   initialData?: ListResult<Partner> | null;
 }
 
-function useClickOutsideMenu(open: boolean, onClose: () => void, ref: RefObject<HTMLElement | null>) {
+function InvitePartnerSplitButton({
+  open,
+  sendDisabled,
+  shareDisabled,
+  busy,
+  busyMode,
+  onSendInvite,
+  onShareLink,
+}: {
+  open: boolean;
+  sendDisabled: boolean;
+  shareDisabled: boolean;
+  busy: boolean;
+  busyMode: "copy" | "send" | null;
+  onSendInvite: () => void;
+  onShareLink: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (!menuOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") setMenuOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -999,56 +1023,58 @@ function useClickOutsideMenu(open: boolean, onClose: () => void, ref: RefObject<
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose, ref]);
-}
-
-function InvitePartnerSplitButton({
-  open,
-  disabled,
-  busy,
-  busyMode,
-  onSendInvite,
-  onShareLink,
-}: {
-  open: boolean;
-  disabled: boolean;
-  busy: boolean;
-  busyMode: "copy" | "send" | null;
-  onSendInvite: () => void;
-  onShareLink: () => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useClickOutsideMenu(menuOpen, () => setMenuOpen(false), ref);
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!open) setMenuOpen(false);
   }, [open]);
+
+  useEffect(() => {
+    if (!menuOpen || !ref.current) {
+      setMenuRect(null);
+      return;
+    }
+    const update = () => {
+      const el = ref.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setMenuRect({ top: rect.bottom + 6, left: rect.right - 184, width: 184 });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [menuOpen]);
 
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
   };
 
-  const inactive = disabled || busy;
+  const menuDisabled = shareDisabled && sendDisabled;
+  const sendInactive = sendDisabled || busy;
+  const menuInactive = menuDisabled || busy;
 
   return (
     <div ref={ref} className="relative w-full min-w-0 sm:w-auto">
       <div
         className={cn(
           "flex w-full overflow-hidden rounded-lg shadow-[0_1px_2px_rgba(237,75,0,0.15)] sm:inline-flex sm:w-auto",
-          inactive && "pointer-events-none opacity-50",
+          sendInactive && menuInactive && "pointer-events-none opacity-50",
         )}
       >
         <button
           type="button"
-          disabled={inactive}
+          disabled={sendInactive}
           onClick={onSendInvite}
           className={cn(
             "inline-flex h-9 min-h-9 flex-1 items-center justify-center gap-1.5 border border-r-0 border-primary/25",
             "bg-primary px-3 text-xs font-semibold text-white transition-colors hover:bg-primary-hover",
             "whitespace-nowrap sm:flex-initial",
+            sendInactive && "pointer-events-none opacity-50",
           )}
         >
           {busy && busyMode === "send" ? (
@@ -1070,7 +1096,7 @@ function InvitePartnerSplitButton({
         </button>
         <button
           type="button"
-          disabled={inactive}
+          disabled={menuInactive}
           aria-expanded={menuOpen}
           aria-haspopup="menu"
           aria-label="More invite options"
@@ -1078,37 +1104,45 @@ function InvitePartnerSplitButton({
           className={cn(
             "inline-flex h-9 w-9 shrink-0 items-center justify-center border border-primary/25",
             "bg-primary text-white transition-colors hover:bg-primary-hover",
+            menuInactive && "pointer-events-none opacity-50",
           )}
         >
           <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", menuOpen && "rotate-180")} />
         </button>
       </div>
 
-      {menuOpen ? (
-        <div
-          role="menu"
-          className="absolute right-0 top-[calc(100%+6px)] z-[60] min-w-[11.5rem] overflow-hidden rounded-lg border border-border-light bg-card py-1 shadow-lg"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80"
-            onClick={() => run(onSendInvite)}
-          >
-            <Send className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-            Send invite
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80"
-            onClick={() => run(onShareLink)}
-          >
-            <Link2 className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-            Share link
-          </button>
-        </div>
-      ) : null}
+      {menuOpen && menuRect && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{ top: menuRect.top, left: menuRect.left, width: menuRect.width }}
+              className="fixed z-[200] min-w-[11.5rem] overflow-hidden rounded-lg border border-border-light bg-card py-1 shadow-lg"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={sendInactive}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => run(onSendInvite)}
+              >
+                <Send className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                Send invite
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={shareDisabled || busy}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover/80 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => run(onShareLink)}
+              >
+                <Link2 className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                Share link
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -1424,19 +1458,19 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     async ({ sendEmail }: { sendEmail: boolean }) => {
       const email = inviteEmail.trim();
       const name = inviteName.trim();
-      if (!name) {
-        toast.error("Partner name is required");
-        return;
-      }
       if (!email) {
         toast.error("Email is required");
+        return;
+      }
+      if (sendEmail && !name) {
+        toast.error("Partner name is required to send an email invite");
         return;
       }
       setInviteSubmitMode(sendEmail ? "send" : "copy");
       setInviteSubmitting(true);
       try {
         const result = await invitePartnerFromZero({
-          name,
+          ...(name ? { name } : {}),
           email,
           phone: invitePhone.trim() || undefined,
           sendEmail,
@@ -2455,7 +2489,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         <div className="px-4 sm:px-6 py-4 space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary" htmlFor="invite-partner-name">
-              Company or personal name *
+              Company or personal name (required for Send invite)
             </label>
             <Input
               id="invite-partner-name"
@@ -2464,7 +2498,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               onChange={(e) => setInviteName(e.target.value)}
               placeholder="e.g. Apex Plumbing Ltd"
               autoComplete="organization"
-              required
             />
           </div>
           <div className="space-y-1.5">
@@ -2519,7 +2552,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           </Button>
           <InvitePartnerSplitButton
             open={inviteOpen}
-            disabled={!inviteName.trim() || !inviteEmail.trim()}
+            sendDisabled={!inviteName.trim() || !inviteEmail.trim()}
+            shareDisabled={!inviteEmail.trim()}
             busy={inviteSubmitting}
             busyMode={inviteSubmitMode}
             onSendInvite={() => void handleInvitePartner({ sendEmail: true })}
