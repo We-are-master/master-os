@@ -84,10 +84,17 @@ import {
 } from "@/services/self-bills";
 import { getSupabase } from "@/services/base";
 import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-bar";
+import { MoneyOutPayActions } from "@/components/finance/money-out-pay-actions";
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 import { createInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { logAudit } from "@/services/audit";
-import { selfBillEffectiveDueYmd, selfBillIsInstallmentDueForWisePay } from "@/lib/self-bill-payment-plan";
+import {
+  defaultSelfBillPayoutPlanRows,
+  hasActiveSelfBillPaymentPlan,
+  selfBillEffectiveDueYmd,
+  selfBillIsInstallmentDueForWisePay,
+} from "@/lib/self-bill-payment-plan";
+import { createSelfBillPaymentPlan } from "@/services/self-bill-payment-plan";
 import type { Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 import "./billing-standalone.css";
 
@@ -196,6 +203,7 @@ function BillingStandaloneInner() {
   const [ledgerSbTab, setLedgerSbTab] = useState<"drafts" | "pending" | "approved">("pending");
   const [readyingSelfBillIds, setReadyingSelfBillIds] = useState<Set<string>>(new Set());
   const [moneyOutSelectedIds, setMoneyOutSelectedIds] = useState<Set<string>>(new Set());
+  const [schedulingPaymentIds, setSchedulingPaymentIds] = useState<Set<string>>(new Set());
 
   // Inline Send / Resend handler used by the Going Out · Money Out widget:
   // `week` → standard cycle (master ticket), single-row sends pass `auto` so the
@@ -360,6 +368,91 @@ function BillingStandaloneInner() {
       await loadData();
     },
     [loadData],
+  );
+
+  const handleBulkMarkSelfBillsPaid = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      const eligible = ids.filter((id) => {
+        const sb = billingSelfBills.find((s) => s.id === id);
+        return sb && !isSelfBillPayoutVoided(sb) && !sb.wise_paid_at;
+      });
+      if (!eligible.length) {
+        toast.error("No payable self-bills selected");
+        return;
+      }
+      setBulkSaving(true);
+      try {
+        await markSelfBillsPaid(eligible);
+        toast.success(
+          eligible.length === 1 ? "Marked paid" : `${eligible.length} self-bills marked paid`,
+        );
+        setMoneyOutSelectedIds(new Set());
+        await loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to mark paid");
+      } finally {
+        setBulkSaving(false);
+      }
+    },
+    [billingSelfBills, loadData],
+  );
+
+  const handleBulkSchedulePayment = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      setSchedulingPaymentIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      let created = 0;
+      let skipped = 0;
+      try {
+        for (const id of ids) {
+          const sb = billingSelfBills.find((s) => s.id === id);
+          if (!sb || sb.bill_origin === "internal" || isSelfBillPayoutVoided(sb)) {
+            skipped += 1;
+            continue;
+          }
+          const installments = data.installmentsBySelfBillId[id];
+          if (hasActiveSelfBillPaymentPlan(installments)) {
+            skipped += 1;
+            continue;
+          }
+          const total = Math.max(0, Number(sb.net_payout ?? 0));
+          if (total <= 0.02) {
+            skipped += 1;
+            continue;
+          }
+          const drafts = defaultSelfBillPayoutPlanRows(total, 4, data.partnerDueCtx(sb.partner_id));
+          await createSelfBillPaymentPlan(sb.id, total, drafts);
+          created += 1;
+        }
+        if (created > 0) {
+          toast.success(
+            created === 1
+              ? "Payout plan scheduled"
+              : `${created} payout plans scheduled on upcoming Fridays`,
+          );
+          await loadData();
+        }
+        if (skipped > 0 && created === 0) {
+          toast.message("All selected self-bills already have a payout plan or cannot be scheduled");
+        } else if (skipped > 0) {
+          toast.message(`${skipped} skipped — already scheduled or not eligible`);
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to schedule payment");
+      } finally {
+        setSchedulingPaymentIds((prev) => {
+          const next = new Set(prev);
+          ids.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    },
+    [billingSelfBills, data.installmentsBySelfBillId, data.partnerDueCtx, loadData],
   );
 
   const handlePayWithWise = useCallback(
@@ -1126,13 +1219,13 @@ function BillingStandaloneInner() {
 
   return (
     <PageTransition>
-      <div className="bl-standalone space-y-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#ED4B00]">
+      <div className="bl-standalone min-w-0 space-y-4 sm:space-y-6">
+        <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#ED4B00] sm:text-[11px] sm:tracking-[0.2em]">
               Billing · Money in &amp; out · control tower
             </p>
-            <h1 className="inline-flex items-center gap-2 text-2xl font-bold text-[#020040]">
+            <h1 className="inline-flex items-center gap-2 text-xl font-bold text-[#020040] sm:text-2xl">
               Billing
               <FixfyHintIcon
                 text={`Everything you owe and everything you're owed — what's due, what's late, day by day. ${dateLabel}.`}
@@ -1140,7 +1233,7 @@ function BillingStandaloneInner() {
               />
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <BillingStandalonePeriodFilter value={periodFilter} onChange={setPeriodFilter} />
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
               Export
@@ -1459,19 +1552,22 @@ function BillingStandaloneInner() {
                             {goingOutApprovedSelfBills.length} approved · {kpiRow.nextRunLabel}
                           </p>
                         </div>
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <p className="text-xl font-bold tabular-nums text-[#020040]">
                             {formatCurrency(goingOutApprovedTotal)}
                           </p>
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            loading={payTargetIds.some((id) => payingSelfBillIds.has(id))}
+                          <MoneyOutPayActions
+                            payLabel={payButtonLabel}
+                            loading={
+                              bulkSaving ||
+                              payTargetIds.some((id) => payingSelfBillIds.has(id)) ||
+                              payTargetIds.some((id) => schedulingPaymentIds.has(id))
+                            }
                             disabled={payTargetIds.length === 0}
-                            onClick={() => void handleBulkPayWithWise(payTargetIds)}
-                          >
-                            {payButtonLabel}
-                          </Button>
+                            onPayNow={() => void handleBulkPayWithWise(payTargetIds)}
+                            onSchedulePayment={() => void handleBulkSchedulePayment(payTargetIds)}
+                            onMarkAsPaid={() => void handleBulkMarkSelfBillsPaid(payTargetIds)}
+                          />
                         </div>
                       </div>
                       <div className="max-h-[420px] overflow-y-auto">
@@ -1504,8 +1600,8 @@ function BillingStandaloneInner() {
             </div>
 
             <div className="rounded-xl border border-border-light bg-white shadow-sm overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-light px-4 py-3">
-                <div className="flex gap-1">
+              <div className="flex flex-col gap-3 border-b border-border-light px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                <div className="-mx-3 flex gap-1 overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0 sm:pb-0">
                   <LedgerTabBtn active={ledgerTab === "inv"} onClick={() => setLedgerTab("inv")} label="Invoices" count={activePeriodInvoices.length} />
                   <LedgerTabBtn active={ledgerTab === "sb"} onClick={() => setLedgerTab("sb")} label="Self-bills" count={activePeriodSelfBills.length} />
                   <LedgerTabBtn active={ledgerTab === "history"} onClick={() => setLedgerTab("history")} label="Payment History" count={null} />
@@ -1628,9 +1724,9 @@ function BillingStandaloneInner() {
 
                     return (
                       <>
-                        <div className="border-b border-border-light px-4 py-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex items-center gap-1">
+                          <div className="flex flex-col gap-3 border-b border-border-light px-3 py-3 sm:px-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="-mx-3 flex gap-1 overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0 sm:pb-0">
                               <TabPill
                                 active={ledgerSbTab === "drafts"}
                                 onClick={() => {
@@ -1800,7 +1896,7 @@ function BillingStandaloneInner() {
                 <p className="text-xs text-text-secondary">{periodLabel} · due or paid in range.</p>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="border-b border-border-light bg-surface-hover/40 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                     <tr>
                       <th className="px-4 py-2">Account</th>
@@ -2479,7 +2575,7 @@ function InvoiceGroupedLedger({
             )}
             {groupOpen ? (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="border-b border-border-light bg-surface-hover/20 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                     <tr>
                       <th className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} />
@@ -3065,7 +3161,7 @@ function TabPill({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
         active
           ? "bg-[#020040] text-white"
           : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
@@ -3076,7 +3172,7 @@ function TabPill({
         {count}
       </span>
       {count > 0 ? (
-        <span className={cn("text-[10px] tabular-nums", active ? "text-white/80" : "text-text-tertiary")}>
+        <span className={cn("hidden text-[10px] tabular-nums sm:inline", active ? "text-white/80" : "text-text-tertiary")}>
           {formatCurrency(total)}
         </span>
       ) : null}
@@ -3090,7 +3186,7 @@ function LedgerTabBtn({ active, onClick, label, count }: { active: boolean; onCl
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors",
+        "shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors",
         active ? "bg-[#ED4B00] text-white" : "text-text-secondary hover:bg-surface-hover",
       )}
     >

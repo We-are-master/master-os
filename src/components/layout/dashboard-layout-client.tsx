@@ -50,12 +50,12 @@ export default function DashboardLayoutClient({
                 <Sidebar />
                 <div
                   className={cn(
-                    "ml-0 flex flex-col h-screen transition-[margin-left] duration-300 ease-in-out",
+                    "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left] duration-300 ease-in-out",
                     collapsed ? "lg:ml-[72px]" : "lg:ml-64",
                   )}
                 >
                   <Header />
-                  <main className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
+                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8">
                     {children}
                   </main>
                   <MasterBrainAssistant />

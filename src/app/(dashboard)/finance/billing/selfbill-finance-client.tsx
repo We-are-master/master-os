@@ -101,7 +101,7 @@ import {
   type OrgPayoutScheduleCtx,
 } from "@/lib/billing-due-date-filter";
 import { BillingDueDateFilter } from "@/components/finance/billing-due-date-filter";
-import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
+import { formatJobScheduleLine, formatJobScheduleListLabel, localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
   cancelSelfBillsByIds,
@@ -2860,13 +2860,31 @@ function CompactJobCard({
   partnerPaid,
   matchedInvoice,
 }: {
-  j: Pick<Job, "id" | "reference" | "title" | "partner_cost" | "partner_agreed_value" | "materials_cost" | "status" | "property_address" | "deleted_at" | "partner_cancelled_at">;
+  j: Pick<
+    Job,
+    | "id"
+    | "reference"
+    | "title"
+    | "partner_cost"
+    | "partner_agreed_value"
+    | "materials_cost"
+    | "status"
+    | "property_address"
+    | "scheduled_date"
+    | "scheduled_start_at"
+    | "scheduled_end_at"
+    | "scheduled_finish_date"
+    | "deleted_at"
+    | "partner_cancelled_at"
+  >;
   partnerPaid: number;
   matchedInvoice?: { reference: string; status: string; amount: number } | null;
 }) {
   const cap = jobContributesToSelfBillPayout(j) ? jobLinePartnerGross(j) : 0;
   const due = jobContributesToSelfBillPayout(j) ? Math.max(0, Math.round((cap - partnerPaid) * 100) / 100) : 0;
   const invPaid = matchedInvoice?.status === "paid";
+  const scheduleLabel = formatJobScheduleListLabel(j);
+  const scheduleDetail = formatJobScheduleLine(j);
   return (
     <div className="flex items-center gap-3 rounded-[8px] border border-border-light bg-surface-hover/80 px-3 py-2">
       <div className="flex-1 min-w-0">
@@ -2882,6 +2900,11 @@ function CompactJobCard({
           ) : null}
         </div>
         <p className="text-[10px] text-text-tertiary truncate">{j.title}</p>
+        {scheduleLabel ? (
+          <p className="text-[10px] text-text-secondary truncate" title={scheduleDetail ?? undefined}>
+            {scheduleLabel}
+          </p>
+        ) : null}
       </div>
       <div className="shrink-0 text-right">
         <p className="text-[12px] font-semibold tabular-nums text-text-primary">{formatCurrency(Number(j.partner_cost) || 0)}</p>
@@ -2911,6 +2934,10 @@ function JobRow({
     | "materials_cost"
     | "status"
     | "property_address"
+    | "scheduled_date"
+    | "scheduled_start_at"
+    | "scheduled_end_at"
+    | "scheduled_finish_date"
     | "deleted_at"
     | "partner_cancelled_at"
     | "partner_cancellation_fee"
@@ -2923,6 +2950,8 @@ function JobRow({
   const feeLine = selfBillJobCancellationFeeLine(j);
   const cap = jobContributesToSelfBillPayout(j) ? jobLinePartnerGross(j) : 0;
   const due = jobContributesToSelfBillPayout(j) ? Math.max(0, Math.round((cap - partnerPaid) * 100) / 100) : 0;
+  const scheduleLabel = formatJobScheduleListLabel(j);
+  const scheduleDetail = formatJobScheduleLine(j);
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
@@ -2932,6 +2961,11 @@ function JobRow({
             <ExternalLink className="h-3 w-3 shrink-0" />
           </Link>
           <p className="text-xs text-text-secondary truncate">{j.title}</p>
+          {scheduleLabel ? (
+            <p className="text-[11px] text-text-secondary truncate" title={scheduleDetail ?? undefined}>
+              {scheduleLabel}
+            </p>
+          ) : null}
           <p className="text-[11px] text-text-tertiary truncate">{j.property_address}</p>
           {payoutNote ? <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutNote}</p> : null}
         </div>
