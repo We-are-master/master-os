@@ -54,3 +54,12 @@ export async function getFixfyAccountId(supabase: SupabaseClient): Promise<strin
   cachedFixfyAccountId = sorted[0].id as string;
   return cachedFixfyAccountId;
 }
+
+/** Returns Fixfy corporate account id, or null when unset / not found (no throw). */
+export async function tryGetFixfyAccountId(supabase: SupabaseClient): Promise<string | null> {
+  try {
+    return await getFixfyAccountId(supabase);
+  } catch {
+    return null;
+  }
+}

@@ -5,14 +5,13 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { catalogServiceIdsForTradeLabels } from "@/lib/catalog-trade-ids";
 import {
   CATALOG_CATEGORY_LABELS,
   CATALOG_CATEGORY_ORDER,
   groupCatalogServicesByCategory,
   type CatalogServiceCategory,
 } from "@/lib/catalog-service-categories";
-import { tradeCategoryCatalogRows } from "@/lib/partner-trade-categories";
+import { isCatalogTradeCategoryLabel, tradeCategoryCatalogRows } from "@/lib/partner-trade-categories";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { updatePartner } from "@/services/partners";
 import { getSupabase } from "@/services/base";
@@ -144,9 +143,8 @@ export function CatalogTradesSkillsTab(props: Props) {
   const [enabledIds, setEnabledIds] = useState<Set<string>>(() => new Set());
   const [primaryId, setPrimaryId] = useState<string | null>(null);
 
-  const tradeRows = useMemo(() => tradeCategoryCatalogRows(catalog), [catalog]);
   const catalogByCategory = useMemo(() => groupCatalogServicesByCategory(catalog), [catalog]);
-  const accountSections = useMemo(
+  const catalogSections = useMemo(
     () =>
       CATALOG_CATEGORY_ORDER.map((category) => ({
         category,
@@ -163,7 +161,6 @@ export function CatalogTradesSkillsTab(props: Props) {
       .then((rows) => {
         if (cancelled) return;
         setCatalog(rows);
-        const categories = tradeCategoryCatalogRows(rows);
         if (props.kind === "partner") {
           const p = props.partner;
           const labels = p.trades?.length ? p.trades : p.trade?.trim() ? [p.trade] : [];
@@ -172,7 +169,7 @@ export function CatalogTradesSkillsTab(props: Props) {
             if (id?.trim()) ids.add(id.trim());
           }
           for (const label of labels) {
-            const row = categories.find(
+            const row = rows.find(
               (c) => (c.name ?? "").trim().toLowerCase() === label.trim().toLowerCase(),
             );
             if (row) ids.add(row.id);
@@ -180,8 +177,8 @@ export function CatalogTradesSkillsTab(props: Props) {
           setEnabledIds(ids);
           const primaryLabel = labels[0]?.trim();
           const primaryRow = primaryLabel
-            ? categories.find((c) => (c.name ?? "").trim() === primaryLabel)
-            : categories.find((c) => ids.has(c.id));
+            ? rows.find((c) => (c.name ?? "").trim() === primaryLabel)
+            : rows.find((c) => ids.has(c.id));
           setPrimaryId(primaryRow?.id ?? (ids.size ? [...ids][0] : null));
         } else {
           const ids = new Set((props.account.catalog_service_ids ?? []).map((id) => id.trim()).filter(Boolean));
@@ -218,25 +215,26 @@ export function CatalogTradesSkillsTab(props: Props) {
   async function handleSave() {
     if (!canEdit) return;
     if (enabledIds.size === 0) {
-      toast.error(isAccount ? "Enable at least one service." : "Enable at least one trade.");
+      toast.error(isAccount ? "Enable at least one service." : "Enable at least one service or trade.");
       return;
     }
 
     setSaving(true);
     try {
       if (props.kind === "partner") {
-        const labels = tradeRows
-          .filter((r) => enabledIds.has(r.id))
-          .map((r) => r.name.trim())
-          .filter(Boolean);
-        const primary =
-          primaryId && enabledIds.has(primaryId)
-            ? tradeRows.find((r) => r.id === primaryId)?.name?.trim()
+        const catalogIds = orderedEnabledCatalogIds(catalog, enabledIds, primaryId);
+        const enabledRows = catalog.filter((r) => enabledIds.has(r.id));
+        const tradeOnly = tradeCategoryCatalogRows(enabledRows);
+        const labels = tradeOnly.map((r) => r.name.trim()).filter(Boolean);
+        const primaryRow =
+          primaryId && enabledIds.has(primaryId) ? catalog.find((r) => r.id === primaryId) : null;
+        const primaryTradeName =
+          primaryRow && isCatalogTradeCategoryLabel(primaryRow.name)
+            ? primaryRow.name.trim()
             : labels[0];
-        const primaryFirst = primary
-          ? [primary, ...labels.filter((l) => l !== primary)]
+        const primaryFirst = primaryTradeName
+          ? [primaryTradeName, ...labels.filter((l) => l !== primaryTradeName)]
           : labels;
-        const catalogIds = catalogServiceIdsForTradeLabels(primaryFirst, catalog);
         const updated = await updatePartner(props.partner.id, {
           trades: primaryFirst,
           trade: primaryFirst[0] ?? props.partner.trade,
@@ -273,7 +271,7 @@ export function CatalogTradesSkillsTab(props: Props) {
     );
   }
 
-  const hasCatalog = isAccount ? catalog.length > 0 : tradeRows.length > 0;
+  const hasCatalog = catalog.length > 0;
   if (!hasCatalog) {
     return (
       <div className="p-6 text-sm text-text-tertiary text-center">
@@ -281,8 +279,6 @@ export function CatalogTradesSkillsTab(props: Props) {
       </div>
     );
   }
-
-  const primaryLabel = isAccount ? "service" : "trade";
 
   function renderSection(title: string, rows: CatalogService[], category?: CatalogServiceCategory) {
     return (
@@ -299,7 +295,7 @@ export function CatalogTradesSkillsTab(props: Props) {
                 enabled={on}
                 isPrimary={isPrimary}
                 canEdit={canEdit}
-                primaryLabel={category === "trades" ? "trade" : primaryLabel}
+                primaryLabel={category === "trades" ? "trade" : "service"}
                 onToggle={(v) => toggleService(row.id, v)}
                 onMakePrimary={() => makePrimary(row.id)}
               />
@@ -319,13 +315,11 @@ export function CatalogTradesSkillsTab(props: Props) {
         <p className="text-xs text-text-tertiary mt-1">
           {isAccount
             ? "What this account can book. Enable trades, certificates, and other services from Settings → Services — new rows appear here automatically."
-            : "What this partner does. We only send work matching enabled trades. New rows from Settings → Services show up here automatically."}
+            : "What this partner does. Enable trades, certificates, cleaning, and other services from Settings → Services — we match jobs to enabled rows."}
         </p>
       </div>
 
-      {isAccount
-        ? accountSections.map((section) => renderSection(section.label, section.rows, section.category))
-        : renderSection("Trades", tradeRows, "trades")}
+      {catalogSections.map((section) => renderSection(section.label, section.rows, section.category))}
 
       {canEdit ? (
         <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
