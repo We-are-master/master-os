@@ -9,7 +9,6 @@ export const runtime = "nodejs";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
-const MUTED = "#6B6B85";
 
 type BlogPost = {
   slug: string;
@@ -83,8 +82,8 @@ export default async function BlogPostPage({
   if (!post) notFound();
 
   return (
-    <main className="min-h-screen bg-white">
-      {/* Header band */}
+    <main className="min-h-screen" style={{ background: "var(--surface)" }}>
+      {/* Navy header band — stays navy in both themes */}
       <header style={{ background: NAVY }} className="px-6 py-10 sm:py-14">
         <div className="mx-auto max-w-2xl">
           <Link href="/blog" className="mb-8 inline-flex items-center text-sm font-semibold text-white/70 hover:text-white">
@@ -111,7 +110,8 @@ export default async function BlogPostPage({
           <img
             src={post.cover_image_url}
             alt={post.title}
-            className="-mt-6 w-full rounded-2xl border border-[#E4E4EC] shadow-[0_8px_30px_rgba(2,0,64,0.10)]"
+            className="-mt-6 w-full rounded-2xl border shadow-[0_8px_30px_rgba(2,0,64,0.10)]"
+            style={{ borderColor: "var(--border-color)" }}
           />
         </div>
       ) : null}
@@ -122,14 +122,18 @@ export default async function BlogPostPage({
         {post.tags && post.tags.length > 0 ? (
           <div className="mt-10 flex flex-wrap gap-2">
             {post.tags.map((t) => (
-              <span key={t} className="rounded-full bg-[#F7F7FB] px-3 py-1 text-xs font-medium" style={{ color: MUTED }}>
+              <span
+                key={t}
+                className="rounded-full px-3 py-1 text-xs font-medium"
+                style={{ background: "var(--surface-secondary)", color: "var(--text-tertiary)" }}
+              >
                 #{t}
               </span>
             ))}
           </div>
         ) : null}
 
-        {/* CTA */}
+        {/* CTA — navy in both themes */}
         <div className="mt-12 rounded-2xl px-7 py-8 text-center" style={{ background: NAVY }}>
           <p className="text-xl font-bold text-white">Something need fixing?</p>
           <p className="mt-2 text-white/70">Forward it to Fixfy — we’ll take it from here.</p>
@@ -142,7 +146,7 @@ export default async function BlogPostPage({
           </a>
         </div>
 
-        <p className="mt-8 text-xs" style={{ color: MUTED }}>
+        <p className="mt-8 text-xs" style={{ color: "var(--text-tertiary)" }}>
           By {post.author} · Fixfy
         </p>
       </article>

@@ -12,7 +12,6 @@ export const metadata: Metadata = {
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
-const MUTED = "#6B6B85";
 
 type BlogCard = {
   slug: string;
@@ -50,8 +49,8 @@ export default async function BlogIndexPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#F7F7FB]">
-      {/* Header band */}
+    <main className="min-h-screen" style={{ background: "var(--surface)" }}>
+      {/* Navy header band — stays navy in both themes */}
       <header style={{ background: NAVY }} className="px-6 py-14 sm:py-20">
         <div className="mx-auto max-w-3xl">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -71,7 +70,7 @@ export default async function BlogIndexPage() {
 
       <section className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
         {posts.length === 0 ? (
-          <p className="text-center text-[15px]" style={{ color: MUTED }}>
+          <p className="text-center text-[15px]" style={{ color: "var(--text-tertiary)" }}>
             New articles are on the way. Check back soon.
           </p>
         ) : (
@@ -80,18 +79,21 @@ export default async function BlogIndexPage() {
               <Link
                 key={post.slug}
                 href={`/blog/${post.slug}`}
-                className="group block overflow-hidden rounded-2xl border border-[#E4E4EC] bg-white shadow-[0_1px_3px_rgba(2,0,64,0.05)] transition hover:shadow-[0_8px_30px_rgba(2,0,64,0.10)]"
+                className="group block overflow-hidden rounded-2xl border transition hover:shadow-[0_8px_30px_rgba(2,0,64,0.10)]"
+                style={{ background: "var(--surface-secondary)", borderColor: "var(--border-color)" }}
               >
                 <div className="flex flex-col gap-1 p-6 sm:p-7">
-                  <div className="flex items-center gap-3 text-xs font-semibold" style={{ color: ORANGE }}>
-                    <span className="uppercase tracking-[0.12em]">{PRODUCT_LABEL[post.product] ?? "Fixfy"}</span>
-                    <span style={{ color: MUTED }}>{fmtDate(post.published_at)}</span>
+                  <div className="flex items-center gap-3 text-xs font-semibold">
+                    <span className="uppercase tracking-[0.12em]" style={{ color: ORANGE }}>
+                      {PRODUCT_LABEL[post.product] ?? "Fixfy"}
+                    </span>
+                    <span style={{ color: "var(--text-tertiary)" }}>{fmtDate(post.published_at)}</span>
                   </div>
-                  <h2 className="mt-1 text-xl font-bold leading-snug tracking-tight text-[#0A0A1F] group-hover:text-[#020040]">
+                  <h2 className="mt-1 text-xl font-bold leading-snug tracking-tight" style={{ color: "var(--text-primary)" }}>
                     {post.title}
                   </h2>
                   {post.excerpt ? (
-                    <p className="mt-1 text-[15px] leading-relaxed" style={{ color: MUTED }}>
+                    <p className="mt-1 text-[15px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
                       {post.excerpt}
                     </p>
                   ) : null}
@@ -105,7 +107,7 @@ export default async function BlogIndexPage() {
         )}
       </section>
 
-      <footer className="px-6 pb-12 text-center text-xs" style={{ color: MUTED }}>
+      <footer className="px-6 pb-12 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>
         <span className="inline-flex items-center gap-2">
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: ORANGE }} />
           getfixfy.com

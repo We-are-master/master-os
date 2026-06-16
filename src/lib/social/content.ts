@@ -62,6 +62,34 @@ export function slugify(input: string, suffix?: string): string {
   return suffix ? `${base}-${suffix}` : base || "post";
 }
 
+/** Photo orientation that suits a given post format. */
+export function orientationForFormat(format: SocialFormat): "square" | "portrait" | "landscape" {
+  if (format === "story") return "portrait";
+  if (format === "landscape") return "landscape";
+  return "square";
+}
+
+/** Builds the on-brand /api/og/social render URL. Pass `photo` for photo mode. */
+export function buildSocialOgUrl(opts: {
+  format: SocialFormat;
+  bg?: string;
+  eyebrow?: string;
+  title: string;
+  sub?: string;
+  photo?: string | null;
+}): string {
+  const base = appBaseUrl().replace(/\/$/, "");
+  const p = new URLSearchParams();
+  p.set("format", opts.format);
+  // Photo mode always uses the navy scrim for legibility.
+  p.set("bg", opts.photo ? "navy" : opts.bg || "navy");
+  if (opts.eyebrow) p.set("eyebrow", opts.eyebrow);
+  p.set("title", opts.title);
+  if (opts.sub) p.set("sub", opts.sub);
+  if (opts.photo) p.set("photo", opts.photo);
+  return `${base}/api/og/social?${p.toString()}`;
+}
+
 /** 1-tap approve/reject link for a queued content row. */
 export function approvalUrl(
   kind: "blog" | "social",

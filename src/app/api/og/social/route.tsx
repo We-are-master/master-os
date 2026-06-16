@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
     ? sp.get("format")
     : "square") as SocialFormat;
   const bg = (["navy", "light", "orange"].includes(sp.get("bg") || "") ? sp.get("bg") : "navy") as BgKind;
+  const photo = (sp.get("photo") || "").trim();
 
   const eyebrow = (sp.get("eyebrow") || "").slice(0, 60);
   const title = (sp.get("title") || "Home services, sorted.").slice(0, 160);
@@ -72,6 +73,13 @@ export async function GET(req: NextRequest) {
   const { w, h } = SOCIAL_DIMENSIONS[format];
   const S = SIZING[format];
   const P = palette(bg);
+  if (photo) {
+    // Photo mode: white text over a navy scrim, regardless of bg.
+    P.fg = FIXFY_BRAND.white;
+    P.sub = "rgba(255,255,255,0.88)";
+    P.eye = FIXFY_BRAND.orange;
+    P.logoLight = true;
+  }
   const origin = req.nextUrl.origin;
   const logoUrl = `${origin}/logos/${P.logoLight ? "fixfy-wordmark-white-trim.png" : "fixfy-wordmark-navy-trim.png"}`;
 
@@ -93,25 +101,53 @@ export async function GET(req: NextRequest) {
           display: "flex",
           flexDirection: "column",
           position: "relative",
-          background: P.bg,
+          background: photo ? FIXFY_BRAND.navy : P.bg,
           color: P.fg,
           fontFamily: "Inter, sans-serif",
           padding: S.pad,
         }}
       >
-        {/* decorative brand shape (bottom-right) */}
-        <div
-          style={{
-            position: "absolute",
-            right: -h * 0.18,
-            bottom: -h * 0.18,
-            width: h * 0.6,
-            height: h * 0.6,
-            borderRadius: h * 0.3,
-            background: P.shape,
-            display: "flex",
-          }}
-        />
+        {/* photo background + navy scrim (photo mode) */}
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            width={w}
+            height={h}
+            alt=""
+            style={{ position: "absolute", top: 0, left: 0, width: w, height: h, objectFit: "cover" }}
+          />
+        ) : null}
+        {photo ? (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: w,
+              height: h,
+              display: "flex",
+              background:
+                "linear-gradient(180deg, rgba(2,0,64,0.55) 0%, rgba(2,0,64,0.12) 30%, rgba(2,0,64,0.55) 66%, rgba(2,0,64,0.95) 100%)",
+            }}
+          />
+        ) : null}
+
+        {/* decorative brand shape (graphic mode only) */}
+        {!photo ? (
+          <div
+            style={{
+              position: "absolute",
+              right: -h * 0.18,
+              bottom: -h * 0.18,
+              width: h * 0.6,
+              height: h * 0.6,
+              borderRadius: h * 0.3,
+              background: P.shape,
+              display: "flex",
+            }}
+          />
+        ) : null}
 
         {/* logo */}
         {/* eslint-disable-next-line @next/next/no-img-element */}

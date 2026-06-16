@@ -4,8 +4,10 @@ import {
   hasValidContentKey,
   slugify,
   approvalUrl,
+  buildSocialOgUrl,
   type ContentProduct,
 } from "@/lib/social/content";
+import { resolvePhoto } from "@/lib/social/media";
 import { sendApprovalEmail } from "@/lib/social/approval-email";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +48,32 @@ export async function POST(req: NextRequest) {
     ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 12)
     : [];
 
+  const excerpt = typeof body.excerpt === "string" ? body.excerpt.trim() : "";
+
+  // Build the cover. Trust a ready cover_image_url; otherwise render the brand
+  // template — with a real photo when the agent asked for one (use_photo).
+  let coverImageUrl: string | null =
+    typeof body.cover_image_url === "string" && body.cover_image_url ? body.cover_image_url : null;
+  if (!coverImageUrl) {
+    let photoUrl: string | null = null;
+    if (body.use_photo === true && typeof body.photo_query === "string" && body.photo_query.trim()) {
+      const photo = await resolvePhoto({
+        query: body.photo_query.trim(),
+        theme: product,
+        orientation: "landscape",
+      });
+      photoUrl = photo?.url ?? null;
+    }
+    coverImageUrl = buildSocialOgUrl({
+      format: "landscape",
+      bg: "navy",
+      eyebrow: product === "trades" ? "FIXFY FOR PROS" : "THE FIXFY BLOG",
+      title,
+      sub: excerpt,
+      photo: photoUrl,
+    });
+  }
+
   const admin = createServiceClient();
 
   // Unique slug: use provided/derived, append a short suffix on collision.
@@ -67,8 +95,8 @@ export async function POST(req: NextRequest) {
       slug,
       title,
       body_md: bodyMd,
-      excerpt: typeof body.excerpt === "string" ? body.excerpt.trim() : null,
-      cover_image_url: typeof body.cover_image_url === "string" ? body.cover_image_url : null,
+      excerpt: excerpt || null,
+      cover_image_url: coverImageUrl,
       product,
       tags,
       seo_title: typeof body.seo_title === "string" ? body.seo_title : null,
@@ -89,8 +117,8 @@ export async function POST(req: NextRequest) {
   void sendApprovalEmail({
     kind: "blog",
     title,
-    body: typeof body.excerpt === "string" && body.excerpt ? body.excerpt : bodyMd.slice(0, 160),
-    imageUrl: typeof body.cover_image_url === "string" ? body.cover_image_url : null,
+    body: excerpt || bodyMd.slice(0, 160),
+    imageUrl: coverImageUrl,
     product,
     approveUrl,
     rejectUrl,

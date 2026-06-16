@@ -3,10 +3,13 @@ import { createServiceClient } from "@/lib/supabase/service";
 import {
   hasValidContentKey,
   approvalUrl,
+  buildSocialOgUrl,
+  orientationForFormat,
   type ContentProduct,
   type SocialFormat,
   type SocialPlatform,
 } from "@/lib/social/content";
+import { resolvePhoto } from "@/lib/social/media";
 import { sendApprovalEmail } from "@/lib/social/approval-email";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +69,32 @@ export async function POST(req: NextRequest) {
     if (!Number.isNaN(d.getTime())) scheduledFor = d.toISOString();
   }
 
+  // Build the post image. If the caller passed a ready image_url, trust it.
+  // Otherwise render the brand template — humanised with a real photo when the
+  // agent asked for one (use_photo) and a photo is available.
+  const str = (k: string) => (typeof body[k] === "string" ? (body[k] as string).trim() : "");
+  let imageUrl: string | null = str("image_url") || null;
+  if (!imageUrl) {
+    const title = str("title") || caption.split("\n")[0];
+    let photoUrl: string | null = null;
+    if (body.use_photo === true && str("photo_query")) {
+      const photo = await resolvePhoto({
+        query: str("photo_query"),
+        theme: product,
+        orientation: orientationForFormat(format),
+      });
+      photoUrl = photo?.url ?? null;
+    }
+    imageUrl = buildSocialOgUrl({
+      format,
+      bg: str("bg") || "navy",
+      eyebrow: str("eyebrow"),
+      title,
+      sub: str("sub"),
+      photo: photoUrl,
+    });
+  }
+
   const admin = createServiceClient();
   const { data, error } = await admin
     .from("social_posts")
@@ -75,7 +104,7 @@ export async function POST(req: NextRequest) {
       product,
       format,
       hashtags,
-      image_url: typeof body.image_url === "string" ? body.image_url : null,
+      image_url: imageUrl,
       scheduled_for: scheduledFor,
       status: "draft",
     })
@@ -93,7 +122,7 @@ export async function POST(req: NextRequest) {
     kind: "social",
     title: caption.split("\n")[0].slice(0, 90),
     body: `${platforms.join(", ")} · ${format}${hashtags.length ? " · " + hashtags.slice(0, 5).map((h) => "#" + h).join(" ") : ""}`,
-    imageUrl: typeof body.image_url === "string" ? body.image_url : null,
+    imageUrl,
     product,
     approveUrl,
     rejectUrl,
