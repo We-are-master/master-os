@@ -6056,13 +6056,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const clientSide = side === "client";
     return (
       <div className="space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-xs text-text-tertiary leading-snug max-w-[58%]">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <p className="text-xs text-text-tertiary leading-snug min-w-0">
             Tap edit or remove on any listed extra. Add new lines with the button on the right.
           </p>
           <Button
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto shrink-0 whitespace-nowrap !flex-nowrap"
             icon={<Plus className="h-3.5 w-3.5" />}
             disabled={job.status === "cancelled" || job.status === "deleted" || (!clientSide && !job.partner_id?.trim())}
             onClick={() => openMoneyFlowFromHub(clientSide ? "client_extra" : "partner_extra")}
@@ -6136,7 +6137,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               </div>
                               {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
                               <span
                                 className={cn(
                                   "text-xs font-semibold tabular-nums",
@@ -6194,7 +6195,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
     return (
       <div className="rounded-md border border-border-light/70 bg-background/60 px-2.5 py-2 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-text-primary">Initial balance</span>
             <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
@@ -6242,7 +6243,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-7 gap-1 px-2.5 text-[11px] font-medium"
+                  className="h-7 shrink-0 whitespace-nowrap !flex-nowrap px-2.5 text-[11px] font-medium"
+                  icon={<Pencil className="h-3 w-3" />}
                   title="Edit initial balance"
                   aria-label="Edit initial balance"
                   onClick={() => {
@@ -6250,7 +6252,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     setFinanceHubBaseDraft(String(Math.max(0, Math.round(editSourceAmount * 100) / 100)));
                   }}
                 >
-                  <Pencil className="h-3 w-3" />
                   Edit balance
                 </Button>
               ) : null}
@@ -6270,25 +6271,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </p>
         ) : null}
       </div>
-    );
-  };
-
-  const renderExtraCategoryPencil = (
-    side: "client" | "partner",
-    bucket: ExtraHistoryBucket,
-    visible: boolean,
-  ) => {
-    if (!visible) return null;
-    return (
-      <button
-        type="button"
-        className="text-text-tertiary transition-colors hover:text-text-primary"
-        title="Edit or remove"
-        aria-label="Edit or remove extras in this category"
-        onClick={() => openFinanceHub(side, bucketHasLedgerEntries(side, bucket) ? bucket : undefined)}
-      >
-        <Pencil className="h-3 w-3" />
-      </button>
     );
   };
 
@@ -8754,57 +8736,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="py-1">
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-text-secondary">Total Extras</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className={cn("font-semibold tabular-nums", clientExtraTotalDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                            {clientExtraTotalDisplay > 0.02 ? `+${formatCurrency(clientExtraTotalDisplay)}` : formatCurrency(0)}
-                          </span>
-                          <button
-                            type="button"
-                            className="text-text-tertiary transition-colors hover:text-text-primary"
-                            title="Edit or remove extras"
-                            aria-label="Edit or remove client extras"
-                            onClick={() => openFinanceHub("client")}
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                        </div>
+                        <span className={cn("font-semibold tabular-nums", clientExtraTotalDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                          {clientExtraTotalDisplay > 0.02 ? `+${formatCurrency(clientExtraTotalDisplay)}` : formatCurrency(0)}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Labour</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("client", "extra", clientExtraPlainDisplay > 0.02 || bucketHasLedgerEntries("client", "extra"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                        {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">CCZ</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("client", "ccz", clientExtraCczDisplay > 0.02 || bucketHasLedgerEntries("client", "ccz"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                        {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Parking</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("client", "parking", clientExtraParkingDisplay > 0.02 || bucketHasLedgerEntries("client", "parking"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                        {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Materials</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("client", "materials", clientExtraMaterialsDisplay > 0.02 || bucketHasLedgerEntries("client", "materials"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                        {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                   </div>
                   {/* Payment history: always show header so empty state is visible */}
@@ -8991,48 +8950,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="py-1">
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-text-secondary">Total Extras</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                            {partnerExtraTotalDisplay > 0.02 ? `+${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
-                          </span>
-                          <button
-                            type="button"
-                            className="text-text-tertiary transition-colors hover:text-text-primary"
-                            onClick={() => openFinanceHub("partner")}
-                            title="Edit or remove extras"
-                            aria-label="Edit or remove partner extras"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                        </div>
+                        <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                          {partnerExtraTotalDisplay > 0.02 ? `+${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Labour</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("partner", "extra", partnerExtraPlainDisplay > 0.02 || bucketHasLedgerEntries("partner", "extra"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                        {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">CCZ</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("partner", "ccz", partnerExtraCczDisplay > 0.02 || bucketHasLedgerEntries("partner", "ccz"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                        {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Parking</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("partner", "parking", partnerExtraParkingDisplay > 0.02 || bucketHasLedgerEntries("partner", "parking"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                        {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
+                      </span>
                     </div>
                     {hasPartnerDeductions ? (
                       <div className="space-y-1 border-t border-border-light/70 pt-2 mt-1 dark:border-[#323a46]">
@@ -9055,12 +8994,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ) : null}
                     <div className="flex items-center justify-between gap-2 py-1 text-xs">
                       <span className="text-text-secondary">Materials</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
-                        </span>
-                        {renderExtraCategoryPencil("partner", "materials", partnerMaterialsLine > 0.02 || bucketHasLedgerEntries("partner", "materials"))}
-                      </div>
+                      <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                        {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
+                      </span>
                     </div>
                   </div>
                   {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
@@ -9114,7 +9050,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   )}
                                   {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
                                   <span
                                     className="text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-300"
                                     title="Reduces amount due only"
@@ -9164,7 +9100,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   </div>
                                   {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
                                   <span
                                     className="text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400"
                                     title="Positive partner cost (legacy row)"
@@ -10368,6 +10304,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   size="sm"
                   variant="primary"
+                  className="whitespace-nowrap !flex-nowrap"
                   icon={<Plus className="h-3.5 w-3.5" />}
                   disabled={job.status === "cancelled" || job.status === "deleted"}
                   onClick={() => openMoneyFlowFromHub("client_pay")}
@@ -10466,6 +10403,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   size="sm"
                   variant="primary"
+                  className="whitespace-nowrap !flex-nowrap"
                   icon={<Plus className="h-3.5 w-3.5" />}
                   disabled={!job.partner_id?.trim() || job.status === "cancelled"}
                   onClick={() => openMoneyFlowFromHub("partner_pay")}

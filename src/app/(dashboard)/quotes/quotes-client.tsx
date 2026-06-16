@@ -8285,7 +8285,7 @@ async function executeManualQuoteSend(quote: Quote, snapshot: ManualQuoteReviewS
   );
   if (!recipient.includes("@")) {
     throw new Error(
-      'No customer inbox found — pick a contact with email, add a Billing email on the account, or set Billing on Accounts to route quotes to “This account” with a Finance email.',
+      'No customer inbox found — for Fixfy / end-customer accounts, tick “Add a contact client” and pick someone with an email. For B2B accounts, set Billing to “This account” with a Finance email.',
     );
   }
   if (recipient !== bidPayloadTrimmedString(rowForSend.client_email as unknown)) {

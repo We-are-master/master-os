@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { tryGetFixfyAccountId } from "@/lib/fixfy-account";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 export type AccountBillingAddresseeMode = "end_client" | "account";
@@ -96,6 +97,28 @@ async function fetchAccountForBilling(
   return null;
 }
 
+/** Fixfy corporate account is always B2C — never bill Victor / ops inbox as the quote customer. */
+async function accountQuoteBillingMode(
+  supabase: SupabaseClient,
+  accountId: string,
+  billingType: string | null | undefined,
+): Promise<AccountBillingAddresseeMode> {
+  const fixfyId = await tryGetFixfyAccountId(supabase);
+  if (fixfyId && accountId === fixfyId) return "end_client";
+  return billingType === "account" ? "account" : "end_client";
+}
+
+async function accountInboxEmailForQuote(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<string> {
+  const a = await fetchAccountForBilling(supabase, accountId);
+  if (!a) return "";
+  const mode = await accountQuoteBillingMode(supabase, accountId, a.billing_type);
+  if (mode === "end_client") return "";
+  return a.finance_email?.trim() || a.email?.trim() || "";
+}
+
 /**
  * Resolves the nominal customer on quotes/invoices (B2C contact vs B2B2C account)
  * from `clients` + `accounts.billing_type` and account finance contact.
@@ -152,7 +175,7 @@ export async function resolveNominalBillingParty(
       mode: "end_client",
     };
   }
-  const mode: AccountBillingAddresseeMode = a.billing_type === "account" ? "account" : "end_client";
+  const mode = await accountQuoteBillingMode(supabase, sourceId, a.billing_type);
   if (mode === "end_client") {
     return {
       displayName: c.full_name?.trim() || fbName,
@@ -186,8 +209,8 @@ export type QuoteProposalRecipientArgs = {
  * Default “customer” email for the quote drawer / proposal send pipeline.
  *
  * - **With `clientId`**: same rules as [`resolveNominalBillingParty`] (`billing_type`: account vs end_client).
- * - **Property-linked (`propertyId` only)**: use that site’s linked account **`finance_email` then `accounts.email`**.
- * - **`accountId` only** (draft / picker before `property_id` exists): same finance/main email fallback as the property-only path.
+ * - **Property-linked (`propertyId` only)**: account inbox only when Billing = “This account”.
+ * - **`accountId` only** (no contact on quote): same — Fixfy / end-client accounts need a contact email.
  *
  * Returns a trimmed address or **`""`** when unresolved.
  */
@@ -216,19 +239,11 @@ export async function getQuoteProposalRecipientEmail(
       .is("deleted_at", null)
       .maybeSingle();
     if (error || !propRow?.account_id?.trim()) return "";
-    const a = await fetchAccountForBilling(supabase, propRow.account_id.trim());
-    if (!a) return "";
-    const fe = a.finance_email?.trim();
-    const main = a.email?.trim();
-    return fe || main || "";
+    return accountInboxEmailForQuote(supabase, propRow.account_id.trim());
   }
 
   if (aidFallback) {
-    const a = await fetchAccountForBilling(supabase, aidFallback);
-    if (!a) return "";
-    const fe = a.finance_email?.trim();
-    const main = a.email?.trim();
-    return fe || main || "";
+    return accountInboxEmailForQuote(supabase, aidFallback);
   }
 
   return "";
