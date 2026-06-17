@@ -100,6 +100,12 @@ function resolveLinkKind(
     : "trade_onboarding";
 }
 
+/** Trade portal express invite — one-click onboarding entry (no OTP). */
+function tradePortalInviteUrl(tradePortalBaseUrl: string, inviteCode: string): string {
+  const base = tradePortalBaseUrl.replace(/\/$/, "");
+  return `${base}/invite?invite=${encodeURIComponent(inviteCode.trim())}`;
+}
+
 /** Trade portal login — partners sign in or claim an OS invite here. */
 function tradePortalLoginUrl(tradePortalBaseUrl: string, email: string, inviteCode?: string | null): string {
   const base = tradePortalBaseUrl.replace(/\/$/, "");
@@ -149,6 +155,7 @@ async function sendPartnerEmail(
     partnerEmail: string;
     partnerName: string;
     onboardingUrl: string;
+    signInUrl?: string;
     expiresAt: Date;
     customMessage?: string;
     linkKind: PartnerPortalLinkKind;
@@ -161,6 +168,7 @@ async function sendPartnerEmail(
           contactName: input.partnerName,
           email: input.partnerEmail,
           onboardingUrl: input.onboardingUrl,
+          signInUrl: input.signInUrl,
           customMessage: input.customMessage,
         })
       : buildPartnerUploadEmailHTML(branding, {
@@ -258,7 +266,7 @@ export async function createPartnerPortalLink(
       tokenId = tokenRow.id;
       expiresAtIso = tokenRow.expires_at;
       inviteCode = tokenRow.short_code;
-      onboardingUrl = tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail, inviteCode);
+      onboardingUrl = tradePortalInviteUrl(tradePortalBaseUrl, inviteCode);
     } else {
       onboardingUrl = tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail);
     }
@@ -285,10 +293,17 @@ export async function createPartnerPortalLink(
   let warning: string | undefined;
 
   if (sendEmail) {
+    const signInUrl =
+      linkKind === "trade_onboarding" && inviteCode
+        ? tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail, inviteCode)
+        : linkKind === "trade_onboarding" && authUserId
+          ? tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail)
+          : undefined;
     const mail = await sendPartnerEmail(supabase, {
       partnerEmail,
       partnerName,
       onboardingUrl,
+      signInUrl,
       expiresAt: new Date(expiresAtIso),
       customMessage,
       linkKind,

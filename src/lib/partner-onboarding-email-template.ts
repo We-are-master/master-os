@@ -12,6 +12,8 @@ export interface PartnerOnboardingEmailOptions {
   contactName: string;
   email: string;
   onboardingUrl: string;
+  /** Pre-filled login URL for partners who already started setup. */
+  signInUrl?: string;
   customMessage?: string;
 }
 
@@ -75,6 +77,11 @@ export function buildPartnerOnboardingRefreshEmailHTML(
   html = replaceAll(html, "partner_name", escapeHtml(contactName));
   html = replaceAll(html, "partner_email", escapeHtml(options.email.trim()));
   html = replaceAll(html, "onboarding_url", escapeHtml(options.onboardingUrl));
+  html = replaceAll(
+    html,
+    "sign_in_url",
+    escapeHtml(options.signInUrl?.trim() || options.onboardingUrl),
+  );
   html = replaceAll(html, "support_email", escapeHtml(supportEmail));
   html = replaceAll(html, "company_name", escapeHtml(companyName));
   html = replaceAll(html, "company_address", escapeHtml(branding.address?.trim() || "124 City Road, London EC1V 2NX, United Kingdom"));
