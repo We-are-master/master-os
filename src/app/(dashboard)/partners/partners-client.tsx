@@ -231,6 +231,32 @@ function PartnersDirectoryGridCheckbox({
   );
 }
 
+function PartnerRevenueLevelCell({
+  totalEarnings,
+  monthEarned,
+  maxAmount,
+  className,
+  valueClassName,
+}: {
+  totalEarnings: number;
+  monthEarned: number;
+  maxAmount: number;
+  className?: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className={cn("space-y-2 min-w-0", className)}>
+      <PartnerRevenueMeter
+        amount={totalEarnings}
+        maxAmount={maxAmount}
+        className="text-center"
+        valueClassName={valueClassName ?? "text-sm"}
+      />
+      <PartnerLevelBadge monthEarned={monthEarned} className="items-center w-full" />
+    </div>
+  );
+}
+
 function PartnerRevenueMeter({
   amount,
   maxAmount,
@@ -475,21 +501,15 @@ function PartnersDirectoryGridView({
                       <dd className="font-semibold text-sm text-text-primary tabular-nums">{item.jobs_completed}</dd>
                     </div>
                     <div className="col-span-2">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Revenue</dt>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">
+                        Revenue / Level
+                      </dt>
                       <dd>
-                        <PartnerRevenueMeter
-                          amount={item.total_earnings}
+                        <PartnerRevenueLevelCell
+                          totalEarnings={item.total_earnings}
+                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
                           maxAmount={maxEarningsInView}
                           valueClassName="text-lg"
-                        />
-                      </dd>
-                    </div>
-                    <div className="col-span-2">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Month level</dt>
-                      <dd>
-                        <PartnerLevelBadge
-                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
-                          className="items-start"
                         />
                       </dd>
                     </div>
@@ -1936,7 +1956,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "company_name",
       label: "Partner",
-      width: "24%",
+      width: "26%",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => (
@@ -1972,7 +1992,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     {
       key: "location",
       label: "Coverage",
-      width: "16%",
+      width: "18%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
@@ -1993,38 +2013,25 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     },
     {
       key: "total_earnings",
-      label: "Revenue",
-      width: "16%",
+      label: "Revenue / Level",
+      width: "18%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       sortable: true,
       render: (item) => (
-        <PartnerRevenueMeter
-          amount={item.total_earnings}
-          maxAmount={maxEarningsInView}
-          className="mx-auto w-full max-w-[9rem] text-center"
-        />
-      ),
-    },
-    {
-      key: "month_level",
-      label: "Level",
-      width: "12%",
-      align: "center",
-      headerClassName: partnersTableHeader,
-      cellClassName: partnersTableCell,
-      render: (item) => (
-        <PartnerLevelBadge
+        <PartnerRevenueLevelCell
+          totalEarnings={item.total_earnings}
           monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
-          className="mx-auto w-full max-w-[8.5rem]"
+          maxAmount={maxEarningsInView}
+          className="mx-auto w-full max-w-[10.5rem]"
         />
       ),
     },
     {
       key: "compliance_score",
       label: "Compliance",
-      width: "12%",
+      width: "14%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,

@@ -29,7 +29,16 @@ import {
 } from "@/lib/account-payment-due-date";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { toast } from "sonner";
-import type { Account, CatalogService, Client, Job, Invoice } from "@/types/database";
+import type { Account, AccountLegacyYearlyStat, CatalogService, Client, Job, Invoice } from "@/types/database";
+import { listAccountLegacyYearlyStats, fetchLegacyRevenueTotalsByAccount } from "@/services/account-legacy-stats";
+import { AccountOverviewGlance } from "@/components/accounts/account-overview-glance";
+import { AccountHistorySection } from "@/components/accounts/account-history-section";
+import {
+  accountRelationshipRevenueTotal,
+  accountRevenueRankMedal,
+  buildAccountRevenueRankMap,
+  sumLegacyRevenueMap,
+} from "@/lib/account-insights";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { catalogServiceLabelsForIds } from "@/lib/catalog-trade-ids";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
@@ -100,6 +109,8 @@ const ACCOUNT_STATUS_OPTIONS = [
 const ACCOUNTS_VIEW_STORAGE_KEY = "master-os-accounts-view";
 
 const ACCOUNTS_LIST_PAGE_SIZE = 10;
+/** Fetch all accounts in one request so revenue + legacy ranking/sort is global (not per server page). */
+const ACCOUNTS_FETCH_PAGE_SIZE = 500;
 
 type AccountsDisplayMode = "list" | "grid";
 
@@ -214,10 +225,6 @@ export default function AccountsPage() {
   const {
     data,
     loading,
-    page,
-    totalPages,
-    totalItems,
-    setPage,
     search,
     setSearch,
     status,
@@ -225,9 +232,12 @@ export default function AccountsPage() {
     refresh,
   } = useSupabaseList<Account>({
     fetcher: listAccounts,
+    pageSize: ACCOUNTS_FETCH_PAGE_SIZE,
     realtimeTable: "accounts",
     initialStatus: "active",
   });
+
+  const [listPage, setListPage] = useState(1);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -312,25 +322,81 @@ export default function AccountsPage() {
     void listActiveAssignableUsers().then(setCreateAssignableUsers).catch(() => setCreateAssignableUsers([]));
   }, [createOpen]);
 
-  const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
+  const [legacyRevenueByAccount, setLegacyRevenueByAccount] = useState<Record<string, number>>({});
+
+  const loadLegacyRevenueTotals = useCallback(async () => {
+    try {
+      const totals = await fetchLegacyRevenueTotalsByAccount();
+      setLegacyRevenueByAccount(totals);
+    } catch {
+      setLegacyRevenueByAccount({});
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLegacyRevenueTotals();
+  }, [loadLegacyRevenueTotals]);
+
+  const relationshipRevenueFor = useCallback(
+    (account: Account) =>
+      accountRelationshipRevenueTotal(
+        account.total_revenue,
+        legacyRevenueByAccount[account.id] ?? 0,
+      ),
+    [legacyRevenueByAccount],
+  );
+
   const activeAccountCount = accountStatusCounts.active ?? 0;
   const inactiveAccountCount = accountStatusCounts.inactive ?? 0;
+
+  useEffect(() => {
+    setListPage(1);
+  }, [status, search]);
 
   const sortedListData = useMemo(() => {
     const sortKey = listSortKey ?? "total_revenue";
     const rows = [...data];
     const dir = listSortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
-      const av = sortKey === "active_jobs" ? Number(a.active_jobs) || 0 : Number(a.total_revenue) || 0;
-      const bv = sortKey === "active_jobs" ? Number(b.active_jobs) || 0 : Number(b.total_revenue) || 0;
-      return (av - bv) * dir;
+      if (sortKey === "active_jobs") {
+        return ((Number(a.active_jobs) || 0) - (Number(b.active_jobs) || 0)) * dir;
+      }
+      return (relationshipRevenueFor(a) - relationshipRevenueFor(b)) * dir;
     });
     return rows;
-  }, [data, listSortKey, listSortDir]);
+  }, [data, listSortKey, listSortDir, relationshipRevenueFor]);
+
+  const clientTotalPages = Math.max(1, Math.ceil(sortedListData.length / ACCOUNTS_LIST_PAGE_SIZE));
+
+  const pageListData = useMemo(() => {
+    const start = (listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE;
+    return sortedListData.slice(start, start + ACCOUNTS_LIST_PAGE_SIZE);
+  }, [sortedListData, listPage]);
+
+  useEffect(() => {
+    if (listPage > clientTotalPages) setListPage(clientTotalPages);
+  }, [listPage, clientTotalPages]);
+
+  const showRevenueMedals =
+    (listSortKey ?? "total_revenue") === "total_revenue" && listSortDir === "desc";
+
+  const revenueRankByAccountId = useMemo(() => {
+    if (!showRevenueMedals) return new Map<string, number>();
+    return buildAccountRevenueRankMap(sortedListData, legacyRevenueByAccount);
+  }, [sortedListData, legacyRevenueByAccount, showRevenueMedals]);
+
+  const legacyRevenueTotal = useMemo(
+    () => sumLegacyRevenueMap(legacyRevenueByAccount),
+    [legacyRevenueByAccount],
+  );
+
+  const combinedTotalRevenue = totalRevenue + legacyRevenueTotal;
+
+  const avgDeal = totalAccounts > 0 ? Math.round(combinedTotalRevenue / totalAccounts) : 0;
 
   const maxRevenueInView = useMemo(
-    () => Math.max(1, ...sortedListData.map((a) => Number(a.total_revenue) || 0)),
-    [sortedListData],
+    () => Math.max(1, ...sortedListData.map((a) => relationshipRevenueFor(a))),
+    [sortedListData, relationshipRevenueFor],
   );
 
   const handleSyncDueDates = async () => {
@@ -489,8 +555,20 @@ export default function AccountsPage() {
         const isActive = item.status === "active";
         const serviceLabels = catalogServiceLabelsForIds(item.catalog_service_ids, catalogServices);
         const industry = item.industry?.trim();
+        const rank = revenueRankByAccountId.get(item.id);
+        const medal = accountRevenueRankMedal(rank);
         return (
           <div className="flex items-center gap-3 min-w-0">
+            {medal ? (
+              <span
+                className="text-lg shrink-0 leading-none w-6 text-center"
+                title={`${rank}${rank === 1 ? "st" : rank === 2 ? "nd" : "rd"} by revenue`}
+              >
+                {medal}
+              </span>
+            ) : (
+              <span className="w-6 shrink-0" aria-hidden />
+            )}
             <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 min-w-0">
@@ -551,10 +629,10 @@ export default function AccountsPage() {
       cellClassName: accountsTableCell,
       sortable: true,
       render: (item) => {
-        const rev = Number(item.total_revenue) || 0;
+        const rev = relationshipRevenueFor(item);
         const pct = Math.round((rev / maxRevenueInView) * 100);
         return (
-          <div className="mx-auto w-full max-w-[9rem] space-y-1.5 text-center">
+          <div className="mx-auto w-full max-w-[9.5rem] space-y-1 text-center">
             <span className="block text-sm font-bold tabular-nums text-text-primary">
               {formatCurrency(rev)}
             </span>
@@ -615,7 +693,7 @@ export default function AccountsPage() {
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto" aria-hidden />,
     },
   ],
-    [accountsTableCell, accountsTableHeader, catalogServices, maxRevenueInView, paymentOrgCtx],
+    [accountsTableCell, accountsTableHeader, catalogServices, legacyRevenueByAccount, maxRevenueInView, paymentOrgCtx, relationshipRevenueFor, revenueRankByAccountId],
   );
 
 
@@ -652,7 +730,7 @@ export default function AccountsPage() {
           />
           <KpiCard
             title="Total Revenue"
-            value={totalRevenue}
+            value={combinedTotalRevenue}
             format="currency"
             description="All-time across accounts"
             icon={DollarSign}
@@ -686,7 +764,7 @@ export default function AccountsPage() {
             </div>
             <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:min-w-[18rem] md:max-w-[34rem] shrink-0">
               <p className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap md:hidden">
-                {totalItems} {totalItems === 1 ? "account" : "accounts"}
+                {sortedListData.length} {sortedListData.length === 1 ? "account" : "accounts"}
               </p>
               <div className="flex items-center gap-2 w-full min-w-0">
                 <div
@@ -737,18 +815,18 @@ export default function AccountsPage() {
           <>
           <DataTable
             columns={columns}
-            data={sortedListData}
+            data={pageListData}
             columnConfigKey="accounts-columns"
             columnConfigScope={status}
             tableClassName="w-full table-fixed"
             className="border-0 shadow-none rounded-none"
             getRowId={(item) => item.id}
             loading={loading}
-            page={page}
-            totalPages={totalPages}
-            totalItems={totalItems}
+            page={listPage}
+            totalPages={clientTotalPages}
+            totalItems={sortedListData.length}
             pageSize={ACCOUNTS_LIST_PAGE_SIZE}
-            onPageChange={setPage}
+            onPageChange={setListPage}
             onRowClick={openAccountDetail}
             selectedId={selectedAccount?.id}
             selectable
@@ -770,13 +848,13 @@ export default function AccountsPage() {
               </div>
             }
           />
-          {accountsDisplayMode === "list" && totalItems > 0 ? (
+          {accountsDisplayMode === "list" && sortedListData.length > 0 ? (
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
               <span>
-                Showing {(page - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(page * ACCOUNTS_LIST_PAGE_SIZE, totalItems)} of {totalItems} accounts
+                Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
               </span>
               <span className="tabular-nums">
-                Total revenue {formatCurrency(totalRevenue)} · Active jobs {totalJobs}
+                Total revenue {formatCurrency(combinedTotalRevenue)} · Active jobs {totalJobs}
               </span>
             </div>
           ) : null}
@@ -784,12 +862,12 @@ export default function AccountsPage() {
           ) : (
             <AccountsGridView
               embedded
-              data={sortedListData}
+              data={pageListData}
               loading={loading}
-              page={page}
-              totalPages={totalPages}
-              totalItems={totalItems}
-              onPageChange={setPage}
+              page={listPage}
+              totalPages={clientTotalPages}
+              totalItems={sortedListData.length}
+              onPageChange={setListPage}
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
               selectedDetailId={selectedAccount?.id}
@@ -797,6 +875,9 @@ export default function AccountsPage() {
               accountOwnerDirectory={accountOwnerDirectory}
               catalogServices={catalogServices}
               paymentOrgCtx={paymentOrgCtx}
+              legacyRevenueByAccount={legacyRevenueByAccount}
+              revenueRankByAccountId={revenueRankByAccountId}
+              relationshipRevenueFor={relationshipRevenueFor}
               bulkActionButtons={
                 <>
                   <BulkBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -815,10 +896,12 @@ export default function AccountsPage() {
           loading={detailLoading}
           paymentOrgCtx={paymentOrgCtx}
           onClose={() => setSelectedAccount(null)}
+          onLegacyRevenueChanged={() => void loadLegacyRevenueTotals()}
           onAccountUpdated={(a) => {
             setSelectedAccount(a);
             refresh();
             loadKpis();
+            void loadLegacyRevenueTotals();
           }}
         />
       ) : null}
@@ -1056,6 +1139,9 @@ function AccountsGridView({
   accountOwnerDirectory,
   catalogServices,
   paymentOrgCtx,
+  legacyRevenueByAccount,
+  revenueRankByAccountId,
+  relationshipRevenueFor,
   bulkActionButtons,
   embedded = false,
 }: {
@@ -1072,6 +1158,9 @@ function AccountsGridView({
   accountOwnerDirectory: AssignableUser[];
   catalogServices: CatalogService[];
   paymentOrgCtx: AccountPaymentOrgContext;
+  legacyRevenueByAccount: Record<string, number>;
+  revenueRankByAccountId: Map<string, number>;
+  relationshipRevenueFor: (account: Account) => number;
   bulkActionButtons: ReactNode;
   embedded?: boolean;
 }) {
@@ -1167,6 +1256,9 @@ function AccountsGridView({
             const statusAccent = ACCOUNT_STATUS_ACCENT[item.status] ?? ACCOUNT_STATUS_ACCENT.inactive;
             const serviceLabels = catalogServiceLabelsForIds(item.catalog_service_ids, catalogServices);
             const industry = item.industry?.trim();
+            const rank = revenueRankByAccountId.get(id);
+            const medal = accountRevenueRankMedal(rank);
+            const totalRev = relationshipRevenueFor(item);
             return (
               <div
                 key={id}
@@ -1206,6 +1298,14 @@ function AccountsGridView({
 
                 <div className="p-4 pt-11 sm:pr-4">
                   <div className="flex gap-3 min-w-0">
+                    {medal ? (
+                      <span
+                        className="text-xl shrink-0 leading-none pt-0.5"
+                        title={`${rank}${rank === 1 ? "st" : rank === 2 ? "nd" : "rd"} by revenue`}
+                      >
+                        {medal}
+                      </span>
+                    ) : null}
                     <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
                     <div className="min-w-0 flex-1 pr-1">
                       <p className="text-sm font-semibold text-text-primary leading-snug truncate">{item.company_name}</p>
@@ -1243,7 +1343,7 @@ function AccountsGridView({
                     </div>
                     <div>
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Revenue</dt>
-                      <dd className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(item.total_revenue)}</dd>
+                      <dd className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(totalRev)}</dd>
                     </div>
                     <div className="col-span-2">
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit</dt>
@@ -1330,18 +1430,21 @@ function AccountDetailDrawer({
   paymentOrgCtx,
   onClose,
   onAccountUpdated,
+  onLegacyRevenueChanged,
 }: {
   account: Account | null;
   loading: boolean;
   paymentOrgCtx: AccountPaymentOrgContext;
   onClose: () => void;
   onAccountUpdated: (a: Account) => void;
+  onLegacyRevenueChanged?: () => void;
 }) {
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
   const [tab, setTab] = useState("overview");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [legacyRows, setLegacyRows] = useState<AccountLegacyYearlyStat[]>([]);
   const [loadingExtras, setLoadingExtras] = useState(false);
   // Clients tab — paginated independently
   const [clientsRows, setClientsRows] = useState<Client[]>([]);
@@ -1448,11 +1551,16 @@ function AccountDetailDrawer({
     setLoadingExtras(true);
     setJobs([]);
     setInvoices([]);
+    setLegacyRows([]);
     (async () => {
       try {
-        const jobList = await listJobsLinkedToAccount(account.id, account.company_name);
+        const [jobList, legacy] = await Promise.all([
+          listJobsLinkedToAccount(account.id, account.company_name),
+          listAccountLegacyYearlyStats(account.id).catch(() => [] as AccountLegacyYearlyStat[]),
+        ]);
         if (cancelled) return;
         setJobs(jobList);
+        setLegacyRows(legacy);
         const refs = jobList.map((j) => j.reference).filter(Boolean);
         if (refs.length > 0) {
           const inv = await listInvoicesForJobReferences(refs);
@@ -1710,7 +1818,7 @@ function AccountDetailDrawer({
             { id: "jobs", label: "Jobs", count: jobs.length || undefined },
             { id: "clients", label: "Clients", count: clientsTotal || undefined },
             { id: "finance", label: "Finance", count: invoices.length || undefined },
-            { id: "portal", label: "Portal User" },
+            { id: "portal", label: "Portal" },
           ]}
         />
       </div>
@@ -1720,38 +1828,15 @@ function AccountDetailDrawer({
         {/* ── Overview tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
           <>
-            {/* Account value hero */}
-            <div className="rounded-2xl border border-border-light bg-white p-5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-2">
-                Account value · All time
-              </p>
-              <div className="flex items-baseline gap-2 mb-3">
-                <span className="text-3xl font-bold tabular-nums text-text-primary">
-                  {formatCurrency(account.total_revenue)}
-                </span>
-                {(loading || loadingExtras) && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary" />
-                )}
-              </div>
-              <div className="h-[2px] rounded-full bg-[#ED4B00] mb-3" />
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
-                <span className="flex items-center gap-1.5 text-text-secondary">
-                  <span className="h-2 w-2 rounded-full bg-[#020040] shrink-0" />
-                  Invoiced <strong className="tabular-nums">{formatCurrency(invoicedAmt)}</strong>
-                </span>
-                <span className="flex items-center gap-1.5 text-text-secondary">
-                  <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                  Awaiting <strong className="tabular-nums">{formatCurrency(awaitingAmt)}</strong>
-                </span>
-                <span className="flex items-center gap-1.5 text-text-secondary">
-                  <span className="h-2 w-2 rounded-full bg-red-400 shrink-0" />
-                  Overdue <strong className="tabular-nums">{formatCurrency(overdueAmt)}</strong>
-                </span>
-                <span className="ml-auto text-text-tertiary text-xs tabular-nums">
-                  Total <strong className="text-text-primary">{formatCurrency(account.total_revenue)}</strong>
-                </span>
-              </div>
-            </div>
+            <AccountOverviewGlance
+              account={account}
+              jobs={jobs}
+              legacyRows={legacyRows}
+              loading={loading || loadingExtras}
+              invoicedAmt={invoicedAmt}
+              awaitingAmt={awaitingAmt}
+              overdueAmt={overdueAmt}
+            />
 
             {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
             <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
@@ -2364,9 +2449,27 @@ function AccountDetailDrawer({
           />
         )}
 
-        {/* ── Portal users tab ─────────────────────────────────────── */}
+        {/* ── Portal tab (history + portal users) ──────────────────── */}
         {tab === "portal" && account && (
-          <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+          <div className="space-y-6">
+            <AccountHistorySection
+              account={account}
+              jobs={jobs}
+              legacyRows={legacyRows}
+              loading={loadingExtras}
+              isAdmin={isAdmin}
+              onLegacyRowsChange={(rows) => {
+                setLegacyRows(rows);
+                onLegacyRevenueChanged?.();
+              }}
+            />
+            <div className="rounded-2xl border border-border-light bg-white p-5">
+              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider mb-4">
+                Portal users
+              </p>
+              <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+            </div>
+          </div>
         )}
 
       </div>

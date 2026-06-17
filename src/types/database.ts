@@ -904,6 +904,19 @@ export interface Account {
   created_at: string;
 }
 
+/** Yearly completed-job stats from the previous system (mig 245). */
+export interface AccountLegacyYearlyStat {
+  id: string;
+  account_id: string;
+  year: number;
+  completed_jobs_count: number;
+  revenue_gbp: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
 export interface Invoice {
   id: string;
   reference: string;

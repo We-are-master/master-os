@@ -1,0 +1,140 @@
+/*
+ * Pulse — premium dark palette (from pulse-dark-standalone.html).
+ * Scoped to .pulse-dark inside .dark only; light mode unchanged.
+ */
+
+.dark .pulse-dark {
+  /* ── Fixfy fx-* tokens ─────────────────────────────────────────────── */
+  --color-fx-ink: #f3f3f8;
+  --color-fx-slate: #c4c4d6;
+  --color-fx-mute: #8888a1;
+  --color-fx-paper: #0a0a18;
+  --color-fx-paper-2: #1b1b38;
+  --color-fx-line: #1d1d3c;
+  --color-fx-line-2: #252550;
+  --color-fx-green: #34d27b;
+  --color-fx-amber: #f5b133;
+  --color-fx-red: #ff6b6b;
+  --color-fx-blue: #5b9dff;
+  --color-fx-coral-p: #ff7a3c;
+  --color-fx-coral-50: rgb(237 75 0 / 0.16);
+  --color-fx-green-50: rgb(52 210 123 / 0.16);
+  --color-fx-amber-50: rgb(245 177 51 / 0.16);
+  --color-fx-red-50: rgb(255 107 107 / 0.16);
+  --color-fx-blue-50: rgb(91 157 255 / 0.16);
+  --color-fx-navy: #f3f3f8;
+  --color-fx-navy-2: #c4c4d6;
+  --color-fx-navy-3: #8888a1;
+
+  /* ── Semantic app tokens (bg-card, text-text-*, borders) ───────────── */
+  --surface: #0a0a18;
+  --surface-secondary: #0a0a18;
+  --surface-tertiary: #1b1b38;
+  --surface-hover: #1b1b38;
+  --text-primary: #f3f3f8;
+  --text-secondary: #c4c4d6;
+  --text-tertiary: #8888a1;
+  --card-bg: #15152e;
+  --card-border: #1d1d3c;
+
+  /* Hairlines = one tone above card (#15152e → #1d1d3c), not white rgba */
+  --pulse-card-bg: #15152e;
+  --pulse-card-edge: #1d1d3c;
+  --pulse-card-edge-hover: #252550;
+  --border-color: #1d1d3c;
+  --border-light: #1a1a36;
+
+  /* Elevation via shadow only — no bright inset rim (reads as white line) */
+  --shadow-fx-1: 0 10px 26px rgb(0 0 0 / 0.4);
+  --shadow-fx-2: 0 18px 44px rgb(0 0 0 / 0.52);
+  --shadow-fx-3: 0 30px 70px rgb(0 0 0 / 0.6);
+
+  /* ── Charts ────────────────────────────────────────────────────────── */
+  --chart-cursor-overlay: rgb(255 255 255 / 0.04);
+  --chart-reference-dash: rgb(255 255 255 / 0.1);
+
+  /* Full-bleed canvas inside dashboard main padding */
+  background-color: #0a0a18;
+  margin: -1rem;
+  padding: 1rem;
+  min-height: calc(100% + 2rem);
+}
+
+@media (min-width: 640px) {
+  .dark .pulse-dark {
+    margin: -1.5rem;
+    padding: 1.5rem;
+    min-height: calc(100% + 3rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .dark .pulse-dark {
+    margin: -2rem;
+    padding: 2rem;
+    min-height: calc(100% + 4rem);
+  }
+}
+
+/* KPI accent cards — translucent gradients (reference rebuilds light #fff gradients) */
+.dark .pulse-dark .border-fx-coral\/25 {
+  background: linear-gradient(180deg, rgb(237 75 0 / 0.16), rgb(237 75 0 / 0.05)) !important;
+  border-color: rgb(237 75 0 / 0.42) !important;
+}
+
+.dark .pulse-dark .border-fx-red\/25 {
+  background: linear-gradient(180deg, rgb(200 16 46 / 0.16), rgb(200 16 46 / 0.05)) !important;
+  border-color: rgb(255 107 107 / 0.4) !important;
+}
+
+.dark .pulse-dark .border-fx-red\/25 .text-fx-red {
+  color: #ff6b6b;
+}
+
+/* Violet status pill (final_check forecast legend) */
+.dark .pulse-dark .dark\:bg-violet-950\/60 {
+  background-color: rgb(124 58 237 / 0.16);
+}
+
+/* Recharts — brighten stacked bar fills on dark canvas */
+.dark .pulse-dark svg rect[fill="#ED4B00"] {
+  fill: rgb(237 75 0 / 0.88);
+}
+
+.dark .pulse-dark svg rect[fill="#0E8A5F"] {
+  fill: rgb(52 210 123 / 0.78);
+}
+
+.dark .pulse-dark svg rect[fill="#0B5FFF"] {
+  fill: rgb(91 157 255 / 0.78);
+}
+
+.dark .pulse-dark svg rect[fill="#7C3AED"] {
+  fill: rgb(167 139 250 / 0.78);
+}
+
+/* Revenue trend cost line uses var(--text-tertiary); grid / reference lines */
+.dark .pulse-dark .recharts-cartesian-grid line,
+.dark .pulse-dark .recharts-reference-line line {
+  stroke: #1d1d3c;
+}
+
+/* Tables — header/row dividers match card edge, not bright white */
+.dark .pulse-dark table thead th.bg-fx-paper {
+  background-color: #14142a;
+}
+
+.dark .pulse-dark :is(table th, table td, tr).border-fx-line,
+.dark .pulse-dark .border-t.border-fx-line,
+.dark .pulse-dark .border-b.border-fx-line {
+  border-color: var(--pulse-card-edge);
+}
+
+.dark .pulse-dark .hover\:border-fx-line-2:hover {
+  border-color: var(--pulse-card-edge-hover);
+}
+
+/* Segment / toggle tracks sit on card — edge one step up from track */
+.dark .pulse-dark .bg-fx-paper-2.rounded-md {
+  box-shadow: inset 0 0 0 1px #1d1d3c;
+}
