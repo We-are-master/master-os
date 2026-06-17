@@ -231,32 +231,6 @@ function PartnersDirectoryGridCheckbox({
   );
 }
 
-function PartnerRevenueLevelCell({
-  totalEarnings,
-  monthEarned,
-  maxAmount,
-  className,
-  valueClassName,
-}: {
-  totalEarnings: number;
-  monthEarned: number;
-  maxAmount: number;
-  className?: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div className={cn("space-y-2 min-w-0", className)}>
-      <PartnerRevenueMeter
-        amount={totalEarnings}
-        maxAmount={maxAmount}
-        className="text-center"
-        valueClassName={valueClassName ?? "text-sm"}
-      />
-      <PartnerLevelBadge monthEarned={monthEarned} className="items-center w-full" />
-    </div>
-  );
-}
-
 function PartnerRevenueMeter({
   amount,
   maxAmount,
@@ -271,11 +245,11 @@ function PartnerRevenueMeter({
   const earned = Math.round((Number(amount) || 0) * 100) / 100;
   const pct = Math.round((earned / Math.max(1, maxAmount)) * 100);
   return (
-    <div className={cn("space-y-1.5", className)}>
-      <span className={cn("block font-bold tabular-nums text-text-primary", valueClassName ?? "text-sm")}>
+    <div className={cn("flex flex-col items-center gap-0.5 w-full min-w-[3.25rem]", className)}>
+      <span className={cn("font-bold tabular-nums text-text-primary whitespace-nowrap", valueClassName ?? "text-sm")}>
         {formatCurrency(earned)}
       </span>
-      <div className="h-1 w-full rounded-full bg-surface-tertiary overflow-hidden">
+      <div className="h-0.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
         <div
           className="h-full rounded-full bg-primary/75 transition-all"
           style={{ width: `${Math.max(pct, earned > 0 ? 4 : 0)}%` }}
@@ -500,16 +474,22 @@ function PartnersDirectoryGridView({
                       <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Jobs</dt>
                       <dd className="font-semibold text-sm text-text-primary tabular-nums">{item.jobs_completed}</dd>
                     </div>
-                    <div className="col-span-2">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">
-                        Revenue / Level
-                      </dt>
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Revenue</dt>
                       <dd>
-                        <PartnerRevenueLevelCell
-                          totalEarnings={item.total_earnings}
-                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+                        <PartnerRevenueMeter
+                          amount={item.total_earnings}
                           maxAmount={maxEarningsInView}
                           valueClassName="text-lg"
+                        />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Level</dt>
+                      <dd>
+                        <PartnerLevelBadge
+                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+                          dense
                         />
                       </dd>
                     </div>
@@ -2013,18 +1993,32 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     },
     {
       key: "total_earnings",
-      label: "Revenue / Level",
-      width: "18%",
+      label: "Revenue",
+      width: "11%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       sortable: true,
       render: (item) => (
-        <PartnerRevenueLevelCell
-          totalEarnings={item.total_earnings}
-          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+        <PartnerRevenueMeter
+          amount={item.total_earnings}
           maxAmount={maxEarningsInView}
-          className="mx-auto w-full max-w-[10.5rem]"
+          className="mx-auto w-fit max-w-[9rem]"
+        />
+      ),
+    },
+    {
+      key: "month_earnings",
+      label: "Level",
+      width: "12%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: (item) => (
+        <PartnerLevelBadge
+          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
+          dense
+          className="mx-auto w-fit max-w-[9rem]"
         />
       ),
     },
@@ -4625,6 +4619,21 @@ function PartnerDetailDrawer({
         partner_status_reasons: force ? ["force_activated"] : [],
       });
       setActivateForceOpen(false);
+      try {
+        const res = await fetch(`/api/partners/${partner.id}/send-activated-email`, { method: "POST" });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; warning?: string; error?: string };
+        if (res.ok && data.sentTo) {
+          toast.success(`Partner activated — welcome email sent to ${data.sentTo}`);
+        } else if (data.warning) {
+          toast.success("Partner activated (email not sent — Resend not configured)");
+        } else if (!res.ok) {
+          toast.error(data.error ?? "Partner activated but welcome email failed");
+        } else {
+          toast.success("Partner activated");
+        }
+      } catch {
+        toast.success("Partner activated");
+      }
     },
     [partner, computedCompliance, onPartnerPatch],
   );

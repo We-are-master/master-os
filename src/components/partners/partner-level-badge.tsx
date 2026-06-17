@@ -111,14 +111,39 @@ export function PartnerLevelBadge({
   monthEarned,
   weekEarned,
   className,
+  dense = false,
 }: {
   monthEarned: number;
   weekEarned?: number;
   className?: string;
+  /** Tighter layout for Revenue / Level table column — bar matches revenue width. */
+  dense?: boolean;
 }) {
   const thresholds = usePartnerLevelThresholds();
   const state = levelFromEarnings(monthEarned, weekEarned, thresholds);
   const toneClass = TONE_CLASS[state.tone];
+
+  if (dense) {
+    return (
+      <div className={cn("min-w-0 w-full", className)}>
+        <div className="flex items-center justify-center gap-1 min-w-0">
+          <PartnerLevelIcon level={state.level} icon={state.icon} tone={state.tone} size="sm" className="h-5 w-5 [&_svg]:h-3 [&_svg]:w-3" />
+          <p className="text-[10px] font-semibold text-text-primary truncate leading-tight">
+            L{state.level} · {state.name}
+          </p>
+        </div>
+        <p className="text-[9px] text-text-tertiary tabular-nums text-center leading-tight mt-0.5">
+          {state.pct}% of goal
+        </p>
+        <div className="h-0.5 w-full rounded-full bg-surface-tertiary overflow-hidden mt-0.5">
+          <div
+            className={cn("h-full rounded-full transition-all", toneClass.bar)}
+            style={{ width: `${state.barPct}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("flex flex-col items-center gap-1 min-w-0", className)}>
