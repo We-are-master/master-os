@@ -41,6 +41,7 @@ export type CreatePartnerPortalLinkResult = {
   shortUrl: string;
   expiresAt: string;
   tokenId: string | null;
+  inviteCode?: string | null;
   sentTo?: string;
   emailSent?: boolean;
   emailError?: string | null;
@@ -99,9 +100,12 @@ function resolveLinkKind(
     : "trade_onboarding";
 }
 
-/** Trade portal home — partners sign in or create an account here (not /join invite deep links). */
-function tradePortalHomeUrl(tradePortalBaseUrl: string): string {
-  return `${tradePortalBaseUrl.replace(/\/$/, "")}/`;
+/** Trade portal login — partners sign in or claim an OS invite here. */
+function tradePortalLoginUrl(tradePortalBaseUrl: string, email: string, inviteCode?: string | null): string {
+  const base = tradePortalBaseUrl.replace(/\/$/, "");
+  const params = new URLSearchParams({ email });
+  if (inviteCode?.trim()) params.set("invite", inviteCode.trim());
+  return `${base}/login?${params.toString()}`;
 }
 
 async function insertPortalTokenWithRetry(
@@ -237,11 +241,10 @@ export async function createPartnerPortalLink(
   let onboardingUrl = "";
   let fullUrl = "";
   let tokenId: string | null = null;
+  let inviteCode: string | null = null;
   let expiresAtIso = expiresAt.toISOString();
 
   if (linkKind === "trade_onboarding") {
-    onboardingUrl = tradePortalHomeUrl(tradePortalBaseUrl);
-    fullUrl = onboardingUrl;
     if (!authUserId) {
       const rawToken = generatePartnerPortalTokenRaw();
       const shortCode = generatePartnerPortalShortCode();
@@ -254,7 +257,12 @@ export async function createPartnerPortalLink(
       });
       tokenId = tokenRow.id;
       expiresAtIso = tokenRow.expires_at;
+      inviteCode = tokenRow.short_code;
+      onboardingUrl = tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail, inviteCode);
+    } else {
+      onboardingUrl = tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail);
     }
+    fullUrl = onboardingUrl;
   } else {
     const rawToken = generatePartnerPortalTokenRaw();
     const shortCode = generatePartnerPortalShortCode();
@@ -320,6 +328,7 @@ export async function createPartnerPortalLink(
     fullUrl,
     expiresAt: expiresAtIso,
     tokenId,
+    inviteCode,
     sentTo: partnerEmail,
     emailSent,
     emailError,
