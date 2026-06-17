@@ -3403,6 +3403,7 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   contract: { label: "Contract", icon: FileText },
   tax: { label: "Tax Document", icon: DollarSign },
   utr: { label: "UTR / HMRC", icon: DollarSign },
+  company_registration: { label: "Proof of company", icon: FileText },
   service_agreement: { label: "Service Agreement", icon: FileText },
   self_bill_agreement: { label: "Self Bill Agreement", icon: FileText },
   id_proof: { label: "ID Proof", icon: Users },

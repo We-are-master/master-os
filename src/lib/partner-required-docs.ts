@@ -8,7 +8,7 @@ export type PartnerDocRuleRow = {
   mandatory: boolean;
 };
 
-export type PartnerDocCatalogGroup = "core" | "utr" | "agreement" | "trade_cert" | "extra";
+export type PartnerDocCatalogGroup = "core" | "legal" | "utr" | "agreement" | "trade_cert" | "extra";
 
 export type PartnerDocCatalogEntry = {
   id: string;
@@ -38,6 +38,7 @@ export interface PartnerDocLike {
 
 const DOC_TYPES_NO_EXPIRY = new Set([
   "utr",
+  "company_registration",
   "service_agreement",
   "self_bill_agreement",
   "proof_of_address",
@@ -134,6 +135,15 @@ export const UTR_REQUIRED_DOC: RequiredDocDef = {
   aliases: ["utr", "hmrc", "unique taxpayer", "utr (hmrc)", "tax reference"],
 };
 
+/** Limited companies only — Certificate of Incorporation / Companies House record. */
+export const COMPANY_REGISTRATION_REQUIRED_DOC: RequiredDocDef = {
+  id: "company_registration",
+  name: "Proof of company",
+  description: "Certificate of Incorporation or Companies House record",
+  docType: "company_registration",
+  aliases: ["proof of company", "incorporation", "companies house", "company registration"],
+};
+
 /** Always included in blended document score (with core mandatory IDs). */
 export const AGREEMENT_REQUIRED_DOCS: RequiredDocDef[] = [
   {
@@ -214,6 +224,12 @@ export function getPartnerDocumentCatalogForSetup(): PartnerDocCatalogEntry[] {
     description: `${UTR_REQUIRED_DOC.description} (self-employed partners only)`,
     group: "utr",
   };
+  const companyReg: PartnerDocCatalogEntry = {
+    id: COMPANY_REGISTRATION_REQUIRED_DOC.id,
+    name: COMPANY_REGISTRATION_REQUIRED_DOC.name,
+    description: `${COMPANY_REGISTRATION_REQUIRED_DOC.description} (limited companies only)`,
+    group: "legal",
+  };
   const agreements = AGREEMENT_REQUIRED_DOCS.map((d) => ({
     id: d.id,
     name: d.name,
@@ -226,7 +242,7 @@ export function getPartnerDocumentCatalogForSetup(): PartnerDocCatalogEntry[] {
     description: d.description,
     group: "extra" as const,
   }));
-  return [...core, utr, ...agreements, ...getAllTradeCertificateCatalogEntries(), ...extras];
+  return [...core, utr, companyReg, ...agreements, ...getAllTradeCertificateCatalogEntries(), ...extras];
 }
 
 /** Default rules = current product behaviour before any Setup overrides. */
@@ -292,9 +308,14 @@ export function buildMandatoryDocsChecklist(
   rules?: PartnerDocRuleRow[] | null,
 ): RequiredDocDef[] {
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
-  const withUtr =
-    partner && inferPartnerLegal(partner) === "self_employed" ? [...core, UTR_REQUIRED_DOC] : [...core];
-  return filterDefsByRules([...withUtr, ...AGREEMENT_REQUIRED_DOCS], rules);
+  const legal =
+    partner && inferPartnerLegal(partner) === "self_employed"
+      ? UTR_REQUIRED_DOC
+      : partner && inferPartnerLegal(partner) === "limited_company"
+        ? COMPANY_REGISTRATION_REQUIRED_DOC
+        : null;
+  const withLegal = legal ? [...core, legal] : [...core];
+  return filterDefsByRules([...withLegal, ...AGREEMENT_REQUIRED_DOCS], rules);
 }
 
 /**
@@ -380,10 +401,13 @@ export function buildRequiredDocumentChecklist(
 ): RequiredDocDef[] {
   const tradeCerts = buildTradeCertificateRequirements(trades, rules);
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
-  const base =
+  const legal =
     partner && inferPartnerLegal(partner) === "self_employed"
-      ? [...core, UTR_REQUIRED_DOC, ...tradeCerts]
-      : [...core, ...tradeCerts];
+      ? UTR_REQUIRED_DOC
+      : partner && inferPartnerLegal(partner) === "limited_company"
+        ? COMPANY_REGISTRATION_REQUIRED_DOC
+        : null;
+  const base = legal ? [...core, legal, ...tradeCerts] : [...core, ...tradeCerts];
   return filterDefsByRules(base, rules);
 }
 
