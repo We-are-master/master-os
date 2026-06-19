@@ -2,6 +2,7 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
+import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 
 export interface InvoicePdfData {
   reference: string;
@@ -199,6 +200,8 @@ const styles = StyleSheet.create({
   },
   vatText: { fontSize: 9, lineHeight: 1.45, color: NAVY },
 
+  bankNote: { fontSize: 9, lineHeight: 1.45, color: MUTED, marginTop: 8 },
+
   footer: {
     position: "absolute" as const,
     bottom: 0,
@@ -360,6 +363,27 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
               </View>
             </View>
           </View>
+
+          {!isPaid ? (
+            <View style={[styles.sectionGap]} wrap={false}>
+              <Text style={styles.sectionLabel}>Pay by bank transfer</Text>
+              <View style={styles.refBar}>
+                {FIXFY_CLIENT_BANK_DETAIL_ROWS.map((row) => (
+                  <View key={row.label} style={styles.refRow}>
+                    <Text style={styles.refKey}>{row.label}</Text>
+                    <Text style={styles.refVal}>{row.value}</Text>
+                  </View>
+                ))}
+                <View style={styles.refRowLast}>
+                  <Text style={styles.refKey}>Payment reference</Text>
+                  <Text style={styles.refValDue}>{displayBillingReference(data.reference)}</Text>
+                </View>
+                <Text style={styles.bankNote}>
+                  Use this reference so we can match your payment automatically.
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           <View style={styles.vatNote} wrap={false}>
             <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>

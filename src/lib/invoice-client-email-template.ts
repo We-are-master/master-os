@@ -7,6 +7,7 @@ import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTradeFeeOptions } from "@/lib/invoice-trade-fee-split";
 import { displayBillingReference } from "@/lib/billing-reference";
+import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 
 export type InvoiceClientEmailContext = {
   clientName: string;
@@ -194,14 +195,7 @@ function buildPayNowBlock(paymentLinkUrl: string): string {
  * receipts (no need to repeat).
  */
 function buildBankDetailsBlock(): string {
-  const rows: Array<{ label: string; value: string }> = [
-    { label: "Account name", value: "GETFIXFY LTD" },
-    { label: "Sort code",    value: "04-00-03" },
-    { label: "Account no.",  value: "06913415" },
-    { label: "IBAN",         value: "GB38 MONZ 0400 0306 9134 15" },
-    { label: "Bank",         value: "Monzo Bank" },
-  ];
-  const rowsHtml = rows
+  const rowsHtml = FIXFY_CLIENT_BANK_DETAIL_ROWS
     .map(
       (r) => `
                       <tr>
