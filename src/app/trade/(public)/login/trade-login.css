@@ -348,9 +348,37 @@
   text-decoration: underline;
 }
 
-.tp-auth__footer {
+.tp-auth__eco {
   margin-top: auto;
-  padding-top: 40px;
+  padding-top: 36px;
+  text-align: center;
+}
+.tp-auth__eco-h {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tp-mute);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.tp-auth__eco-links {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.tp-auth__eco-links a {
+  font-size: 12px;
+  color: var(--tp-mute);
+  text-decoration: none;
+}
+.tp-auth__eco-links a:hover {
+  color: #ed4b00;
+  text-decoration: underline;
+}
+
+.tp-auth__footer {
+  padding-top: 16px;
   font-size: 11px;
   color: var(--tp-mute);
   text-align: center;

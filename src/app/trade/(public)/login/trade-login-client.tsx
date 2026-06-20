@@ -338,6 +338,14 @@ export function TradeLoginClient() {
             </form>
           )}
 
+          <div className="tp-auth__eco">
+            <span className="tp-auth__eco-h">Fixfy</span>
+            <div className="tp-auth__eco-links">
+              <a href="https://getfixfy.com">Fixfy</a>
+              <a href="https://getfixfy.com/growth">Fixfy Growth</a>
+              <a href="https://partners.getfixfy.com/">Fixfy Partners</a>
+            </div>
+          </div>
           <p className="tp-auth__footer">© 2026 Fixfy · partners.getfixfy.com</p>
         </div>
       </section>
