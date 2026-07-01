@@ -1859,7 +1859,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, []);
 
-  const loadJobSelfBill = useCallback(async (j: Job) => {
+  const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
     if (!j.partner_id?.trim()) {
       setJobSelfBill(null);
       return;
@@ -1867,6 +1867,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setLoadingSelfBill(true);
     try {
       let working = j;
+      if (
+        opts?.syncTotals !== false &&
+        working.self_bill_id?.trim()
+      ) {
+        try {
+          await syncSelfBillAfterJobChange(working);
+        } catch {
+          /* non-blocking — still show last saved self-bill row */
+        }
+      }
       if (!working.self_bill_id?.trim() && !autoSelfBillEnsureRef.current.has(working.id)) {
         autoSelfBillEnsureRef.current.add(working.id);
         const gross = partnerSelfBillGrossAmount(working);
@@ -1974,11 +1984,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const j = await getJob(id);
       setJob(j);
       if (j) {
+        if (j.partner_id?.trim() && j.self_bill_id?.trim()) {
+          try {
+            await syncSelfBillAfterJobChange(j);
+          } catch {
+            /* continue — reload below still picks up server state */
+          }
+        }
         await Promise.all([
           loadPayments(j.id),
           loadJobInvoices(j),
           loadQuoteLineItems(j),
-          loadJobSelfBill(j),
+          loadJobSelfBill(j, { syncTotals: false }),
           loadExtraHistory(j.id),
         ]);
       }
@@ -9527,8 +9544,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Money out · We pay the <strong className="font-semibold">partner</strong>
                   </p>
                 </div>
+                {job.partner_id?.trim() ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    loading={refreshingJob || loadingSelfBill}
+                    className="h-7 shrink-0 text-[10px] px-2"
+                    icon={<RefreshCw className="h-3 w-3" />}
+                    onClick={() => void refreshJobFinance().then(() => toast.success("Partner finance synced"))}
+                    title="Reload job finance and recalculate self-bill totals from the server"
+                  >
+                    Sync
+                  </Button>
+                ) : null}
               </div>
-              <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
+              {!job.partner_id?.trim() ? (
+                <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
+              ) : null}
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
