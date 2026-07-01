@@ -132,6 +132,20 @@ type JobPayoutRow = {
   partner_cancellation_compensation_gbp?: number | null;
 };
 
+/** Job statuses that count toward partner labour/materials on a weekly self-bill. */
+export const SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES = new Set<string>([
+  "awaiting_payment",
+  "completed",
+]);
+
+export function isJobApprovedForSelfBillPayout(
+  j: Pick<Job, "status" | "deleted_at">,
+): boolean {
+  if (j.deleted_at) return false;
+  if (j.status === "deleted" || j.status === "cancelled") return false;
+  return SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status);
+}
+
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
 export function jobContributesToSelfBillPayout(
   j: Pick<
@@ -149,7 +163,7 @@ export function jobContributesToSelfBillPayout(
   if (j.status === "cancelled") {
     return officeCancellationPartnerPayoutGbp(j) > 0.02;
   }
-  return true;
+  return isJobApprovedForSelfBillPayout(j);
 }
 
 /** Partner-readable job state when the job no longer counts toward payout (for UI / PDF). */
@@ -159,6 +173,10 @@ export function selfBillJobPayoutStateLabel(
   if (j.deleted_at) return j.status === "deleted" ? "Deleted" : "Archived";
   if (j.status === "cancelled" && j.partner_cancelled_at) return "Lost";
   if (j.status === "cancelled") return "Cancelled";
+  if (j.status === "on_hold") return "On hold";
+  if (j.status === "in_progress") return "In progress";
+  if (j.status === "final_check") return "Final checks";
+  if (!isJobApprovedForSelfBillPayout(j)) return "Not approved";
   return null;
 }
 
@@ -174,7 +192,7 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
     .eq("self_bill_id", selfBillId);
   if (selErr) throw selErr;
   const list = (rows ?? []) as JobPayoutRow[];
-  const payable = list.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
+  const payable = list.filter((r) => isJobApprovedForSelfBillPayout(r as Job));
   const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
@@ -201,9 +219,14 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
  * Recompute totals from payable jobs, then set payout-void status (or reopen accumulating) from linked job states.
  * Skips **paid** and **internal** self-bills. Call after job status/archive changes and weekly linking.
  */
-export async function refreshSelfBillPayoutState(selfBillId: string): Promise<void> {
-  const supabase = getSupabase();
-  const before = await getSelfBill(selfBillId);
+export async function refreshSelfBillPayoutState(
+  selfBillId: string,
+  client?: SupabaseClient,
+): Promise<void> {
+  const supabase = client ?? getSupabase();
+  const before = client
+    ? ((await supabase.from("self_bills").select("*").eq("id", selfBillId).maybeSingle()).data as SelfBill | null)
+    : await getSelfBill(selfBillId);
   if (!before) return;
   if (before.bill_origin === "internal") return;
   if (before.status === "paid") return;
@@ -235,7 +258,7 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
     }
   }
 
-  const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
+  const payable = jobs.filter((r) => isJobApprovedForSelfBillPayout(r as Job));
   const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
@@ -310,6 +333,36 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   }
 
   if (jobs.length === 0) return;
+
+  /** Jobs still open but not yet payable (on hold, in progress, etc.) — keep the bill, zero payable total. */
+  const hasActiveNonPayable = jobs.some(
+    (j) =>
+      !j.deleted_at &&
+      j.status !== "deleted" &&
+      j.status !== "cancelled" &&
+      !isJobApprovedForSelfBillPayout(j as Job),
+  );
+  if (hasActiveNonPayable) {
+    const holdStatus = before.status === "draft" ? "draft" : "accumulating";
+    const holdPatch: Record<string, unknown> = {
+      status: holdStatus,
+      jobs_count: jobsCount,
+      job_value: jobValue,
+      materials,
+      commission,
+      net_payout: netPayout,
+      payout_void_reason: null,
+      partner_status_label: null,
+    };
+    let { error: holdErr } = await supabase.from("self_bills").update(holdPatch).eq("id", selfBillId);
+    if (holdErr && isSupabaseMissingColumnError(holdErr)) {
+      delete holdPatch.payout_void_reason;
+      delete holdPatch.partner_status_label;
+      ({ error: holdErr } = await supabase.from("self_bills").update(holdPatch).eq("id", selfBillId));
+    }
+    if (holdErr) throw holdErr;
+    return;
+  }
 
   const hasArchived = jobs.some((j) => Boolean(j.deleted_at));
   const hasLost = jobs.some((j) => j.status === "cancelled" && j.partner_cancelled_at);

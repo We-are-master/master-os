@@ -97,6 +97,7 @@ import {
   ensureWeeklySelfBillForJob,
   getSelfBill,
   listSelfBillsLinkedToJob,
+  selfBillJobPayoutStateLabel,
   syncSelfBillAfterJobChange,
   updateSelfBill,
 } from "@/services/self-bills";
@@ -284,7 +285,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
-import { clientMaterialsMisallocationPatch } from "@/lib/repair-client-materials-allocation";
+import { clientMaterialsMisallocationPatch, partnerMaterialsLedgerSyncPatch } from "@/lib/repair-client-materials-allocation";
 import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -579,7 +580,16 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
-function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
+function JobDetailSelfBillPanel({
+  sb,
+  job,
+  jobLineGross,
+}: {
+  sb: SelfBill;
+  job: Job;
+  /** Matches Cash out — partner (cap + materials from ledger). */
+  jobLineGross: number;
+}) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const partnerFieldBill = sb.bill_origin !== "internal";
@@ -595,7 +605,8 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
       : weekLine;
   const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
   const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
-  const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
+  const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
+  const payoutHoldNote = selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
@@ -640,6 +651,9 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
                 Partner → us · {sb.partner_name}
               </p>
               <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
+              {payoutHoldNote ? (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
+              ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
               <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
                 <div>
@@ -1859,6 +1873,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, []);
 
+  const syncJobFinanceViaApi = useCallback(async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}/sync-finance`, { method: "POST" });
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      job?: Job;
+      selfBill?: SelfBill | null;
+    };
+    if (!res.ok) {
+      throw new Error(body.error?.trim() || "Finance sync failed");
+    }
+    if (!body.job) throw new Error("Finance sync returned no job");
+    return { job: body.job, selfBill: body.selfBill ?? null };
+  }, []);
+
   const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
     if (!j.partner_id?.trim()) {
       setJobSelfBill(null);
@@ -1867,14 +1895,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setLoadingSelfBill(true);
     try {
       let working = j;
-      if (
-        opts?.syncTotals !== false &&
-        working.self_bill_id?.trim()
-      ) {
+      if (opts?.syncTotals !== false && working.partner_id?.trim()) {
         try {
-          await syncSelfBillAfterJobChange(working);
-        } catch {
-          /* non-blocking — still show last saved self-bill row */
+          const synced = await syncJobFinanceViaApi(working.id);
+          setJob(synced.job);
+          working = synced.job;
+          if (synced.selfBill) {
+            setJobSelfBill(synced.selfBill);
+            return;
+          }
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
+          /* fall through — load last saved row */
         }
       }
       if (!working.self_bill_id?.trim() && !autoSelfBillEnsureRef.current.has(working.id)) {
@@ -1905,7 +1937,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setLoadingSelfBill(false);
     }
-  }, []);
+  }, [syncJobFinanceViaApi]);
 
   const createDocumentAsDraft = useCallback(async (
     type: "invoice" | "selfbill",
@@ -1981,30 +2013,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!id) return;
     setRefreshingJob(true);
     try {
-      const j = await getJob(id);
-      setJob(j);
-      if (j) {
-        if (j.partner_id?.trim() && j.self_bill_id?.trim()) {
-          try {
-            await syncSelfBillAfterJobChange(j);
-          } catch {
-            /* continue — reload below still picks up server state */
-          }
+      let j = await getJob(id);
+      if (!j) return;
+      if (j.partner_id?.trim()) {
+        try {
+          const synced = await syncJobFinanceViaApi(j.id);
+          j = synced.job;
+          setJob(synced.job);
+          if (synced.selfBill) setJobSelfBill(synced.selfBill);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
         }
-        await Promise.all([
-          loadPayments(j.id),
-          loadJobInvoices(j),
-          loadQuoteLineItems(j),
-          loadJobSelfBill(j, { syncTotals: false }),
-          loadExtraHistory(j.id),
-        ]);
+      } else {
+        setJob(j);
       }
+      await Promise.all([
+        loadPayments(j.id),
+        loadJobInvoices(j),
+        loadQuoteLineItems(j),
+        loadJobSelfBill(j, { syncTotals: false }),
+        loadExtraHistory(j.id),
+      ]);
     } catch {
       toast.error("Failed to refresh");
     } finally {
       setRefreshingJob(false);
     }
-  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
+  }, [id, syncJobFinanceViaApi, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
   const handleOpenRequestPaymentModal = useCallback(async () => {
     if (!job?.id?.trim()) return;
@@ -2245,15 +2280,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job?.id || extraHistory.length === 0) return;
     const repairKey = `${job.id}:${job.materials_cost}:${job.extras_amount}:${extraHistory.length}`;
     if (materialsRepairAttemptedRef.current === repairKey) return;
-    const patch = clientMaterialsMisallocationPatch(
-      job,
-      extraHistory.map((row) => ({
-        side: row.side,
-        extra_type: row.extraType,
-        amount: row.amount,
-        allocation: row.allocation,
-      })),
-    );
+    const patch =
+      clientMaterialsMisallocationPatch(
+        job,
+        extraHistory.map((row) => ({
+          side: row.side,
+          extra_type: row.extraType,
+          amount: row.amount,
+          allocation: row.allocation,
+        })),
+      ) ??
+      partnerMaterialsLedgerSyncPatch(
+        job,
+        extraHistory.map((row) => ({
+          side: row.side,
+          extra_type: row.extraType,
+          amount: row.amount,
+          allocation: row.allocation,
+        })),
+      );
     if (!patch) return;
     materialsRepairAttemptedRef.current = repairKey;
     let cancelled = false;
@@ -6382,7 +6427,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
     ? ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
       ? financeDocCancelledBadge
-      : financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
+      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
         ? financeDocDraftBadge
         : financeDocSentBadge
     : null;
@@ -9565,7 +9610,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} />
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutTotal} />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
