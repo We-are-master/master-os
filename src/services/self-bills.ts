@@ -343,12 +343,7 @@ export async function refreshSelfBillPayoutState(
       !isJobApprovedForSelfBillPayout(j as Job),
   );
   if (hasActiveNonPayable) {
-    const holdStatus =
-      before.status === "draft"
-        ? "draft"
-        : before.status === "paid" || before.bill_origin === "internal"
-          ? before.status
-          : "accumulating";
+    const holdStatus = before.status === "draft" ? "draft" : "accumulating";
     const holdPatch: Record<string, unknown> = {
       status: holdStatus,
       jobs_count: jobsCount,

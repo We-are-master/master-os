@@ -10,6 +10,7 @@ import {
   canLinkJobToSelfBill,
   refreshSelfBillPayoutState,
   resolveJobSelfBillWeekAnchor,
+  SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES,
 } from "@/services/self-bills";
 
 const JOB_SELECT_FIELDS =
@@ -32,11 +33,6 @@ export const dynamic = "force-dynamic";
 
 const ADMIN_ROLES = new Set(["admin", "manager"]);
 const CHUNK = 200;
-
-import {
-  refreshSelfBillPayoutState,
-  SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES,
-} from "@/services/self-bills";
 
 /** Self-bill statuses we can promote to ready_to_pay */
 const PROMOTABLE_STATUSES = new Set([
@@ -220,7 +216,13 @@ export async function POST(req: NextRequest) {
 
   // ── 4. Load all linked jobs for these self-bills ──────────────────────────
   const selfBillIds = selfBills.map((s) => s.id);
-  type SyncJobRow = { status: string; partner_cost: number; materials_cost: number; partner_cancelled_at?: string | null };
+  type SyncJobRow = {
+    status: string;
+    partner_cost: number;
+    materials_cost: number;
+    partner_cancelled_at?: string | null;
+    deleted_at?: string | null;
+  };
   const jobsBySb = new Map<string, SyncJobRow[]>();
 
   for (let i = 0; i < selfBillIds.length; i += CHUNK) {
