@@ -33,8 +33,10 @@ export const dynamic = "force-dynamic";
 const ADMIN_ROLES = new Set(["admin", "manager"]);
 const CHUNK = 200;
 
-/** Job statuses that mean the job has been approved and finalised */
-const APPROVED_JOB_STATUSES = new Set(["awaiting_payment", "completed"]);
+import {
+  refreshSelfBillPayoutState,
+  SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES,
+} from "@/services/self-bills";
 
 /** Self-bill statuses we can promote to ready_to_pay */
 const PROMOTABLE_STATUSES = new Set([
@@ -258,7 +260,7 @@ export async function POST(req: NextRequest) {
     if (SKIP_STATUSES.has(sb.status) || sb.bill_origin === "internal") continue;
 
     const jobs = jobsBySb.get(sb.id) ?? [];
-    const payable = jobs.filter((j) => j.status !== "cancelled");
+    const payable = jobs.filter((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status));
 
     const jobValue = payable.reduce((s, j) => s + (Number(j.partner_cost) || 0), 0);
     const materials = payable.reduce((s, j) => s + (Number(j.materials_cost) || 0), 0);
@@ -272,8 +274,11 @@ export async function POST(req: NextRequest) {
       net_payout: netPayout,
     };
 
-    // Void self-bills whose every linked job is now cancelled/lost
-    if (payable.length === 0 && jobs.length > 0) {
+    // Void self-bills whose every linked job is cancelled/lost (not merely on hold / in progress)
+    const allLinkedTerminal = jobs.length > 0 && jobs.every(
+      (j) => j.status === "cancelled" || j.status === "deleted" || Boolean(j.deleted_at),
+    );
+    if (payable.length === 0 && allLinkedTerminal) {
       const hasPartnerCancel = jobs.some((j) => j.partner_cancelled_at);
       patch.status = hasPartnerCancel ? "payout_lost" : "payout_cancelled";
       patch.partner_status_label = hasPartnerCancel ? "Lost" : "Cancelled";
@@ -285,7 +290,7 @@ export async function POST(req: NextRequest) {
     if (
       PROMOTABLE_STATUSES.has(sb.status) &&
       payable.length > 0 &&
-      payable.every((j) => APPROVED_JOB_STATUSES.has(j.status))
+      payable.every((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status))
     ) {
       patch.status = "ready_to_pay";
       stats.promoted++;

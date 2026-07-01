@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { clientMaterialsMisallocationPatch } from "./repair-client-materials-allocation";
+import { clientMaterialsMisallocationPatch, partnerMaterialsLedgerSyncPatch } from "./repair-client-materials-allocation";
 
 describe("clientMaterialsMisallocationPatch", () => {
   it("repairs JOB-9278-style misallocation (33.70 client + 28.08 partner in materials_cost)", () => {
@@ -36,6 +36,40 @@ describe("clientMaterialsMisallocationPatch", () => {
         { side: "client", extra_type: "MATERIALS", amount: 33.7, allocation: "materials" },
         { side: "partner", extra_type: "MATERIALS", amount: 28.08, allocation: "materials" },
       ],
+    );
+    assert.equal(patch, null);
+  });
+});
+
+describe("partnerMaterialsLedgerSyncPatch", () => {
+  it("syncs materials_cost from partner ledger when job row is stale", () => {
+    const patch = partnerMaterialsLedgerSyncPatch(
+      {
+        client_price: 100,
+        extras_amount: 0,
+        materials_cost: 0,
+        partner_cost: 35,
+        customer_deposit: 0,
+      },
+      [
+        { side: "partner", extra_type: "MATERIALS", amount: 35, allocation: "materials" },
+        { side: "partner", extra_type: "MATERIALS", amount: 7.75, allocation: "materials" },
+      ],
+    );
+    assert.ok(patch);
+    assert.equal(patch!.materials_cost, 42.75);
+  });
+
+  it("is idempotent when job row matches ledger", () => {
+    const patch = partnerMaterialsLedgerSyncPatch(
+      {
+        client_price: 100,
+        extras_amount: 0,
+        materials_cost: 42.75,
+        partner_cost: 35,
+        customer_deposit: 0,
+      },
+      [{ side: "partner", extra_type: "MATERIALS", amount: 42.75, allocation: "materials" }],
     );
     assert.equal(patch, null);
   });
