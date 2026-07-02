@@ -1363,10 +1363,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         }
       }
       if (sent > 0) {
-        toast.success(`Onboarding email sent to ${sent} partner${sent === 1 ? "" : "s"}`);
+        toast.success(`Onboarding link sent to ${sent} partner${sent === 1 ? "" : "s"}`);
       }
       if (failed > 0) {
-        toast.error(`${failed} onboarding email${failed === 1 ? "" : "s"} failed`);
+        toast.error(`${failed} onboarding link${failed === 1 ? "" : "s"} failed to send`);
       }
       if (skipped > 0) {
         toast.warning(`${skipped} skipped (no email on profile)`);
@@ -1380,8 +1380,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     statusFilter === "onboarding"
       ? bulkOnboardingEmailBusy
         ? "Sending…"
-        : "Enviar onboarding email"
-      : "Enviar e-mail";
+        : "Send Onboarding Link"
+      : "Send email";
   const bulkEmailAction =
     statusFilter === "onboarding" ? () => void handleBulkOnboardingEmail() : handleBulkOutreach;
 
@@ -2440,7 +2440,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 bulkActions={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
-                    <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
@@ -2487,7 +2487,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 bulkActionsSlot={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
-                    <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
