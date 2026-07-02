@@ -7,6 +7,17 @@ import {
   StyleSheet,
   Image,
 } from "@react-pdf/renderer";
+import {
+  FIXFY_PDF_FOOTER_HEIGHT,
+  FIXFY_PDF_NAVY,
+  FIXFY_PDF_ORANGE,
+  FIXFY_PDF_PAD_H,
+  FIXFY_PDF_PAGE_GAP,
+  fixfyPdfHeaderLogoStyle,
+  fixfyPdfPageMargins,
+  FixfyPdfFooterGuard,
+  KeepTogetherBlock,
+} from "@/lib/pdf/fixfy-pdf-layout";
 
 export interface QuotePDFData {
   reference: string;
@@ -61,8 +72,8 @@ const DEFAULT_BRANDING: CompanyBranding = {
   tagline: "Professional Property Services",
 };
 
-const NAVY = "#020040";
-const ORANGE = "#ED4B00";
+const NAVY = FIXFY_PDF_NAVY;
+const ORANGE = FIXFY_PDF_ORANGE;
 const INK = "#1A1A1A";
 const SLATE = "#4A4A55";
 const LABEL = "#6B6E7B";
@@ -73,7 +84,6 @@ const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
 const ORANGE_TINT = "#FFF1EA";
 const FOOTER_INFO = "#AAAAD0";
-const FOOTER_HEIGHT = 72;
 
 function formatCurrency(value: number): string {
   return `£${value.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -94,21 +104,22 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: INK,
     backgroundColor: "#FFFFFF",
-    paddingBottom: FOOTER_HEIGHT + 8,
+    ...fixfyPdfPageMargins,
   },
 
   header: {
     backgroundColor: NAVY,
-    paddingTop: 20,
+    paddingTop: 14,
     paddingBottom: 14,
-    paddingHorizontal: 24,
-    alignItems: "center",
+    paddingHorizontal: FIXFY_PDF_PAD_H,
+    alignItems: "flex-start" as const,
+    marginTop: -FIXFY_PDF_PAGE_GAP,
   },
-  headerLogo: { width: 100, height: 28, objectFit: "contain" as const },
+  headerLogo: fixfyPdfHeaderLogoStyle,
   headerCompany: { color: "#FFFFFF", fontSize: 15, fontFamily: "Helvetica-Bold", letterSpacing: 0.5 },
   orangeBar: { height: 4, backgroundColor: ORANGE },
 
-  body: { paddingHorizontal: 36, paddingTop: 22 },
+  body: { paddingHorizontal: FIXFY_PDF_PAD_H, paddingTop: FIXFY_PDF_PAGE_GAP },
 
   hero: { marginBottom: 16 },
   eyebrow: {
@@ -302,10 +313,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: FOOTER_HEIGHT,
+    height: FIXFY_PDF_FOOTER_HEIGHT,
     backgroundColor: NAVY,
     paddingVertical: 14,
-    paddingHorizontal: 36,
+    paddingHorizontal: FIXFY_PDF_PAD_H,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -364,16 +375,16 @@ export function QuotePDF({
         <View style={styles.orangeBar} />
 
         <View style={styles.body}>
-          <View style={styles.hero} wrap={false}>
+          <KeepTogetherBlock minHeight={80} style={styles.hero}>
             <Text style={styles.eyebrow}>Your Quote</Text>
             <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
             <Text style={styles.intro}>
               Thanks for the request. Please find your quote below. To accept, simply reply to the
               email this quote was sent with and we&apos;ll schedule the work.
             </Text>
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={[styles.refBar, styles.sectionGap]} wrap={false}>
+          <KeepTogetherBlock minHeight={56} style={[styles.refBar, styles.sectionGap]}>
             <View style={styles.refRow}>
               <Text style={styles.refLabel}>Quote Ref</Text>
               <Text style={styles.refValueStrong}>{data.reference}</Text>
@@ -384,9 +395,9 @@ export function QuotePDF({
                 {data.expiresAt ? formatPDFDate(data.expiresAt) : "—"}
               </Text>
             </View>
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={styles.sectionGap} wrap={false}>
+          <KeepTogetherBlock minHeight={80} style={styles.sectionGap}>
             <Text style={styles.sectionLabel}>Job Details</Text>
             <View style={styles.detailBox}>
               <View style={styles.detailHeader}>
@@ -399,18 +410,18 @@ export function QuotePDF({
                 </View>
               ))}
             </View>
-          </View>
+          </KeepTogetherBlock>
 
           {data.scope?.trim() ? (
-            <View style={styles.sectionGap}>
+            <KeepTogetherBlock minHeight={60} style={styles.sectionGap}>
               <Text style={styles.sectionLabel}>Scope of Work</Text>
               <View style={styles.scopeCard}>
                 <Text style={styles.scopeText}>{data.scope.trim()}</Text>
               </View>
-            </View>
+            </KeepTogetherBlock>
           ) : null}
 
-          <View style={styles.sectionGap}>
+          <KeepTogetherBlock minHeight={120} style={styles.sectionGap}>
             <Text style={styles.sectionLabel}>Pricing</Text>
             <View style={styles.priceBox}>
               {items.map((item, i) => (
@@ -434,23 +445,23 @@ export function QuotePDF({
                 <Text style={styles.subLabel}>VAT ({vatPct}%)</Text>
                 <Text style={styles.subValue}>{formatCurrency(vat)}</Text>
               </View>
-              <View style={styles.totalRow} wrap={false}>
+              <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.totalAmount}>{formatCurrency(grandTotal)}</Text>
               </View>
             </View>
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={[styles.acceptNote, styles.sectionGap]} wrap={false}>
+          <KeepTogetherBlock minHeight={52} style={[styles.acceptNote, styles.sectionGap]}>
             <Text style={styles.acceptTitle}>How to Accept</Text>
             <Text style={styles.acceptText}>
               Reply to the email this quote was sent with confirming you&apos;d like to proceed (ref{" "}
               {data.reference}). We&apos;ll schedule the work and send a confirmation with the date
               and arrival window.
             </Text>
-          </View>
+          </KeepTogetherBlock>
 
-          <View minPresenceAhead={80}>
+          <KeepTogetherBlock minHeight={120}>
             <Text style={styles.sectionLabel}>Terms</Text>
             <View style={styles.termsGrid}>
               {TERMS.map((term) => (
@@ -462,9 +473,9 @@ export function QuotePDF({
                 </View>
               ))}
             </View>
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={styles.helpCard} wrap={false}>
+          <KeepTogetherBlock minHeight={44} style={styles.helpCard}>
             <Text style={styles.helpTitle}>Questions about this quote?</Text>
             <Text style={styles.helpText}>
               Reply to the email or contact us at{" "}
@@ -476,9 +487,10 @@ export function QuotePDF({
                 </Text>
               ) : null}
             </Text>
-          </View>
+          </KeepTogetherBlock>
         </View>
 
+        <FixfyPdfFooterGuard />
         <View style={styles.footer} fixed>
           {branding.logoUrl ? <Image src={branding.logoUrl} style={styles.footerLogo} /> : null}
           <Text style={styles.footerInfo}>{footerLine}</Text>

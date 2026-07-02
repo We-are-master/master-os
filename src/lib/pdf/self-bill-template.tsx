@@ -1,6 +1,18 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
+import {
+  FIXFY_PDF_FOOTER_HEIGHT,
+  FIXFY_PDF_HEADER_LOGO_HEIGHT,
+  FIXFY_PDF_NAVY,
+  FIXFY_PDF_ORANGE,
+  FIXFY_PDF_PAD_H,
+  FIXFY_PDF_PAGE_BOTTOM_RESERVE,
+  FIXFY_PDF_PAGE_GAP,
+  fixfyPdfHeaderLogoStyle,
+  FixfyPdfFooterGuard,
+  KeepTogetherBlock,
+} from "@/lib/pdf/fixfy-pdf-layout";
 
 export interface SelfBillPdfLine {
   reference: string;
@@ -53,8 +65,8 @@ export interface SelfBillPdfData {
 
 /* Brand palette — mirrors the Self-Bill Issued email
  * (src/lib/email-templates/...) and the client statement PDF. */
-const NAVY = "#020040";
-const ORANGE = "#ED4B00";
+const NAVY = FIXFY_PDF_NAVY;
+const ORANGE = FIXFY_PDF_ORANGE;
 const LILAC = "#F2F0FA";
 const TEXT = "#1A1A1A";
 const MUTED = "#4A4A55";
@@ -62,11 +74,10 @@ const LABEL = "#9A9AA8";
 const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
 const FOOTER_INFO = "#AAAAD0";
-const PAD = 32;
-const FOOTER_RESERVE = 68;
-const BODY_TOP = 18;
-/** Logo band (12+28+12) + orange accent (4) — reserved on every page via `fixed` header. */
-const PAGE_HEADER_HEIGHT = 56;
+const PAD = FIXFY_PDF_PAD_H;
+const BODY_TOP = FIXFY_PDF_PAGE_GAP;
+/** Logo band + orange accent — reserved on every page via `fixed` header. */
+const PAGE_HEADER_HEIGHT = FIXFY_PDF_HEADER_LOGO_HEIGHT + 28;
 
 const styles = StyleSheet.create({
   page: {
@@ -74,13 +85,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: NAVY,
     paddingTop: PAGE_HEADER_HEIGHT + BODY_TOP,
-    paddingBottom: FOOTER_RESERVE,
+    paddingBottom: FIXFY_PDF_PAGE_BOTTOM_RESERVE,
   },
 
   pageHeader: { position: "absolute" as const, top: 0, left: 0, right: 0 },
-  headerBand: { backgroundColor: NAVY, paddingVertical: 12, alignItems: "center" },
+  headerBand: {
+    backgroundColor: NAVY,
+    paddingVertical: 12,
+    paddingHorizontal: PAD,
+    alignItems: "flex-start" as const,
+  },
   wordmark: { fontFamily: "Helvetica-Bold", fontSize: 20, color: "#FFFFFF", letterSpacing: 0.5 },
-  headerLogo: { width: 100, height: 28, objectFit: "contain" as const },
+  headerLogo: fixfyPdfHeaderLogoStyle,
   accentBar: { backgroundColor: ORANGE, height: 4 },
 
   body: { paddingHorizontal: PAD },
@@ -141,6 +157,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    height: FIXFY_PDF_FOOTER_HEIGHT,
     backgroundColor: NAVY,
     paddingVertical: 14,
     paddingHorizontal: PAD,
@@ -313,6 +330,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           </View>
         </View>
 
+        <FixfyPdfFooterGuard />
         {/* Footer (navy, pinned) */}
         <View style={styles.footer} fixed>
           <Text style={styles.footerWordmark}>Fixfy</Text>
