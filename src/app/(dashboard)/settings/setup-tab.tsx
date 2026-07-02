@@ -96,13 +96,8 @@ import {
   zendeskCancellationReasonFieldConfigured,
   zendeskOnHoldReasonFieldConfigured,
 } from "@/lib/zendesk-field-ids";
-import {
-  buildDefaultPartnerDocumentRules,
-  getPartnerDocumentCatalogForSetup,
-  mergePartnerDocumentRules,
-  type PartnerDocRuleRow,
-} from "@/lib/partner-required-docs";
 import { DocRulesGroup } from "@/components/settings/doc-rules-group";
+import { PartnerRegistrationConfigPanel } from "@/components/settings/partner-registration-config-panel";
 import { SettingsSectionLayout } from "@/components/settings/settings-section-layout";
 import {
   SETUP_SECTIONS,
@@ -217,16 +212,12 @@ export function SetupTab() {
   const [cancelZendeskSyncing, setCancelZendeskSyncing] = useState(false);
   const [accessCczFeeStr, setAccessCczFeeStr] = useState(String(DEFAULT_ACCESS_CCZ_FEE_GBP));
   const [accessParkingFeeStr, setAccessParkingFeeStr] = useState(String(DEFAULT_ACCESS_PARKING_FEE_GBP));
-  const [partnerDocRules, setPartnerDocRules] = useState<PartnerDocRuleRow[]>(() =>
-    buildDefaultPartnerDocumentRules(),
-  );
   const [employeeDocRules, setEmployeeDocRules] = useState<WorkforceDocRuleRow[]>(
     () => mergeWorkforceDocumentRules(null).employee,
   );
   const [contractorDocRules, setContractorDocRules] = useState<WorkforceDocRuleRow[]>(
     () => mergeWorkforceDocumentRules(null).contractor,
   );
-  const [tradeCertsExpanded, setTradeCertsExpanded] = useState(false);
   const [partnerPayoutStandard, setPartnerPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
   const [savedPayoutStandard, setSavedPayoutStandard] = useState(ORG_PARTNER_PAYOUT_STANDARD_TERMS);
   const [partnerPayoutReferenceYmd, setPartnerPayoutReferenceYmd] = useState("");
@@ -413,7 +404,6 @@ export function SetupTab() {
       );
       setAccessCczFeeStr(String(parsed.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(parsed.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
-      setPartnerDocRules(mergePartnerDocumentRules(parsed.partner_document_rules));
       const workforceRules = mergeWorkforceDocumentRules(parsed.workforce_document_rules);
       setEmployeeDocRules(workforceRules.employee);
       setContractorDocRules(workforceRules.contractor);
@@ -673,7 +663,6 @@ export function SetupTab() {
           : undefined,
         access_ccz_fee_gbp: accessCczFee,
         access_parking_fee_gbp: accessParkingFee,
-        partner_document_rules: partnerDocRules,
         workforce_document_rules: {
           employee: employeeDocRules,
           contractor: contractorDocRules,
@@ -760,7 +749,6 @@ export function SetupTab() {
       );
       setAccessCczFeeStr(String(next.access_ccz_fee_gbp ?? DEFAULT_ACCESS_CCZ_FEE_GBP));
       setAccessParkingFeeStr(String(next.access_parking_fee_gbp ?? DEFAULT_ACCESS_PARKING_FEE_GBP));
-      setPartnerDocRules(mergePartnerDocumentRules(next.partner_document_rules));
       const workforceRules = mergeWorkforceDocumentRules(next.workforce_document_rules);
       setEmployeeDocRules(workforceRules.employee);
       setContractorDocRules(workforceRules.contractor);
@@ -1989,147 +1977,7 @@ export function SetupTab() {
         </div>
       </Card>
 
-      <Card padding="none">
-        <CardHeader className="px-6 pt-6">
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="h-4 w-4 text-text-tertiary" />
-            <CardTitle>Partner documents</CardTitle>
-            <FixfyHintIcon text="Choose which documents partners must upload. Request shows the doc in checklists and upload links; Mandatory blocks compliance and counts toward the document score when missing." />
-          </div>
-          <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
-            UTR applies to self-employed partners only. Trade certificates apply when the partner has that trade.
-          </p>
-        </CardHeader>
-        <div className="px-6 pb-6 space-y-5">
-          <DocRulesGroup
-            title="Core & legal"
-            entries={getPartnerDocumentCatalogForSetup().filter((e) =>
-              ["core", "utr", "agreement"].includes(e.group),
-            )}
-            rules={partnerDocRules}
-            canEdit={canEditConfig}
-            onPatch={(id, patch) => {
-              setPartnerDocRules((prev) =>
-                prev.map((r) => {
-                  if (r.id !== id) return r;
-                  const enabled = patch.enabled ?? r.enabled;
-                  return {
-                    ...r,
-                    enabled,
-                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
-                  };
-                }),
-              );
-            }}
-          />
-          <div>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-2 rounded-lg border border-border-light bg-card px-3 py-2.5 text-left hover:bg-surface-hover/80 transition-colors"
-              onClick={() => setTradeCertsExpanded((v) => !v)}
-            >
-              <span className="text-sm font-medium text-text-primary">Trade certificates</span>
-              {tradeCertsExpanded ? (
-                <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />
-              )}
-            </button>
-            {tradeCertsExpanded ? (
-              <div className="mt-3 space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={!canEditConfig}
-                    onClick={() => {
-                      const tradeIds = new Set(
-                        getPartnerDocumentCatalogForSetup()
-                          .filter((e) => e.group === "trade_cert")
-                          .map((e) => e.id),
-                      );
-                      setPartnerDocRules((prev) =>
-                        prev.map((r) =>
-                          tradeIds.has(r.id) ? { ...r, enabled: true, mandatory: true } : r,
-                        ),
-                      );
-                    }}
-                  >
-                    All trade certs mandatory
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={!canEditConfig}
-                    onClick={() => {
-                      const tradeIds = new Set(
-                        getPartnerDocumentCatalogForSetup()
-                          .filter((e) => e.group === "trade_cert")
-                          .map((e) => e.id),
-                      );
-                      setPartnerDocRules((prev) =>
-                        prev.map((r) =>
-                          tradeIds.has(r.id) ? { ...r, enabled: true, mandatory: false } : r,
-                        ),
-                      );
-                    }}
-                  >
-                    All optional
-                  </Button>
-                </div>
-                <DocRulesGroup
-                  title=""
-                  entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "trade_cert")}
-                  rules={partnerDocRules}
-                  canEdit={canEditConfig}
-                  onPatch={(id, patch) => {
-                    setPartnerDocRules((prev) =>
-                      prev.map((r) => {
-                        if (r.id !== id) return r;
-                        const enabled = patch.enabled ?? r.enabled;
-                        return {
-                          ...r,
-                          enabled,
-                          mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
-                        };
-                      }),
-                    );
-                  }}
-                />
-              </div>
-            ) : null}
-          </div>
-          <DocRulesGroup
-            title="Optional extras"
-            entries={getPartnerDocumentCatalogForSetup().filter((e) => e.group === "extra")}
-            rules={partnerDocRules}
-            canEdit={canEditConfig}
-            onPatch={(id, patch) => {
-              setPartnerDocRules((prev) =>
-                prev.map((r) => {
-                  if (r.id !== id) return r;
-                  const enabled = patch.enabled ?? r.enabled;
-                  return {
-                    ...r,
-                    enabled,
-                    mandatory: enabled ? (patch.mandatory ?? r.mandatory) : false,
-                  };
-                }),
-              );
-            }}
-          />
-          <Button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={!canEditConfig || saving}
-            icon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-          >
-            {saving ? "Saving…" : "Save setup"}
-          </Button>
-        </div>
-      </Card>
+      <PartnerRegistrationConfigPanel canEdit={canEditConfig} />
         </>
       ) : null}
 

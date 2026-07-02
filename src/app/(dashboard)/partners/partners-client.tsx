@@ -70,6 +70,7 @@ import {
 } from "@/lib/coverage-cities";
 import {
   clearedCoverageFieldsForMode,
+  formatPartnerCoverageDisplay,
   formatPartnerCoverageSummary,
 } from "@/lib/partner-coverage";
 import type { PartnerCoverageMode } from "@/types/database";
@@ -176,7 +177,6 @@ const PARTNER_DIRECTORY_STAGE_FILTERS = [
   { id: "all", label: "All" },
   { id: "onboarding", label: "Onboarding" },
   { id: "active", label: "Active" },
-  { id: "needs_attention", label: "Needs attention" },
   { id: "inactive", label: "Inactive" },
 ] as const;
 
@@ -1148,7 +1148,7 @@ function InvitePartnerSplitButton({
 }
 
 export function PartnersClient({ initialData }: PartnersClientProps = {}) {
-  const { partnerDocumentRules } = useFrontendSetup();
+  const { partnerDocumentRules, partnerRegistrationRules } = useFrontendSetup();
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -1192,6 +1192,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
   const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
   const [onboardingSendBusyId, setOnboardingSendBusyId] = useState<string | null>(null);
+  const [bulkOnboardingEmailBusy, setBulkOnboardingEmailBusy] = useState(false);
 
   useEffect(() => {
     try {
@@ -1336,6 +1337,53 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     initialStatus: "active",
     initialData,
   });
+
+  const handleBulkOnboardingEmail = useCallback(async () => {
+    if (selectedIds.size === 0 || bulkOnboardingEmailBusy) return;
+    const selected = partners.filter((p) => selectedIds.has(p.id));
+    const withEmail = selected.filter((p) => p.email?.trim());
+    const skipped = selected.length - withEmail.length;
+
+    if (withEmail.length === 0) {
+      toast.error("None of the selected partners have an email address");
+      return;
+    }
+
+    setBulkOnboardingEmailBusy(true);
+    let sent = 0;
+    let failed = 0;
+    try {
+      for (const p of withEmail) {
+        try {
+          const { emailError } = await requestPartnerOnboardingLink(p.id, { sendEmail: true });
+          if (emailError) failed += 1;
+          else sent += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      if (sent > 0) {
+        toast.success(`Onboarding email sent to ${sent} partner${sent === 1 ? "" : "s"}`);
+      }
+      if (failed > 0) {
+        toast.error(`${failed} onboarding email${failed === 1 ? "" : "s"} failed`);
+      }
+      if (skipped > 0) {
+        toast.warning(`${skipped} skipped (no email on profile)`);
+      }
+    } finally {
+      setBulkOnboardingEmailBusy(false);
+    }
+  }, [selectedIds, partners, bulkOnboardingEmailBusy]);
+
+  const bulkEmailLabel =
+    statusFilter === "onboarding"
+      ? bulkOnboardingEmailBusy
+        ? "Sending…"
+        : "Enviar onboarding email"
+      : "Enviar e-mail";
+  const bulkEmailAction =
+    statusFilter === "onboarding" ? () => void handleBulkOnboardingEmail() : handleBulkOutreach;
 
   const legacyZeroListKey = useMemo(
     () => partners.filter((p) => p.rating === 0).map((p) => p.id).join(","),
@@ -1599,7 +1647,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         count:
           s.id === "inactive"
             ? inactiveStageCount
-            : (statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0)),
+            : s.id === "onboarding"
+              ? (statusCounts.onboarding ?? 0) + (statusCounts.needs_attention ?? 0)
+              : (statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0)),
       })),
     [statusCounts, totalPartners, inactiveStageCount],
   );
@@ -1978,14 +2028,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       cellClassName: partnersTableCell,
       render: (item) => {
         const summary = formatPartnerCoverageSummary(item);
-        const [cityLine, detailLine] = summary.includes("·")
-          ? summary.split("·").map((s) => s.trim())
-          : [summary, ""];
+        const { primary, secondary } = formatPartnerCoverageDisplay(item);
         return (
           <div className="mx-auto min-w-0 max-w-[11rem] text-sm text-text-secondary text-center" title={summary}>
-            <span className="block truncate font-medium text-text-primary">{cityLine || "—"}</span>
-            {detailLine ? (
-              <span className="block truncate text-[11px] text-text-tertiary mt-0.5">{detailLine}</span>
+            <span className="block truncate font-medium text-text-primary">{primary || "—"}</span>
+            {secondary ? (
+              <span className="block truncate text-[11px] text-text-tertiary mt-0.5">{secondary}</span>
             ) : null}
           </div>
         );
@@ -2398,7 +2446,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
+                    <BulkActionBtn
+                      label={bulkEmailLabel}
+                      onClick={bulkEmailAction}
+                      variant="default"
+                      disabled={bulkOnboardingEmailBusy}
+                    />
                   </>
                 }
               />
@@ -2440,7 +2493,12 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
+                    <BulkActionBtn
+                      label={bulkEmailLabel}
+                      onClick={bulkEmailAction}
+                      variant="default"
+                      disabled={bulkOnboardingEmailBusy}
+                    />
                   </>
                 }
                 catalogServices={partnerCatalogServices}
@@ -2463,6 +2521,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         tradePickOptions={tradePickOptions}
         partnerCatalogForIds={partnerCatalogServices}
         partnerDocumentRules={partnerDocumentRules}
+        partnerRegistrationRules={partnerRegistrationRules}
         onClose={() => {
           setSelectedPartner(null);
           setSelectedTeamMember(null);
@@ -3262,10 +3321,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   );
 }
 
-function BulkActionBtn({ label, onClick, variant }: {
+function BulkActionBtn({ label, onClick, variant, disabled }: {
   label: string;
   onClick: () => void;
   variant: "success" | "danger" | "warning" | "default";
+  disabled?: boolean;
 }) {
   const colors = {
     success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
@@ -3276,7 +3336,8 @@ function BulkActionBtn({ label, onClick, variant }: {
   return (
     <button
       onClick={onClick}
-      className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}
+      disabled={disabled}
+      className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors disabled:pointer-events-none disabled:opacity-50 ${colors[variant]}`}
     >
       {label}
     </button>
@@ -3941,6 +4002,7 @@ function PartnerDetailDrawer({
   tradePickOptions = [GENERAL_MAINTENANCE_LABEL],
   partnerCatalogForIds = [],
   partnerDocumentRules,
+  partnerRegistrationRules,
 }: {
   partner: Partner | null;
   teamMember: TeamMember | null;
@@ -3950,6 +4012,7 @@ function PartnerDetailDrawer({
   /** Services catalogue — used to sync `catalog_service_ids` when trades change. */
   partnerCatalogForIds?: CatalogService[];
   partnerDocumentRules: PartnerDocRuleRow[];
+  partnerRegistrationRules: import("@/lib/partner-registration-fields").PartnerRegistrationRuleRow[];
   onClose: () => void;
   onPartnerPatch: (patch: Partial<Partner>) => Promise<void>;
   onVerify: (partner: Partner) => void;
@@ -4332,15 +4395,14 @@ function PartnerDetailDrawer({
     return data;
   }, []);
 
-  const handleLinkAppUser = async () => {
-    if (!partner) return;
-    const raw = linkEmail.trim();
-    if (!raw) {
-      toast.error("Enter the email they use to log into the app.");
-      return;
-    }
-    setLinkBusy(true);
-    try {
+  const linkPartnerAppAccountByEmail = useCallback(
+    async (emailRaw: string, opts?: { quiet?: boolean }): Promise<boolean> => {
+      if (!partner) return false;
+      const raw = emailRaw.trim();
+      if (!raw) {
+        if (!opts?.quiet) toast.error("Enter the email they use to log into the app.");
+        return false;
+      }
       const supabase = getSupabase();
       const { data: found, error: qErr } = await supabase
         .from("profiles")
@@ -4351,8 +4413,10 @@ function PartnerDetailDrawer({
       const match =
         (found ?? []).find((r) => (r.email ?? "").toLowerCase() === raw.toLowerCase()) ?? (found ?? [])[0];
       if (!match?.id) {
-        toast.error("No profile with that email. They need to register in the Fixfy app first.");
-        return;
+        if (!opts?.quiet) {
+          toast.error("No profile with that email. They need to register in the Fixfy app first.");
+        }
+        return false;
       }
       const { data: clash } = await supabase
         .from("partners")
@@ -4361,26 +4425,40 @@ function PartnerDetailDrawer({
         .neq("id", partner.id)
         .maybeSingle();
       if (clash) {
-        toast.error(
-          `That app account is already linked to “${(clash as { company_name: string }).company_name}”.`
-        );
-        return;
+        if (!opts?.quiet) {
+          toast.error(
+            `That app account is already linked to “${(clash as { company_name: string }).company_name}”.`,
+          );
+        }
+        return false;
       }
       const updated = await updatePartner(partner.id, { auth_user_id: match.id });
       onPartnerUpdate?.(updated);
       setLinkedAppProfile(await getProfileById(match.id));
       try {
         await syncAppUserRow(match.id, partner.id);
-        toast.success("Linked — Team (App) + mobile app profile (users) ready.");
+        if (!opts?.quiet) toast.success("Linked — Team (App) + mobile app profile (users) ready.");
       } catch (syncErr) {
-        toast.success("Linked in OS — they appear under Team (App).");
-        toast.error(
-          syncErr instanceof Error
-            ? `${syncErr.message} Add SUPABASE_SERVICE_ROLE_KEY to the server env, or run docs/SQL_APP_SETUP.sql if users is missing.`
-            : "Could not create row in public.users for the app."
-        );
+        if (!opts?.quiet) {
+          toast.success("Linked in OS — they appear under Team (App).");
+          toast.error(
+            syncErr instanceof Error
+              ? `${syncErr.message} Add SUPABASE_SERVICE_ROLE_KEY to the server env, or run docs/SQL_APP_SETUP.sql if users is missing.`
+              : "Could not create row in public.users for the app.",
+          );
+        }
       }
       onTeamChanged?.();
+      return true;
+    },
+    [partner, syncAppUserRow, onPartnerUpdate, onTeamChanged],
+  );
+
+  const handleLinkAppUser = async () => {
+    if (!partner) return;
+    setLinkBusy(true);
+    try {
+      await linkPartnerAppAccountByEmail(linkEmail);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to link");
     } finally {
@@ -4579,16 +4657,16 @@ function PartnerDetailDrawer({
     [partner, partnerTradesForCompliance, partnerDocumentRules],
   );
   const documentComplianceScore = partner ? computeComplianceScore(documents, mandatoryDocsForScore) : 0;
-  const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner) : 0;
+  const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner, partnerRegistrationRules) : 0;
   const expiredDocCount = countExpiredDocuments(documents);
   const computedCompliance = partner
     ? mergePartnerComplianceScore(documentComplianceScore, profileCompletenessScore, expiredDocCount)
     : 0;
 
-  const profileCompletenessItems = partner ? getProfileCompletenessItems(partner) : [];
+  const profileCompletenessItems = partner ? getProfileCompletenessItems(partner, partnerRegistrationRules) : [];
   const complianceAttentionCount =
     partner
-      ? profileCompletenessItems.filter((i) => !i.done).length +
+      ? profileCompletenessItems.filter((i) => i.scoresTowardCompliance !== false && !i.done).length +
         mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
       : 0;
 
@@ -4616,26 +4694,50 @@ function PartnerDetailDrawer({
       }
       await onPartnerPatch({
         status: "active",
-        partner_status_reasons: force ? ["force_activated"] : [],
+        partner_status_reasons: mergeUniqueReasons(force ? ["force_activated"] : [], ["was_activated"]),
+        ...(partner.verified ? {} : { verified: true }),
       });
       setActivateForceOpen(false);
+
+      let postActivateNote = "";
+      if (isAdmin) {
+        try {
+          if (partner.auth_user_id) {
+            await syncAppUserRow(partner.auth_user_id, partner.id);
+          } else {
+            const email = linkEmail.trim() || partner.email?.trim() || "";
+            if (email) {
+              const linked = await linkPartnerAppAccountByEmail(email, { quiet: true });
+              if (!linked) {
+                postActivateNote = " — app account not linked (no matching profile)";
+              }
+            } else {
+              postActivateNote = " — add an email to link the app account";
+            }
+          }
+        } catch (e) {
+          postActivateNote = ` — app link failed: ${e instanceof Error ? e.message : "unknown error"}`;
+        }
+      }
+
       try {
         const res = await fetch(`/api/partners/${partner.id}/send-activated-email`, { method: "POST" });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; warning?: string; error?: string };
+        const base = `Partner activated${postActivateNote}`;
         if (res.ok && data.sentTo) {
-          toast.success(`Partner activated — welcome email sent to ${data.sentTo}`);
+          toast.success(`${base} — welcome email sent to ${data.sentTo}`);
         } else if (data.warning) {
-          toast.success("Partner activated (email not sent — Resend not configured)");
+          toast.success(`${base} (welcome email not sent — Resend not configured)`);
         } else if (!res.ok) {
-          toast.error(data.error ?? "Partner activated but welcome email failed");
+          toast.error(`${data.error ?? "Welcome email failed"}${postActivateNote}`);
         } else {
-          toast.success("Partner activated");
+          toast.success(base);
         }
       } catch {
-        toast.success("Partner activated");
+        toast.success(`Partner activated${postActivateNote}`);
       }
     },
-    [partner, computedCompliance, onPartnerPatch],
+    [partner, computedCompliance, onPartnerPatch, isAdmin, syncAppUserRow, linkEmail, linkPartnerAppAccountByEmail],
   );
 
   const submitDeactivate = useCallback(async () => {
@@ -4644,12 +4746,18 @@ function PartnerDetailDrawer({
       if (deactivatePreset === "missing_docs") {
         await onPartnerPatch({
           status: "needs_attention",
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["missing_documents"]),
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [
+            "missing_documents",
+            "was_activated",
+          ]),
         });
       } else if (deactivatePreset === "low_score") {
         await onPartnerPatch({
           status: "needs_attention",
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["low_compliance_score"]),
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [
+            "low_compliance_score",
+            "was_activated",
+          ]),
         });
       } else if (deactivatePreset === "on_break") {
         await onPartnerPatch({
@@ -5376,7 +5484,7 @@ function PartnerDetailDrawer({
                     if (partner.status !== "needs_attention" && partner.status !== "on_break") return null;
                     const chip =
                       partner.status === "needs_attention"
-                        ? "border-red-200/80 bg-red-50/80 dark:bg-red-950/40 text-red-800 dark:text-red-200"
+                        ? "border-amber-200/80 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100"
                         : "border-stone-400/60 bg-stone-500/10 text-text-secondary";
                     return reasonsForDisplay.map((r) => (
                       <span
@@ -6635,6 +6743,7 @@ function PartnerDetailDrawer({
                 No linked app user yet — admin account actions are unavailable.
               </p>
             )}
+
           </div>
         )}
 

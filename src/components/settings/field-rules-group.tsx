@@ -2,20 +2,20 @@
 
 import { MicroLabel } from "@/components/fx/primitives";
 
-export type DocRuleRow = {
+export type FieldRuleRow = {
   id: string;
-  enabled: boolean;
+  visible: boolean;
   mandatory: boolean;
 };
 
-export type DocCatalogEntry = {
+export type FieldCatalogEntry = {
   id: string;
   name: string;
   description: string;
-  trade?: string;
+  locked?: boolean;
 };
 
-export function DocRulesGroup({
+export function FieldRulesGroup({
   title,
   entries,
   rules,
@@ -24,12 +24,12 @@ export function DocRulesGroup({
   onPatch,
 }: {
   title: string;
-  entries: DocCatalogEntry[];
-  rules: DocRuleRow[];
-  /** Blended compliance % label per document id. */
+  entries: FieldCatalogEntry[];
+  rules: FieldRuleRow[];
+  /** Blended compliance % label per field id (from registration rules). */
   scores?: Record<string, string>;
   canEdit: boolean;
-  onPatch: (id: string, patch: Partial<Pick<DocRuleRow, "enabled" | "mandatory">>) => void;
+  onPatch: (id: string, patch: Partial<Pick<FieldRuleRow, "visible" | "mandatory">>) => void;
 }) {
   const ruleById = new Map(rules.map((r) => [r.id, r]));
   if (entries.length === 0) return null;
@@ -38,15 +38,16 @@ export function DocRulesGroup({
       {title ? <MicroLabel>{title}</MicroLabel> : null}
       <div className="rounded-lg border border-border-light overflow-hidden divide-y divide-border-light">
         <div className="hidden sm:grid sm:grid-cols-[1fr_3.75rem_5.5rem_5.5rem] gap-2 px-3 py-2 bg-surface-hover/60 text-[10px] font-mono uppercase tracking-[0.1em] text-text-tertiary">
-          <span>Document</span>
+          <span>Field</span>
           <span className="text-center" title="Share of blended compliance score when mandatory">
             Score
           </span>
-          <span className="text-center">Request</span>
+          <span className="text-center">Visible</span>
           <span className="text-center">Mandatory</span>
         </div>
         {entries.map((entry) => {
-          const rule = ruleById.get(entry.id) ?? { id: entry.id, enabled: true, mandatory: true };
+          const rule = ruleById.get(entry.id) ?? { id: entry.id, visible: true, mandatory: true };
+          const locked = entry.locked;
           const scoreLabel = scores?.[entry.id] ?? "—";
           return (
             <div
@@ -55,21 +56,22 @@ export function DocRulesGroup({
             >
               <div className="min-w-0">
                 <p className="text-sm font-medium text-text-primary">{entry.name}</p>
-                <p className="text-[11px] text-text-tertiary leading-snug">
-                  {entry.description}
-                  {entry.trade ? ` · ${entry.trade}` : ""}
-                </p>
+                <p className="text-[11px] text-text-tertiary leading-snug">{entry.description}</p>
               </div>
               <div className="flex items-center justify-start sm:justify-center">
                 <span
                   className={`text-xs font-mono tabular-nums ${
-                    scoreLabel === "—" || scoreLabel === "Opt." ? "text-text-tertiary" : "text-text-secondary font-medium"
+                    scoreLabel === "—"
+                      ? "text-text-tertiary"
+                      : scoreLabel === "Opt."
+                        ? "text-text-tertiary"
+                        : "text-text-secondary font-medium"
                   }`}
                   title={
                     scoreLabel === "Opt."
-                      ? "Requested in onboarding but not counted toward compliance"
+                      ? "Visible in onboarding but not counted toward compliance"
                       : scoreLabel === "—"
-                        ? "Not requested — excluded from compliance"
+                        ? "Not counted toward compliance (hidden or onboarding-only)"
                         : "Approx. share of blended compliance score"
                   }
                 >
@@ -81,18 +83,18 @@ export function DocRulesGroup({
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
-                  checked={rule.enabled}
-                  disabled={!canEdit}
-                  onChange={(e) => onPatch(entry.id, { enabled: e.target.checked })}
+                  checked={locked ? true : rule.visible}
+                  disabled={!canEdit || locked}
+                  onChange={(e) => onPatch(entry.id, { visible: e.target.checked })}
                 />
-                <span className="sm:hidden">Request</span>
+                <span className="sm:hidden">Visible</span>
               </label>
               <label className="flex items-center justify-start sm:justify-center gap-2 text-xs text-text-secondary">
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5 rounded border-border text-primary shrink-0"
-                  checked={rule.mandatory}
-                  disabled={!canEdit || !rule.enabled}
+                  checked={locked ? true : rule.mandatory}
+                  disabled={!canEdit || locked || !rule.visible}
                   onChange={(e) => onPatch(entry.id, { mandatory: e.target.checked })}
                 />
                 <span className="sm:hidden">Mandatory</span>

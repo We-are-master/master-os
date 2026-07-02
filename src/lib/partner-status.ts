@@ -6,6 +6,7 @@ export const PARTNER_REASON_CODES = [
   "low_compliance_score",
   "expired_docs",
   "on_break",
+  "was_activated",
 ] as const;
 
 export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
@@ -16,6 +17,7 @@ const LABELS: Record<string, string> = {
   expired_docs: "Expired Docs",
   on_break: "On Break",
   force_activated: "Force Activated",
+  was_activated: "Activated",
 };
 
 /** Human-readable label for a stored reason string (supports `other:…`). */
@@ -50,6 +52,19 @@ export type PartnerAutoFlags = {
   complianceBelowThreshold: boolean;
 };
 
+/** Directory filters: onboarding tab includes partners still in funnel + post-activation gaps. */
+export const PARTNER_ONBOARDING_STAGE_STATUSES = ["onboarding", "needs_attention"] as const;
+
+/** Whether this partner has been through at least one staff activation. */
+export function partnerWasActivatedOnce(
+  p: Pick<Partner, "verified" | "partner_status_reasons" | "status">,
+): boolean {
+  const reasons = p.partner_status_reasons ?? [];
+  if (reasons.includes("was_activated") || reasons.includes("force_activated")) return true;
+  if (p.verified) return true;
+  return p.status === "active" || p.status === "needs_attention";
+}
+
 export function computeAutoReasonCodes(flags: PartnerAutoFlags): string[] {
   const out: string[] = [];
   if (flags.missingMandatoryDocs) out.push("missing_documents");
@@ -60,12 +75,13 @@ export function computeAutoReasonCodes(flags: PartnerAutoFlags): string[] {
 
 /**
  * When compliance flags require attention, merge reason codes.
- * - **Onboarding** stays `onboarding` (no auto move to needs_attention) until someone activates or deactivates.
- * - **Active** → `needs_attention` only when the caller passes reason codes (e.g. `expired_docs` — not pending review).
+ * - **Onboarding** stays `onboarding` until someone activates (even if docs are missing).
+ * - **Active** → `needs_attention` when issues appear after activation.
+ * - **Needs attention** without a prior activation falls back to `onboarding`.
  * Does not change `inactive` / `on_break` partners.
  */
 export function deriveAutoStatusAndReasons(
-  partner: Pick<Partner, "status" | "partner_status_reasons">,
+  partner: Pick<Partner, "status" | "partner_status_reasons" | "verified">,
   autoCodes: string[],
 ): { status: Partner["status"]; partner_status_reasons: string[] } {
   const current = partner.status;
@@ -74,6 +90,9 @@ export function deriveAutoStatusAndReasons(
   /** Legacy top-level `on_break` is treated like inactive for automation (reason stays in `partner_status_reasons`). */
   if (current === "inactive" || current === "on_break") {
     return { status: current, partner_status_reasons: partner.partner_status_reasons ?? [] };
+  }
+  if (current === "needs_attention" && !partnerWasActivatedOnce(partner)) {
+    return { status: "onboarding", partner_status_reasons: merged.filter((r) => r !== "was_activated") };
   }
   // Manual force activation wins over compliance automation while partner remains non-inactive.
   if (isForceActivated) {

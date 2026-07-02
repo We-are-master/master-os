@@ -22,4 +22,21 @@ describe("formatPartnerCoverageSummary", () => {
     assert.match(summary, /^London · \d+ districts$/);
     assert.notEqual(summary, `${postcodes.length} postcode districts`);
   });
+
+  it("shows pick on top and radius below for radius coverage", () => {
+    const summary = formatPartnerCoverageSummary({
+      coverage_mode: "radius",
+      service_radius_miles: 50,
+      coverage_latitude: 51.53,
+      coverage_longitude: -0.1,
+      coverage_base_postcode: "EC1V, Islington",
+      included_postcodes: null,
+      coverage_cities: null,
+      location: "",
+      excluded_postcodes: null,
+      uk_coverage_regions: null,
+    });
+
+    assert.equal(summary, "EC1V, Islington · 50 mi");
+  });
 });
