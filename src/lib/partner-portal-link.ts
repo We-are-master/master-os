@@ -100,10 +100,35 @@ function resolveLinkKind(
     : "trade_onboarding";
 }
 
-/** Trade portal express invite — one-click onboarding entry (no OTP). */
-function tradePortalInviteUrl(tradePortalBaseUrl: string, inviteCode: string): string {
+/** Trade portal express invite — /get-started with OS partner prefill (trades, contact). */
+function tradePortalGetStartedUrl(
+  tradePortalBaseUrl: string,
+  inviteCode: string,
+  prefill: {
+    email: string;
+    contactName: string;
+    companyName: string;
+    trades: string[];
+  },
+): string {
   const base = tradePortalBaseUrl.replace(/\/$/, "");
-  return `${base}/invite?invite=${encodeURIComponent(inviteCode.trim())}`;
+  const params = new URLSearchParams();
+  params.set("invite", inviteCode.trim());
+  params.set("email", prefill.email.trim());
+  if (prefill.contactName.trim()) params.set("name", prefill.contactName.trim());
+  if (prefill.companyName.trim()) params.set("business", prefill.companyName.trim());
+  const trades = prefill.trades.map((t) => t.trim()).filter(Boolean);
+  if (trades.length) params.set("trades", trades.join(","));
+  return `${base}/get-started?${params.toString()}`;
+}
+
+function partnerTradesFromRow(partner: { trade?: string | null; trades?: string[] | null }): string[] {
+  const fromArray = (partner.trades ?? []).filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0,
+  );
+  if (fromArray.length) return fromArray.map((t) => t.trim());
+  const primary = partner.trade?.trim();
+  return primary ? [primary] : [];
 }
 
 /** Trade portal login — partners sign in or claim an OS invite here. */
@@ -266,7 +291,12 @@ export async function createPartnerPortalLink(
       tokenId = tokenRow.id;
       expiresAtIso = tokenRow.expires_at;
       inviteCode = tokenRow.short_code;
-      onboardingUrl = tradePortalInviteUrl(tradePortalBaseUrl, inviteCode);
+      onboardingUrl = tradePortalGetStartedUrl(tradePortalBaseUrl, inviteCode, {
+        email: partnerEmail,
+        contactName: (partner as { contact_name?: string | null }).contact_name?.trim() ?? "",
+        companyName: (partner as { company_name?: string | null }).company_name?.trim() ?? "",
+        trades: partnerTradesFromRow(partner as { trade?: string | null; trades?: string[] | null }),
+      });
     } else {
       onboardingUrl = tradePortalLoginUrl(tradePortalBaseUrl, partnerEmail);
     }

@@ -87,6 +87,19 @@ function partnerFromJobEmbed(job: unknown): {
   };
 }
 
+type ClientRel = { full_name?: string | null };
+
+function clientNameFromEmbed(row: {
+  client_name?: string | null;
+  clients?: ClientRel | ClientRel[] | null;
+}): string {
+  const denorm = row.client_name?.trim() ?? "";
+  if (denorm) return denorm;
+  const clientRowRaw = row.clients;
+  const clientRow = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
+  return clientRow?.full_name?.trim() ?? "";
+}
+
 // ─── Job creation (accept flow) ──────────────────────────────────────────────
 
 /**
@@ -106,10 +119,10 @@ export async function dispatchJobCreatedZendesk(args: {
       id, reference, title, property_address, scope, status,
       scheduled_date, scheduled_start_at, scheduled_end_at, total_value,
       catalog_service_id,
-      external_source, external_ref, partner_id, partner_confirmed_at, client_id,
+      external_source, external_ref, partner_id, partner_confirmed_at, client_id, client_name,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
-      clients ( name ),
+      clients ( full_name ),
       partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
@@ -145,10 +158,7 @@ export async function dispatchJobCreatedZendesk(args: {
     .maybeSingle();
   if (!claimed) return { ok: true };
 
-  type ClientRel = { name?: string | null };
-  const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
-  const clientRow: ClientRel | null = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
-  const clientNameFallback = clientRow?.name ?? "";
+  const clientNameFallback = clientNameFromEmbed(job as { client_name?: string | null; clients?: ClientRel | ClientRel[] | null });
 
   // Resolve the customer-facing recipient the same way quotes/invoices do — the
   // account's billing_type decides between the account email (B2B) and the end
@@ -340,10 +350,10 @@ async function dispatchJobTerminalNotice(args: {
   const { data: job, error } = await supabase
     .from("jobs")
     .select(`
-      id, reference, title, status,
+      id, reference, title, status, client_name,
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
-      clients ( name ),
+      clients ( full_name ),
       partners ( company_name, contact_name, email, zendesk_user_id )
     `)
     .eq("id", args.jobId)
@@ -358,9 +368,7 @@ async function dispatchJobTerminalNotice(args: {
   if (job.status !== args.status) return { ok: true }; // status drifted — skip
   if ((job as Record<string, unknown>)[sentColumn]) return { ok: true };
 
-  const clientRow = (job as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
-  const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+  const clientName = clientNameFromEmbed(job as { client_name?: string | null; clients?: ClientRel | ClientRel[] | null });
 
   const html =
     args.status === "completed"
@@ -409,10 +417,10 @@ export async function dispatchQuoteRejectedZendesk(
   const { data: quote, error } = await supabase
     .from("quotes")
     .select(`
-      id, reference, status,
+      id, reference, status, client_name,
       external_source, external_ref,
       rejection_reason, rejection_notice_sent_at,
-      clients ( name )
+      clients ( full_name )
     `)
     .eq("id", quoteId)
     .maybeSingle();
@@ -428,9 +436,7 @@ export async function dispatchQuoteRejectedZendesk(
     return { ok: true };
   }
 
-  const clientRow = (quote as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
-  const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+  const clientName = clientNameFromEmbed(quote as { client_name?: string | null; clients?: ClientRel | ClientRel[] | null });
 
   const html = buildQuoteRejectedHtml({
     customerName: clientName,
