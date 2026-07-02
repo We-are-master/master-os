@@ -107,7 +107,6 @@ import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { partnerCoversJob } from "@/lib/partner-coverage";
 import { extractUkPostcode } from "@/lib/uk-postcode";
-import { uploadManualJobReport } from "@/services/job-report-storage";
 import {
   createSignedJobReportAssetUrl,
   createSignedJobReportPdfUrl,
@@ -1290,12 +1289,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
-  const [manualReportFile, setManualReportFile] = useState<File | null>(null);
-  const [manualReportNotes, setManualReportNotes] = useState("");
-  const [manualReportResult, setManualReportResult] = useState("");
-  const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
-  const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
-  const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
   const [appJobReports, setAppJobReports] = useState<AppJobReportRow[]>([]);
   const [loadingAppJobReports, setLoadingAppJobReports] = useState(false);
   const [openingReportId, setOpeningReportId] = useState<string | null>(null);
@@ -5060,95 +5053,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     })();
   }, [job?.id, job?.owner_id, profile?.id, profile?.full_name]);
 
-  const handleManualReportAnalyze = useCallback(async () => {
-    if (!job) return;
-    if (!manualReportFile) {
-      toast.error("Select a report file first.");
-      return;
-    }
-    setAnalyzingManualReport(true);
-    try {
-      const uploaded = await uploadManualJobReport(job.id, manualReportFile);
-      const res = await fetch("/api/jobs/analyze-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobReference: job.reference,
-          fileUrl: uploaded.publicUrl,
-          mimeType: uploaded.mimeType,
-          notes: manualReportNotes.trim() || undefined,
-        }),
-      });
-      const body = (await res.json()) as { analysis?: string; error?: string };
-      if (!res.ok) throw new Error(body.error || "Failed to analyse report");
-      const analysis = body.analysis ?? "";
-      setManualReportResult(analysis);
-      await handleJobUpdate(job.id, {
-        report_notes: [
-          job.report_notes,
-          `Manual report file: ${uploaded.publicUrl}`,
-          `Manual report analysis (${new Date().toLocaleString()}):`,
-          analysis,
-        ].filter(Boolean).join("\n\n"),
-      });
-      toast.success("Report analysed and saved to report notes.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to analyse report");
-    } finally {
-      setAnalyzingManualReport(false);
-    }
-  }, [job, manualReportFile, manualReportNotes, handleJobUpdate]);
-
-  const handlePhaseReportUploadAnalyze = useCallback(
-    async (phase: number, jobContext?: Job): Promise<Job | null> => {
-      const j = jobContext ?? job;
-      if (!j) return null;
-      const file = phaseReportFiles[phase] ?? null;
-      if (!file) {
-        toast.error("Select a report file first.");
-        return null;
-      }
-      setAnalyzingPhase(phase);
-      try {
-        const uploaded = await uploadManualJobReport(j.id, file);
-        const res = await fetch("/api/jobs/analyze-report", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jobReference: j.reference,
-            fileUrl: uploaded.publicUrl,
-            mimeType: uploaded.mimeType,
-            notes: `Phase ${phase} report.`,
-          }),
-        });
-        const body = (await res.json()) as { analysis?: string; error?: string };
-        if (!res.ok) throw new Error(body.error || "Failed to analyse report");
-        const analysis = body.analysis ?? "";
-        const updated = await handleJobUpdate(j.id, {
-          [`report_${phase}_uploaded`]: true,
-          [`report_${phase}_uploaded_at`]: new Date().toISOString(),
-          report_notes: [
-            j.report_notes,
-            `Phase ${phase} file: ${uploaded.publicUrl}`,
-            `Phase ${phase} report analysis (${new Date().toLocaleString()}):`,
-            analysis,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-        } as Partial<Job>);
-        setPhaseReportFiles((prev) => ({ ...prev, [phase]: null }));
-        toast.success(`Phase ${phase} report uploaded and analysed.`);
-        return updated ?? null;
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to upload/analyse report");
-        return null;
-      } finally {
-        setAnalyzingPhase(null);
-      }
-    },
-    [job, phaseReportFiles, handleJobUpdate],
-  );
-
   const handleSendReportAndInvoice = useCallback(async (opts?: {
     reviewSentAt?: string;
     reviewSendMethod?: "email" | "manual";
@@ -8131,141 +8035,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : null}
               </div>
             </div>
-
-            {/* MANUAL REPORT + AI ANALYSIS */}
-            <details
-              className="group rounded-[12px] overflow-hidden bg-white"
-              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
-            >
-              <summary
-                className="flex list-none items-center justify-between gap-2 px-[18px] py-[14px] cursor-pointer select-none [&::-webkit-details-marker]:hidden"
-                style={{ background: "#FAFAFB" }}
-              >
-                <p
-                  className="text-[11px] font-medium uppercase flex items-center gap-1.5 min-w-0"
-                  style={{ color: "#020040", letterSpacing: "0.6px" }}
-                >
-                  <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
-                </p>
-                <ChevronDown
-                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-                  style={{ color: "#9A9AA0" }}
-                  aria-hidden
-                />
-              </summary>
-              <div
-                className="space-y-3 px-[18px] py-[18px]"
-                style={{ borderTop: "0.5px solid #E4E4E8" }}
-              >
-                <div>
-                  <label
-                    className="block text-[11px] font-medium uppercase mb-[6px]"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Report file
-                  </label>
-                  <input
-                    id="manual-report-file"
-                    type="file"
-                    accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                    className="sr-only"
-                    onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
-                  />
-                  <div
-                    className="rounded-[8px] p-3 bg-white"
-                    style={{ border: "0.5px dashed #D8D8DD" }}
-                  >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <label
-                        htmlFor="manual-report-file"
-                        className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
-                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                        onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
-                        onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
-                      >
-                        <Upload className="h-3.5 w-3.5" />
-                        {manualReportFile ? "Change file" : "Choose file"}
-                      </label>
-                      {manualReportFile && (
-                        <button
-                          type="button"
-                          onClick={() => setManualReportFile(null)}
-                          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
-                          style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
-                        >
-                          <X className="h-3 w-3" /> Remove
-                        </button>
-                      )}
-                    </div>
-                    <p className="mt-2 text-[11px] truncate" style={{ color: "#6B6B70" }}>
-                      {manualReportFile?.name ?? "No file selected"}
-                    </p>
-                  </div>
-                  <p className="text-[11px] mt-[6px]" style={{ color: "#6B6B70" }}>
-                    Supported: PDF, DOC, DOCX or images (max 10MB).
-                  </p>
-                </div>
-                <div>
-                  <label
-                    className="block text-[11px] font-medium uppercase mb-[6px]"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Ops notes (recommended)
-                  </label>
-                  <textarea
-                    value={manualReportNotes}
-                    onChange={(e) => setManualReportNotes(e.target.value)}
-                    rows={3}
-                    placeholder="Add context, what was done, issues found, materials used, safety notes..."
-                    className="w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none bg-white"
-                    style={{
-                      border: "0.5px solid #D8D8DD",
-                      color: "#020040",
-                      fontFamily: "inherit",
-                      lineHeight: 1.5,
-                    }}
-                  />
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button
-                    type="button"
-                    disabled={!manualReportFile || analyzingManualReport}
-                    onClick={() => void handleManualReportAnalyze()}
-                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ background: "#020040" }}
-                    onMouseEnter={(e) => {
-                      if (!(e.currentTarget as HTMLButtonElement).disabled)
-                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                    }}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    {analyzingManualReport ? "Analyzing…" : "Upload & analyze"}
-                  </button>
-                  {manualReportFile && (
-                    <span className="text-[11px] truncate" style={{ color: "#6B6B70" }}>
-                      {manualReportFile.name}
-                    </span>
-                  )}
-                </div>
-                {manualReportResult && (
-                  <div
-                    className="rounded-[8px] p-3"
-                    style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[11px] font-medium uppercase mb-[6px]"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      AI response
-                    </p>
-                    <pre className="text-[12px] whitespace-pre-wrap" style={{ color: "#020040" }}>
-                      {manualReportResult}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </details>
             </>
             ) : null}
 
