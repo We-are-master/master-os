@@ -119,6 +119,40 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+
+  // Defense in depth for the "resume onboarding" flow: if a partner row
+  // already exists for this email, don't try to create a duplicate auth
+  // user + directory row. Bounce the wizard into the OTP-gated resume path.
+  // The client normally checks this at Step 0 (via /api/join/exists) and
+  // never reaches here — but any older client hitting the endpoint gets a
+  // graceful branch instead of a 409.
+  const { data: existingPartner } = await supabase
+    .from("partners")
+    .select("id, status")
+    .eq("email", email)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existingPartner) {
+    const status = String(existingPartner.status ?? "");
+    if (status === "onboarding" || status === "inactive" || status === "on_break") {
+      return NextResponse.json(
+        {
+          resume: status === "onboarding" ? "docs" : "reactivate",
+          partnerId: existingPartner.id,
+          needsOtp: true,
+          message: "This email is already registered. Verify by code to resume onboarding.",
+        },
+        { status: 200 },
+      );
+    }
+    // active / needs_attention: nothing to resume — direct them to sign in.
+    return NextResponse.json(
+      { error: "An account with this email already exists.", canSignIn: true },
+      { status: 409 },
+    );
+  }
+
   const docRules = await fetchPartnerDocumentRules(supabase);
   const DOC_DEFS = joinDocDefsFromRules(docRules);
 

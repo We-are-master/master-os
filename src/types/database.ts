@@ -844,6 +844,10 @@ export interface Partner {
   payment_terms?: string | null;
   /** Default partner owes cancellation fee (£) — office may override; falls back to company_settings. */
   default_partner_cancel_fee_gbp?: number | null;
+  /** Timestamp set by the Trade Portal `/get-started` wizard on final agreement sign. Portal + OS use it to know the partner is ready for review. */
+  wizard_completed_at?: string | null;
+  /** Set by the admin at activation from the Ready tab: `subscription` = billed through Stripe, `free` = ops-managed free tier. */
+  account_type?: "subscription" | "free" | null;
 }
 
 /** Tokenized self-service link sent to partners so they can refresh docs + profile data without login. */
