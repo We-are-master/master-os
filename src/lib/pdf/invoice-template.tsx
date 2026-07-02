@@ -3,6 +3,17 @@ import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/render
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
+import {
+  FIXFY_PDF_FOOTER_HEIGHT,
+  FIXFY_PDF_NAVY,
+  FIXFY_PDF_ORANGE,
+  FIXFY_PDF_PAD_H,
+  FIXFY_PDF_PAGE_GAP,
+  fixfyPdfHeaderLogoStyle,
+  fixfyPdfPageMargins,
+  FixfyPdfFooterGuard,
+  KeepTogetherBlock,
+} from "@/lib/pdf/fixfy-pdf-layout";
 
 export interface InvoicePdfData {
   reference: string;
@@ -32,8 +43,8 @@ export interface InvoicePdfData {
   requestPercent?: number;
 }
 
-const NAVY = "#020040";
-const ORANGE = "#ED4B00";
+const NAVY = FIXFY_PDF_NAVY;
+const ORANGE = FIXFY_PDF_ORANGE;
 const LILAC = "#F2F0FA";
 const TEXT = "#1A1A1A";
 const MUTED = "#4A4A55";
@@ -41,24 +52,25 @@ const LABEL = "#6B6E7B";
 const BORDER = "#E8E8EE";
 const HAIRLINE = "#F2F0FA";
 const FOOTER_INFO = "#AAAAD0";
-const PAD = 36;
-const FOOTER_HEIGHT = 68;
+const PAD = FIXFY_PDF_PAD_H;
 
 const styles = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
     fontSize: 10,
     color: NAVY,
-    paddingBottom: FOOTER_HEIGHT + 8,
+    ...fixfyPdfPageMargins,
   },
 
   headerBand: {
     backgroundColor: NAVY,
-    paddingVertical: 12,
-    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: PAD,
+    alignItems: "flex-start" as const,
+    marginTop: -FIXFY_PDF_PAGE_GAP,
   },
   wordmark: { fontFamily: "Helvetica-Bold", fontSize: 18, color: "#FFFFFF", letterSpacing: 0.5 },
-  headerLogo: { width: 100, height: 28, objectFit: "contain" as const },
+  headerLogo: fixfyPdfHeaderLogoStyle,
   accentBar: { backgroundColor: ORANGE, height: 4 },
 
   body: { paddingHorizontal: PAD, paddingTop: 18 },
@@ -207,7 +219,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: FOOTER_HEIGHT,
+    height: FIXFY_PDF_FOOTER_HEIGHT,
     backgroundColor: NAVY,
     paddingVertical: 12,
     paddingHorizontal: PAD,
@@ -264,7 +276,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
         <View style={styles.accentBar} />
 
         <View style={styles.body}>
-          <View style={styles.hero} wrap={false}>
+          <KeepTogetherBlock minHeight={90} style={styles.hero}>
             <Text style={styles.eyebrow}>{eyebrow}</Text>
             <View style={styles.docTitle}>
               <Text style={styles.docRef}>{displayBillingReference(data.reference)}</Text>
@@ -272,18 +284,18 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
             </View>
             <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
             <Text style={styles.intro}>{intro}</Text>
-          </View>
+          </KeepTogetherBlock>
 
           {isPaid ? (
-            <View style={styles.paidNote} wrap={false}>
+            <KeepTogetherBlock minHeight={44} style={styles.paidNote}>
               <Text style={styles.paidNoteText}>
                 Payment received — {money(data.amount)}
                 {data.paymentDate ? ` on ${data.paymentDate}` : ""}
               </Text>
-            </View>
+            </KeepTogetherBlock>
           ) : null}
 
-          <View style={[styles.refBar, styles.sectionGap]} wrap={false}>
+          <KeepTogetherBlock minHeight={72} style={[styles.refBar, styles.sectionGap]}>
             <View style={styles.refRow}>
               <Text style={styles.refKey}>Issue date</Text>
               <Text style={styles.refVal}>{data.issueDate}</Text>
@@ -307,9 +319,9 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
                 <Text style={styles.refVal}>{data.quoteReference}</Text>
               </View>
             ) : null}
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={styles.sectionGap} wrap={false}>
+          <KeepTogetherBlock minHeight={120} style={styles.sectionGap}>
             <Text style={styles.sectionLabel}>{isPaid ? "Job" : "Job completed"}</Text>
             <View style={styles.card}>
               <View style={styles.cardHead}>
@@ -338,34 +350,34 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
                 <Text style={[styles.infoVal, styles.infoValMuted]}>{data.jobReference || "—"}</Text>
               </View>
             </View>
-          </View>
+          </KeepTogetherBlock>
 
-          <View style={styles.sectionGap}>
+          <KeepTogetherBlock minHeight={100} style={styles.sectionGap}>
             <Text style={styles.sectionLabel}>Charges breakdown</Text>
             <View style={styles.card}>
-              <View style={styles.lineRow} wrap={false}>
+              <View style={styles.lineRow}>
                 <Text style={styles.lineLabel}>Trade services</Text>
                 <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
               </View>
-              <View style={styles.lineRow} wrap={false}>
+              <View style={styles.lineRow}>
                 <Text style={styles.lineLabel}>Fixfy platform fee</Text>
                 <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
               </View>
               {data.partial && !isPaid ? (
-                <View style={styles.lineRow} wrap={false}>
+                <View style={styles.lineRow}>
                   <Text style={styles.lineLabel}>Already paid</Text>
                   <Text style={styles.lineVal}>{money(data.paidAmount)}</Text>
                 </View>
               ) : null}
-              <View style={styles.totalRow} wrap={false}>
+              <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>{totalLabel}</Text>
                 <Text style={styles.totalVal}>{money(totalAmount)}</Text>
               </View>
             </View>
-          </View>
+          </KeepTogetherBlock>
 
           {!isPaid ? (
-            <View style={[styles.sectionGap]} wrap={false}>
+            <KeepTogetherBlock minHeight={140} style={styles.sectionGap}>
               <Text style={styles.sectionLabel}>Pay by bank transfer</Text>
               <View style={styles.refBar}>
                 {FIXFY_CLIENT_BANK_DETAIL_ROWS.map((row) => (
@@ -382,17 +394,18 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
                   Use this reference so we can match your payment automatically.
                 </Text>
               </View>
-            </View>
+            </KeepTogetherBlock>
           ) : null}
 
-          <View style={styles.vatNote} wrap={false}>
+          <KeepTogetherBlock minHeight={52} style={styles.vatNote}>
             <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
             <Text style={styles.vatText}>
               Reply to your statement email or contact support@getfixfy.com and we&#39;ll send one across.
             </Text>
-          </View>
+          </KeepTogetherBlock>
         </View>
 
+        <FixfyPdfFooterGuard />
         <View style={styles.footer} fixed>
           {data.logoUrl ? (
             <Image src={data.logoUrl} style={styles.footerLogo} />

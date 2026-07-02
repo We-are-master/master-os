@@ -7,6 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
 import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
+import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -84,6 +85,8 @@ export async function GET(
       }
     : null;
 
+  const logoUrl = await resolveCompanyPdfLogoDataUri(admin);
+
   const pdfBuffer = await renderToBuffer(
     React.createElement(JobReportPDF, {
       data: {
@@ -92,6 +95,7 @@ export async function GET(
         propertyAddress: String(job.property_address ?? ""),
         clientName:      clientName || null,
         partnerName:     (job.partner_name as string | null) ?? null,
+        logoUrl,
         start,
         final,
       },

@@ -8129,34 +8129,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
                 </div>
               ) : null}
-              {allConfiguredReportsApproved(job) && (
-                <div
-                  className="rounded-[10px] p-[14px] flex flex-col sm:flex-row sm:items-center gap-3"
-                  style={{ background: "#F4F5FB", border: "0.5px solid #D8DBEE" }}
-                >
-                  <p
-                    className="flex-1 text-[13px] font-medium"
-                    style={{ color: "#020040" }}
-                  >
-                    All reports validated — ready to send report &amp; request final payment.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={!sendReportFinalCheck.ok}
-                    title={sendReportFinalCheck.message}
-                    onClick={() => void handleSendReportAndInvoice()}
-                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ background: "#020040" }}
-                    onMouseEnter={(e) => {
-                      if (!(e.currentTarget as HTMLButtonElement).disabled)
-                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                    }}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Review &amp; approve
-                  </button>
-                </div>
-              )}
               </div>
             </div>
 
