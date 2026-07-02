@@ -208,7 +208,7 @@ export function resolveCoverageCityLabels(partner: PartnerCoverageFields): strin
   if (fromIds.length) return fromIds.join(", ");
 
   const loc = partner.location?.trim();
-  if (loc && /^london$/i.test(loc)) return "London";
+  if (loc && /london/i.test(loc)) return "London";
 
   if (partner.uk_coverage_regions?.some((r) => r.trim().toLowerCase() === "london")) {
     return "London";
@@ -219,6 +219,13 @@ export function resolveCoverageCityLabels(partner: PartnerCoverageFields): strin
     const londonSet = new Set(defaultLondonIncludedPostcodes().map(normalizeOutwardCode));
     const overlap = rawIncluded.filter((c) => londonSet.has(normalizeOutwardCode(c))).length;
     if (overlap > 0 && overlap / rawIncluded.length >= 0.25) return "London";
+  }
+
+  const effective = effectiveIncludedPostcodes(partner);
+  if (effective.length > 0) {
+    const londonSet = new Set(defaultLondonIncludedPostcodes().map(normalizeOutwardCode));
+    const overlap = effective.filter((c) => londonSet.has(normalizeOutwardCode(c))).length;
+    if (overlap > 0 && overlap / effective.length >= 0.25) return "London";
   }
 
   return "";
@@ -254,7 +261,7 @@ export function formatPartnerCoverageDisplay(partner: PartnerCoverageFields): Pa
       return { primary: "Postcodes (not set)", secondary: "" };
     }
     if (cities) return { primary: cities, secondary: `${n} districts` };
-    return { primary: `${n} postcode districts`, secondary: "" };
+    return { primary: "Postcodes", secondary: `${n} districts` };
   }
   return { primary: "", secondary: "" };
 }
