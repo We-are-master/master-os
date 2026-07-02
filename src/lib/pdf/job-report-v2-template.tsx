@@ -411,7 +411,7 @@ function KeepTogetherBlock({
 }: {
   children: React.ReactNode;
   minHeight: number;
-  style?: Record<string, unknown> | Record<string, unknown>[];
+  style?: React.ComponentProps<typeof View>["style"];
 }) {
   return (
     <View style={style} wrap={false} minPresenceAhead={PAGE_BOTTOM_RESERVE + minHeight}>
