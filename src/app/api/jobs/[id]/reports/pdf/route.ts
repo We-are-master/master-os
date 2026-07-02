@@ -52,10 +52,9 @@ export async function GET(
   const { data: job, error } = await admin
     .from("jobs")
     .select(`
-      id, reference, title, property_address, partner_name,
+      id, reference, title, property_address, partner_name, client_name,
       start_report, final_report,
-      start_report_approved_at, final_report_approved_at,
-      clients ( name )
+      start_report_approved_at, final_report_approved_at
     `)
     .eq("id", jobId)
     .maybeSingle();
@@ -64,8 +63,7 @@ export async function GET(
     return NextResponse.json({ error: error?.message ?? "Job not found" }, { status: 404 });
   }
 
-  const clientRow = (job as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
-  const clientName = Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+  const clientName = String(job.client_name ?? "").trim();
 
   const startNorm = normalizeReport(job.start_report);
   const finalNorm = normalizeReport(job.final_report);
