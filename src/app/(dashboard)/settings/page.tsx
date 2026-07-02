@@ -40,6 +40,7 @@ import { BrandingImageUpload } from "@/components/settings/branding-image-upload
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
 import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
+import { ServicesPricingClient } from "@/app/(dashboard)/services/services-pricing-client";
 const settingsAdminTabs = [
   { id: "ai-briefs", label: "AI & Daily brief" },
   { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
@@ -60,11 +61,15 @@ function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const { loading: configLoading } = useAdminConfig();
+  const { loading: configLoading, can } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
+  const canCatalog = can("service_catalog");
 
   const visibleTabs = useMemo(() => {
     const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My Profile" }];
+    if (canCatalog) {
+      tabs.push({ id: "services", label: "Services" });
+    }
     if (isAdmin) {
       tabs.push(
         ...settingsAdminTabs.map((t) => ({
@@ -75,14 +80,14 @@ function SettingsPageInner() {
       );
     }
     return tabs;
-  }, [isAdmin]);
+  }, [isAdmin, canCatalog]);
 
   const tabFromUrl = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState("profile");
 
   useEffect(() => {
     if (tabFromUrl === "service-catalog") {
-      router.replace("/services");
+      router.replace("/settings?tab=services");
       return;
     }
     if (tabFromUrl === "tiers") {
@@ -130,6 +135,7 @@ function SettingsPageInner() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
+          {activeTab === "services" && canCatalog && <ServicesPricingClient embedded />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
           {activeTab === "setup" && isAdmin && <SetupTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}

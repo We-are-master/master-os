@@ -224,23 +224,45 @@ export function resolveCoverageCityLabels(partner: PartnerCoverageFields): strin
   return "";
 }
 
-export function formatPartnerCoverageSummary(partner: PartnerCoverageFields): string {
+export type PartnerCoverageDisplay = {
+  primary: string;
+  secondary: string;
+};
+
+/** Two-line coverage label for directory tables (city/pick on top, detail below). */
+export function formatPartnerCoverageDisplay(partner: PartnerCoverageFields): PartnerCoverageDisplay {
   const mode = effectiveCoverageMode(partner);
   if (mode === "radius") {
     const miles = partner.service_radius_miles;
-    const pc = partner.coverage_base_postcode?.trim();
+    const pick =
+      partner.coverage_base_postcode?.trim() ||
+      partner.location?.trim() ||
+      "";
     if (miles != null && miles > 0) {
-      return pc ? `${miles} mi from ${pc}` : `${miles} mi radius`;
+      return {
+        primary: pick || "Radius",
+        secondary: `${miles} mi`,
+      };
     }
-    return "Radius (not set)";
+    return { primary: "Radius (not set)", secondary: "" };
   }
   if (mode === "postcodes") {
     const n = effectiveIncludedPostcodes(partner).length;
     const cities = resolveCoverageCityLabels(partner);
-    if (n === 0) return cities ? `Postcodes · ${cities}` : "Postcodes (not set)";
-    return cities ? `${cities} · ${n} districts` : `${n} postcode districts`;
+    if (n === 0) {
+      if (cities) return { primary: cities, secondary: "Postcodes (not set)" };
+      return { primary: "Postcodes (not set)", secondary: "" };
+    }
+    if (cities) return { primary: cities, secondary: `${n} districts` };
+    return { primary: `${n} postcode districts`, secondary: "" };
   }
-  return "";
+  return { primary: "", secondary: "" };
+}
+
+export function formatPartnerCoverageSummary(partner: PartnerCoverageFields): string {
+  const { primary, secondary } = formatPartnerCoverageDisplay(partner);
+  if (!primary) return "";
+  return secondary ? `${primary} · ${secondary}` : primary;
 }
 
 export function defaultCoveragePatchForNewPartner(): Partial<Partner> {

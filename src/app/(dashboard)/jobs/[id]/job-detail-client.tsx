@@ -7052,7 +7052,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         </div>
 
         {/* ── MAIN GRID (sidebar stacks below main until lg) ── */}
-        <div className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-stretch">
+        <div className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_342px] lg:items-stretch">
           {/* ═══ LEFT — operational column ═══ */}
           <div className="min-h-0 min-w-0 space-y-3 border-border-light p-3 sm:p-4 lg:border-r">
 
@@ -8904,27 +8904,45 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         setMoneyDrawerFlow("client_pay");
                         setMoneyDrawerOpen(true);
                       }}
-                      title="Records money received from the client. Reduces amount due only — use Charge or discount for line-item extras."
+                      title="Records money received from the client. Reduces amount due only — use Add extra charge or Add a discount for line-item adjustments."
                     >
-                      Record payment
+                      Record Received Payment
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn(
-                      "min-h-[2.75rem] w-full rounded-lg border-emerald-300/90 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45",
-                    )}
-                    disabled={job.status === "cancelled" || job.status === "deleted"}
-                    icon={<Plus className="h-4 w-4 shrink-0" />}
-                    onClick={() => {
-                      setMoneyDrawerInitialExtraType(undefined);
-                      setMoneyDrawerFlow("client_extra");
-                      setMoneyDrawerOpen(true);
-                    }}
-                  >
-                    Charge or discount
-                  </Button>
+                  <div className="flex w-full flex-nowrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={job.status === "cancelled" || job.status === "deleted"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Labour");
+                        setMoneyDrawerFlow("client_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add extra charge
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={job.status === "cancelled" || job.status === "deleted"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Discount — labour");
+                        setMoneyDrawerFlow("client_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add a discount
+                    </Button>
+                  </div>
                 </div>
                 {(() => {
                   if (!showsJobPaymentPlan) return null;
@@ -9218,7 +9236,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   ) : null}
                 </div>
-                {/* Always stack — right rail (~352px) is too narrow for two side-by-side action buttons */}
                 <div className="mt-2 flex w-full flex-col gap-2">
                   {isAdmin ? (
                     <Button
@@ -9236,22 +9253,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       Record partner payment
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn(
-                      "min-h-[2.75rem] w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45",
-                    )}
-                    disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                    icon={<Plus className="h-4 w-4 shrink-0" />}
-                    onClick={() => {
-                      setMoneyDrawerInitialExtraType(undefined);
-                      setMoneyDrawerFlow("partner_extra");
-                      setMoneyDrawerOpen(true);
-                    }}
-                  >
-                    Extra &amp; deduction
-                  </Button>
+                  <div className="flex w-full flex-nowrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Labour");
+                        setMoneyDrawerFlow("partner_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add extra charge
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Discount — labour");
+                        setMoneyDrawerFlow("partner_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add deduction
+                    </Button>
+                  </div>
                 </div>
                 {showsJobPaymentPlan &&
                 job.self_bill_id?.trim() &&
@@ -10387,7 +10422,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   disabled={job.status === "cancelled" || job.status === "deleted"}
                   onClick={() => openMoneyFlowFromHub("client_pay")}
                 >
-                  Record payment
+                  Record Received Payment
                 </Button>
               ) : null}
               <div>

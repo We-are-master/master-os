@@ -9,6 +9,10 @@ import {
 
 export type { JobOnHoldPresetRow };
 import {
+  mergePartnerRegistrationRules,
+  type PartnerRegistrationRuleRow,
+} from "@/lib/partner-registration-fields";
+import {
   mergePartnerDocumentRules,
   type PartnerDocRuleRow,
 } from "@/lib/partner-required-docs";
@@ -132,6 +136,8 @@ export type FrontendSetup = {
    * Controls which docs are requested and which are mandatory for compliance.
    */
   partner_document_rules?: PartnerDocRuleRow[];
+  /** Partner registration field rules — visible/mandatory for Trade Portal onboarding. */
+  partner_registration_rules?: PartnerRegistrationRuleRow[];
   /** Workforce document rules — employee + contractor (Settings → Setup). */
   workforce_document_rules?: WorkforceDocumentRules;
 
@@ -460,6 +466,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
     base.working_days = [...DEFAULT_WORKING_DAYS];
     base.working_hours = { ...DEFAULT_WORKING_HOURS };
     base.partner_document_rules = mergePartnerDocumentRules(null);
+    base.partner_registration_rules = mergePartnerRegistrationRules(null);
     base.workforce_document_rules = mergeWorkforceDocumentRules(null);
     return base;
   }
@@ -520,6 +527,7 @@ export function parseFrontendSetup(raw: unknown): FrontendSetup {
   base.access_ccz_fee_gbp = clampAccessFeeGbp(o.access_ccz_fee_gbp, DEFAULT_ACCESS_CCZ_FEE_GBP);
   base.access_parking_fee_gbp = clampAccessFeeGbp(o.access_parking_fee_gbp, DEFAULT_ACCESS_PARKING_FEE_GBP);
   base.partner_document_rules = mergePartnerDocumentRules(o.partner_document_rules);
+  base.partner_registration_rules = mergePartnerRegistrationRules(o.partner_registration_rules);
   base.workforce_document_rules = mergeWorkforceDocumentRules(o.workforce_document_rules);
   if (o.partner_level_monthly_goal_gbp !== undefined) {
     base.partner_level_monthly_goal_gbp = clampPartnerLevelGbp(
@@ -775,6 +783,9 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
   if (patch.partner_document_rules !== undefined) {
     base.partner_document_rules = mergePartnerDocumentRules(patch.partner_document_rules);
   }
+  if (patch.partner_registration_rules !== undefined) {
+    base.partner_registration_rules = mergePartnerRegistrationRules(patch.partner_registration_rules);
+  }
   if (patch.workforce_document_rules !== undefined) {
     base.workforce_document_rules = mergeWorkforceDocumentRules(patch.workforce_document_rules);
   }
@@ -857,6 +868,10 @@ export function mergeFrontendSetup(prev: unknown, patch: Partial<FrontendSetup>)
 /** Resolved partner document rules from company setup (merged with code defaults). */
 export function resolvePartnerDocumentRules(setup?: FrontendSetup | null): PartnerDocRuleRow[] {
   return mergePartnerDocumentRules(setup?.partner_document_rules);
+}
+
+export function resolvePartnerRegistrationRules(setup?: FrontendSetup | null): PartnerRegistrationRuleRow[] {
+  return mergePartnerRegistrationRules(setup?.partner_registration_rules);
 }
 
 export function resolveWorkforceDocumentRules(setup?: FrontendSetup | null): WorkforceDocumentRules {

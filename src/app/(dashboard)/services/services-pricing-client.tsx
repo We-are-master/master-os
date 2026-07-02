@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   LayoutGrid,
@@ -502,7 +502,7 @@ function StatusSegment({
   );
 }
 
-export function ServicesPricingClient() {
+export function ServicesPricingClient({ embedded = false }: { embedded?: boolean }) {
   const { can, loading: configLoading } = useAdminConfig();
   const canCatalog = can("service_catalog");
 
@@ -536,23 +536,22 @@ export function ServicesPricingClient() {
     });
   }, []);
 
+  const wrap = (content: ReactNode) =>
+    embedded ? <div>{content}</div> : <PageTransition>{content}</PageTransition>;
+
   if (configLoading) {
-    return (
-      <PageTransition>
-        <div className="flex items-center justify-center py-24 text-text-tertiary">
-          <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
-        </div>
-      </PageTransition>
+    return wrap(
+      <div className="flex items-center justify-center py-24 text-text-tertiary">
+        <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+      </div>,
     );
   }
 
   if (!canCatalog) {
-    return (
-      <PageTransition>
-        <div className="rounded-xl border border-border-light bg-card p-8 text-center">
-          <p className="text-sm text-text-secondary">You don&apos;t have access to the service catalog.</p>
-        </div>
-      </PageTransition>
+    return wrap(
+      <div className="rounded-xl border border-border-light bg-card p-8 text-center">
+        <p className="text-sm text-text-secondary">You don&apos;t have access to the service catalog.</p>
+      </div>,
     );
   }
 
@@ -561,29 +560,43 @@ export function ServicesPricingClient() {
       ? `${kpis.missingPriceNames[0]}${kpis.missingPriceNames.length > 1 ? ` +${kpis.missingPriceNames.length - 1}` : ""} · needs a price`
       : "all priced";
 
-  return (
-    <PageTransition>
-      <div className="svc-pricing space-y-6">
+  const headerActions = (
+    <>
+      <ViewSegment view={viewMode} onChange={setViewMode} />
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={<Share2 className="h-3.5 w-3.5" />}
+        onClick={() => setShareOpen(true)}
+      >
+        Share rate card
+      </Button>
+      <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={editor.openCreate}>
+        New service
+      </Button>
+    </>
+  );
+
+  return wrap(
+    <div className="svc-pricing space-y-6">
+      {embedded ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-text-secondary">
+            What you pay, what you charge, and what you keep — for every service.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">{headerActions}</div>
+        </div>
+      ) : (
         <PageHeader
           eyebrow="Catalog · Pricing"
           title="Services"
           subtitle="What you pay, what you charge, and what you keep — for every service. Click a row to expand add-ons; click edit to change pricing."
         >
-          <ViewSegment view={viewMode} onChange={setViewMode} />
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Share2 className="h-3.5 w-3.5" />}
-            onClick={() => setShareOpen(true)}
-          >
-            Share rate card
-          </Button>
-          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={editor.openCreate}>
-            New service
-          </Button>
+          {headerActions}
         </PageHeader>
+      )}
 
-        <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
+      <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
@@ -701,7 +714,6 @@ export function ServicesPricingClient() {
         )}
 
         {editor.modals}
-      </div>
-    </PageTransition>
+      </div>,
   );
 }
