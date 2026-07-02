@@ -47,11 +47,6 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Accounts", href: "/accounts", icon: "building" },
       { label: "Partners", href: "/partners", icon: "users" },
-    ],
-  },
-  {
-    label: "People",
-    items: [
       { label: "Workforce", href: "/people", icon: "contact", permission: "team", adminOnly: true },
     ],
   },
@@ -67,7 +62,6 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Admin",
     items: [
-      { label: "Services", href: "/services", icon: "circle-dollar-sign", permission: "service_catalog" },
       { label: "Settings", href: "/settings", icon: "settings", permission: "settings" },
     ],
   },

@@ -1,5 +1,10 @@
 import type { Partner, PartnerLegalType } from "@/types/database";
 import { partnerCoverageIsComplete } from "@/lib/partner-coverage";
+import {
+  PROFILE_ITEM_TO_REGISTRATION_ID,
+  resolvePartnerRegistrationRule,
+  type PartnerRegistrationRuleRow,
+} from "@/lib/partner-registration-fields";
 
 /** Infer legal type when DB column missing (legacy rows). */
 export function inferPartnerLegal(p: Pick<Partner, "partner_legal_type" | "crn">): PartnerLegalType {
@@ -29,10 +34,13 @@ export function isVatProfileComplete(partner: Partner): boolean {
 }
 
 /** Checklist rows for UI — weights match `computeProfileCompletenessScore`. */
-export function getProfileCompletenessItems(partner: Partner): ProfileCompletenessItem[] {
+export function getProfileCompletenessItems(
+  partner: Partner,
+  registrationRules?: PartnerRegistrationRuleRow[] | null,
+): ProfileCompletenessItem[] {
   const legal = inferPartnerLegal(partner);
   const hasCoverage = partnerCoverageIsComplete(partner);
-  return [
+  const all: ProfileCompletenessItem[] = [
     { id: "email", label: "Email on file", weight: 14, done: !!partner.email?.trim(), hint: "Add or confirm in Overview." },
     { id: "phone", label: "Phone number", weight: 12, done: !!partner.phone?.trim(), hint: "Add in Overview." },
     {
@@ -84,13 +92,34 @@ export function getProfileCompletenessItems(partner: Partner): ProfileCompletene
       hint: "Edit in Overview.",
     },
   ];
+
+  return all
+    .map((item): ProfileCompletenessItem | null => {
+      const regId = PROFILE_ITEM_TO_REGISTRATION_ID[item.id] ?? item.id;
+      const { visible, mandatory } = resolvePartnerRegistrationRule(regId, registrationRules);
+      if (!visible) return null;
+      const scores =
+        item.scoresTowardCompliance === false
+          ? false
+          : registrationRules != null
+            ? mandatory
+            : true;
+      return {
+        ...item,
+        scoresTowardCompliance: scores,
+      };
+    })
+    .filter((item): item is ProfileCompletenessItem => item != null);
 }
 
 /**
  * 0–100: phone, address, coverage, correct UTR/CRN, VAT, core identity.
  */
-export function computeProfileCompletenessScore(partner: Partner): number {
-  const items = getProfileCompletenessItems(partner);
+export function computeProfileCompletenessScore(
+  partner: Partner,
+  registrationRules?: PartnerRegistrationRuleRow[] | null,
+): number {
+  const items = getProfileCompletenessItems(partner, registrationRules);
   let earned = 0;
   let max = 0;
   for (const it of items) {
@@ -98,7 +127,7 @@ export function computeProfileCompletenessScore(partner: Partner): number {
     max += it.weight;
     if (it.done) earned += it.weight;
   }
-  return max > 0 ? Math.round((earned / max) * 100) : 0;
+  return max > 0 ? Math.round((earned / max) * 100) : 100;
 }
 
 /**

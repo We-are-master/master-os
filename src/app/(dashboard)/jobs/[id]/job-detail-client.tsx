@@ -97,6 +97,7 @@ import {
   ensureWeeklySelfBillForJob,
   getSelfBill,
   listSelfBillsLinkedToJob,
+  selfBillJobPayoutStateLabel,
   syncSelfBillAfterJobChange,
   updateSelfBill,
 } from "@/services/self-bills";
@@ -106,7 +107,6 @@ import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { partnerCoversJob } from "@/lib/partner-coverage";
 import { extractUkPostcode } from "@/lib/uk-postcode";
-import { uploadManualJobReport } from "@/services/job-report-storage";
 import {
   createSignedJobReportAssetUrl,
   createSignedJobReportPdfUrl,
@@ -284,7 +284,7 @@ import {
   signedLedgerDisplayAmount,
 } from "@/lib/job-extra-discount";
 import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry, updateJobExtraEntry } from "@/services/job-extra-entries";
-import { clientMaterialsMisallocationPatch } from "@/lib/repair-client-materials-allocation";
+import { clientMaterialsMisallocationPatch, partnerMaterialsLedgerSyncPatch } from "@/lib/repair-client-materials-allocation";
 import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, jobPartnerListKind, jobStatusLabel } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -579,7 +579,16 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
-function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
+function JobDetailSelfBillPanel({
+  sb,
+  job,
+  jobLineGross,
+}: {
+  sb: SelfBill;
+  job: Job;
+  /** Matches Cash out — partner (cap + materials from ledger). */
+  jobLineGross: number;
+}) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const partnerFieldBill = sb.bill_origin !== "internal";
@@ -595,7 +604,8 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
       : weekLine;
   const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
   const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
-  const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
+  const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
+  const payoutHoldNote = selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
@@ -640,6 +650,9 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
                 Partner → us · {sb.partner_name}
               </p>
               <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
+              {payoutHoldNote ? (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
+              ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
               <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
                 <div>
@@ -1276,12 +1289,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
-  const [manualReportFile, setManualReportFile] = useState<File | null>(null);
-  const [manualReportNotes, setManualReportNotes] = useState("");
-  const [manualReportResult, setManualReportResult] = useState("");
-  const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
-  const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
-  const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
   const [appJobReports, setAppJobReports] = useState<AppJobReportRow[]>([]);
   const [loadingAppJobReports, setLoadingAppJobReports] = useState(false);
   const [openingReportId, setOpeningReportId] = useState<string | null>(null);
@@ -1859,7 +1866,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, []);
 
-  const loadJobSelfBill = useCallback(async (j: Job) => {
+  const syncJobFinanceViaApi = useCallback(async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}/sync-finance`, { method: "POST" });
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      job?: Job;
+      selfBill?: SelfBill | null;
+    };
+    if (!res.ok) {
+      throw new Error(body.error?.trim() || "Finance sync failed");
+    }
+    if (!body.job) throw new Error("Finance sync returned no job");
+    return { job: body.job, selfBill: body.selfBill ?? null };
+  }, []);
+
+  const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
     if (!j.partner_id?.trim()) {
       setJobSelfBill(null);
       return;
@@ -1867,6 +1888,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setLoadingSelfBill(true);
     try {
       let working = j;
+      if (opts?.syncTotals !== false && working.partner_id?.trim()) {
+        try {
+          const synced = await syncJobFinanceViaApi(working.id);
+          setJob(synced.job);
+          working = synced.job;
+          if (synced.selfBill) {
+            setJobSelfBill(synced.selfBill);
+            return;
+          }
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
+          /* fall through — load last saved row */
+        }
+      }
       if (!working.self_bill_id?.trim() && !autoSelfBillEnsureRef.current.has(working.id)) {
         autoSelfBillEnsureRef.current.add(working.id);
         const gross = partnerSelfBillGrossAmount(working);
@@ -1895,7 +1930,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setLoadingSelfBill(false);
     }
-  }, []);
+  }, [syncJobFinanceViaApi]);
 
   const createDocumentAsDraft = useCallback(async (
     type: "invoice" | "selfbill",
@@ -1971,23 +2006,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!id) return;
     setRefreshingJob(true);
     try {
-      const j = await getJob(id);
-      setJob(j);
-      if (j) {
-        await Promise.all([
-          loadPayments(j.id),
-          loadJobInvoices(j),
-          loadQuoteLineItems(j),
-          loadJobSelfBill(j),
-          loadExtraHistory(j.id),
-        ]);
+      let j = await getJob(id);
+      if (!j) return;
+      if (j.partner_id?.trim()) {
+        try {
+          const synced = await syncJobFinanceViaApi(j.id);
+          j = synced.job;
+          setJob(synced.job);
+          if (synced.selfBill) setJobSelfBill(synced.selfBill);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
+        }
+      } else {
+        setJob(j);
       }
+      await Promise.all([
+        loadPayments(j.id),
+        loadJobInvoices(j),
+        loadQuoteLineItems(j),
+        loadJobSelfBill(j, { syncTotals: false }),
+        loadExtraHistory(j.id),
+      ]);
     } catch {
       toast.error("Failed to refresh");
     } finally {
       setRefreshingJob(false);
     }
-  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
+  }, [id, syncJobFinanceViaApi, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
   const handleOpenRequestPaymentModal = useCallback(async () => {
     if (!job?.id?.trim()) return;
@@ -2228,15 +2273,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job?.id || extraHistory.length === 0) return;
     const repairKey = `${job.id}:${job.materials_cost}:${job.extras_amount}:${extraHistory.length}`;
     if (materialsRepairAttemptedRef.current === repairKey) return;
-    const patch = clientMaterialsMisallocationPatch(
-      job,
-      extraHistory.map((row) => ({
-        side: row.side,
-        extra_type: row.extraType,
-        amount: row.amount,
-        allocation: row.allocation,
-      })),
-    );
+    const patch =
+      clientMaterialsMisallocationPatch(
+        job,
+        extraHistory.map((row) => ({
+          side: row.side,
+          extra_type: row.extraType,
+          amount: row.amount,
+          allocation: row.allocation,
+        })),
+      ) ??
+      partnerMaterialsLedgerSyncPatch(
+        job,
+        extraHistory.map((row) => ({
+          side: row.side,
+          extra_type: row.extraType,
+          amount: row.amount,
+          allocation: row.allocation,
+        })),
+      );
     if (!patch) return;
     materialsRepairAttemptedRef.current = repairKey;
     let cancelled = false;
@@ -4998,95 +5053,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     })();
   }, [job?.id, job?.owner_id, profile?.id, profile?.full_name]);
 
-  const handleManualReportAnalyze = useCallback(async () => {
-    if (!job) return;
-    if (!manualReportFile) {
-      toast.error("Select a report file first.");
-      return;
-    }
-    setAnalyzingManualReport(true);
-    try {
-      const uploaded = await uploadManualJobReport(job.id, manualReportFile);
-      const res = await fetch("/api/jobs/analyze-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobReference: job.reference,
-          fileUrl: uploaded.publicUrl,
-          mimeType: uploaded.mimeType,
-          notes: manualReportNotes.trim() || undefined,
-        }),
-      });
-      const body = (await res.json()) as { analysis?: string; error?: string };
-      if (!res.ok) throw new Error(body.error || "Failed to analyse report");
-      const analysis = body.analysis ?? "";
-      setManualReportResult(analysis);
-      await handleJobUpdate(job.id, {
-        report_notes: [
-          job.report_notes,
-          `Manual report file: ${uploaded.publicUrl}`,
-          `Manual report analysis (${new Date().toLocaleString()}):`,
-          analysis,
-        ].filter(Boolean).join("\n\n"),
-      });
-      toast.success("Report analysed and saved to report notes.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to analyse report");
-    } finally {
-      setAnalyzingManualReport(false);
-    }
-  }, [job, manualReportFile, manualReportNotes, handleJobUpdate]);
-
-  const handlePhaseReportUploadAnalyze = useCallback(
-    async (phase: number, jobContext?: Job): Promise<Job | null> => {
-      const j = jobContext ?? job;
-      if (!j) return null;
-      const file = phaseReportFiles[phase] ?? null;
-      if (!file) {
-        toast.error("Select a report file first.");
-        return null;
-      }
-      setAnalyzingPhase(phase);
-      try {
-        const uploaded = await uploadManualJobReport(j.id, file);
-        const res = await fetch("/api/jobs/analyze-report", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jobReference: j.reference,
-            fileUrl: uploaded.publicUrl,
-            mimeType: uploaded.mimeType,
-            notes: `Phase ${phase} report.`,
-          }),
-        });
-        const body = (await res.json()) as { analysis?: string; error?: string };
-        if (!res.ok) throw new Error(body.error || "Failed to analyse report");
-        const analysis = body.analysis ?? "";
-        const updated = await handleJobUpdate(j.id, {
-          [`report_${phase}_uploaded`]: true,
-          [`report_${phase}_uploaded_at`]: new Date().toISOString(),
-          report_notes: [
-            j.report_notes,
-            `Phase ${phase} file: ${uploaded.publicUrl}`,
-            `Phase ${phase} report analysis (${new Date().toLocaleString()}):`,
-            analysis,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-        } as Partial<Job>);
-        setPhaseReportFiles((prev) => ({ ...prev, [phase]: null }));
-        toast.success(`Phase ${phase} report uploaded and analysed.`);
-        return updated ?? null;
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to upload/analyse report");
-        return null;
-      } finally {
-        setAnalyzingPhase(null);
-      }
-    },
-    [job, phaseReportFiles, handleJobUpdate],
-  );
-
   const handleSendReportAndInvoice = useCallback(async (opts?: {
     reviewSentAt?: string;
     reviewSendMethod?: "email" | "manual";
@@ -6365,7 +6331,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
     ? ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
       ? financeDocCancelledBadge
-      : financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
+      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
         ? financeDocDraftBadge
         : financeDocSentBadge
     : null;
@@ -6990,7 +6956,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         </div>
 
         {/* ── MAIN GRID (sidebar stacks below main until lg) ── */}
-        <div className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-stretch">
+        <div className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_342px] lg:items-stretch">
           {/* ═══ LEFT — operational column ═══ */}
           <div className="min-h-0 min-w-0 space-y-3 border-border-light p-3 sm:p-4 lg:border-r">
 
@@ -8067,171 +8033,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
                 </div>
               ) : null}
-              {allConfiguredReportsApproved(job) && (
-                <div
-                  className="rounded-[10px] p-[14px] flex flex-col sm:flex-row sm:items-center gap-3"
-                  style={{ background: "#F4F5FB", border: "0.5px solid #D8DBEE" }}
-                >
-                  <p
-                    className="flex-1 text-[13px] font-medium"
-                    style={{ color: "#020040" }}
-                  >
-                    All reports validated — ready to send report &amp; request final payment.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={!sendReportFinalCheck.ok}
-                    title={sendReportFinalCheck.message}
-                    onClick={() => void handleSendReportAndInvoice()}
-                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ background: "#020040" }}
-                    onMouseEnter={(e) => {
-                      if (!(e.currentTarget as HTMLButtonElement).disabled)
-                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                    }}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Review &amp; approve
-                  </button>
-                </div>
-              )}
               </div>
             </div>
-
-            {/* MANUAL REPORT + AI ANALYSIS */}
-            <details
-              className="group rounded-[12px] overflow-hidden bg-white"
-              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
-            >
-              <summary
-                className="flex list-none items-center justify-between gap-2 px-[18px] py-[14px] cursor-pointer select-none [&::-webkit-details-marker]:hidden"
-                style={{ background: "#FAFAFB" }}
-              >
-                <p
-                  className="text-[11px] font-medium uppercase flex items-center gap-1.5 min-w-0"
-                  style={{ color: "#020040", letterSpacing: "0.6px" }}
-                >
-                  <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
-                </p>
-                <ChevronDown
-                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-                  style={{ color: "#9A9AA0" }}
-                  aria-hidden
-                />
-              </summary>
-              <div
-                className="space-y-3 px-[18px] py-[18px]"
-                style={{ borderTop: "0.5px solid #E4E4E8" }}
-              >
-                <div>
-                  <label
-                    className="block text-[11px] font-medium uppercase mb-[6px]"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Report file
-                  </label>
-                  <input
-                    id="manual-report-file"
-                    type="file"
-                    accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                    className="sr-only"
-                    onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
-                  />
-                  <div
-                    className="rounded-[8px] p-3 bg-white"
-                    style={{ border: "0.5px dashed #D8D8DD" }}
-                  >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <label
-                        htmlFor="manual-report-file"
-                        className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
-                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-                        onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
-                        onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
-                      >
-                        <Upload className="h-3.5 w-3.5" />
-                        {manualReportFile ? "Change file" : "Choose file"}
-                      </label>
-                      {manualReportFile && (
-                        <button
-                          type="button"
-                          onClick={() => setManualReportFile(null)}
-                          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
-                          style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
-                        >
-                          <X className="h-3 w-3" /> Remove
-                        </button>
-                      )}
-                    </div>
-                    <p className="mt-2 text-[11px] truncate" style={{ color: "#6B6B70" }}>
-                      {manualReportFile?.name ?? "No file selected"}
-                    </p>
-                  </div>
-                  <p className="text-[11px] mt-[6px]" style={{ color: "#6B6B70" }}>
-                    Supported: PDF, DOC, DOCX or images (max 10MB).
-                  </p>
-                </div>
-                <div>
-                  <label
-                    className="block text-[11px] font-medium uppercase mb-[6px]"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Ops notes (recommended)
-                  </label>
-                  <textarea
-                    value={manualReportNotes}
-                    onChange={(e) => setManualReportNotes(e.target.value)}
-                    rows={3}
-                    placeholder="Add context, what was done, issues found, materials used, safety notes..."
-                    className="w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none bg-white"
-                    style={{
-                      border: "0.5px solid #D8D8DD",
-                      color: "#020040",
-                      fontFamily: "inherit",
-                      lineHeight: 1.5,
-                    }}
-                  />
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button
-                    type="button"
-                    disabled={!manualReportFile || analyzingManualReport}
-                    onClick={() => void handleManualReportAnalyze()}
-                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ background: "#020040" }}
-                    onMouseEnter={(e) => {
-                      if (!(e.currentTarget as HTMLButtonElement).disabled)
-                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
-                    }}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    {analyzingManualReport ? "Analyzing…" : "Upload & analyze"}
-                  </button>
-                  {manualReportFile && (
-                    <span className="text-[11px] truncate" style={{ color: "#6B6B70" }}>
-                      {manualReportFile.name}
-                    </span>
-                  )}
-                </div>
-                {manualReportResult && (
-                  <div
-                    className="rounded-[8px] p-3"
-                    style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[11px] font-medium uppercase mb-[6px]"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      AI response
-                    </p>
-                    <pre className="text-[12px] whitespace-pre-wrap" style={{ color: "#020040" }}>
-                      {manualReportResult}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </details>
             </>
             ) : null}
 
@@ -8842,27 +8645,45 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         setMoneyDrawerFlow("client_pay");
                         setMoneyDrawerOpen(true);
                       }}
-                      title="Records money received from the client. Reduces amount due only — use Charge or discount for line-item extras."
+                      title="Records money received from the client. Reduces amount due only — use Add extra charge or Add a discount for line-item adjustments."
                     >
-                      Record payment
+                      Record Received Payment
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn(
-                      "min-h-[2.75rem] w-full rounded-lg border-emerald-300/90 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45",
-                    )}
-                    disabled={job.status === "cancelled" || job.status === "deleted"}
-                    icon={<Plus className="h-4 w-4 shrink-0" />}
-                    onClick={() => {
-                      setMoneyDrawerInitialExtraType(undefined);
-                      setMoneyDrawerFlow("client_extra");
-                      setMoneyDrawerOpen(true);
-                    }}
-                  >
-                    Charge or discount
-                  </Button>
+                  <div className="flex w-full flex-nowrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={job.status === "cancelled" || job.status === "deleted"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Labour");
+                        setMoneyDrawerFlow("client_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add extra charge
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={job.status === "cancelled" || job.status === "deleted"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Discount — labour");
+                        setMoneyDrawerFlow("client_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add a discount
+                    </Button>
+                  </div>
                 </div>
                 {(() => {
                   if (!showsJobPaymentPlan) return null;
@@ -9156,7 +8977,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   ) : null}
                 </div>
-                {/* Always stack — right rail (~352px) is too narrow for two side-by-side action buttons */}
                 <div className="mt-2 flex w-full flex-col gap-2">
                   {isAdmin ? (
                     <Button
@@ -9174,22 +8994,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       Record partner payment
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={cn(
-                      "min-h-[2.75rem] w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45",
-                    )}
-                    disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                    icon={<Plus className="h-4 w-4 shrink-0" />}
-                    onClick={() => {
-                      setMoneyDrawerInitialExtraType(undefined);
-                      setMoneyDrawerFlow("partner_extra");
-                      setMoneyDrawerOpen(true);
-                    }}
-                  >
-                    Extra &amp; deduction
-                  </Button>
+                  <div className="flex w-full flex-nowrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Labour");
+                        setMoneyDrawerFlow("partner_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add extra charge
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
+                      )}
+                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
+                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
+                      onClick={() => {
+                        setMoneyDrawerInitialExtraType("Discount — labour");
+                        setMoneyDrawerFlow("partner_extra");
+                        setMoneyDrawerOpen(true);
+                      }}
+                    >
+                      Add deduction
+                    </Button>
+                  </div>
                 </div>
                 {showsJobPaymentPlan &&
                 job.self_bill_id?.trim() &&
@@ -9527,12 +9365,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     Money out · We pay the <strong className="font-semibold">partner</strong>
                   </p>
                 </div>
+                {job.partner_id?.trim() ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    loading={refreshingJob || loadingSelfBill}
+                    className="h-7 shrink-0 text-[10px] px-2"
+                    icon={<RefreshCw className="h-3 w-3" />}
+                    onClick={() => void refreshJobFinance().then(() => toast.success("Partner finance synced"))}
+                    title="Reload job finance and recalculate self-bill totals from the server"
+                  >
+                    Sync
+                  </Button>
+                ) : null}
               </div>
-              <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
+              {!job.partner_id?.trim() ? (
+                <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
+              ) : null}
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} />
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutTotal} />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
@@ -10309,7 +10163,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   disabled={job.status === "cancelled" || job.status === "deleted"}
                   onClick={() => openMoneyFlowFromHub("client_pay")}
                 >
-                  Record payment
+                  Record Received Payment
                 </Button>
               ) : null}
               <div>

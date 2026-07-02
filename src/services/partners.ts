@@ -1,5 +1,6 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
 import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
+import { PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
 import type { Partner } from "@/types/database";
 import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 
@@ -25,10 +26,9 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   const statusArg =
     !params.status || params.status === "all"
       ? null
-      // The RPC takes a single status string. The page treats "inactive" as
-      // ("inactive" + "on_break") for legacy reasons; we'll fall back to the
-      // direct path in that one case so the IN-list filter is preserved.
-      : params.status === "inactive"
+      // The RPC takes a single status string. The page treats "inactive" and "onboarding"
+      // as unions; fall back to the direct path so IN-list filters are preserved.
+      : params.status === "inactive" || params.status === "onboarding"
         ? "__needs_fallback__"
         : params.status;
 
@@ -78,6 +78,8 @@ async function listPartnersLegacy(
     /** Inactive stage includes legacy `on_break` rows (same lifecycle as inactive + reason). */
     if (params.status === "inactive") {
       query = query.in("status", ["inactive", "on_break"]);
+    } else if (params.status === "onboarding") {
+      query = query.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
     } else {
       query = query.eq("status", params.status);
     }
@@ -109,6 +111,8 @@ async function listPartnersLegacy(
     if (params.status && params.status !== "all") {
       if (params.status === "inactive") {
         fallback = fallback.in("status", ["inactive", "on_break"]);
+      } else if (params.status === "onboarding") {
+        fallback = fallback.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
       } else {
         fallback = fallback.eq("status", params.status);
       }

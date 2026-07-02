@@ -10,11 +10,12 @@ const SETTINGS_NAV_ITEM = {
   permission: "settings" as const,
 };
 
-const PEOPLE_DIRECTORY_ITEM = {
+const WORKFORCE_NAV_ITEM = {
   label: "Workforce",
   href: "/people",
   icon: "contact",
   permission: "team" as const,
+  adminOnly: true,
 };
 
 const TEAM_CORE_ITEM = {
@@ -146,6 +147,42 @@ function ensureLearnGroup(nav: NavGroup[]): NavGroup[] {
   return [{ label: LEARN_GROUP_LABEL, items: [SCHOOL_NAV_ITEM] }, ...stripped];
 }
 
+/** Move Workforce (/people) from People into Network; drop empty People group. */
+function relocateWorkforceToNetwork(nav: NavGroup[]): NavGroup[] {
+  let workforceItem: NavItem | undefined;
+
+  const withoutPeople = nav
+    .filter((g) => g.label !== PEOPLE_GROUP_LABEL)
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => {
+        if (i.href === "/people") {
+          if (!workforceItem) workforceItem = i;
+          return false;
+        }
+        return true;
+      }),
+    }));
+
+  const item = workforceItem ?? { ...WORKFORCE_NAV_ITEM };
+
+  const networkIdx = withoutPeople.findIndex((g) => g.label === "Network");
+  if (networkIdx < 0) {
+    return [...withoutPeople, { label: "Network", items: [item] }].filter((g) => g.items.length > 0);
+  }
+
+  if (withoutPeople[networkIdx].items.some((i) => i.href === "/people")) {
+    return withoutPeople.filter((g) => g.items.length > 0);
+  }
+
+  withoutPeople[networkIdx] = {
+    ...withoutPeople[networkIdx],
+    items: [...withoutPeople[networkIdx].items, item],
+  };
+
+  return withoutPeople.filter((g) => g.items.length > 0);
+}
+
 /** Move /schedule out of Operations and into Overview (below Dashboard) if stored there. */
 function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
   let scheduleItem: NavItem | undefined;
@@ -210,22 +247,6 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     items: g.items.filter((i) => !strip.has(i.href)),
   }));
 
-  const peopleIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
-  if (peopleIdx >= 0) {
-    const items = next[peopleIdx].items;
-    const extras = items.filter((i) => i.href !== "/people" && i.href !== "/finance/payroll");
-    const peopleItem = items.find((i) => i.href === "/people") ?? { ...PEOPLE_DIRECTORY_ITEM };
-    next[peopleIdx] = {
-      ...next[peopleIdx],
-      items: [peopleItem, ...extras],
-    };
-  } else {
-    next.push({
-      label: PEOPLE_GROUP_LABEL,
-      items: [{ ...PEOPLE_DIRECTORY_ITEM }],
-    });
-  }
-
   const adminIdx = next.findIndex((g) => g.label === "Admin");
   if (adminIdx >= 0) {
     const items = [...next[adminIdx].items];
@@ -239,7 +260,6 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
   }
 
   const financeIdx = next.findIndex((g) => g.label === "Finance");
-  const peopleNavIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
   const canonicalFinance = DEFAULT_NAVIGATION.find((g) => g.label === "Finance");
   if (financeIdx >= 0 && canonicalFinance) {
     const seen = new Set(next[financeIdx].items.map((i) => i.href));
@@ -252,13 +272,11 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     }
     next[financeIdx] = { ...next[financeIdx], items: merged };
   }
-  if (peopleNavIdx >= 0 && financeIdx >= 0 && peopleNavIdx > financeIdx) {
-    const [peopleGroup] = next.splice(peopleNavIdx, 1);
-    next.splice(financeIdx, 0, peopleGroup);
-  }
 
   const relocated = ensureLearnGroup(
-    relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)))),
+    relocateWorkforceToNetwork(
+      relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)))),
+    ),
   );
   return syncItemLabels(relocated);
 }
@@ -305,12 +323,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
-    ],
-  },
-  {
-    label: PEOPLE_GROUP_LABEL,
-    items: [
-      { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
+      { ...WORKFORCE_NAV_ITEM },
     ],
   },
   {

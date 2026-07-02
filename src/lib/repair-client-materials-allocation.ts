@@ -56,11 +56,29 @@ export function clientMaterialsMisallocationPatch(
     customer_final_payment,
     partner_cost: Number(job.partner_cost ?? 0),
   } as Job;
-
   return {
+    client_price,
     extras_amount,
     materials_cost,
     customer_final_payment,
+    ...deriveStoredJobFinancials(merged),
+  };
+}
+
+/**
+ * When partner materials live only on the ledger, sync `materials_cost` on the job row
+ * so self-bill totals and the Partner self-bill card match Cash out — partner.
+ */
+export function partnerMaterialsLedgerSyncPatch(
+  job: Pick<Job, "materials_cost" | "partner_cost" | "client_price" | "extras_amount" | "customer_deposit">,
+  rows: MaterialsLedgerRow[],
+): Partial<Job> | null {
+  const partnerMaterials = Math.max(0, sumLedgerMaterials(rows, "partner"));
+  const currentMaterials = Number(job.materials_cost ?? 0);
+  if (Math.abs(currentMaterials - partnerMaterials) <= 0.02) return null;
+  const merged = { ...job, materials_cost: partnerMaterials } as Job;
+  return {
+    materials_cost: partnerMaterials,
     ...deriveStoredJobFinancials(merged),
   };
 }

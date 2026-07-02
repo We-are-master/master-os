@@ -7,6 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
 import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
+import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -51,10 +52,9 @@ export async function GET(
   const { data: job, error } = await admin
     .from("jobs")
     .select(`
-      id, reference, title, property_address, partner_name,
+      id, reference, title, property_address, partner_name, client_name,
       start_report, final_report,
-      start_report_approved_at, final_report_approved_at,
-      clients ( name )
+      start_report_approved_at, final_report_approved_at
     `)
     .eq("id", jobId)
     .maybeSingle();
@@ -63,8 +63,7 @@ export async function GET(
     return NextResponse.json({ error: error?.message ?? "Job not found" }, { status: 404 });
   }
 
-  const clientRow = (job as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
-  const clientName = Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+  const clientName = String(job.client_name ?? "").trim();
 
   const startNorm = normalizeReport(job.start_report);
   const finalNorm = normalizeReport(job.final_report);
@@ -84,6 +83,8 @@ export async function GET(
       }
     : null;
 
+  const logoUrl = await resolveCompanyPdfLogoDataUri(admin);
+
   const pdfBuffer = await renderToBuffer(
     React.createElement(JobReportPDF, {
       data: {
@@ -92,6 +93,7 @@ export async function GET(
         propertyAddress: String(job.property_address ?? ""),
         clientName:      clientName || null,
         partnerName:     (job.partner_name as string | null) ?? null,
+        logoUrl,
         start,
         final,
       },

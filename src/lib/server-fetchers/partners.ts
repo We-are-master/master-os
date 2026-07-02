@@ -5,6 +5,7 @@
  * which returns paged rows + per-partner doc/job aggregates in one call.
  */
 import { enrichPartnersDirectoryEarnings } from "@/lib/partner-directory-earnings";
+import { PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
 import { getServerSupabase } from "@/lib/supabase/server-cached";
 import type { Partner } from "@/types/database";
 import type { ListResult } from "@/services/base";
@@ -27,7 +28,10 @@ export async function fetchInitialPartners(
   // fall back to a direct query in that one case (mirrors listPartners
   // behaviour in src/services/partners.ts).
   if (status === "inactive") {
-    return fetchInactivePartnersDirect(opts, pageSize);
+    return fetchPartnersDirectByStatuses(opts, pageSize, ["inactive", "on_break"]);
+  }
+  if (status === "onboarding") {
+    return fetchPartnersDirectByStatuses(opts, pageSize, [...PARTNER_ONBOARDING_STAGE_STATUSES]);
   }
 
   try {
@@ -61,16 +65,17 @@ export async function fetchInitialPartners(
   }
 }
 
-async function fetchInactivePartnersDirect(
+async function fetchPartnersDirectByStatuses(
   opts: FetchPartnersOptions,
   pageSize: number,
+  statuses: string[],
 ): Promise<ListResult<Partner> | null> {
   try {
     const supabase = await getServerSupabase();
     let query = supabase
       .from("partners")
       .select("*", { count: "exact" })
-      .in("status", ["inactive", "on_break"])
+      .in("status", statuses)
       .order("joined_at", { ascending: false });
 
     if (opts.trade && opts.trade !== "all") {
