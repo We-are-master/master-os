@@ -153,6 +153,10 @@ import {
 } from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 import { invitePartnerFromZero } from "@/lib/partner-invite";
+import { PartnerFunnel } from "@/components/partners/partner-funnel";
+import { partnerIsReadyForReview } from "@/lib/partner-ready-check";
+import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
+import type { PartnerDocLike } from "@/lib/partner-required-docs";
 
 const PARTNERS_PAGE_SIZE = 10;
 const PARTNERS_DIR_VIEW_STORAGE_KEY = "master-os-partners-directory-view";
@@ -175,6 +179,7 @@ function complianceTier(score: number): {
 const PARTNER_DIRECTORY_STAGE_FILTERS = [
   { id: "all", label: "All" },
   { id: "onboarding", label: "Onboarding" },
+  { id: "ready", label: "Ready" },
   { id: "active", label: "Active" },
   { id: "needs_attention", label: "Needs attention" },
   { id: "inactive", label: "Inactive" },
@@ -1182,6 +1187,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
+  /** Onboarding partners that have already uploaded every mandatory document — surface in the "Ready" tab for admin review. */
+  const [readyPartnerIds, setReadyPartnerIds] = useState<Set<string>>(() => new Set());
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
@@ -1305,8 +1312,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   }, [viewMode, loadTeam]);
 
   const fetcher = useCallback(async (params: ListParams) => {
+    // The virtual "ready" tab shares a DB status with "onboarding" — the split
+    // between the two is derived from `readyPartnerIds`. We translate here so
+    // the RPC still runs, then the client-side filter in `sortedPartners`
+    // narrows the page down to the right subset.
+    const effectiveStatus = params.status === "ready" ? "onboarding" : params.status;
     const result = await listPartners({
       ...params,
+      status: effectiveStatus,
       trade: tradeFilter !== "all" ? tradeFilter : undefined,
     });
     try {
@@ -1442,6 +1455,48 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
       setPartnersBelow50Count(below50Res.count ?? 0);
+
+      // Compute "Ready" set — onboarding partners with every mandatory doc uploaded.
+      // Keep this pass small: only onboarding rows plus a single partner_documents
+      // fetch scoped to those ids.
+      try {
+        const { data: onboardingPartners } = await supabase
+          .from("partners")
+          .select("id, status, trade, trades, partner_legal_type, utr, crn, vat_number, vat_registered")
+          .eq("status", "onboarding")
+          .is("deleted_at", null);
+        const onboardingRows = (onboardingPartners ?? []) as Array<
+          Pick<
+            Partner,
+            "id" | "status" | "trade" | "trades" | "partner_legal_type" | "utr" | "crn" | "vat_number" | "vat_registered"
+          >
+        >;
+        if (onboardingRows.length === 0) {
+          setReadyPartnerIds(new Set());
+        } else {
+          const ids = onboardingRows.map((p) => p.id);
+          const [docsRes, rules] = await Promise.all([
+            supabase
+              .from("partner_documents")
+              .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
+              .in("partner_id", ids),
+            fetchPartnerDocumentRules(supabase).catch(() => null),
+          ]);
+          const docsByPartnerId = new Map<string, PartnerDocLike[]>();
+          for (const row of (docsRes.data ?? []) as Array<PartnerDocLike & { partner_id: string }>) {
+            const arr = docsByPartnerId.get(row.partner_id) ?? [];
+            arr.push(row);
+            docsByPartnerId.set(row.partner_id, arr);
+          }
+          const readySet = new Set<string>();
+          for (const p of onboardingRows) {
+            if (partnerIsReadyForReview(p, docsByPartnerId.get(p.id), rules)) readySet.add(p.id);
+          }
+          setReadyPartnerIds(readySet);
+        }
+      } catch {
+        setReadyPartnerIds(new Set());
+      }
     } catch { /* cosmetic */ }
   }, []);
 
@@ -1590,18 +1645,23 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
   const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
+  const readyCount = readyPartnerIds.size;
+  const onboardingRawCount = statusCounts["onboarding"] ?? 0;
+  const onboardingTabCount = Math.max(0, onboardingRawCount - readyCount);
 
   const partnerDirectoryTabs = useMemo(
     () =>
-      PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => ({
-        id: s.id,
-        label: s.label,
-        count:
-          s.id === "inactive"
-            ? inactiveStageCount
-            : (statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0)),
-      })),
-    [statusCounts, totalPartners, inactiveStageCount],
+      PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => {
+        if (s.id === "inactive") return { id: s.id, label: s.label, count: inactiveStageCount };
+        if (s.id === "ready") return { id: s.id, label: s.label, count: readyCount };
+        if (s.id === "onboarding") return { id: s.id, label: s.label, count: onboardingTabCount };
+        return {
+          id: s.id,
+          label: s.label,
+          count: statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0),
+        };
+      }),
+    [statusCounts, totalPartners, inactiveStageCount, readyCount, onboardingTabCount],
   );
 
   const createWizardStepIndex = CREATE_PARTNER_WIZARD_STEPS.findIndex((s) => s.id === createWizardStep);
@@ -1908,7 +1968,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   const sortedPartners = useMemo(() => {
     const sortKey = listSortKey ?? "total_earnings";
-    const rows = [...partners];
+    // Client-side filter for the "ready" / "onboarding" split. Both tabs pull
+    // the same DB rows (status = onboarding) — the difference is whether the
+    // partner has already uploaded every mandatory document.
+    let rows = [...partners];
+    if (statusFilter === "ready") {
+      rows = rows.filter((p) => readyPartnerIds.has(p.id));
+    } else if (statusFilter === "onboarding") {
+      rows = rows.filter((p) => !readyPartnerIds.has(p.id));
+    }
     const dir = listSortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
       const av =
@@ -1922,7 +1990,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       return (av - bv) * dir;
     });
     return rows;
-  }, [partners, listSortKey, listSortDir]);
+  }, [partners, listSortKey, listSortDir, statusFilter, readyPartnerIds]);
 
   const maxEarningsInView = useMemo(
     () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
@@ -2212,6 +2280,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             accent="primary"
           />
         </StaggerContainer>
+
+        {viewMode === "directory" && <PartnerFunnel />}
 
         {viewMode === "team" && (
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
@@ -4048,6 +4118,12 @@ function PartnerDetailDrawer({
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
   const [activateForceOpen, setActivateForceOpen] = useState(false);
+  const [activateAccountType, setActivateAccountType] = useState<"subscription" | "free">(
+    partner?.account_type ?? "subscription",
+  );
+  useEffect(() => {
+    setActivateAccountType(partner?.account_type ?? "subscription");
+  }, [partner?.account_type, partner?.id]);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deactivatePreset, setDeactivatePreset] = useState<"" | "missing_docs" | "low_score" | "on_break" | "other">("");
   const [deactivateOtherText, setDeactivateOtherText] = useState("");
@@ -4608,16 +4684,38 @@ function PartnerDetailDrawer({
   }, [partner, teamMember, computedCompliance, onPartnerUpdate]);
 
   const runActivate = useCallback(
-    async (force: boolean) => {
+    async (force: boolean, options?: { accountType?: "subscription" | "free" }) => {
       if (!partner) return;
-      if (!force && shouldForceActivateAck(computedCompliance)) {
+      // Always route activation through the modal so the admin picks the
+      // account_type (subscription vs free). The modal doubles as the
+      // low-compliance override warning when scores are below 95%.
+      if (!force) {
         setActivateForceOpen(true);
         return;
       }
-      await onPartnerPatch({
-        status: "active",
-        partner_status_reasons: force ? ["force_activated"] : [],
-      });
+      const accountType = options?.accountType ?? activateAccountType;
+      const belowThreshold = shouldForceActivateAck(computedCompliance);
+      try {
+        await onPartnerPatch({
+          status: "active",
+          partner_status_reasons: belowThreshold ? ["force_activated"] : [],
+          account_type: accountType,
+        });
+      } catch (patchErr) {
+        // Older databases without migration 247 reject the account_type
+        // column — activation still matters more than the tier tag, so
+        // retry without it and let ops know to run the migration.
+        const msg = patchErr instanceof Error ? patchErr.message : String(patchErr);
+        if (/account_type|schema cache|42703|PGRST204/i.test(msg)) {
+          await onPartnerPatch({
+            status: "active",
+            partner_status_reasons: belowThreshold ? ["force_activated"] : [],
+          });
+          toast.message("Account type not saved — apply migration 247 to enable it.");
+        } else {
+          throw patchErr;
+        }
+      }
       setActivateForceOpen(false);
       try {
         const res = await fetch(`/api/partners/${partner.id}/send-activated-email`, { method: "POST" });
@@ -4635,7 +4733,7 @@ function PartnerDetailDrawer({
         toast.success("Partner activated");
       }
     },
-    [partner, computedCompliance, onPartnerPatch],
+    [partner, computedCompliance, onPartnerPatch, activateAccountType],
   );
 
   const submitDeactivate = useCallback(async () => {
@@ -5673,6 +5771,58 @@ function PartnerDetailDrawer({
                 >
                   Discard
                 </Button>
+              </div>
+            )}
+
+            {/* ─── Account type — subscription vs free (admin-editable) ─────────────── */}
+            {isAdmin && (
+              <div className="mt-4 rounded-xl border border-border-light bg-surface-hover/40 px-3 py-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    Account type
+                  </p>
+                  {partner.account_type ? (
+                    <Badge
+                      variant={partner.account_type === "subscription" ? "primary" : "info"}
+                      size="sm"
+                      className="text-[10px]"
+                    >
+                      {partner.account_type === "subscription" ? "Subscription" : "Free account"}
+                    </Badge>
+                  ) : (
+                    <span className="text-[10px] text-text-tertiary">Not set</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(["subscription", "free"] as const).map((option) => {
+                    const active = partner.account_type === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => {
+                          if (active) return;
+                          void onPartnerPatch({ account_type: option }).catch(() => {
+                            toast.error("Couldn't save account type — apply migration 247 first.");
+                          });
+                        }}
+                        className={cn(
+                          "rounded-lg border px-2.5 py-2 text-left transition-colors",
+                          active
+                            ? "border-primary bg-primary/5 ring-1 ring-primary/25 cursor-default"
+                            : "border-border-light bg-card hover:bg-surface-hover cursor-pointer",
+                        )}
+                      >
+                        <p className="text-xs font-semibold text-text-primary">
+                          {option === "subscription" ? "Subscription" : "Free"}
+                        </p>
+                        <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+                          {option === "subscription" ? "Stripe billing" : "Ops-managed"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -7385,22 +7535,60 @@ function PartnerDetailDrawer({
       <Modal
         open={activateForceOpen}
         onClose={() => setActivateForceOpen(false)}
-        title="Compliance below minimum"
-        subtitle="Activation usually requires 95% compliance."
+        title="Activate partner"
+        subtitle="Choose the account tier before flipping this partner live."
         size="sm"
       >
-        <div className="p-6 space-y-4">
-          <p className="text-sm text-text-secondary">
-            This partner does not meet the minimum compliance score ({ACTIVATION_COMPLIANCE_MIN_SCORE}%). Current score:{" "}
-            <span className="font-semibold tabular-nums text-text-primary">{computedCompliance}%</span>. Do you want to force
-            activation?
-          </p>
+        <div className="p-6 space-y-5">
+          {shouldForceActivateAck(computedCompliance) && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+              Compliance is below the {ACTIVATION_COMPLIANCE_MIN_SCORE}% threshold (current:{" "}
+              <span className="font-semibold tabular-nums">{computedCompliance}%</span>). Activation will be
+              recorded as force-activated.
+            </div>
+          )}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">
+              Account type
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["subscription", "free"] as const).map((option) => {
+                const active = activateAccountType === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setActivateAccountType(option)}
+                    className={cn(
+                      "rounded-xl border px-3 py-3 text-left transition-colors",
+                      active
+                        ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                        : "border-border-light bg-card hover:bg-surface-hover",
+                    )}
+                  >
+                    <p className="text-sm font-semibold text-text-primary">
+                      {option === "subscription" ? "Subscription" : "Free account"}
+                    </p>
+                    <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
+                      {option === "subscription"
+                        ? "Billed monthly via Stripe (Pro / Team plans)."
+                        : "Ops-managed — no Stripe subscription; internal billing."}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" type="button" onClick={() => setActivateForceOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="primary" onClick={() => void runActivate(true)}>
-              Force activate
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void runActivate(true, { accountType: activateAccountType })}
+            >
+              Activate as {activateAccountType === "subscription" ? "Subscription" : "Free"}
             </Button>
           </div>
         </div>

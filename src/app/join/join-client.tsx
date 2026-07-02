@@ -443,6 +443,18 @@ function RegistrationForm() {
   const [error, setError]     = useState<string | null>(null);
   const [inviteLoading, setInviteLoading] = useState(Boolean(inviteCode));
 
+  // Resume-on-existing-email state. When the wizard detects at Step 0 that
+  // this email is already a partner, we branch into a small OTP flow instead
+  // of pushing the user through Step 1 / Step 2 just to 409 at the end.
+  type ResumeKind = "docs" | "reactivate";
+  const [resumeKind, setResumeKind]           = useState<ResumeKind | null>(null);
+  const [resumePartnerId, setResumePartnerId] = useState<string | null>(null);
+  const [resumeOtpSent, setResumeOtpSent]     = useState(false);
+  const [resumeOtp, setResumeOtp]             = useState("");
+  const [resumeVerified, setResumeVerified]   = useState(false);
+  const [resumeMissingDocs, setResumeMissingDocs] = useState<string[]>([]);
+  const [resumeUploads, setResumeUploads]     = useState<Partial<Record<DocKey, File>>>({});
+
   // Step 0 — Account
   const [fullName,        setFullName]        = useState("");
   const [email,           setEmail]           = useState("");
@@ -545,14 +557,167 @@ function RegistrationForm() {
     return null;
   }
 
-  function handleNext() {
+  async function handleNext() {
     const err = validateStep(step);
     if (err) { setError(err); return; }
     setError(null);
+    // Step 0 → check whether this email already belongs to a partner. If it
+    // does and their account can be resumed (onboarding / inactive), branch
+    // into the OTP resume flow instead of collecting Step 1 / Step 2.
+    if (step === 0) {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/join/exists", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: normalizeEmailInput(email).toLowerCase() }),
+        });
+        const payload = (await res.json().catch(() => ({}))) as {
+          found?: boolean;
+          resume?: ResumeKind;
+          partnerId?: string;
+          canSignIn?: boolean;
+          error?: string;
+        };
+        if (res.status === 429) {
+          setError(payload.error ?? "Too many requests. Please try again in a few minutes.");
+          return;
+        }
+        if (!res.ok) {
+          setError(payload.error ?? "Could not verify your email. Please try again.");
+          return;
+        }
+        if (payload.found && payload.canSignIn) {
+          setError("An account with this email is already active. Please sign in instead.");
+          return;
+        }
+        if (payload.found && payload.resume && payload.partnerId) {
+          setResumeKind(payload.resume);
+          setResumePartnerId(payload.partnerId);
+          setResumeOtpSent(false);
+          setResumeVerified(false);
+          setResumeOtp("");
+          setResumeUploads({});
+          return;
+        }
+      } catch (e) {
+        console.error("[join] exists preflight failed:", e);
+        // Fall through to normal signup on transient errors — the register
+        // endpoint has its own defense-in-depth branch that catches dupes.
+      } finally {
+        setLoading(false);
+      }
+    }
     setStep((s) => s + 1);
   }
 
   function handleBack() { setError(null); setStep((s) => s - 1); }
+
+  async function handleResumeSendCode() {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/join/resume-request-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizeEmailInput(email).toLowerCase() }),
+      });
+      if (res.status === 429) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? "Too many code requests. Please try again in a few minutes.");
+        return;
+      }
+      setResumeOtpSent(true);
+    } catch (e) {
+      console.error("[join] resume send code:", e);
+      setError("Could not send the code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResumeVerifyCode() {
+    if (!/^\d{6}$/.test(resumeOtp.trim())) {
+      setError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/join/resume-verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizeEmailInput(email).toLowerCase(),
+          token: resumeOtp.trim(),
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        partnerId?: string;
+        missingDocs?: string[];
+        error?: string;
+      };
+      if (!res.ok || !payload.ok) {
+        setError(payload.error ?? "That code did not work. Try again.");
+        return;
+      }
+      setResumeVerified(true);
+      setResumePartnerId(payload.partnerId ?? resumePartnerId);
+      setResumeMissingDocs(Array.isArray(payload.missingDocs) ? payload.missingDocs : []);
+    } catch (e) {
+      console.error("[join] resume verify:", e);
+      setError("Could not verify the code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function resumePendingDocKeys(): DocKey[] {
+    const missingNames = new Set(resumeMissingDocs.map((n) => n.trim().toLowerCase()));
+    return docFields.filter((d) => missingNames.has(d.label.trim().toLowerCase())).map((d) => d.key);
+  }
+
+  async function handleResumeSubmit() {
+    const pending = resumePendingDocKeys();
+    const notUploaded = pending.filter((k) => !resumeUploads[k]);
+    if (notUploaded.length > 0) {
+      const missingLabels = docFields
+        .filter((d) => notUploaded.includes(d.key))
+        .map((d) => d.label)
+        .join(", ");
+      setError(`Please upload: ${missingLabels}.`);
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      for (const key of pending) {
+        const file = resumeUploads[key];
+        if (!file) continue;
+        const compressed = await compressImage(file);
+        const form = new FormData();
+        form.append("docKey", key);
+        form.append("file", sanitizeFileForUpload(compressed, key));
+        const res = await fetch("/api/join/resume-upload", {
+          method: "POST",
+          body: form,
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as { error?: string };
+          setError(payload.error ?? `Could not upload ${key}. Try again.`);
+          return;
+        }
+      }
+      setSuccess(true);
+    } catch (e) {
+      console.error("[join] resume submit:", e);
+      setError(extractFriendlyError(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function handleFileChange(key: DocKey, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -688,7 +853,33 @@ function RegistrationForm() {
           </div>
         )}
 
-        {step === 0 && (
+        {resumeKind && !resumeVerified && (
+          <ResumeOtpPanel
+            email={email}
+            kind={resumeKind}
+            otpSent={resumeOtpSent}
+            otp={resumeOtp}
+            setOtp={setResumeOtp}
+            onSend={handleResumeSendCode}
+            onVerify={handleResumeVerifyCode}
+            onCancel={() => {
+              setResumeKind(null);
+              setResumePartnerId(null);
+              setResumeOtpSent(false);
+              setResumeOtp("");
+            }}
+            loading={loading}
+          />
+        )}
+        {resumeKind && resumeVerified && (
+          <ResumeDocsPanel
+            docFields={docFields}
+            pendingKeys={resumePendingDocKeys()}
+            uploads={resumeUploads}
+            setUploads={setResumeUploads}
+          />
+        )}
+        {!resumeKind && step === 0 && (
           <Step0
             fullName={fullName}             setFullName={setFullName}
             email={email}                   setEmail={setEmail}
@@ -698,7 +889,7 @@ function RegistrationForm() {
             showPassword={showPassword}     setShowPassword={setShowPassword}
           />
         )}
-        {step === 1 && (
+        {!resumeKind && step === 1 && (
           <Step1
             companyName={companyName}       setCompanyName={setCompanyName}
             address={address}               setAddress={setAddress}
@@ -709,7 +900,7 @@ function RegistrationForm() {
             tradeOptions={tradeOptions}
           />
         )}
-        {step === 2 && (
+        {!resumeKind && step === 2 && (
           <Step2
             docFields={docFields}
             docs={docs}
@@ -725,7 +916,7 @@ function RegistrationForm() {
 
         {/* Navigation */}
         <div className="flex gap-3 mt-6">
-          {step > 0 && (
+          {!resumeKind && step > 0 && (
             <button
               type="button"
               onClick={handleBack}
@@ -734,16 +925,18 @@ function RegistrationForm() {
               Back
             </button>
           )}
-          {step < 2 ? (
+          {!resumeKind && step < 2 && (
             <button
               type="button"
               onClick={handleNext}
-              className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90"
+              disabled={loading}
+              className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
               style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
             >
-              Continue
+              {loading ? "Checking…" : "Continue"}
             </button>
-          ) : (
+          )}
+          {!resumeKind && step === 2 && (
             <button
               type="button"
               onClick={handleSubmit}
@@ -752,6 +945,17 @@ function RegistrationForm() {
               style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
             >
               {loading ? "Submitting…" : "Submit Application"}
+            </button>
+          )}
+          {resumeKind && resumeVerified && (
+            <button
+              type="button"
+              onClick={handleResumeSubmit}
+              disabled={loading || resumePendingDocKeys().length === 0}
+              className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
+            >
+              {loading ? "Uploading…" : "Finish onboarding"}
             </button>
           )}
         </div>
@@ -1151,6 +1355,155 @@ function SuccessScreen() {
         </a>
         <p className="text-xs text-slate-400 mt-4">Use the same email and password to sign in.</p>
       </div>
+    </div>
+  );
+}
+
+// ─── Resume onboarding panels ────────────────────────────────────────────────
+function ResumeOtpPanel({
+  email,
+  kind,
+  otpSent,
+  otp,
+  setOtp,
+  onSend,
+  onVerify,
+  onCancel,
+  loading,
+}: {
+  email: string;
+  kind: "docs" | "reactivate";
+  otpSent: boolean;
+  otp: string;
+  setOtp: (v: string) => void;
+  onSend: () => void;
+  onVerify: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+          Welcome back
+        </p>
+        <p className="text-sm font-bold text-slate-800 mt-1">
+          We already have an account for {email}
+        </p>
+        <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+          {kind === "reactivate"
+            ? "Your account was set inactive. Verify by code to reactivate it and finish uploading any missing documents."
+            : "Verify by code to resume onboarding from where you stopped — we&apos;ll only ask for the documents you haven&apos;t sent yet."}
+        </p>
+      </div>
+
+      {!otpSent ? (
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={loading}
+          className="w-full py-3 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
+        >
+          {loading ? "Sending…" : "Send verification code"}
+        </button>
+      ) : (
+        <>
+          <Field label="6-digit code" required>
+            <input
+              className={inputCls + " tracking-[0.4em] text-center font-mono"}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="000000"
+              {...invalidNoBubble}
+            />
+          </Field>
+          <button
+            type="button"
+            onClick={onVerify}
+            disabled={loading || otp.length !== 6}
+            className="w-full py-3 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
+          >
+            {loading ? "Verifying…" : "Verify and resume"}
+          </button>
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={loading}
+            className="w-full py-2 text-xs font-semibold text-slate-500 hover:text-slate-800"
+          >
+            Resend code
+          </button>
+        </>
+      )}
+
+      <button
+        type="button"
+        onClick={onCancel}
+        className="w-full py-2 text-xs font-semibold text-slate-500 hover:text-slate-800"
+      >
+        Use a different email
+      </button>
+    </div>
+  );
+}
+
+function ResumeDocsPanel({
+  docFields,
+  pendingKeys,
+  uploads,
+  setUploads,
+}: {
+  docFields: JoinDocField[];
+  pendingKeys: DocKey[];
+  uploads: Partial<Record<DocKey, File>>;
+  setUploads: (updater: (prev: Partial<Record<DocKey, File>>) => Partial<Record<DocKey, File>>) => void;
+}) {
+  if (pendingKeys.length === 0) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+        <p className="text-sm font-semibold text-emerald-800">
+          You&apos;re all set — every required document is already on file.
+        </p>
+        <p className="text-xs text-emerald-700 mt-1">
+          Our team will review and get back to you within one business day.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+          Documents to upload
+        </p>
+        <p className="text-xs text-amber-800 mt-1">
+          These are the only files we still need from you.
+        </p>
+      </div>
+      {docFields
+        .filter((d) => pendingKeys.includes(d.key))
+        .map(({ key, label, hint }) => (
+          <Field key={key} label={label} required>
+            <p className="text-[11px] text-slate-500 mb-1.5">{hint}</p>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) setUploads((prev) => ({ ...prev, [key]: f }));
+              }}
+              className="block w-full text-xs text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+            />
+            {uploads[key] ? (
+              <p className="text-[11px] text-emerald-600 mt-1">✓ {uploads[key]?.name}</p>
+            ) : null}
+          </Field>
+        ))}
     </div>
   );
 }

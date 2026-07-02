@@ -61,7 +61,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const supabase = createServiceClient();
   const { data: partner, error } = await supabase
     .from("partners")
-    .select("id, email, contact_name, company_name, status")
+    .select("id, email, contact_name, company_name, status, account_type")
     .eq("id", id)
     .maybeSingle();
   if (error || !partner) return NextResponse.json({ error: "Partner not found" }, { status: 404 });
@@ -79,7 +79,15 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const tradePortalBase = resolvePartnerTradePortalBaseUrl().replace(/\/$/, "");
   const loginUrl = `${tradePortalBase}/login?email=${encodeURIComponent(email)}`;
   const branding = await loadCompanyBranding(supabase);
-  const html = buildPartnerAccountActivatedEmailHTML(branding, { contactName, email, loginUrl });
+  const rawAccountType = (partner as { account_type?: string | null }).account_type ?? null;
+  const accountType =
+    rawAccountType === "subscription" || rawAccountType === "free" ? rawAccountType : null;
+  const html = buildPartnerAccountActivatedEmailHTML(branding, {
+    contactName,
+    email,
+    loginUrl,
+    accountType,
+  });
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (!resendKey) {
