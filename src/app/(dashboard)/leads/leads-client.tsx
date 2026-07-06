@@ -13,9 +13,10 @@ import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import Link from "next/link";
-import { Plus, Loader2, ExternalLink, Trash2 } from "lucide-react";
+import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { CatalogService, Lead, LeadStatus, LeadUrgency } from "@/types/database";
+import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
 import { listLeads, createLead, updateLead, deleteLead, countJobsForClient } from "@/services/leads";
@@ -151,9 +152,13 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   const [createForm, setCreateForm] = useState(() => emptyLeadForm());
   const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
+  const [createPhotos, setCreatePhotos] = useState<File[]>([]);
   const [editForm, setEditForm] = useState(() => emptyLeadForm());
   const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
   const [linkedJobsCount, setLinkedJobsCount] = useState<number | null>(null);
+  /** Photos on the currently open lead (drawer). */
+  const [leadImages, setLeadImages] = useState<string[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
 
   // Service catalog rows for the Type of Work picker. Loaded once on mount —
   // the list is small (canonical trade names + custom services) and the
@@ -215,9 +220,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   useEffect(() => {
     if (!selectedLead) {
       setLinkedJobsCount(null);
+      setLeadImages([]);
       return;
     }
     setEditErrors({});
+    setLeadImages(normalizeJsonImageArray(selectedLead.images));
     setEditForm({
       name: selectedLead.name,
       email: selectedLead.email ?? "",
@@ -372,6 +379,33 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
       {
+        key: "images",
+        label: "Photos",
+        minWidth: "4.5rem",
+        headerClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell",
+        render: (item) => {
+          const imgs = normalizeJsonImageArray(item.images);
+          if (imgs.length === 0) return <span className="text-xs text-text-tertiary">—</span>;
+          return (
+            <div className="flex items-center gap-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imgs[0]}
+                alt=""
+                loading="lazy"
+                className="h-8 w-8 rounded-md object-cover border border-border-light"
+              />
+              {imgs.length > 1 ? (
+                <span className="text-[11px] font-medium text-text-tertiary tabular-nums">
+                  +{imgs.length - 1}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
         key: "actions",
         label: "",
         width: "2.75rem",
@@ -418,7 +452,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     }
     setCreating(true);
     try {
-      const lead = await createLead({
+      let lead = await createLead({
         name: createForm.name,
         email: createForm.email,
         phone: createForm.phone,
@@ -430,9 +464,23 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         status: "new",
         catalog_service_id: createForm.catalog_service_id,
       });
+      // Photos are uploaded after the lead exists (need its id for the folder),
+      // then attached — same pattern as service requests.
+      if (createPhotos.length > 0) {
+        try {
+          const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+          const urls = await uploadQuoteInviteImages(createPhotos, `leads/${lead.id}`);
+          if (urls.length > 0) lead = await updateLead(lead.id, { images: urls });
+        } catch (photoErr) {
+          toast.error(
+            photoErr instanceof Error ? `Lead created, photos failed: ${photoErr.message}` : "Lead created but photos failed to upload",
+          );
+        }
+      }
       toast.success(`Lead ${lead.reference} created and linked to Fixfy clients`);
       setCreateOpen(false);
       setCreateForm(emptyLeadForm());
+      setCreatePhotos([]);
       setCreateErrors({});
       setStatus("new");
       await refresh();
@@ -474,6 +522,40 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error(err instanceof Error ? err.message : "Could not save lead");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const addLeadPhotos = async (files: File[]) => {
+    if (!selectedLead || files.length === 0) return;
+    setUploadingPhotos(true);
+    try {
+      const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+      const urls = await uploadQuoteInviteImages(files, `leads/${selectedLead.id}`);
+      const merged = [...leadImages, ...urls];
+      const updated = await updateLead(selectedLead.id, { images: merged });
+      setLeadImages(normalizeJsonImageArray(updated.images));
+      setSelectedLead(updated);
+      await refresh();
+      toast.success(urls.length === 1 ? "Photo added" : `${urls.length} photos added`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not upload photos");
+    } finally {
+      setUploadingPhotos(false);
+    }
+  };
+
+  const removeLeadPhoto = async (url: string) => {
+    if (!selectedLead) return;
+    const next = leadImages.filter((u) => u !== url);
+    setLeadImages(next); // optimistic
+    try {
+      const updated = await updateLead(selectedLead.id, { images: next });
+      setLeadImages(normalizeJsonImageArray(updated.images));
+      setSelectedLead(updated);
+      await refresh();
+    } catch (err) {
+      setLeadImages(leadImages); // rollback
+      toast.error(err instanceof Error ? err.message : "Could not remove photo");
     }
   };
 
@@ -670,6 +752,45 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               )}
             />
           </FieldBlock>
+          <FieldBlock label="Photos (optional)">
+            <div className="flex flex-wrap items-center gap-2">
+              {createPhotos.map((file, i) => (
+                <div key={`${file.name}-${i}`} className="relative h-16 w-16 shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={URL.createObjectURL(file)}
+                    alt=""
+                    className="h-16 w-16 rounded-lg object-cover border border-border-light"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCreatePhotos((p) => p.filter((_, idx) => idx !== i))}
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-surface border border-border-light p-0.5 text-text-tertiary hover:text-red-600 shadow-sm"
+                    aria-label="Remove photo"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              <label className="flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-dashed border-border text-text-tertiary hover:border-primary hover:text-primary transition-colors">
+                <ImagePlus className="h-5 w-5" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length) setCreatePhotos((p) => [...p, ...files]);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            <p className="mt-1.5 text-[11px] text-text-tertiary">
+              Site or reference photos. JPG/PNG/WebP, up to 5 MB each.
+            </p>
+          </FieldBlock>
           <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
             <Button variant="ghost" onClick={() => setCreateOpen(false)} className="w-full sm:w-auto">
               Cancel
@@ -737,6 +858,62 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             </div>
 
             <LeadOffersCard leadId={selectedLead.id} published={!!selectedLead.published_at} />
+
+            {/* Photos */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                  Photos {leadImages.length > 0 ? `(${leadImages.length})` : ""}
+                </p>
+                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline cursor-pointer">
+                  {uploadingPhotos ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ImagePlus className="h-3.5 w-3.5" />
+                  )}
+                  Add photos
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    disabled={uploadingPhotos}
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length) void addLeadPhotos(files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {leadImages.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {leadImages.map((url) => (
+                    <div key={url} className="relative group aspect-square">
+                      <a href={url} target="_blank" rel="noopener noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full rounded-lg object-cover border border-border-light"
+                        />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void removeLeadPhoto(url)}
+                        className="absolute -right-1.5 -top-1.5 rounded-full bg-surface border border-border-light p-0.5 text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-red-600 shadow-sm transition-opacity"
+                        aria-label="Remove photo"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-text-tertiary">No photos yet.</p>
+              )}
+            </div>
 
             {selectedLead.client_id ? (
               <Link

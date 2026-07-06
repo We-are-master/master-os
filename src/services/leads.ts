@@ -153,6 +153,7 @@ export type UpdateLeadInput = Partial<
     | "status"
     | "owner_id"
     | "published_at"
+    | "images"
   >
 >;
 
@@ -205,6 +206,9 @@ export async function updateLead(id: string, patch: UpdateLeadInput): Promise<Le
   if (patch.status !== undefined) payload.status = patch.status;
   if (patch.owner_id !== undefined) payload.owner_id = patch.owner_id;
   if (patch.published_at !== undefined) payload.published_at = patch.published_at;
+  if (patch.images !== undefined) {
+    payload.images = Array.isArray(patch.images) ? patch.images.filter(Boolean) : [];
+  }
 
   const { data, error } = await supabase
     .from("leads")

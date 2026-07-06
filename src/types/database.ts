@@ -286,6 +286,8 @@ export interface Lead {
    *  created before mig 204 — those keep broadcasting to every partner. */
   catalog_service_id?: string | null;
   published_at?: string | null;
+  /** Site / reference photos (quote-invite-images bucket). JSON array of public URLs. */
+  images?: string[] | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
