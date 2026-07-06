@@ -155,7 +155,10 @@ import {
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 import { invitePartnerFromZero } from "@/lib/partner-invite";
 import { PartnerFunnel } from "@/components/partners/partner-funnel";
-import { partnerIsReadyForReview } from "@/lib/partner-ready-check";
+import {
+  computePartnerOnboardingProgress,
+  type PartnerOnboardingProgress,
+} from "@/lib/partner-ready-check";
 import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
 import type { PartnerDocLike } from "@/lib/partner-required-docs";
 
@@ -1189,6 +1192,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
   /** Onboarding partners that have already uploaded every mandatory document — surface in the "Ready" tab for admin review. */
   const [readyPartnerIds, setReadyPartnerIds] = useState<Set<string>>(() => new Set());
+  /** Per-onboarding-partner upload progress (submitted/total mandatory docs) for the Onboarding tab bar. */
+  const [onboardingProgress, setOnboardingProgress] = useState<Map<string, PartnerOnboardingProgress>>(() => new Map());
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
@@ -1521,6 +1526,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         >;
         if (onboardingRows.length === 0) {
           setReadyPartnerIds(new Set());
+          setOnboardingProgress(new Map());
         } else {
           const ids = onboardingRows.map((p) => p.id);
           const [docsRes, rules] = await Promise.all([
@@ -1537,13 +1543,18 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             docsByPartnerId.set(row.partner_id, arr);
           }
           const readySet = new Set<string>();
+          const progress = new Map<string, PartnerOnboardingProgress>();
           for (const p of onboardingRows) {
-            if (partnerIsReadyForReview(p, docsByPartnerId.get(p.id), rules)) readySet.add(p.id);
+            const prog = computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id), rules);
+            progress.set(p.id, prog);
+            if (prog.ready) readySet.add(p.id);
           }
           setReadyPartnerIds(readySet);
+          setOnboardingProgress(progress);
         }
       } catch {
         setReadyPartnerIds(new Set());
+        setOnboardingProgress(new Map());
       }
     } catch { /* cosmetic */ }
   }, []);
@@ -2251,6 +2262,66 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     },
   ];
 
+  // Onboarding & Ready tabs swap the approval-based Compliance column for an "Onboarding"
+  // submission bar (mandatory docs uploaded / total). Same set the Ready check uses, so it
+  // reads 100% exactly when the partner enters the Ready queue.
+  const onboardingListColumns: Column<Partner>[] = (() => {
+    const byKey = new Map(columns.map((c) => [c.key, c] as const));
+    const pick = (key: string, width: string): Column<Partner> => {
+      const c = byKey.get(key);
+      return c ? { ...c, width } : { key, label: "", width, render: () => null };
+    };
+    const onboardingBar: Column<Partner> = {
+      key: "onboarding_progress",
+      label: "Onboarding",
+      width: "22%",
+      align: "center",
+      headerClassName: partnersTableHeader,
+      cellClassName: partnersTableCell,
+      render: (item) => {
+        const prog = onboardingProgress.get(item.id);
+        const pct = prog?.pct ?? 0;
+        const done = prog?.ready ?? false;
+        const barClass = done ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-sky-500";
+        const textClass = done
+          ? "text-emerald-600 dark:text-emerald-400"
+          : pct >= 50
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-sky-600 dark:text-sky-400";
+        return (
+          <div
+            className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
+            title={prog ? `${prog.submitted}/${prog.total} mandatory documents uploaded` : "Onboarding progress"}
+          >
+            <div className="flex items-center justify-center gap-2">
+              <span className={cn("text-sm font-bold tabular-nums", textClass)}>{pct}%</span>
+              <span className={cn("text-[9px] font-bold uppercase tracking-wide", textClass)}>
+                {done ? "READY" : prog ? `${prog.submitted}/${prog.total} DOCS` : "—"}
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", barClass)}
+                style={{ width: `${Math.max(4, Math.min(100, pct))}%` }}
+              />
+            </div>
+          </div>
+        );
+      },
+    };
+    return [
+      pick("company_name", "30%"),
+      pick("trade", "13%"),
+      pick("location", "20%"),
+      onboardingBar,
+      pick("status", "12%"),
+      pick("actions", "112px"),
+    ];
+  })();
+
+  const activeColumns =
+    statusFilter === "onboarding" || statusFilter === "ready" ? onboardingListColumns : columns;
+
   const tradeCatalogSelectOptions = useMemo(
     () => [{ value: "all", label: "All trades" }, ...tradePickOptions.map((t) => ({ value: t, label: t }))],
     [tradePickOptions],
@@ -2482,7 +2553,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             ) : directoryDisplayMode === "list" ? (
               <>
               <DataTable
-                columns={columns}
+                columns={activeColumns}
                 data={sortedPartners}
                 getRowId={(item) => item.id}
                 selectedId={selectedPartner?.id}
