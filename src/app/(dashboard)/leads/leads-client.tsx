@@ -178,6 +178,13 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     };
   }, []);
 
+  /** id → display name for the Type of Work column + drawer badge. */
+  const catalogNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of catalogServices) m.set(c.id, c.name);
+    return m;
+  }, [catalogServices]);
+
   const loadCounts = useCallback(async () => {
     try {
       const counts = await getStatusCounts("leads", LEAD_STATUSES);
@@ -343,6 +350,23 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         },
       },
       {
+        key: "catalog_service_id",
+        label: "Type of work",
+        minWidth: "8rem",
+        headerClassName: "hidden md:table-cell",
+        cellClassName: "hidden md:table-cell max-w-[12rem]",
+        render: (item) => {
+          const name = item.catalog_service_id ? catalogNameById.get(item.catalog_service_id) : null;
+          return name ? (
+            <Badge variant="default" className="text-[10px] font-medium">
+              {name}
+            </Badge>
+          ) : (
+            <span className="text-xs text-text-tertiary">—</span>
+          );
+        },
+      },
+      {
         key: "scope",
         label: "Scope",
         minWidth: "12rem",
@@ -433,7 +457,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
     ],
-    [deletingId, handleDelete],
+    [deletingId, handleDelete, catalogNameById],
   );
 
   const handleCreate = async () => {
@@ -513,6 +537,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         urgency: editForm.urgency,
         scope: editForm.scope,
         status: editForm.status,
+        catalog_service_id: editForm.catalog_service_id,
       });
       toast.success("Lead updated");
       setSelectedLead(updated);
@@ -963,6 +988,20 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               />
               <p className="mt-1.5 text-[11px] text-text-tertiary">
                 Choose a Mapbox suggestion — city and postcode are filled automatically.
+              </p>
+            </FieldBlock>
+
+            <FieldBlock label="Type of Work">
+              <Select
+                value={editForm.catalog_service_id}
+                onChange={(e) => setEditForm((f) => ({ ...f, catalog_service_id: e.target.value }))}
+                options={[
+                  { value: "", label: "Select a type of work…" },
+                  ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+              />
+              <p className="mt-1.5 text-[11px] text-text-tertiary">
+                Drives Trade Portal targeting — only partners with a matching trade see this lead.
               </p>
             </FieldBlock>
 

@@ -154,6 +154,7 @@ export type UpdateLeadInput = Partial<
     | "owner_id"
     | "published_at"
     | "images"
+    | "catalog_service_id"
   >
 >;
 
@@ -208,6 +209,11 @@ export async function updateLead(id: string, patch: UpdateLeadInput): Promise<Le
   if (patch.published_at !== undefined) payload.published_at = patch.published_at;
   if (patch.images !== undefined) {
     payload.images = Array.isArray(patch.images) ? patch.images.filter(Boolean) : [];
+  }
+  if (patch.catalog_service_id !== undefined) {
+    const cid = (patch.catalog_service_id ?? "").trim();
+    if (cid && !UUID_RE.test(cid)) throw new Error("Type of Work selection is invalid.");
+    payload.catalog_service_id = cid || null;
   }
 
   const { data, error } = await supabase
