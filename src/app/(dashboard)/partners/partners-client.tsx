@@ -1516,7 +1516,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         const { data: onboardingPartners } = await supabase
           .from("partners")
           .select("id, status, trade, trades, partner_legal_type, utr, crn, vat_number, vat_registered")
-          .eq("status", "onboarding")
+          .in("status", ["onboarding", "needs_attention"])
           .is("deleted_at", null);
         const onboardingRows = (onboardingPartners ?? []) as Array<
           Pick<
@@ -1547,7 +1547,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           for (const p of onboardingRows) {
             const prog = computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id), rules);
             progress.set(p.id, prog);
-            if (prog.ready) readySet.add(p.id);
+            if (p.status === "onboarding" && prog.ready) readySet.add(p.id);
           }
           setReadyPartnerIds(readySet);
           setOnboardingProgress(progress);
@@ -6973,7 +6973,7 @@ function PartnerDetailDrawer({
 
         {/* ========== DOCUMENTS · FILES ========== */}
         {tab === "documents" && documentsSubTab === "files" && (
-          <div className="p-4 sm:p-6 space-y-4">
+          <div className="p-4 sm:p-6 flex flex-col gap-4">
             {missingRequiredDocs.length > 0 && (
               <div
                 role="alert"
@@ -7019,7 +7019,7 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
             </div>
-            <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
+            <div className="order-last rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
                 No expiry date required. In-app submission can be wired later; upload files here for the record.
@@ -7049,7 +7049,7 @@ function PartnerDetailDrawer({
             </div>
             {partnerTradesForCompliance.length > 0 &&
               partnerTradesForCompliance.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
-              <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+              <div className="order-last rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Optional certificates</p>
                 <p className="text-[11px] text-text-tertiary leading-snug">
                   CSCS etc. — only for selected trades; not part of the compliance score.
@@ -7076,7 +7076,7 @@ function PartnerDetailDrawer({
               </div>
             )}
             {partnerTradesForCompliance.length > 0 && (
-            <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+            <div className="order-last rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Other optional</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
                 DBS — optional; not part of the compliance score (shown when at least one trade is selected).
@@ -7094,7 +7094,7 @@ function PartnerDetailDrawer({
               </Button>
             </div>
             )}
-            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-3">
+            <div className="order-last rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-3">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mandatory documents</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
                 Core IDs, insurance, UTR (if self-employed), and agreements — these drive the compliance score. Trade certificates are listed separately.
@@ -7290,15 +7290,17 @@ function PartnerDetailDrawer({
               initialName={docPreset?.name}
             />
             <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
-            {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
+            {loadingDocs && <div className="order-2 space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
-              <div className="py-12 text-center">
+              <div className="order-2 py-12 text-center">
                 <FileText className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No documents uploaded yet</p>
                 <p className="text-xs text-text-tertiary mt-1">Add insurance, certifications, licenses and more</p>
               </div>
             )}
-            {!loadingDocs && documents.map((doc) => {
+            {!loadingDocs && [...documents]
+              .sort((a, b) => (b.status === "pending" ? 1 : 0) - (a.status === "pending" ? 1 : 0))
+              .map((doc) => {
               const typeConfig = docTypeLabels[doc.doc_type] || docTypeLabels.other;
               const sConfig = docStatusConfig[doc.status] || docStatusConfig.pending;
               const Icon = typeConfig.icon;
@@ -7307,7 +7309,7 @@ function PartnerDetailDrawer({
                 <motion.div
                   key={doc.id}
                   variants={staggerItem}
-                  className="p-4 rounded-xl border border-border-light hover:border-border transition-colors cursor-pointer"
+                  className="order-2 p-4 rounded-xl border border-border-light hover:border-border transition-colors cursor-pointer"
                   onClick={() => setSelectedDoc(doc)}
                 >
                   <div className="flex items-start gap-3">
