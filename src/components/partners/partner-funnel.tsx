@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Globe, UserCog, LogIn, TrendingDown } from "lucide-react";
-import { getSupabase } from "@/services/base";
+import { getSupabase, getStatusCounts } from "@/services/base";
 
 type FunnelCounts = {
   website: number;
@@ -47,31 +47,41 @@ export function PartnerFunnel() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true);
+    // Use the same robust RPC (get_status_counts) that drives the working tab counts —
+    // raw `count: exact, head: true` returns null on the self-hosted PostgREST/Kong setup.
+    const load = async () => {
       try {
         const supabase = getSupabase();
-        const base = () =>
-          supabase.from("partners").select("id", { count: "exact", head: true }).is("deleted_at", null);
-        const [total, onboarding, portal] = await Promise.all([
-          base(),
-          base().eq("status", "onboarding"),
-          base().not("auth_user_id", "is", null),
+        const [statusCounts, activeWithLogin] = await Promise.all([
+          getStatusCounts("partners", ["active", "inactive", "onboarding", "needs_attention", "on_break"]),
+          supabase
+            .from("partners")
+            .select("id")
+            .eq("status", "active")
+            .not("auth_user_id", "is", null)
+            .is("deleted_at", null),
         ]);
         if (cancelled) return;
         setCounts({
-          website: total.count ?? 0,
-          onboarding: onboarding.count ?? 0,
-          portal: portal.count ?? 0,
+          website: statusCounts.all ?? 0,
+          onboarding: (statusCounts.onboarding ?? 0) + (statusCounts.needs_attention ?? 0),
+          portal: activeWithLogin.data?.length ?? 0,
         });
       } catch {
-        if (!cancelled) setCounts({ website: 0, onboarding: 0, portal: 0 });
+        /* keep the last good counts on a transient error */
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+    void load();
+    // Near real-time: refresh on an interval and when the tab regains focus.
+    const interval = setInterval(() => void load(), 30_000);
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
