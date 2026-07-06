@@ -173,6 +173,13 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     };
   }, []);
 
+  // Lookup for the "Type of work" column: catalog_service_id → service name.
+  const serviceNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of catalogServices) m.set(s.id, s.name);
+    return m;
+  }, [catalogServices]);
+
   const loadCounts = useCallback(async () => {
     try {
       const counts = await getStatusCounts("leads", LEAD_STATUSES);
@@ -305,6 +312,17 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         },
       },
       {
+        key: "catalog_service_id",
+        label: "Type of work",
+        minWidth: "8rem",
+        headerClassName: "hidden md:table-cell",
+        cellClassName: "hidden md:table-cell max-w-[10rem]",
+        render: (item) => {
+          const name = item.catalog_service_id ? serviceNameById.get(item.catalog_service_id) : "";
+          return <span className="text-xs text-text-secondary truncate block">{name || "—"}</span>;
+        },
+      },
+      {
         key: "email",
         label: "Email",
         minWidth: "9rem",
@@ -399,7 +417,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
     ],
-    [deletingId, handleDelete],
+    [deletingId, handleDelete, serviceNameById],
   );
 
   const handleCreate = async () => {
