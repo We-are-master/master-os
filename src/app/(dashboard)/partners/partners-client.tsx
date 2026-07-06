@@ -2319,8 +2319,34 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     ];
   })();
 
+  // Active tab: swap the status badge for a "Portal access" column — whether the partner
+  // has trade-portal access (a linked auth account) and, when the portal records it, the last visit.
+  const portalAccessColumn: Column<Partner> = {
+    key: "portal_access",
+    label: "Portal access",
+    width: "12%",
+    align: "center",
+    headerClassName: partnersTableHeader,
+    cellClassName: partnersTableCell,
+    render: (item) => {
+      const hasAccess = Boolean(item.auth_user_id);
+      return (
+        <div className="flex justify-center">
+          <Badge variant={hasAccess ? "success" : "default"} size="sm" className="uppercase tracking-wide">
+            {hasAccess ? "Has access" : "No access"}
+          </Badge>
+        </div>
+      );
+    },
+  };
+  const activeTabColumns: Column<Partner>[] = columns.map((c) => (c.key === "status" ? portalAccessColumn : c));
+
   const activeColumns =
-    statusFilter === "onboarding" || statusFilter === "ready" ? onboardingListColumns : columns;
+    statusFilter === "onboarding" || statusFilter === "ready"
+      ? onboardingListColumns
+      : statusFilter === "active"
+        ? activeTabColumns
+        : columns;
 
   const tradeCatalogSelectOptions = useMemo(
     () => [{ value: "all", label: "All trades" }, ...tradePickOptions.map((t) => ({ value: t, label: t }))],
