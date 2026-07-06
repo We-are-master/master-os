@@ -15,7 +15,7 @@ const STAGE_META = [
   {
     key: "website" as const,
     label: "Website",
-    hint: "All partners captured through the website / directory signup",
+    hint: "Visits to the Trade Portal get-started signup page",
     icon: Globe,
     color: "from-sky-500/25 to-sky-500/5",
     text: "text-sky-600 dark:text-sky-400",
@@ -62,8 +62,18 @@ export function PartnerFunnel() {
             .is("deleted_at", null),
         ]);
         if (cancelled) return;
+        // get-started page visits (first-party tracking). Falls back to 0 until
+        // migration 248 (page_hits + get_page_hit_count) is applied to the DB.
+        let website = 0;
+        try {
+          const { data, error } = await supabase.rpc("get_page_hit_count", { p_path: "/get-started" });
+          if (!error && data != null) website = Number(data) || 0;
+        } catch {
+          /* RPC not applied yet */
+        }
+        if (cancelled) return;
         setCounts({
-          website: statusCounts.all ?? 0,
+          website,
           onboarding: (statusCounts.onboarding ?? 0) + (statusCounts.needs_attention ?? 0),
           portal: activeWithLogin.data?.length ?? 0,
         });
