@@ -105,14 +105,6 @@ export type RpaConfig = {
     baseUrl: string;
     accountId: string;
   };
-  /** Zendesk ticket creation on job acceptance — off unless subdomain+email+token all set. */
-  zendesk: {
-    enabled: boolean;
-    subdomain?: string;
-    email?: string;
-    apiToken?: string;
-    priority: string;
-  };
   env: {
     checkatradeEmail: string;
     checkatradePassword: string;
@@ -193,13 +185,6 @@ export function loadConfig(): RpaConfig {
       // the container).
       baseUrl: String(envStr("MASTER_OS_BASE_URL") ?? masterOs.baseUrl ?? "https://app.getfixfy.com").replace(/\/$/, ""),
       accountId,
-    },
-    zendesk: {
-      enabled: Boolean(envStr("ZENDESK_SUBDOMAIN") && envStr("ZENDESK_EMAIL") && envStr("ZENDESK_API_TOKEN")),
-      subdomain: envStr("ZENDESK_SUBDOMAIN"),
-      email: envStr("ZENDESK_EMAIL"),
-      apiToken: envStr("ZENDESK_API_TOKEN"),
-      priority: envStr("ZENDESK_PRIORITY") ?? "normal",
     },
     env: {
       checkatradeEmail: requireEnv("CHECKATRADE_EMAIL"),

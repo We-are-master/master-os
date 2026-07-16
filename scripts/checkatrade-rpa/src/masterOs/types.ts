@@ -14,6 +14,8 @@ export type CreateJobPayload = {
   client_price?: number;
   auto_assign: true;
   report_link?: string;
+  /** Master OS opens + links a fresh Zendesk ticket itself at insert time — the RPA never touches Zendesk. */
+  create_zendesk_ticket?: true;
 };
 
 export type CreateLeadPayload = {
@@ -31,4 +33,6 @@ export type MasterOsCreateResponse = {
   id: string;
   reference: string;
   status: string;
+  /** Present when create_zendesk_ticket was sent and the OS opened one. */
+  zendesk_ticket_id?: number;
 };

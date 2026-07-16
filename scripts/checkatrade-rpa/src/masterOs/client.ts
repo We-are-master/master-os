@@ -29,28 +29,6 @@ export function createMasterOsClient(cfg: RpaConfig) {
     async createLead(payload: CreateLeadPayload): Promise<MasterOsCreateResponse> {
       return post(`${cfg.masterOs.baseUrl}/api/leads`, cfg.env.masterOsLeadApiKey, payload);
     },
-    /**
-     * Sets external_source='zendesk' + external_ref=ticketId on an existing
-     * job — this is what makes the clickable "#12345" Zendesk badge appear
-     * on the job card/detail view in the Master OS UI. Deliberately NOT the
-     * same as POST /api/jobs's `ticket_id` param (which triggers a full
-     * Zendesk-macro reconciliation flow — customer-facing replies, ticket
-     * requester reassignment, side conversations — designed for tickets
-     * that originated the job, not the other way around). This just sets
-     * the link, plus a best-effort mirror of the job reference into the
-     * ticket's own custom field — no customer-facing side effects.
-     */
-    async linkZendeskTicket(jobId: string, ticketId: string | number): Promise<void> {
-      const res = await fetch(`${cfg.masterOs.baseUrl}/api/jobs/${jobId}/zendesk-link`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "X-API-Key": cfg.env.masterOsJobApiKey },
-        body: JSON.stringify({ ticketId: String(ticketId) }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new MasterOsApiError(res.status, text);
-      }
-    },
   };
 }
 

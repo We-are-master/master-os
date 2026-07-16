@@ -3,29 +3,14 @@ import type { RpaConfig } from "./config.js";
 import type { CheckatradeOpportunity } from "./checkatrade/types.js";
 import { acceptJobAndPickSlot, detailUrl } from "./checkatrade/booking.js";
 import { respondToLead } from "./checkatrade/leadResponse.js";
-import { MasterOsApiError, type MasterOsClient } from "./masterOs/client.js";
+import { type MasterOsClient } from "./masterOs/client.js";
 import { countJobsAcceptedToday, hasSeen, markSeen } from "./dedupe/seenStore.js";
-import { addZendeskComment, createZendeskTicket } from "./zendesk/client.js";
 import { logger } from "./logger.js";
 
-/**
- * Same rule for both leads and jobs: match against a known trade
- * (categoryMap entry) when Checkatrade's own category/title corresponds to
- * one; otherwise ALWAYS use fallbackCategory ("General Maintenance") rather
- * than sending Checkatrade's raw text through. Jobs still show the specific
- * Checkatrade title via CreateJobPayload.title — this only governs the
- * broad-trade field used for partner matching / catalog linkage.
- */
-function resolveServiceType(category: string, cfg: RpaConfig): string {
-  const mapped = Object.entries(cfg.categoryMap).find(
-    ([k]) => k.toLowerCase() === category.toLowerCase(),
-  )?.[1];
-  return mapped ?? cfg.fallbackCategory;
-}
-
-function isUnknownServiceTypeError(err: unknown): boolean {
-  return err instanceof MasterOsApiError && err.status === 400 && /did not match any active Services catalog/.test(err.body);
-}
+// service_type is ALWAYS cfg.fallbackCategory ("General Maintenance") — it's
+// the single trade we operate on Checkatrade, and it's a canonical catalog
+// name so the OS never rejects it. Jobs still show the specific Checkatrade
+// title via CreateJobPayload.title.
 
 /**
  * Pre-accept gate for a JOB (Checkatrade Express) — evaluated from the list
@@ -115,19 +100,9 @@ async function handleLead(
     phone: details.phone,
     email: details.email,
     scope: [details.message ?? o.description, details.appointmentNote].filter(Boolean).join("\n\n"),
-    service_type: resolveServiceType(o.category, cfg),
+    service_type: cfg.fallbackCategory,
   };
-  let res;
-  try {
-    res = await masterOs.createLead(leadPayload);
-  } catch (err) {
-    if (!isUnknownServiceTypeError(err)) throw err;
-    logger.warn(`Unmapped category "${o.category}" — retrying with fallbackCategory`, {
-      externalId: o.externalId,
-      fallbackCategory: cfg.fallbackCategory,
-    });
-    res = await masterOs.createLead({ ...leadPayload, service_type: cfg.fallbackCategory });
-  }
+  const res = await masterOs.createLead(leadPayload);
   await markSeen(o.externalId, { kind: "lead", masterOsId: res.id });
   logger.info("Created lead in Master OS", { externalId: o.externalId, reference: res.reference });
 }
@@ -192,24 +167,6 @@ async function handleJob(
   const clientName = accepted.customerName || o.customerName || "Checkatrade customer";
   const checkatradeLink = detailUrl(o.externalId);
 
-  // Create the Zendesk ticket FIRST so the job can be linked to it. Best-effort:
-  // a Zendesk hiccup must never block the (already-won) job's creation.
-  let zendeskTicket = null;
-  try {
-    zendeskTicket = await createZendeskTicket(cfg, {
-      subject: `Checkatrade Express job accepted: ${title}`,
-      body:
-        `Auto-accepted via the Checkatrade RPA.\n\n` +
-        `Customer: ${clientName}\n` +
-        `Address: ${propertyAddress}\n` +
-        `Scheduled: ${accepted.acceptedDate} ${accepted.acceptedTimeWindow ?? "09:00"}\n` +
-        `Earnings: £${o.priceHint ?? "?"}\n` +
-        `Checkatrade job link: ${checkatradeLink}`,
-    });
-  } catch (err) {
-    logger.error(`Zendesk ticket creation failed for ${o.externalId} (continuing without one)`, err);
-  }
-
   const jobPayload = {
     account_id: cfg.masterOs.accountId,
     date: accepted.acceptedDate,
@@ -220,30 +177,21 @@ async function handleJob(
     // Specific Checkatrade title for display (jobs.title) — separate from
     // service_type, which must be a broad trade for partner matching.
     title,
-    service_type: resolveServiceType(o.category, cfg),
+    service_type: cfg.fallbackCategory,
     // The real, job-specific brief lives on the detail page, not the list card.
     description: accepted.richDescription || o.description,
     client_price: o.priceHint,
     auto_assign: true as const,
     report_link: checkatradeLink,
+    // The OS opens + links the Zendesk ticket itself at insert time — 100%
+    // linked from birth, no RPA-side Zendesk calls to race or half-fail.
+    create_zendesk_ticket: true as const,
   };
   const res = await masterOs.createJob(jobPayload);
   await markSeen(o.externalId, { kind: "job", masterOsId: res.id });
-  logger.info("Created job in Master OS", { externalId: o.externalId, reference: res.reference });
-
-  // Complete the bidirectional link: comment the OS reference back onto the
-  // ticket, and set external_source/external_ref so the job card shows the
-  // clickable "#id" Zendesk badge. Both best-effort.
-  if (zendeskTicket) {
-    try {
-      await addZendeskComment(cfg, zendeskTicket.id, `Master OS reference: ${res.reference}`);
-    } catch (err) {
-      logger.error(`Zendesk follow-up comment failed for ticket ${zendeskTicket.id} (job was still created fine)`, err);
-    }
-    try {
-      await masterOs.linkZendeskTicket(res.id, zendeskTicket.id);
-    } catch (err) {
-      logger.error(`Linking Zendesk ticket ${zendeskTicket.id} to ${res.reference} failed (job was still created fine)`, err);
-    }
-  }
+  logger.info("Created job in Master OS", {
+    externalId: o.externalId,
+    reference: res.reference,
+    zendeskTicketId: res.zendesk_ticket_id ?? "(none — check OS logs)",
+  });
 }
