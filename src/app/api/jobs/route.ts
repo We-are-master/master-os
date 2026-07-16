@@ -9,6 +9,12 @@ import {
 } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
+import {
+  createTicket,
+  ZENDESK_REPLY_STATUS_FIELD_ID,
+  ZENDESK_REPLY_STATUS_SENT_VALUE,
+} from "@/lib/zendesk";
+import { appBaseUrl } from "@/lib/app-base-url";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
@@ -178,6 +184,12 @@ export const runtime  = "nodejs";
  *                                    //   via the existing offer-window mechanism
  *                                    //   (mig 080). Default false → status='unassigned',
  *                                    //   staff picks partner manually.
+ *     create_zendesk_ticket?: boolean, // when true and no ticket_id: the OS
+ *                                    //   opens a fresh Zendesk ticket itself
+ *                                    //   (private note, team requester) and
+ *                                    //   links it at insert time. Response
+ *                                    //   carries zendesk_ticket_id. Used by
+ *                                    //   the Checkatrade RPA.
  *     ticket_id?:       string,      // Zendesk ticket id — stored as
  *                                    //   external_source='zendesk',
  *                                    //   external_ref=ticket_id.
@@ -196,6 +208,9 @@ export const runtime  = "nodejs";
  *                                    //   the macro can confirm. Distinct from
  *                                    //   the partner-app submission URL the
  *                                    //   API builds on the fly.
+ *     internal_notes?:  string       // Free-text, office-only notes (e.g. a
+ *                                    //   linked external ticket URL).
+ *                                    //   Persisted on jobs.internal_notes.
  *   }
  *
  * Behavior:
@@ -263,7 +278,7 @@ export async function POST(req: NextRequest) {
   let clientEmail       = clientEmailRaw && clientEmailRaw.includes("@") ? clientEmailRaw : null;
   const clientPhone     = nullish(body.client_phone);
   let propertyAddress   = str(body.property_address);
-  let postcodeIn        = str(body.postcode);
+  const postcodeIn      = str(body.postcode);
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
@@ -276,9 +291,17 @@ export async function POST(req: NextRequest) {
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
   let catalogServiceIdIn = str(body.catalog_service_id)?.replace(/^os_/i, "") || null;
   let autoAssign        = parseAutoAssignFlag(body);
-  const ticketId        = str(body.ticket_id) || null;
+  // `let` because create_zendesk_ticket mints a fresh ticket further down
+  // (after validation/pricing) and threads its id through the same path an
+  // incoming ticket_id would take.
+  let ticketId          = str(body.ticket_id) || null;
+  // When true and no ticket_id came in, the OS opens a brand-new Zendesk
+  // ticket itself and links it at insert time (external_source/external_ref),
+  // so callers like the Checkatrade RPA never touch Zendesk directly.
+  const createZendeskTicketIn = body.create_zendesk_ticket === true;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
+  const internalNotesIn = nullish(body.internal_notes);
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -448,10 +471,40 @@ export async function POST(req: NextRequest) {
         { status: 200 },
       );
     }
+  } else if (reportLinkIn) {
+    // Non-Zendesk integrations (e.g. Checkatrade RPA) do not have a ticket id
+    // when creating the job. Their source URL is the stable external key; if
+    // the caller retries after a partial failure, return the existing job
+    // instead of creating JOB-9330, JOB-9331, ...
+    const { data: dupJob } = await supabase
+      .from("jobs")
+      .select("id, reference, status, report_link")
+      .eq("report_link", reportLinkIn)
+      .maybeSingle();
+    if (dupJob) {
+      const dup = dupJob as {
+        id: string;
+        reference: string;
+        status: string;
+        report_link: string | null;
+      };
+      return NextResponse.json(
+        {
+          id:         dup.id,
+          reference:  dup.reference,
+          status:     dup.status,
+          action:     "existing",
+          report_link: dup.report_link ?? buildReportLink(String(dup.reference)),
+        },
+        { status: 200 },
+      );
+    }
+  }
 
-    // Conversion path: a QUOTE for this ticket already exists (created by an
-    // earlier Zendesk macro). Carry over its client_id and mark it converted
-    // once the job is in.
+  // Conversion path: a QUOTE for this ticket already exists (created by an
+  // earlier Zendesk macro). Carry over its client_id and mark it converted
+  // once the job is in.
+  if (ticketId) {
     const { data: existingQuote } = await supabase
       .from("quotes")
       .select("id, client_id, status")
@@ -741,6 +794,9 @@ export async function POST(req: NextRequest) {
   if (reportLinkIn) {
     jobRow.report_link = reportLinkIn;
   }
+  if (internalNotesIn) {
+    jobRow.internal_notes = internalNotesIn;
+  }
 
   const { data: inserted, error: insErr } = await supabase
     .from("jobs")
@@ -771,6 +827,59 @@ export async function POST(req: NextRequest) {
       .eq("id", convertingFromQuote.id);
     if (convErr) {
       console.error("[api/jobs] quote conversion status update failed:", convErr.message);
+    }
+  }
+
+  // ─── create_zendesk_ticket: mint + link a fresh ticket ───────────────
+  // Runs right after the insert so the ticket subject/body can carry the
+  // job reference and a direct link to the job in the OS ("fácil acesso"),
+  // then the link is written back onto the row BEFORE the dispatch block so
+  // every downstream Zendesk sync sees the ticket exactly as if the caller
+  // had sent ticket_id. Best-effort: a Zendesk outage must not block an
+  // already-recorded job.
+  let createdZendeskTicketId: number | null = null;
+  if (createZendeskTicketIn && !ticketId) {
+    const osJobUrl = `${appBaseUrl()}/jobs/${inserted.id}`;
+    const detailLines = [
+      `Job no OS: ${osJobUrl}`,
+      `Customer: ${clientName}`,
+      `Address: ${propertyAddress}`,
+      `Scheduled: ${isoDate} ${arrivalTime || ""}`.trim(),
+      clientPrice ? `Value: £${clientPrice}` : null,
+      reportLinkIn ? `Source: ${reportLinkIn}` : null,
+      description ? `\n${description}` : null,
+    ].filter(Boolean);
+    const customFields =
+      ZENDESK_REPLY_STATUS_FIELD_ID > 0
+        ? [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }]
+        : undefined;
+    const tRes = await createTicket({
+      subject: `${inserted.reference} · ${titleResolved} · ${clientName}`,
+      // Private internal note (same rationale as create-ticket-for-entity):
+      // the requester is the team placeholder, and the opening "created from
+      // OS" details must never surface as a customer-facing reply.
+      commentBody: detailLines.join("\n"),
+      publicComment: false,
+      requesterEmail: "team@getfixfy.com",
+      requesterName: "Fixfy Team",
+      tags: ["os-created", "os-job", "webhook-job"],
+      externalId: String(inserted.id),
+      customFields,
+    });
+    if (tRes.ok && tRes.id) {
+      createdZendeskTicketId = tRes.id;
+      ticketId = String(tRes.id);
+      const { error: linkErr } = await supabase
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: ticketId })
+        .eq("id", inserted.id);
+      if (linkErr) {
+        console.error("[api/jobs] create_zendesk_ticket: link write failed:", linkErr.message);
+        zendeskCorrections.push("zendesk_ticket_link_write_failed");
+      }
+    } else {
+      console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
+      zendeskCorrections.push("zendesk_ticket_create_failed");
     }
   }
 
@@ -824,6 +933,7 @@ export async function POST(req: NextRequest) {
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
       ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
+      ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
     },
     { status: 201 },
   );

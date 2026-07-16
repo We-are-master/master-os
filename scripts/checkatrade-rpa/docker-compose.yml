@@ -1,0 +1,12 @@
+services:
+  checkatrade-rpa:
+    build: .
+    container_name: checkatrade-rpa
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RPA_HEADLESS: "true"
+      MASTER_OS_BASE_URL: "http://host.docker.internal:3000"
+    volumes:
+      - ./.state:/app/.state
