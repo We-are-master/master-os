@@ -14,6 +14,7 @@ import {
   ZENDESK_REPLY_STATUS_FIELD_ID,
   ZENDESK_REPLY_STATUS_SENT_VALUE,
 } from "@/lib/zendesk";
+import { appBaseUrl } from "@/lib/app-base-url";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
@@ -783,47 +784,6 @@ export async function POST(req: NextRequest) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
     jobRow.auto_assign_expires_at = autoAssignExpiresAtIso();
   }
-  // ─── create_zendesk_ticket: mint + link a fresh ticket ───────────────
-  // Runs after validation/pricing so a rejected request never opens a stray
-  // ticket, and before the insert so the job row is born already linked and
-  // every downstream Zendesk dispatch (status sync, form fields, invites)
-  // sees the ticket exactly as if the caller had sent ticket_id. Best-effort:
-  // a Zendesk outage must not block recording an already-won job.
-  let createdZendeskTicketId: number | null = null;
-  if (createZendeskTicketIn && !ticketId) {
-    const detailLines = [
-      `Customer: ${clientName}`,
-      `Address: ${propertyAddress}`,
-      `Scheduled: ${isoDate} ${arrivalTime || ""}`.trim(),
-      clientPrice ? `Value: £${clientPrice}` : null,
-      description ? `\n${description}` : null,
-      reportLinkIn ? `\nSource link: ${reportLinkIn}` : null,
-    ].filter(Boolean);
-    const customFields =
-      ZENDESK_REPLY_STATUS_FIELD_ID > 0
-        ? [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }]
-        : undefined;
-    const tRes = await createTicket({
-      subject: `${titleResolved} · ${clientName}`,
-      // Private internal note (same rationale as create-ticket-for-entity):
-      // the requester is the team placeholder, and the opening "created from
-      // OS" details must never surface as a customer-facing reply.
-      commentBody: detailLines.join("\n"),
-      publicComment: false,
-      requesterEmail: "team@getfixfy.com",
-      requesterName: "Fixfy Team",
-      tags: ["os-created", "os-job", "webhook-job"],
-      customFields,
-    });
-    if (tRes.ok && tRes.id) {
-      createdZendeskTicketId = tRes.id;
-      ticketId = String(tRes.id);
-    } else {
-      console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
-      zendeskCorrections.push("zendesk_ticket_create_failed");
-    }
-  }
-
   if (ticketId) {
     jobRow.external_source = "zendesk";
     jobRow.external_ref    = ticketId;
@@ -867,6 +827,59 @@ export async function POST(req: NextRequest) {
       .eq("id", convertingFromQuote.id);
     if (convErr) {
       console.error("[api/jobs] quote conversion status update failed:", convErr.message);
+    }
+  }
+
+  // ─── create_zendesk_ticket: mint + link a fresh ticket ───────────────
+  // Runs right after the insert so the ticket subject/body can carry the
+  // job reference and a direct link to the job in the OS ("fácil acesso"),
+  // then the link is written back onto the row BEFORE the dispatch block so
+  // every downstream Zendesk sync sees the ticket exactly as if the caller
+  // had sent ticket_id. Best-effort: a Zendesk outage must not block an
+  // already-recorded job.
+  let createdZendeskTicketId: number | null = null;
+  if (createZendeskTicketIn && !ticketId) {
+    const osJobUrl = `${appBaseUrl()}/jobs/${inserted.id}`;
+    const detailLines = [
+      `Job no OS: ${osJobUrl}`,
+      `Customer: ${clientName}`,
+      `Address: ${propertyAddress}`,
+      `Scheduled: ${isoDate} ${arrivalTime || ""}`.trim(),
+      clientPrice ? `Value: £${clientPrice}` : null,
+      reportLinkIn ? `Source: ${reportLinkIn}` : null,
+      description ? `\n${description}` : null,
+    ].filter(Boolean);
+    const customFields =
+      ZENDESK_REPLY_STATUS_FIELD_ID > 0
+        ? [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }]
+        : undefined;
+    const tRes = await createTicket({
+      subject: `${inserted.reference} · ${titleResolved} · ${clientName}`,
+      // Private internal note (same rationale as create-ticket-for-entity):
+      // the requester is the team placeholder, and the opening "created from
+      // OS" details must never surface as a customer-facing reply.
+      commentBody: detailLines.join("\n"),
+      publicComment: false,
+      requesterEmail: "team@getfixfy.com",
+      requesterName: "Fixfy Team",
+      tags: ["os-created", "os-job", "webhook-job"],
+      externalId: String(inserted.id),
+      customFields,
+    });
+    if (tRes.ok && tRes.id) {
+      createdZendeskTicketId = tRes.id;
+      ticketId = String(tRes.id);
+      const { error: linkErr } = await supabase
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: ticketId })
+        .eq("id", inserted.id);
+      if (linkErr) {
+        console.error("[api/jobs] create_zendesk_ticket: link write failed:", linkErr.message);
+        zendeskCorrections.push("zendesk_ticket_link_write_failed");
+      }
+    } else {
+      console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
+      zendeskCorrections.push("zendesk_ticket_create_failed");
     }
   }
 
