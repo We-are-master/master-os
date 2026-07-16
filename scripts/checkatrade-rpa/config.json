@@ -1,0 +1,22 @@
+{
+  "pollIntervalMinutes": 1,
+  "headless": false,
+  "processKinds": ["lead", "job"],
+  "filters": {
+    "enabled": false,
+    "categories": [],
+    "regions": [],
+    "minValue": 0
+  },
+  "categoryMap": {
+    "Emergency Handyman Service": "Handyman"
+  },
+  "fallbackCategory": "General Maintenance",
+  "booking": {
+    "slotSelectionStrategy": "latest"
+  },
+  "masterOs": {
+    "baseUrl": "http://localhost:3000",
+    "accountId": "38b48520-f116-4263-90e5-8cd5a7d39ecf"
+  }
+}
