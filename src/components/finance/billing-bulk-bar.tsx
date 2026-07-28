@@ -11,6 +11,7 @@ type Props = {
   /** When variant is selfbill — drives which bulk actions appear. */
   selfbillMode?: "drafts" | "pending" | "approved";
   onMarkPaid?: () => void;
+  markPaidLabel?: string;
   onClear: () => void;
   onEmail?: () => void;
   onCancel?: () => void;
@@ -27,6 +28,7 @@ export function BillingBulkBar({
   variant,
   selfbillMode,
   onMarkPaid,
+  markPaidLabel = "Mark as paid",
   onClear,
   onEmail,
   onCancel,
@@ -49,7 +51,7 @@ export function BillingBulkBar({
           className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
-          Mark as paid
+          {markPaidLabel}
         </button>
       ) : null}
       {variant === "selfbill" && selfbillMode === "drafts" && onMarkReadyToPay ? (
@@ -90,6 +92,17 @@ export function BillingBulkBar({
       ) : null}
       {variant === "selfbill" && selfbillMode === "approved" ? (
         <>
+          {onMarkPaid ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onMarkPaid}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
+              {markPaidLabel}
+            </button>
+          ) : null}
           {onUnapprove ? (
             <button
               type="button"

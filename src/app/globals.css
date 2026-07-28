@@ -47,6 +47,17 @@
   --color-card: var(--card-bg);
   --color-card-border: var(--card-border);
 
+  /* Sidebar/nav — theme-driven so the minimal style can flip it light/hairline */
+  --color-nav-bg: var(--nav-bg);
+  --color-nav-border: var(--nav-border);
+  --color-nav-border-strong: var(--nav-border-strong);
+  --color-nav-text: var(--nav-text);
+  --color-nav-text-strong: var(--nav-text-strong);
+  --color-nav-muted: var(--nav-muted);
+  --color-nav-hover: var(--nav-hover);
+  --color-nav-active-bg: var(--nav-active-bg);
+  --color-nav-accent: var(--nav-accent);
+
   /* ── Fixfy OS design system (fx-*) ──────────────────────────────────── */
   /* Brand */
   --color-fx-navy: #020040;
@@ -156,6 +167,17 @@
   --badge-muted: #f5f5f4;
   --scrollbar-thumb: #d6d3d1;
   --scrollbar-hover: #a8a29e;
+
+  /* Sidebar/nav (default look — deep navy, constant across light & dark) */
+  --nav-bg: #0A0A28;
+  --nav-border: rgba(255, 255, 255, 0.04);
+  --nav-border-strong: rgba(255, 255, 255, 0.10);
+  --nav-text: rgba(255, 255, 255, 0.60);
+  --nav-text-strong: rgba(255, 255, 255, 0.92);
+  --nav-muted: rgba(255, 255, 255, 0.40);
+  --nav-hover: rgba(255, 255, 255, 0.04);
+  --nav-active-bg: rgba(237, 75, 0, 0.10);
+  --nav-accent: #ED4B00;
 }
 
 /* ============ DARK THEME ============ */
@@ -258,6 +280,119 @@
   color-scheme: dark;
 }
 
+/* ============ MINIMAL STYLE — LIGHT (Vercel/Stripe) ============ */
+/* Composes on top of :root. Flat, hairline, near-white surfaces, coral kept. */
+[data-style="minimal"] {
+  --surface: #ffffff;
+  --surface-secondary: #fafafa;
+  --surface-tertiary: #f4f4f5;
+  --surface-hover: #f7f7f8;
+
+  --border-color: #ededed;
+  --border-light: #f2f2f2;
+
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-tertiary: #8f8f8f;
+
+  /* fx-* neutrals → flat grays */
+  --color-fx-ink: #171717;
+  --color-fx-slate: #404040;
+  --color-fx-mute: #737373;
+  --color-fx-line: #ededed;
+  --color-fx-line-2: #e0e0e0;
+  --color-fx-paper: #fafafa;
+  --color-fx-paper-2: #f4f4f5;
+
+  --card-bg: #ffffff;
+  --card-border: #ededed;
+  --input-bg: #ffffff;
+  --input-border: #e4e4e4;
+
+  /* Flatter radii */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.75rem;
+
+  /* Flat shadows — hairline over elevation, no glow */
+  --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-fx-2: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-fx-3: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-glow: none;
+
+  /* Nav — light, hairline */
+  --nav-bg: #fafafa;
+  --nav-border: #ededed;
+  --nav-border-strong: #e4e4e4;
+  --nav-text: #525252;
+  --nav-text-strong: #171717;
+  --nav-muted: #8f8f8f;
+  --nav-hover: #f0f0f0;
+  --nav-active-bg: rgba(237, 75, 0, 0.08);
+  --nav-accent: #ED4B00;
+}
+
+/* ============ MINIMAL STYLE — DARK (Vercel dark) ============ */
+/* Composes on top of .dark. Near-black canvas, hairline borders. */
+.dark[data-style="minimal"] {
+  --surface: #0a0a0a;
+  --surface-secondary: #000000;
+  --surface-tertiary: #111111;
+  --surface-hover: #161616;
+
+  --border-color: #1f1f1f;
+  --border-light: #171717;
+
+  --text-primary: #ededed;
+  --text-secondary: #a1a1a1;
+  --text-tertiary: #6b6b6b;
+
+  --color-fx-ink: #ededed;
+  --color-fx-slate: #d4d4d4;
+  --color-fx-mute: #8f8f8f;
+  --color-fx-line: #1f1f1f;
+  --color-fx-line-2: #2a2a2a;
+  --color-fx-paper: #0f0f0f;
+  --color-fx-paper-2: #161616;
+
+  --card-bg: #0f0f0f;
+  --card-border: #1f1f1f;
+  --input-bg: #111111;
+  --input-border: #262626;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.75rem;
+
+  --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-fx-2: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-fx-3: 0 2px 8px rgba(0, 0, 0, 0.7);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-elevated: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.7);
+  --shadow-glow: none;
+
+  /* Nav — near-black, hairline */
+  --nav-bg: #0a0a0a;
+  --nav-border: #1c1c1c;
+  --nav-border-strong: #262626;
+  --nav-text: #a1a1a1;
+  --nav-text-strong: #ededed;
+  --nav-muted: #6b6b6b;
+  --nav-hover: #171717;
+  --nav-active-bg: rgba(242, 101, 39, 0.14);
+  --nav-accent: #f26527;
+}
+
 /* Inter is loaded via next/font in src/app/layout.tsx (self-hosted, preloaded). */
 
 * {
@@ -298,6 +433,17 @@ body {
 ::selection {
   background: rgba(233, 55, 1, 0.15);
   color: var(--text-primary);
+}
+
+/* ── Minimal style — chrome typography & icons ───────────────────────── */
+/* Geist (Vercel's typeface), tighter tracking, thinner lucide strokes. */
+html[data-style="minimal"] {
+  font-family: var(--font-geist), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.011em;
+}
+
+[data-style="minimal"] svg.lucide {
+  stroke-width: 1.5px;
 }
 
 @keyframes shimmer {

@@ -115,6 +115,8 @@ function NavLink({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  const { style } = useTheme();
+  const minimal = style === "minimal";
   const childActive = item.children?.some((c) => pathMatchesHref(pathname, c.href)) ?? false;
   const selfActive = pathMatchesHref(pathname, item.href);
   const isParentOfActive = !nested && Boolean(item.children?.length) && childActive && !selfActive;
@@ -125,32 +127,44 @@ function NavLink({
   const LogoComponent = navLogoComponents[item.href];
   const iconClassName = cn(
     "h-4 w-4 shrink-0 transition-colors",
-    rowHighlight ? "text-fx-coral opacity-100" : "text-white/60 opacity-85 group-hover:text-white"
+    rowHighlight ? "text-nav-accent opacity-100" : "text-nav-text opacity-85 group-hover:text-nav-text-strong"
   );
 
   return (
     <Link href={item.href} onClick={onNavigate}>
       <motion.div
-        whileHover={{ x: nested ? 0 : 2 }}
-        whileTap={{ scale: 0.98 }}
+        whileHover={{ x: minimal || nested ? 0 : 2 }}
+        whileTap={{ scale: minimal ? 1 : 0.98 }}
         className={cn(
-          "group relative flex items-center gap-2.5 rounded-md text-[13.5px] font-medium transition-colors duration-200",
-          nested ? "pl-6 pr-2.5 py-1.5 ml-2 border-l border-white/10" : "px-2.5 py-2",
+          "group relative flex items-center gap-2.5 font-medium transition-colors duration-200",
+          minimal ? "rounded-md text-[13px]" : "rounded-md text-[13.5px]",
+          nested
+            ? cn("pl-6 pr-2.5 ml-2 border-l border-nav-border-strong", minimal ? "py-1" : "py-1.5")
+            : minimal ? "px-2.5 py-1.5" : "px-2.5 py-2",
           collapsed && "justify-center px-2",
           rowHighlight
-            ? "text-white bg-fx-coral/10"
-            : "text-white/60 hover:text-white/90 hover:bg-white/[0.04]"
+            ? "text-nav-text-strong bg-nav-active-bg"
+            : "text-nav-text hover:text-nav-text-strong hover:bg-nav-hover"
         )}
       >
         {showStripe && (
-          <motion.div
-            layoutId={nested ? `sidebar-active-${item.href}` : "sidebar-active"}
-            className={cn(
-              "absolute w-[3px] bg-fx-coral rounded-r",
-              nested ? "-left-2 top-1.5 bottom-1.5" : "-left-3 top-1.5 bottom-1.5"
-            )}
-            transition={{ type: "spring", damping: 25, stiffness: 300 }}
-          />
+          minimal ? (
+            <div
+              className={cn(
+                "absolute w-[2px] bg-nav-accent rounded-r",
+                nested ? "-left-2 top-1 bottom-1" : "-left-3 top-1.5 bottom-1.5"
+              )}
+            />
+          ) : (
+            <motion.div
+              layoutId={nested ? `sidebar-active-${item.href}` : "sidebar-active"}
+              className={cn(
+                "absolute w-[3px] bg-fx-coral rounded-r",
+                nested ? "-left-2 top-1.5 bottom-1.5" : "-left-3 top-1.5 bottom-1.5"
+              )}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            />
+          )
         )}
         {LogoComponent ? (
           <LogoComponent className={iconClassName} />
@@ -184,14 +198,14 @@ function NavLink({
 }
 
 function SidebarBrand({ collapsed }: { collapsed: boolean }) {
-  const { resolved } = useTheme();
+  const { resolved, style } = useTheme();
   const logos = useCompanyLogos();
-  const logoSrc = !logos.loading ? resolveAppLogoUrl(resolved, logos) : undefined;
+  const logoSrc = !logos.loading ? resolveAppLogoUrl(resolved, logos, style) : undefined;
   const [imgErr, setImgErr] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => setImgErr(false));
-  }, [logoSrc, resolved]);
+  }, [logoSrc, resolved, style]);
 
   const title = logos.companyName?.trim() || APP_NAME;
   const showCustom = Boolean(logoSrc && !imgErr);
@@ -221,7 +235,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
                 exit={{ opacity: 0, width: 0 }}
                 className="overflow-hidden"
               >
-                <span className="text-[15px] font-semibold text-white tracking-[-0.01em] whitespace-nowrap">
+                <span className="text-[15px] font-semibold text-nav-text-strong tracking-[-0.01em] whitespace-nowrap">
                   {title}
                 </span>
               </motion.div>
@@ -323,7 +337,7 @@ function SidebarNavGroups({
                     [group.label]: !prev[group.label],
                   }))
                 }
-                className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/60"
+                className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-nav-muted transition-colors hover:text-nav-text"
               >
                 <span>{group.label}</span>
                 {collapsedSections[group.label] ? (
@@ -410,10 +424,10 @@ export function Sidebar() {
       </nav>
 
       {opts.showCollapse && (
-        <div className="p-3 border-t border-white/5">
+        <div className="p-3 border-t border-nav-border">
           <button
             onClick={toggle}
-            className="w-full flex items-center justify-center h-9 rounded-lg text-sidebar-text-muted hover:text-white hover:bg-white/5 transition-colors"
+            className="w-full flex items-center justify-center h-9 rounded-lg text-nav-muted hover:text-nav-text-strong hover:bg-nav-hover transition-colors"
           >
             <motion.div
               animate={{ rotate: opts.collapsed ? 180 : 0 }}
@@ -433,7 +447,7 @@ export function Sidebar() {
         initial={false}
         animate={{ width: collapsed ? 72 : 256 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
-        className="fixed left-0 top-0 bottom-0 z-50 bg-fx-navy-2 hidden lg:flex flex-col border-r border-white/[0.04]"
+        className="fixed left-0 top-0 bottom-0 z-50 bg-nav-bg hidden lg:flex flex-col border-r border-nav-border"
       >
         {sidebarShell({ collapsed, showCollapse: true })}
       </motion.aside>
@@ -453,13 +467,13 @@ export function Sidebar() {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 28, stiffness: 320 }}
-              className="absolute left-0 top-0 bottom-0 w-[min(18rem,85vw)] bg-fx-navy-2 flex flex-col border-r border-white/[0.04] shadow-2xl"
+              className="absolute left-0 top-0 bottom-0 w-[min(18rem,85vw)] bg-nav-bg flex flex-col border-r border-nav-border shadow-2xl"
             >
               <div className="flex items-center justify-end px-3 pt-3 lg:hidden">
                 <button
                   type="button"
                   onClick={closeMobile}
-                  className="h-9 w-9 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                  className="h-9 w-9 rounded-lg flex items-center justify-center text-nav-text hover:text-nav-text-strong hover:bg-nav-hover transition-colors"
                   aria-label="Close menu"
                 >
                   <X className="h-5 w-5" />

@@ -30,14 +30,30 @@ export type SelfBillJobLine = Pick<
 export async function markSelfBillsPaid(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const supabase = getSupabase();
-  const paidDay = new Date().toISOString().slice(0, 10);
-  const res = await supabase.from("self_bills").update({ status: "paid", paid_at: paidDay }).in("id", ids);
-  if (res.error && /paid_at|column|schema|PGRST204/i.test(String(res.error.message ?? ""))) {
-    const { error } = await supabase.from("self_bills").update({ status: "paid" }).in("id", ids);
-    if (error) throw error;
-  } else if (res.error) {
-    throw res.error;
+  const nowIso = new Date().toISOString();
+  const paidDay = nowIso.slice(0, 10);
+  // Set status + wise_paid_at so Money Out Ready (filters on both) drops the row immediately.
+  const full = await supabase
+    .from("self_bills")
+    .update({ status: "paid", paid_at: paidDay, wise_paid_at: nowIso })
+    .in("id", ids);
+  if (!full.error) return;
+
+  const msg = String(full.error.message ?? "");
+  if (/wise_paid_at|paid_at|column|schema|PGRST204/i.test(msg)) {
+    const withoutWise = await supabase
+      .from("self_bills")
+      .update({ status: "paid", paid_at: paidDay })
+      .in("id", ids);
+    if (!withoutWise.error) return;
+    if (/paid_at|column|schema|PGRST204/i.test(String(withoutWise.error.message ?? ""))) {
+      const { error } = await supabase.from("self_bills").update({ status: "paid" }).in("id", ids);
+      if (error) throw error;
+      return;
+    }
+    throw withoutWise.error;
   }
+  throw full.error;
 }
 
 export async function fetchPartnerPaidTotalsByJobIds(jobIds: string[]): Promise<Record<string, number>> {
