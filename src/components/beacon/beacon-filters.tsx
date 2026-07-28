@@ -6,7 +6,16 @@ import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import { MicroLabel } from "@/components/fx/primitives";
 
-export type BeaconDateMode = "today" | "tomorrow" | "week" | "month" | "qtd" | "all" | "custom";
+export type BeaconDateMode =
+  | "today"
+  | "tomorrow"
+  | "week"
+  | "month"
+  | "qtd"
+  | "last_month"
+  | "next_month"
+  | "all"
+  | "custom";
 
 export type BeaconFilters = {
   dateMode: BeaconDateMode;
@@ -238,6 +247,16 @@ export function getBeaconScheduleYmdRange(filters: BeaconFilters): { from: strin
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 0, 0, 0, 0);
       return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
     }
+    case "last_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth(), 0, 0, 0, 0, 0);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
+    case "next_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth() + 2, 0, 0, 0, 0, 0);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
     case "qtd": {
       const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
       const s = new Date(now.getFullYear(), qStartMonth, 1, 0, 0, 0, 0);
@@ -279,6 +298,16 @@ export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; 
     case "month": {
       const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "last_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "next_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
       return { fromIso: s.toISOString(), toIso: e.toISOString() };
     }
     case "qtd": {

@@ -344,7 +344,17 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
 }
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v2";
-const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "qtd", "custom"];
+const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = [
+  "all",
+  "today",
+  "tomorrow",
+  "week",
+  "month",
+  "qtd",
+  "last_month",
+  "next_month",
+  "custom",
+];
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";

@@ -8,6 +8,8 @@ export type DateRangePreset =
   | "30d"
   | "90d"
   | "mtd"
+  | "last_month"
+  | "next_month"
   | "qtd"
   | "ytd"
   | "custom"
@@ -91,6 +93,16 @@ export function getBoundsForPreset(
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       break;
     }
+    case "last_month": {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      break;
+    }
+    case "next_month": {
+      start = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
+      break;
+    }
     case "ytd":
       start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
       break;
@@ -116,6 +128,8 @@ export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "tomorrow", label: "Tomorrow" },
   { id: "wtd", label: "Week to date" },
   { id: "mtd", label: "This month (full)" },
+  { id: "last_month", label: "Last month" },
+  { id: "next_month", label: "Next month" },
   { id: "qtd", label: "Quarter to date" },
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
@@ -141,6 +155,8 @@ const COMPACT_PRESET_LABELS: Record<DateRangePreset, string> = {
   tomorrow: "Tomorrow",
   wtd: "Week to date",
   mtd: "Current month",
+  last_month: "Last month",
+  next_month: "Next month",
   qtd: "This quarter",
   "7d": "Last 7 days",
   "30d": "Last 30 days",

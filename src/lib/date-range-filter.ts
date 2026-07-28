@@ -1,14 +1,22 @@
 /**
  * Unified date filter primitives shared across Pulse, Live View, Jobs, Quotes,
- * and Schedule. Single source of truth for the 6 canonical modes so adding /
+ * and Schedule. Single source of truth for the canonical modes so adding /
  * tweaking a mode happens in one place.
  *
  * Why a fresh module instead of extending `dashboard-date-range.ts`: that one
  * carries legacy presets (7d/30d/90d/ytd) that we don't want surfacing here.
- * The shared filter intentionally exposes just 6 user-facing modes.
  */
 
-export type DateFilterMode = "all" | "today" | "tomorrow" | "week" | "month" | "qtd" | "custom";
+export type DateFilterMode =
+  | "all"
+  | "today"
+  | "tomorrow"
+  | "week"
+  | "month"
+  | "qtd"
+  | "last_month"
+  | "next_month"
+  | "custom";
 
 export type DateFilterValue = {
   mode: DateFilterMode;
@@ -26,13 +34,28 @@ export const DEFAULT_DATE_FILTER: DateFilterValue = {
 /** Inclusive ISO bounds in local browser TZ. `null` means custom range incomplete. */
 export type DateFilterBounds = { fromIso: string; toIso: string };
 
-export const DATE_FILTER_QUICK_OPTIONS: { id: Exclude<DateFilterMode, "custom">; label: string }[] = [
-  { id: "all", label: "All" },
+export type DateFilterQuickOption = { id: Exclude<DateFilterMode, "custom">; label: string };
+
+/** Chips always visible in the strip. */
+export const DATE_FILTER_PRIMARY_OPTIONS: DateFilterQuickOption[] = [
   { id: "today", label: "Today" },
   { id: "tomorrow", label: "Tomorrow" },
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
+];
+
+/** Options tucked behind the "…" overflow (plus Custom range). */
+export const DATE_FILTER_OVERFLOW_OPTIONS: DateFilterQuickOption[] = [
+  { id: "all", label: "All" },
   { id: "qtd", label: "QTD" },
+  { id: "last_month", label: "Last month" },
+  { id: "next_month", label: "Next month" },
+];
+
+/** All non-custom quick options (primary + overflow) — useful for labels / lookups. */
+export const DATE_FILTER_QUICK_OPTIONS: DateFilterQuickOption[] = [
+  ...DATE_FILTER_PRIMARY_OPTIONS,
+  ...DATE_FILTER_OVERFLOW_OPTIONS,
 ];
 
 export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | null {
@@ -65,6 +88,16 @@ export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | nu
     case "month": {
       const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "last_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "next_month": {
+      const s = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
       return { fromIso: s.toISOString(), toIso: e.toISOString() };
     }
     case "qtd": {

@@ -2,7 +2,7 @@
 
 import { List, LayoutGrid, Map as MapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
+import { LiveIndicator } from "@/components/fx/primitives";
 import {
   BeaconFiltersButton,
   type BeaconFilters,
@@ -27,7 +27,17 @@ type Props = {
   onFiltersChange: (next: BeaconFilters) => void;
 };
 
-const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>(["all", "today", "tomorrow", "week", "month", "qtd", "custom"]);
+const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>([
+  "all",
+  "today",
+  "tomorrow",
+  "week",
+  "month",
+  "qtd",
+  "last_month",
+  "next_month",
+  "custom",
+]);
 
 export function BeaconHeader({ view, onViewChange, liveCount, filters, onFiltersChange }: Props) {
   // Beacon's BeaconDateMode is a superset (adds "all"); map both directions.
@@ -46,18 +56,14 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
   };
 
   return (
-    <div className="flex items-end justify-between gap-6 flex-wrap">
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-center gap-3">
-          <MicroLabel>Beacon</MicroLabel>
+    <div className="flex items-start justify-between gap-6 flex-wrap">
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
+            Live Operations
+          </h1>
           <LiveIndicator label={`${liveCount} live`} />
         </div>
-        <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
-          Live Operations
-        </h1>
-        <p className="text-[13px] text-fx-mute m-0">
-          Switch views to triage active work.
-        </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <DateRangeFilter value={sharedValue} onChange={applyShared} variant="segment" />
