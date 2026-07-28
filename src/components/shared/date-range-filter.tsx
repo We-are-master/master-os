@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  DATE_FILTER_OVERFLOW_OPTIONS,
+  DATE_FILTER_PRIMARY_OPTIONS,
   DATE_FILTER_QUICK_OPTIONS,
   type DateFilterMode,
   type DateFilterValue,
@@ -16,15 +18,15 @@ type Props = {
   onChange: (next: DateFilterValue) => void;
   /** "segment" matches Pulse's pill-group look. "chip" matches Beacon/Jobs outline-chip look. */
   variant?: Variant;
-  /** When true, only the "All" chip stays visible; Today/Tomorrow/Week/Month/QTD move into the … menu. */
+  /** When true, only the "All" chip stays visible; other quick options move into the … menu. */
   compactQuickOptions?: boolean;
   className?: string;
 };
 
 /**
- * Shared 5-chip date filter (Today / Tomorrow / Week / Month / QTD) plus a "…"
- * overflow button that opens a popover with the Custom range pickers. Same
- * presentation on Pulse / Live View / Jobs / Quotes / Schedule.
+ * Shared date filter: Today / Tomorrow / Week / Month on the strip, plus a "…"
+ * overflow for All / QTD / Last month / Next month / Custom. Same presentation
+ * on Pulse / Live View / Jobs / Quotes / Schedule.
  */
 export function DateRangeFilter({
   value,
@@ -37,10 +39,10 @@ export function DateRangeFilter({
   const wrapRef = useRef<HTMLDivElement>(null);
   const inlineQuickOptions = compactQuickOptions
     ? DATE_FILTER_QUICK_OPTIONS.filter((opt) => opt.id === "all")
-    : DATE_FILTER_QUICK_OPTIONS;
+    : DATE_FILTER_PRIMARY_OPTIONS;
   const overflowQuickOptions = compactQuickOptions
     ? DATE_FILTER_QUICK_OPTIONS.filter((opt) => opt.id !== "all")
-    : [];
+    : DATE_FILTER_OVERFLOW_OPTIONS;
 
   useEffect(() => {
     if (!overflowOpen) return;

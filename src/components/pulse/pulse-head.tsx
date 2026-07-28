@@ -24,6 +24,8 @@ const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
   tomorrow: "tomorrow",
   week: "wtd",
   month: "mtd",
+  last_month: "last_month",
+  next_month: "next_month",
   qtd: "qtd",
   custom: "custom",
 };
@@ -34,6 +36,8 @@ const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
   tomorrow: "tomorrow",
   wtd: "week",
   mtd: "month",
+  last_month: "last_month",
+  next_month: "next_month",
   qtd: "qtd",
   custom: "custom",
 };

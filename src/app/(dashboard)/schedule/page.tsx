@@ -769,7 +769,7 @@ export default function SchedulePage() {
   return (
     <PageTransition
       className={cn(
-        "flex flex-col min-w-0 gap-4",
+        "flex flex-col min-w-0 gap-4 -mt-2 sm:-mt-3 lg:-mt-4",
         view === "map" &&
           "min-h-0 overflow-hidden gap-2 sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]",
       )}
