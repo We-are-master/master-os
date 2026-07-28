@@ -67,8 +67,16 @@ export function useCompanyLogos(): CompanyLogosState {
 /** Pick image URL for current resolved theme with sensible fallbacks. */
 export function resolveAppLogoUrl(
   resolved: "light" | "dark",
-  logos: Pick<CompanyLogosState, "logoUrl" | "logoLightThemeUrl" | "logoDarkThemeUrl">
+  logos: Pick<CompanyLogosState, "logoUrl" | "logoLightThemeUrl" | "logoDarkThemeUrl">,
+  style: "default" | "minimal" = "default",
 ): string | undefined {
+  // Minimal style: light hairline nav needs a dark/navy mark; dark minimal needs a light mark.
+  if (style === "minimal") {
+    if (resolved === "dark") {
+      return logos.logoDarkThemeUrl || "/logos/fixfy-wordmark-white-trim.png";
+    }
+    return "/logos/fixfy-primary-navy.png";
+  }
   if (resolved === "dark") {
     return logos.logoDarkThemeUrl || logos.logoLightThemeUrl || logos.logoUrl;
   }

@@ -180,6 +180,11 @@ export function MoneyOutPayActions({
             label: "Schedule Payment",
             onClick: onSchedulePayment,
           },
+          {
+            icon: <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />,
+            label: "Mark as Paid",
+            onClick: onMarkAsPaid,
+          },
         ]}
       >
         <WiseIcon />
@@ -206,6 +211,22 @@ export function MoneyOutPayActions({
       >
         <span>{payLabel}</span>
       </SplitActionButton>
+
+      <button
+        type="button"
+        disabled={inactive}
+        onClick={onMarkAsPaid}
+        title="Mark as paid without Wise"
+        className={cn(
+          "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-[8px] border border-emerald-600/20 bg-emerald-500 px-3",
+          "text-xs font-bold leading-none text-white transition-colors hover:bg-emerald-600",
+          "shadow-[0_1px_2px_rgba(16,185,129,0.2),0_4px_12px_rgba(16,185,129,0.25)]",
+          inactive && "pointer-events-none opacity-50",
+        )}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />}
+        Mark as paid
+      </button>
     </div>
   );
 }

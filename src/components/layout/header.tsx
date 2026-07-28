@@ -7,8 +7,9 @@ import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, Menu, LogOut, Moon, Sun, Sparkles,
-  Search, X, History,
+  Search, X, History, Monitor, Check, Minus,
 } from "lucide-react";
+import type { Theme, Style } from "@/hooks/use-theme";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { Badge } from "@/components/ui/badge";
 import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
@@ -359,13 +360,131 @@ function GlobalSearch() {
   );
 }
 
+// ── Theme menu (appearance + style) ───────────────────────────────────────────
+
+function ThemeMenu() {
+  const { theme, resolved, style, setTheme, setStyle } = useTheme();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const appearanceOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
+    { value: "light", label: "Light", icon: Sun },
+    { value: "dark", label: "Dark", icon: Moon },
+    { value: "system", label: "System", icon: Monitor },
+  ];
+  const styleOptions: { value: Style; label: string; icon: typeof Sun }[] = [
+    { value: "default", label: "Default", icon: Sparkles },
+    { value: "minimal", label: "Minimal", icon: Minus },
+  ];
+
+  const Row = ({
+    active,
+    label,
+    Icon,
+    onClick,
+  }: {
+    active: boolean;
+    label: string;
+    Icon: typeof Sun;
+    onClick: () => void;
+  }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+        active
+          ? "bg-surface-tertiary text-text-primary font-medium"
+          : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="flex-1 text-left">{label}</span>
+      {active && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+    </button>
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="relative flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
+        title="Theme"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          {resolved === "dark" ? (
+            <motion.div key="sun" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
+              <Sun className="h-[18px] w-[18px]" />
+            </motion.div>
+          ) : (
+            <motion.div key="moon" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
+              <Moon className="h-[18px] w-[18px]" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: 0.12 }}
+            className="absolute right-0 z-50 mt-2 w-52 rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
+            role="menu"
+          >
+            <p className="fx-kk px-2 pb-1 pt-1">Appearance</p>
+            {appearanceOptions.map((o) => (
+              <Row
+                key={o.value}
+                active={theme === o.value}
+                label={o.label}
+                Icon={o.icon}
+                onClick={() => setTheme(o.value)}
+              />
+            ))}
+            <div className="my-1.5 h-px bg-border" />
+            <p className="fx-kk px-2 pb-1 pt-1">Style</p>
+            {styleOptions.map((o) => (
+              <Row
+                key={o.value}
+                active={style === o.value}
+                label={o.label}
+                Icon={o.icon}
+                onClick={() => setStyle(o.value)}
+              />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ── Header ───────────────────────────────────────────────────────────────────
 
 export function Header() {
   const pathname = usePathname();
   const { toggleMobile } = useSidebar();
   const { profile } = useProfile();
-  const { resolved, toggle: toggleTheme } = useTheme();
   const activityLogActive = pathname === "/activity" || pathname.startsWith("/activity/");
   const displayName = profile?.full_name || "User";
   const displayRole = profile?.role
@@ -396,23 +515,7 @@ export function Header() {
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
-        <button
-          onClick={toggleTheme}
-          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
-          title={resolved === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            {resolved === "dark" ? (
-              <motion.div key="sun" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
-                <Sun className="h-[18px] w-[18px]" />
-              </motion.div>
-            ) : (
-              <motion.div key="moon" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
-                <Moon className="h-[18px] w-[18px]" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </button>
+        <ThemeMenu />
         <Link
           href="/activity"
           className={cn(

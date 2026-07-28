@@ -44,9 +44,16 @@ function usePortalTheme() {
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : false;
     const r: "light" | "dark" = initial === "system" ? (sysIsDark ? "dark" : "light") : initial;
+    const minimal = typeof window !== "undefined"
+      && localStorage.getItem("master-os-style") === "minimal";
     queueMicrotask(() => {
       setResolved(r);
       document.documentElement.classList.toggle("dark", r === "dark");
+      if (minimal) {
+        document.documentElement.setAttribute("data-style", "minimal");
+      } else {
+        document.documentElement.removeAttribute("data-style");
+      }
     });
   }, []);
 

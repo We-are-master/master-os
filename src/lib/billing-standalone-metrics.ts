@@ -290,6 +290,8 @@ export type WorklistRow = {
   invoice: Invoice;
   balanceDue: number;
   daysLate: number;
+  /** Expected payment date (YYYY-MM-DD) from due / installment plan. */
+  expectedPayYmd: string;
   accountKey: string;
   accountName: string;
   clientName: string;
@@ -304,6 +306,8 @@ export type AttentionAccountGroup = {
   invoiceCount: number;
   totalDue: number;
   maxDaysLate: number;
+  /** Earliest expected payment date among open invoices in the group. */
+  nextExpectedPayYmd: string | null;
   rows: WorklistRow[];
 };
 
@@ -400,6 +404,7 @@ function collectAttentionWorklistRows(
       invoice: inv,
       balanceDue,
       daysLate,
+      expectedPayYmd: dueYmd,
       accountKey,
       accountName: accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked",
       clientName: inv.client_name?.trim() || "—",
@@ -467,6 +472,7 @@ export function buildAttentionAccountGroups(
         invoiceCount: 0,
         totalDue: 0,
         maxDaysLate: 0,
+        nextExpectedPayYmd: null,
         rows: [],
       };
       byAccount.set(row.accountKey, group);
@@ -475,6 +481,12 @@ export function buildAttentionAccountGroups(
     group.invoiceCount += 1;
     group.totalDue = Math.round((group.totalDue + row.balanceDue) * 100) / 100;
     group.maxDaysLate = Math.max(group.maxDaysLate, row.daysLate);
+    if (
+      row.expectedPayYmd &&
+      (!group.nextExpectedPayYmd || row.expectedPayYmd < group.nextExpectedPayYmd)
+    ) {
+      group.nextExpectedPayYmd = row.expectedPayYmd;
+    }
   }
   return [...byAccount.values()].sort(
     (a, b) => b.maxDaysLate - a.maxDaysLate || b.totalDue - a.totalDue || a.accountName.localeCompare(b.accountName),

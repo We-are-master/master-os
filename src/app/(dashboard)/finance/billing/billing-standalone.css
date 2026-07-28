@@ -82,12 +82,12 @@
 }
 
 .bl-standalone .cf__pnl {
-  height: 18px;
-  margin-bottom: 2px;
+  height: 14px;
+  margin-bottom: 1px;
   text-align: center;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 18px;
+  line-height: 14px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -117,10 +117,10 @@
 }
 
 .bl-standalone .cf__amt {
-  height: 14px;
+  height: 12px;
   text-align: center;
-  font-size: 9px;
-  line-height: 14px;
+  font-size: 8px;
+  line-height: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -138,7 +138,7 @@
 }
 
 .bl-standalone .cf__well {
-  height: 74px;
+  height: 46px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -167,24 +167,24 @@
 .bl-standalone .cf__axis {
   height: 1px;
   background: #e8e8ee;
-  margin: 4px 0;
+  margin: 2px 0;
 }
 
 .bl-standalone .cf__lbl {
   text-align: center;
-  font-size: 9.5px;
+  font-size: 9px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #9a9aa8;
-  line-height: 1.35;
-  padding-top: 2px;
+  line-height: 1.2;
+  padding-top: 1px;
 }
 
 .bl-standalone .cf__lbl b {
   display: block;
   color: #020040;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .bl-standalone .cf__day.is-today .cf__lbl b {
