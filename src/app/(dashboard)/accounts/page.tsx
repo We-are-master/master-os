@@ -945,6 +945,7 @@ export default function AccountsPage() {
               legacyRevenueByAccount={legacyRevenueByAccount}
               revenueRankByAccountId={revenueRankByAccountId}
               relationshipRevenueFor={relationshipRevenueFor}
+              clientCountByAccountId={clientCountByAccountId}
               bulkActionButtons={
                 <>
                   <BulkBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -1209,6 +1210,7 @@ function AccountsGridView({
   legacyRevenueByAccount,
   revenueRankByAccountId,
   relationshipRevenueFor,
+  clientCountByAccountId,
   bulkActionButtons,
   embedded = false,
 }: {
@@ -1228,6 +1230,7 @@ function AccountsGridView({
   legacyRevenueByAccount: Record<string, number>;
   revenueRankByAccountId: Map<string, number>;
   relationshipRevenueFor: (account: Account) => number;
+  clientCountByAccountId: Record<string, number>;
   bulkActionButtons: ReactNode;
   embedded?: boolean;
 }) {
