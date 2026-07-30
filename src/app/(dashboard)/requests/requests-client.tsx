@@ -778,7 +778,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
     [data],
   );
 
-  const handleExportFullCsv = useCallback(async (fields: string[]) => {
+  const handleExportFullCsv = useCallback(async (fields: string[], _rowScope?: string) => {
     try {
       const allRows: ServiceRequest[] = [];
       let p = 1;

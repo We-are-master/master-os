@@ -2519,7 +2519,7 @@ function JobsPageContent() {
     [data],
   );
 
-  const handleExportFullCsv = useCallback(async (fields: string[]) => {
+  const handleExportFullCsv = useCallback(async (fields: string[], _rowScope?: string) => {
     try {
       const allRows: Job[] = [];
       let p = 1;

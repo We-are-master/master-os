@@ -2294,7 +2294,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     [data],
   );
 
-  const handleExport = useCallback(async (fields: string[]) => {
+  const handleExport = useCallback(async (fields: string[], _rowScope?: string) => {
     try {
       const allRows: Quote[] = [];
       let p = 1;
