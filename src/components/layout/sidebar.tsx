@@ -97,7 +97,7 @@ const navLogoComponents: Record<string, (props: { className?: string }) => React
 };
 
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
-const SIDEBAR_HIDDEN_HREFS = new Set(["/clients", "/requests", "/compliance", "/ppm"]);
+const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm"]);
 
 function pathMatchesHref(pathname: string, href: string): boolean {
   return pathname === href || (href !== "/" && pathname.startsWith(href));

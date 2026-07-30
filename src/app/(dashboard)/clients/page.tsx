@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,8 @@ import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
+import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { toast } from "sonner";
 import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -61,6 +64,41 @@ import {
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 
 const CLIENT_STATUSES = ["active", "inactive", "vip", "blocked"] as const;
+
+/** Canonical export columns — covers the full client row + resolved account name. */
+const CLIENT_EXPORT_ALL_FIELDS = [
+  "id",
+  "full_name",
+  "email",
+  "phone",
+  "client_type",
+  "status",
+  "source",
+  "account_name",
+  "source_account_id",
+  "address",
+  "city",
+  "postcode",
+  "total_spent",
+  "jobs_count",
+  "last_job_date",
+  "notes",
+  "tags",
+  "created_at",
+  "updated_at",
+] as const;
+
+const CLIENT_EXPORT_VISIBLE_FIELDS = [
+  "full_name",
+  "email",
+  "phone",
+  "client_type",
+  "status",
+  "account_name",
+  "city",
+  "total_spent",
+  "jobs_count",
+] as const;
 
 const statusConfig: Record<string, { variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   active: { variant: "success", dot: true },
@@ -106,10 +144,20 @@ function OpenClientFromQuery({ setSelectedClient }: { setSelectedClient: (c: Cli
 }
 
 function ClientsPageInner() {
+  const searchParams = useSearchParams();
+  const accountIdFilter = searchParams.get("accountId")?.trim() ?? "";
+  const listParams = useMemo(
+    () => (accountIdFilter ? { sourceAccountId: accountIdFilter } : undefined),
+    [accountIdFilter],
+  );
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Client>({ fetcher: listClients, realtimeTable: "clients" });
+  } = useSupabaseList<Client>({
+    fetcher: listClients,
+    realtimeTable: "clients",
+    listParams,
+  });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
@@ -119,8 +167,67 @@ function ClientsPageInner() {
   /** Linked clients ÷ distinct `source_account_id` (0 if none). */
   const [clientsPerAccountAvg, setClientsPerAccountAvg] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [sourceAccounts, setSourceAccounts] = useState<Array<{ id: string; name: string }>>([]);
+
+  const accountFilterName = useMemo(() => {
+    if (!accountIdFilter) return null;
+    return sourceAccounts.find((a) => a.id === accountIdFilter)?.name ?? null;
+  }, [accountIdFilter, sourceAccounts]);
+
+  const accountNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of sourceAccounts) map.set(a.id, a.name);
+    return map;
+  }, [sourceAccounts]);
+
+  const clientAllFields = useMemo(() => {
+    const fromRows = data.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>));
+    return [...new Set([...CLIENT_EXPORT_ALL_FIELDS, ...fromRows, "account_name"])];
+  }, [data]);
+
+  const handleExportCsv = useCallback(
+    async (fields: string[]) => {
+      try {
+        const allRows: Client[] = [];
+        let p = 1;
+        const pageSize = 500;
+        while (true) {
+          const res = await listClients({
+            page: p,
+            pageSize,
+            search: search.trim() ? search : undefined,
+            status: status !== "all" ? status : undefined,
+            ...(listParams ?? {}),
+          });
+          allRows.push(...res.data);
+          if (p >= res.totalPages) break;
+          p += 1;
+        }
+        if (allRows.length === 0) {
+          toast.info("No clients to export");
+          return;
+        }
+        const rows = allRows.map((c) => {
+          const aid = c.source_account_id?.trim() ?? "";
+          return {
+            ...(c as unknown as Record<string, unknown>),
+            account_name: aid ? accountNameById.get(aid) ?? "" : "",
+            tags: Array.isArray(c.tags) ? c.tags.join("; ") : (c.tags ?? ""),
+          };
+        });
+        const finalFields =
+          fields.length > 0 ? fields : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+        const csv = buildCsvFromRows(rows, finalFields);
+        downloadCsvFile(`clients-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+        toast.success(`Exported ${allRows.length} client${allRows.length === 1 ? "" : "s"}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to export clients");
+      }
+    },
+    [search, status, listParams, accountNameById],
+  );
 
   const loadCounts = useCallback(async () => {
     try {
@@ -242,17 +349,6 @@ function ClientsPageInner() {
     } catch { toast.error("Failed to update"); }
   };
 
-  const handleExport = useCallback(() => {
-    const csv = ["Name,Email,Phone,Type,Status,City,Total Spent,Jobs"]
-      .concat(data.map((c) => `"${c.full_name}","${c.email ?? ""}","${c.phone ?? ""}",${c.client_type},${c.status},"${c.city ?? ""}",${c.total_spent},${c.jobs_count}`))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "clients_export.csv"; a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Clients exported");
-  }, [data]);
-
   const columns: Column<Client>[] = [
     {
       key: "full_name", label: "Client", width: "260px",
@@ -288,9 +384,14 @@ function ClientsPageInner() {
         if (!aid) return <span className="text-xs text-text-tertiary">—</span>;
         const name = sourceAccounts.find((a) => a.id === aid)?.name;
         return (
-          <span className="text-xs text-text-secondary" title={aid}>
+          <Link
+            href={`/accounts?search=${encodeURIComponent(name ?? aid)}`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex max-w-full items-center rounded-md border border-border-light bg-surface-secondary/80 px-2 py-0.5 text-xs font-medium text-text-primary hover:border-primary/40 hover:bg-primary/5 truncate"
+            title={name ?? aid}
+          >
             {name ?? `Linked (${aid.slice(0, 8)}…)`}
-          </span>
+          </Link>
         );
       },
     },
@@ -337,8 +438,23 @@ function ClientsPageInner() {
     <PageTransition>
       <OpenClientFromQuery setSelectedClient={setSelectedClient} />
       <div className="space-y-5">
-        <PageHeader title="Clients" subtitle="Manage individual clients and their service history.">
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
+        <PageHeader
+          title="Clients"
+          subtitle={
+            accountIdFilter
+              ? `Showing clients linked to ${accountFilterName ?? "selected account"}.`
+              : "Manage individual clients and their service history."
+          }
+        >
+          {accountIdFilter ? (
+            <Link
+              href="/clients"
+              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
+            >
+              Clear account filter
+            </Link>
+          ) : null}
+          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>Export</Button>
           <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Client</Button>
         </PageHeader>
 
@@ -401,6 +517,14 @@ function ClientsPageInner() {
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New client" subtitle="Link the client to an account from Accounts (or create one)" size="lg">
         <CreateClientForm sourceAccounts={sourceAccounts} onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
+
+      <ExportCsvModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        allFields={clientAllFields}
+        visibleFields={[...CLIENT_EXPORT_VISIBLE_FIELDS]}
+        onConfirm={handleExportCsv}
+      />
     </PageTransition>
   );
 }

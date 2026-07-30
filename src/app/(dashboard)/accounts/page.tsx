@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -113,6 +114,15 @@ const ACCOUNTS_LIST_PAGE_SIZE = 10;
 const ACCOUNTS_FETCH_PAGE_SIZE = 500;
 
 type AccountsDisplayMode = "list" | "grid";
+
+function ApplyAccountsSearchQuery({ setSearch }: { setSearch: (s: string) => void }) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const q = searchParams.get("search")?.trim();
+    if (q) setSearch(q);
+  }, [searchParams, setSearch]);
+  return null;
+}
 
 /** Display name for account owner: resolve `account_owner_id` → profiles list; optional legacy `owner_name` if present. */
 function accountOwnerLabel(
@@ -278,6 +288,8 @@ export default function AccountsPage() {
   const [totalJobs, setTotalJobs] = useState(0);
   const [totalAccounts, setTotalAccounts] = useState(0);
   const [accountStatusCounts, setAccountStatusCounts] = useState<Record<string, number>>({});
+  /** `accounts.id` → count of clients with `source_account_id` = that account. */
+  const [clientCountByAccountId, setClientCountByAccountId] = useState<Record<string, number>>({});
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -303,9 +315,31 @@ export default function AccountsPage() {
     }
   }, []);
 
+  const loadClientCounts = useCallback(async () => {
+    try {
+      const supabase = getSupabase();
+      const { data: rows, error } = await supabase
+        .from("clients")
+        .select("source_account_id")
+        .not("source_account_id", "is", null)
+        .is("deleted_at", null);
+      if (error) throw error;
+      const map: Record<string, number> = {};
+      for (const row of (rows ?? []) as { source_account_id?: string | null }[]) {
+        const id = row.source_account_id?.trim();
+        if (!id) continue;
+        map[id] = (map[id] ?? 0) + 1;
+      }
+      setClientCountByAccountId(map);
+    } catch {
+      /* cosmetic — table still works without counts */
+    }
+  }, []);
+
   useEffect(() => {
     loadKpis();
-  }, [loadKpis]);
+    loadClientCounts();
+  }, [loadKpis, loadClientCounts]);
 
   useEffect(() => {
     void listActiveAssignableUsers().then(setAccountOwnerDirectory).catch(() => setAccountOwnerDirectory([]));
@@ -361,10 +395,13 @@ export default function AccountsPage() {
       if (sortKey === "active_jobs") {
         return ((Number(a.active_jobs) || 0) - (Number(b.active_jobs) || 0)) * dir;
       }
+      if (sortKey === "clients_count") {
+        return ((clientCountByAccountId[a.id] ?? 0) - (clientCountByAccountId[b.id] ?? 0)) * dir;
+      }
       return (relationshipRevenueFor(a) - relationshipRevenueFor(b)) * dir;
     });
     return rows;
-  }, [data, listSortKey, listSortDir, relationshipRevenueFor]);
+  }, [data, listSortKey, listSortDir, relationshipRevenueFor, clientCountByAccountId]);
 
   const clientTotalPages = Math.max(1, Math.ceil(sortedListData.length / ACCOUNTS_LIST_PAGE_SIZE));
 
@@ -604,7 +641,7 @@ export default function AccountsPage() {
     {
       key: "active_jobs",
       label: "Jobs",
-      width: "14%",
+      width: "12%",
       align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
@@ -621,9 +658,36 @@ export default function AccountsPage() {
       ),
     },
     {
+      key: "clients_count",
+      label: "Clients",
+      width: "12%",
+      align: "center",
+      headerClassName: accountsTableHeader,
+      cellClassName: accountsTableCell,
+      sortable: true,
+      render: (item) => {
+        const count = clientCountByAccountId[item.id] ?? 0;
+        return (
+          <Link
+            href={`/clients?accountId=${encodeURIComponent(item.id)}`}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              "inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded-full px-2 text-xs font-semibold tabular-nums transition-colors",
+              count > 0
+                ? "bg-fx-navy/10 text-fx-navy hover:bg-fx-navy/15 dark:bg-white/10 dark:text-white"
+                : "bg-surface-tertiary/80 text-text-tertiary hover:bg-surface-tertiary",
+            )}
+            title={count === 1 ? "1 client" : `${count} clients`}
+          >
+            {count}
+          </Link>
+        );
+      },
+    },
+    {
       key: "total_revenue",
       label: "Revenue",
-      width: "22%",
+      width: "20%",
       align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
@@ -649,7 +713,7 @@ export default function AccountsPage() {
     {
       key: "billing",
       label: "Billing",
-      width: "22%",
+      width: "20%",
       align: "center",
       headerClassName: accountsTableHeader,
       cellClassName: accountsTableCell,
@@ -693,12 +757,15 @@ export default function AccountsPage() {
       render: () => <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto" aria-hidden />,
     },
   ],
-    [accountsTableCell, accountsTableHeader, catalogServices, legacyRevenueByAccount, maxRevenueInView, paymentOrgCtx, relationshipRevenueFor, revenueRankByAccountId],
+    [accountsTableCell, accountsTableHeader, catalogServices, clientCountByAccountId, legacyRevenueByAccount, maxRevenueInView, paymentOrgCtx, relationshipRevenueFor, revenueRankByAccountId],
   );
 
 
   return (
     <PageTransition>
+      <Suspense fallback={null}>
+        <ApplyAccountsSearchQuery setSearch={setSearch} />
+      </Suspense>
       <div className="space-y-5">
         <PageHeader title="Accounts" subtitle="Corporate clients — billing, jobs, and rate cards in one place.">
           {!configLoading && canCatalog ? (
@@ -1329,7 +1396,7 @@ function AccountsGridView({
                     </div>
                   ) : null}
 
-                  <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border-light/80 pt-4">
+                  <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-border-light/80 pt-4">
                     <div>
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Jobs</dt>
                       <dd
@@ -1342,10 +1409,21 @@ function AccountsGridView({
                       </dd>
                     </div>
                     <div>
+                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Clients</dt>
+                      <dd
+                        className={cn(
+                          "text-lg font-semibold tabular-nums",
+                          (clientCountByAccountId[item.id] ?? 0) > 0 ? "text-fx-navy dark:text-white" : "text-text-tertiary",
+                        )}
+                      >
+                        {clientCountByAccountId[item.id] ?? 0}
+                      </dd>
+                    </div>
+                    <div>
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Revenue</dt>
                       <dd className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(totalRev)}</dd>
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-3">
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit</dt>
                       <dd
                         className="text-sm font-medium tabular-nums text-text-secondary"

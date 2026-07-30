@@ -91,6 +91,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     : listParams?.dateColumn
       ? `${listParams.dateColumn}|${listParams.dateFromUtcIso ?? listParams.dateFrom ?? ""}|${listParams.dateToUtcIso ?? listParams.dateTo ?? ""}`
       : "";
+  const sourceAccountKey = listParams?.sourceAccountId?.trim() ?? "";
   const prevRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevRangeKeyRef.current === null) {
@@ -178,7 +179,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, search, status, tick, jobsListWindowKey, dateRangeKey]);
+  }, [page, pageSize, search, status, tick, jobsListWindowKey, dateRangeKey, sourceAccountKey]);
 
   const refreshSilentRef = useRef(refreshSilent);
   useLayoutEffect(() => {
