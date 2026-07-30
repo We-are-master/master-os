@@ -322,6 +322,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     label: "Network",
     items: [
       { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
+      { label: "Clients", href: "/clients", icon: "user-circle", permission: "accounts" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
       { ...WORKFORCE_NAV_ITEM },
     ],

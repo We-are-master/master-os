@@ -60,6 +60,8 @@ export interface ListParams {
   quotesNewTab?: boolean;
   /** Quotes list **Ready to send** tab — manual draft, not yet emailed (virtual bucket). */
   quotesReadyToSendTab?: boolean;
+  /** Clients list: filter by linked corporate account (`source_account_id`). */
+  sourceAccountId?: string;
 }
 
 /**
@@ -174,6 +176,10 @@ export async function queryList<T>(
     query = query.in("status", params.statusIn);
   } else if (params.status && params.status !== "all") {
     query = query.eq("status", params.status);
+  }
+
+  if (table === "clients" && params.sourceAccountId?.trim()) {
+    query = query.eq("source_account_id", params.sourceAccountId.trim());
   }
 
   if (table === "jobs" && reqPartner) {

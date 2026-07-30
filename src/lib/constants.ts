@@ -46,6 +46,7 @@ export const NAVIGATION: NavGroup[] = [
     label: "Network",
     items: [
       { label: "Accounts", href: "/accounts", icon: "building" },
+      { label: "Clients", href: "/clients", icon: "user-circle", permission: "accounts" },
       { label: "Partners", href: "/partners", icon: "users" },
       { label: "Workforce", href: "/people", icon: "contact", permission: "team", adminOnly: true },
     ],
