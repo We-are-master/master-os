@@ -188,23 +188,31 @@ function ClientsPageInner() {
   }, [data]);
 
   const handleExportCsv = useCallback(
-    async (fields: string[]) => {
+    async (fields: string[], rowScope: string) => {
       try {
-        const allRows: Client[] = [];
-        let p = 1;
-        const pageSize = 500;
-        while (true) {
-          const res = await listClients({
-            page: p,
-            pageSize,
-            search: search.trim() ? search : undefined,
-            status: status !== "all" ? status : undefined,
-            ...(listParams ?? {}),
-          });
-          allRows.push(...res.data);
-          if (p >= res.totalPages) break;
-          p += 1;
+        let allRows: Client[] = [];
+
+        if (rowScope === "page") {
+          allRows = [...data];
+        } else {
+          // "all" = every client in DB; "filtered" = all pages matching current filters
+          const ignoreFilters = rowScope === "all";
+          let p = 1;
+          const pageSize = 500;
+          while (true) {
+            const res = await listClients({
+              page: p,
+              pageSize,
+              search: ignoreFilters ? undefined : search.trim() ? search : undefined,
+              status: ignoreFilters || status === "all" ? undefined : status,
+              ...(ignoreFilters ? {} : (listParams ?? {})),
+            });
+            allRows.push(...res.data);
+            if (p >= res.totalPages) break;
+            p += 1;
+          }
         }
+
         if (allRows.length === 0) {
           toast.info("No clients to export");
           return;
@@ -226,7 +234,7 @@ function ClientsPageInner() {
         toast.error(err instanceof Error ? err.message : "Failed to export clients");
       }
     },
-    [search, status, listParams, accountNameById],
+    [data, search, status, listParams, accountNameById],
   );
 
   const loadCounts = useCallback(async () => {
@@ -523,6 +531,24 @@ function ClientsPageInner() {
         onClose={() => setExportOpen(false)}
         allFields={clientAllFields}
         visibleFields={[...CLIENT_EXPORT_VISIBLE_FIELDS]}
+        defaultRowScope="all"
+        rowScopes={[
+          {
+            id: "all",
+            label: "All clients",
+            description: "Every client in the database — not just this page",
+          },
+          {
+            id: "filtered",
+            label: "Matching filters (all pages)",
+            description: "Uses search, status tab, and account filter across every page",
+          },
+          {
+            id: "page",
+            label: "This page only",
+            description: `Only the ${data.length} client${data.length === 1 ? "" : "s"} visible now`,
+          },
+        ]}
         onConfirm={handleExportCsv}
       />
     </PageTransition>

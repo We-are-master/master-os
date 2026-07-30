@@ -6,18 +6,29 @@ import { Button } from "@/components/ui/button";
 
 type ExportMode = "all" | "visible" | "custom";
 
+export type ExportRowScopeOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
 export function ExportCsvModal({
   open,
   onClose,
   allFields,
   visibleFields,
   onConfirm,
+  rowScopes,
+  defaultRowScope,
 }: {
   open: boolean;
   onClose: () => void;
   allFields: string[];
   visibleFields: string[];
-  onConfirm: (fields: string[]) => Promise<void> | void;
+  onConfirm: (fields: string[], rowScope: string) => Promise<void> | void;
+  /** Optional: which rows to export (e.g. all / filtered / this page). */
+  rowScopes?: ExportRowScopeOption[];
+  defaultRowScope?: string;
 }) {
   const dedupAll = useMemo(
     () => [...new Set(allFields.filter(Boolean))],
@@ -27,16 +38,23 @@ export function ExportCsvModal({
     () => [...new Set(visibleFields.filter((f) => dedupAll.includes(f)))],
     [visibleFields, dedupAll],
   );
+  const scopes = rowScopes?.length
+    ? rowScopes
+    : [{ id: "filtered", label: "All matching rows" }];
+  const initialScope = defaultRowScope ?? scopes[0]?.id ?? "filtered";
+
   const [mode, setMode] = useState<ExportMode>("all");
+  const [rowScope, setRowScope] = useState(initialScope);
   const [selected, setSelected] = useState<Set<string>>(new Set(dedupVisible));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setMode("all");
+    setRowScope(initialScope);
     setSelected(new Set(dedupVisible));
     setSaving(false);
-  }, [open, dedupVisible]);
+  }, [open, dedupVisible, initialScope]);
 
   const toggle = (field: string) => {
     setSelected((prev) => {
@@ -54,34 +72,70 @@ export function ExportCsvModal({
         ? dedupVisible
         : dedupAll.filter((f) => selected.has(f));
 
+  const showRowScopes = scopes.length > 1;
+
   return (
     <Modal
       open={open}
       onClose={saving ? () => {} : onClose}
       title="Export CSV"
-      subtitle="Choose what fields to include in the export file."
+      subtitle="Choose which rows and fields to include in the export file."
       size="md"
     >
       <div className="p-4 sm:p-5 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {[
-            { id: "all", label: "Export all fields" },
-            { id: "visible", label: "Export table columns" },
-            { id: "custom", label: "Choose fields" },
-          ].map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setMode(opt.id as ExportMode)}
-              className={`rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors ${
-                mode === opt.id
-                  ? "border-primary bg-primary/5 text-primary"
-                  : "border-border-light bg-card text-text-secondary hover:bg-surface-hover"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        {showRowScopes ? (
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+              Rows
+            </p>
+            <div className="grid grid-cols-1 gap-2">
+              {scopes.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setRowScope(opt.id)}
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors ${
+                    rowScope === opt.id
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border-light bg-card text-text-secondary hover:bg-surface-hover"
+                  }`}
+                >
+                  <span className="block">{opt.label}</span>
+                  {opt.description ? (
+                    <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">
+                      {opt.description}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+            Fields
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {[
+              { id: "all", label: "Export all fields" },
+              { id: "visible", label: "Export table columns" },
+              { id: "custom", label: "Choose fields" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setMode(opt.id as ExportMode)}
+                className={`rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors ${
+                  mode === opt.id
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border-light bg-card text-text-secondary hover:bg-surface-hover"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {mode === "custom" ? (
@@ -104,6 +158,9 @@ export function ExportCsvModal({
 
         <p className="text-[11px] text-text-tertiary">
           {chosenFields.length} field{chosenFields.length === 1 ? "" : "s"} selected
+          {showRowScopes
+            ? ` · ${scopes.find((s) => s.id === rowScope)?.label ?? rowScope}`
+            : ""}
         </p>
 
         <div className="flex items-center justify-end gap-2 pt-1">
@@ -118,7 +175,7 @@ export function ExportCsvModal({
             onClick={async () => {
               setSaving(true);
               try {
-                await onConfirm(chosenFields);
+                await onConfirm(chosenFields, rowScope);
                 onClose();
               } finally {
                 setSaving(false);
@@ -132,4 +189,3 @@ export function ExportCsvModal({
     </Modal>
   );
 }
-
