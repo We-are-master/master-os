@@ -104,6 +104,7 @@ import {
   mergeUniqueReasons,
   partnerReasonLabel,
   shouldForceActivateAck,
+  withoutForceActivated,
 } from "@/lib/partner-status";
 import { GENERAL_MAINTENANCE_LABEL, typeOfWorkLabelsFromCatalog } from "@/lib/type-of-work";
 import {
@@ -154,7 +155,6 @@ import {
 } from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 import { invitePartnerFromZero } from "@/lib/partner-invite";
-import { PartnerFunnel } from "@/components/partners/partner-funnel";
 import {
   computePartnerOnboardingProgress,
   type PartnerOnboardingProgress,
@@ -2400,8 +2400,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           />
         </StaggerContainer>
 
-        {viewMode === "directory" && <PartnerFunnel />}
-
         {viewMode === "team" && (
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
             {teamLoading && <div className="text-sm text-text-tertiary">Loading team...</div>}
@@ -4261,7 +4259,7 @@ function PartnerDetailDrawer({
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deactivatePreset, setDeactivatePreset] = useState<"" | "missing_docs" | "low_score" | "on_break" | "other">("");
   const [deactivateOtherText, setDeactivateOtherText] = useState("");
-  const [deactivateOtherStage, setDeactivateOtherStage] = useState<PartnerStatus>("needs_attention");
+  const [deactivateOtherStage, setDeactivateOtherStage] = useState<PartnerStatus>("inactive");
 
   const [portalLinkModalOpen, setPortalLinkModalOpen] = useState(false);
   const [portalLinkSelectedIds, setPortalLinkSelectedIds] = useState<Set<string>>(() => new Set());
@@ -4915,18 +4913,21 @@ function PartnerDetailDrawer({
   const submitDeactivate = useCallback(async () => {
     if (!partner || !deactivatePreset) return;
     try {
+      // Always clear force_activated — otherwise the auto-status effect re-activates
+      // the partner ~800ms after a successful "Partner updated" toast.
+      const baseReasons = withoutForceActivated(partner.partner_status_reasons);
       if (deactivatePreset === "missing_docs") {
         await onPartnerPatch({
-          status: "needs_attention",
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [
+          status: "inactive",
+          partner_status_reasons: mergeUniqueReasons(baseReasons, [
             "missing_documents",
             "was_activated",
           ]),
         });
       } else if (deactivatePreset === "low_score") {
         await onPartnerPatch({
-          status: "needs_attention",
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [
+          status: "inactive",
+          partner_status_reasons: mergeUniqueReasons(baseReasons, [
             "low_compliance_score",
             "was_activated",
           ]),
@@ -4934,14 +4935,19 @@ function PartnerDetailDrawer({
       } else if (deactivatePreset === "on_break") {
         await onPartnerPatch({
           status: "inactive",
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["on_break"]),
+          partner_status_reasons: mergeUniqueReasons(baseReasons, ["on_break"]),
         });
       } else if (deactivatePreset === "other") {
         const tail = deactivateOtherText.trim();
         const reason = tail ? `other:${tail}` : "other:";
+        const nextStatus = deactivateOtherStage;
         await onPartnerPatch({
-          status: deactivateOtherStage,
-          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [reason]),
+          status: nextStatus,
+          partner_status_reasons: mergeUniqueReasons(
+            // Strip force override whenever leaving active so automation cannot revive them.
+            nextStatus === "active" ? partner.partner_status_reasons : baseReasons,
+            [reason],
+          ),
         });
       }
       setDeactivateOpen(false);
@@ -6030,7 +6036,7 @@ function PartnerDetailDrawer({
                     onClick={() => {
                       setDeactivatePreset("");
                       setDeactivateOtherText("");
-                      setDeactivateOtherStage("needs_attention");
+                      setDeactivateOtherStage("inactive");
                       setDeactivateOpen(true);
                     }}
                   >
@@ -7435,8 +7441,8 @@ function PartnerDetailDrawer({
                   onChange={(e) => setDeactivateOtherStage(e.target.value as PartnerStatus)}
                   className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
                 >
-                  <option value="needs_attention">Needs attention</option>
                   <option value="inactive">Inactive</option>
+                  <option value="needs_attention">Needs attention</option>
                   <option value="onboarding">Onboarding</option>
                 </select>
               </div>
