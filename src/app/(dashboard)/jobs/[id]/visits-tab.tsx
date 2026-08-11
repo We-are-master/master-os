@@ -414,7 +414,7 @@ function VisitEditModal({
   useEffect(() => {
     Promise.all([
       listCatalogServicesForPicker(),
-      listPartners({ pageSize: 200, status: "all" }).then((r) => r.data ?? []).catch(() => []),
+      listPartners({ pageSize: 200, status: "active" }).then((r) => r.data ?? []).catch(() => []),
     ]).then(([cat, ps]) => {
       setCatalog(cat);
       setPartners(ps);

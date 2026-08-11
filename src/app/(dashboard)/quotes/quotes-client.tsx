@@ -55,7 +55,6 @@ import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { bucketDraftQuoteRows, isQuoteListNew, isQuoteReadyToSend, type QuoteFunnelTabCounts } from "@/lib/quote-list-buckets";
 import { rpcGetQuoteMetricsBundle } from "@/lib/quote-funnel-rpc";
-import { QUOTES_NEW_TAB_OR_FILTER } from "@/lib/quote-list-filters";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import {
   ZENDESK_QUOTE_TICKET_FORM_ID,
@@ -513,18 +512,11 @@ async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>>
       statusIn: ["bidding", "in_survey"],
     });
   }
-  if (status === "draft") {
+  if (status === "draft" || status === "ready_to_send") {
+    // Ready-to-send tab removed — both map to all drafts (New).
     return listQuotes({
       ...rest,
-      status: undefined,
-      quotesNewTab: true,
-    });
-  }
-  if (status === "ready_to_send") {
-    return listQuotes({
-      ...rest,
-      status: undefined,
-      quotesReadyToSendTab: true,
+      status: "draft",
     });
   }
   return listQuotes({ ...params });
@@ -564,12 +556,6 @@ function quoteSortTextCol(columnKey: string, title: string): ColumnSortOption[] 
   ];
 }
 
-const QUOTE_SORT_STAGE: ColumnSortOption[] = [
-  { label: "Early stage first", sortKey: "status", direction: "asc" },
-  { label: "Late stage first", sortKey: "status", direction: "desc" },
-  ...QUOTE_SORT_CREATED,
-];
-
 const QUOTE_SORT_AMOUNT: ColumnSortOption[] = [
   { label: "Low to high", sortKey: "total_value", direction: "asc" },
   { label: "High to low", sortKey: "total_value", direction: "desc" },
@@ -599,59 +585,6 @@ const QUOTE_SORT_BIDDING_SLA: ColumnSortOption[] = [
   { label: "Most time left first", sortKey: "bidding_sla", direction: "desc" },
   ...QUOTE_SORT_CREATED,
 ];
-
-/** Main funnel stages (Survey removed from product — legacy `in_survey` quotes map to Bidding visually). */
-const STAGE_META: { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
-  { id: "draft", label: "New", short: "New", icon: ClipboardList },
-  { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
-  { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
-];
-
-function QuoteStageColumn({ status }: { status: string }) {
-  const stepMap: Record<string, number> = {
-    draft: 0,
-    in_survey: 1,
-    bidding: 1,
-    awaiting_customer: 2,
-    awaiting_payment: 3,
-    rejected: -1,
-    converted_to_job: 5,
-  };
-  const current = stepMap[status] ?? 0;
-  if (current === -1) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <Badge variant="danger" size="sm" className="w-fit">Lost</Badge>
-        <span className="text-[10px] text-text-tertiary">Rejected</span>
-      </div>
-    );
-  }
-  if (current === 5) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <Badge variant="success" size="sm" className="w-fit">Win</Badge>
-        <span className="text-[10px] text-text-tertiary">Converted to job</span>
-      </div>
-    );
-  }
-  const meta = STAGE_META[current] ?? STAGE_META[0];
-  const Icon = meta.icon;
-  return (
-    <div className="flex items-center gap-2 min-w-0">
-      <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
-        title={statusLabels[status] ?? status}
-      >
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold text-text-tertiary leading-none">Stage {current + 1}/4</p>
-        <p className="text-xs font-semibold text-text-primary truncate">{meta.label}</p>
-      </div>
-    </div>
-  );
-}
 
 function QuoteBiddingSlaCell({
   quote,
@@ -730,8 +663,8 @@ function getStageGuidance(status: string): {
   switch (status) {
     case "draft":
       return {
-        headline: "Fill client, property & price",
-        detail: "Use the pipeline actions to move to Awaiting Customer. Bidding is optional if you already have partner cost / sell price.",
+        headline: "New quote — choose a path",
+        detail: "Partner path: Start Bidding. Manual path: price it and Send to Customer (Awaiting Approval).",
       };
     case "in_survey":
     case "bidding":
@@ -952,10 +885,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         if (q.status !== "converted_to_job" && q.status !== "rejected") return false;
       } else if (status === "bidding") {
         if (q.status !== "bidding" && q.status !== "in_survey") return false;
-      } else if (status === "draft") {
+      } else if (status === "draft" || status === "ready_to_send") {
         if (!isQuoteListNew(q)) return false;
-      } else if (status === "ready_to_send") {
-        if (!isQuoteReadyToSend(q)) return false;
       } else if (q.status !== status) {
         return false;
       }
@@ -1020,16 +951,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   useEffect(() => {
     if (!listSortKey) return;
     const allowedSets: Partial<Record<string, Set<string>>> = {
-      draft: new Set(["reference", "client_name", "service_type", "__created_at"]),
-      ready_to_send: new Set([
-        "reference",
-        "client_name",
-        "service_type",
-        "total_value",
-        "deposit_required",
-        "margin_percent",
-        "__created_at",
-      ]),
+      draft: new Set(["reference", "client_name", "service_type", "total_value", "quote_type", "__created_at"]),
+      ready_to_send: new Set(["reference", "client_name", "service_type", "total_value", "quote_type", "__created_at"]),
       bidding: new Set(["reference", "client_name", "service_type", "avg_bid", "bidding_sla", "__created_at"]),
       awaiting_customer: new Set([
         "reference",
@@ -1127,15 +1050,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         },
       ];
     }
-    const ids = ["draft", "ready_to_send", "bidding", "awaiting_customer", "awaiting_payment"];
+    const ids = ["draft", "bidding", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
-      title: id === "ready_to_send" ? "Ready to send" : (statusLabels[id] ?? id),
-      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : id === "ready_to_send" ? "bg-fx-coral" : "bg-primary",
+      title: id === "draft" ? "New" : (statusLabels[id] ?? id),
+      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
       items: filteredQuotes.filter((q) => {
         if (id === "bidding") return q.status === "bidding" || q.status === "in_survey";
         if (id === "draft") return isQuoteListNew(q);
-        if (id === "ready_to_send") return isQuoteReadyToSend(q);
         return q.status === id;
       }),
     }));
@@ -1202,26 +1124,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     };
 
     const loadFunnelCountsViaFilters = async (): Promise<QuoteFunnelTabCounts> => {
-      const [newRes, rtsRes] = await Promise.all([
-        supabase
-          .from("quotes")
-          .select("id", { count: "exact", head: true })
-          .is("deleted_at", null)
-          .eq("status", "draft")
-          .or(QUOTES_NEW_TAB_OR_FILTER),
-        supabase
-          .from("quotes")
-          .select("id", { count: "exact", head: true })
-          .is("deleted_at", null)
-          .eq("status", "draft")
-          .eq("draft_route_completed", true)
-          .or("quote_type.is.null,quote_type.neq.partner")
-          .is("customer_pdf_sent_at", null)
-          .gt("total_value", 0),
-      ]);
+      const newRes = await supabase
+        .from("quotes")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null)
+        .eq("status", "draft");
       if (newRes.error) throw newRes.error;
-      if (rtsRes.error) throw rtsRes.error;
-      return { draft: newRes.count ?? 0, ready_to_send: rtsRes.count ?? 0 };
+      return { draft: newRes.count ?? 0, ready_to_send: 0 };
     };
 
     try {
@@ -1362,13 +1271,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     void reloadQuoteMetrics();
   }, [reloadQuoteMetrics]);
 
+  /** Legacy bookmark: Ready to send tab removed → New. */
+  useEffect(() => {
+    if (status === "ready_to_send") setStatus("draft");
+  }, [status, setStatus]);
+
   /** Heal list/badge drift once — show skeleton while refetching. */
   useEffect(() => {
     if (loading || virtualTabHealAttemptedRef.current) return;
-    const virtualTab = status === "draft" || status === "ready_to_send";
-    if (!virtualTab) return;
-    const badgeCount =
-      status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
+    if (status !== "draft") return;
+    const badgeCount = quoteFunnelCounts.draft;
     if (badgeCount > 0 && data.length === 0 && !virtualTabHealAttemptedRef.current) {
       virtualTabHealAttemptedRef.current = true;
       refresh();
@@ -1381,14 +1293,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     loading,
     status,
     quoteFunnelCounts.draft,
-    quoteFunnelCounts.ready_to_send,
     data.length,
     refresh,
   ]);
 
-  const isVirtualFunnelTab = status === "draft" || status === "ready_to_send";
-  const virtualTabBadgeCount =
-    status === "draft" ? quoteFunnelCounts.draft : quoteFunnelCounts.ready_to_send;
+  const isVirtualFunnelTab = status === "draft";
+  const virtualTabBadgeCount = quoteFunnelCounts.draft;
   const showListLoading =
     loading ||
     (isVirtualFunnelTab &&
@@ -1417,13 +1327,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     refreshWithKpis();
   }, [setStatus, refreshWithKpis]);
 
-  /** Underline + count badges — funnel: New → Ready to send → Bidding → Approval → Payment → Closed. */
+  /** Underline + count badges — funnel: New → Bidding → Approval → Payment → Closed. */
   const quoteStageTabs = useMemo(() => {
     const closed =
       (statusCounts.converted_to_job ?? 0) + (statusCounts.rejected ?? 0);
     return [
       { id: "draft", label: "New", count: quoteFunnelCounts.draft },
-      { id: "ready_to_send", label: "Ready to send", count: quoteFunnelCounts.ready_to_send },
       { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
       { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
       { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
@@ -1660,7 +1569,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         if (generateOnly) {
           refreshWithKpis();
-          setStatus("ready_to_send");
+          setStatus("draft");
           trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
             quoteType: "internal",
             lineItems: manualLines?.length ?? 0,
@@ -1844,7 +1753,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               setDrawerPendingOpenInviteQuoteId(result.id);
             }
           }
-          setStatus(isQuoteReadyToSend(result) ? "ready_to_send" : "draft");
+          setStatus("draft");
         }
 
         refreshWithKpis();
@@ -2169,17 +2078,22 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         ) {
           setStatus("awaiting_customer");
         }
-        if (newStatus === "bidding" && quote.service_type) {
-          fetch("/api/push/notify-partner", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              trades: [quote.service_type],
-              title: "New Job Invitation",
-              body: `${quote.title} — ${quote.property_address ?? quote.client_name}`,
-              data: { type: "quote_invite", quoteId: quote.id },
-            }),
-          }).catch(() => {});
+        if (newStatus === "bidding") {
+          setStatus("bidding");
+          if (quote.service_type) {
+            fetch("/api/push/notify-partner", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                trades: [quote.service_type],
+                title: "New Job Invitation",
+                body: `${quote.title} — ${quote.property_address ?? quote.client_name}`,
+                data: { type: "quote_invite", quoteId: quote.id },
+              }),
+            }).catch(() => {});
+          }
+          // Match partners + track invitations (same path as API bidding create).
+          void fetch(`/api/quotes/${quote.id}/retry-notify`, { method: "POST" }).catch(() => {});
         }
         trackUiPerf("quotes.status_change_ms", performance.now() - perfStart, { from: quote.status, to: newStatus });
         return true;
@@ -2414,30 +2328,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       ),
     };
 
-    const stageColumn: Column<Quote> = {
-      key: "status",
-      label: "Stage",
-      minWidth: "8rem",
-      sortable: true,
-      sortOptions: QUOTE_SORT_STAGE,
-      render: (item) => <QuoteStageColumn status={item.status} />,
-    };
-
-    const leadApprovalPayment: Column<Quote>[] = [...leadCore, quoteTypeColumn, stageColumn];
-
-    /** Aba New: estado fixo com badge destacado — coluna só no tab draft. */
-    const newTabStageColumn: Column<Quote> = {
-      key: "new_stage_label",
-      label: "Status",
-      minWidth: "5rem",
-      headerClassName: "normal-case",
-      sortable: false,
-      render: () => (
-        <Badge variant="success" size="sm" dot className="rounded-full font-semibold shadow-none">
-          New
-        </Badge>
-      ),
-    };
     const biddingSlaColumn: Column<Quote> = {
       key: "bidding_sla",
       label: "SLA",
@@ -2590,15 +2480,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     }
     if (status === "bidding") return [...leadCore, biddingSlaColumn, avgBidColumn, ticketColumn, actionsColumnTail];
     if (status === "awaiting_customer" || status === "awaiting_payment") {
-      return [...leadApprovalPayment, amountColumn, depositColumn, finalBalanceColumn, marginColumn, ticketColumn, actionsColumnTail];
+      return [...leadCore, amountColumn, depositColumn, ticketColumn, actionsColumnTail];
     }
-    if (status === "draft") {
-      return [...leadCore, newTabStageColumn, ticketColumn, actionsColumnTail];
+    if (status === "draft" || status === "ready_to_send") {
+      // New: essentials only — path (Manual/Partner) + amount when priced.
+      return [...leadCore, quoteTypeColumn, amountColumn, ticketColumn, actionsColumnTail];
     }
-    if (status === "ready_to_send") {
-      return [...leadCore, amountColumn, marginColumn, depositColumn, ticketColumn, actionsColumnTail];
-    }
-    return [...leadApprovalPayment, amountColumn, marginColumn, ticketColumn, actionsColumnTail];
+    return [...leadCore, amountColumn, ticketColumn, actionsColumnTail];
   }, [status, avgBidByQuoteId, biddingSlaMs, biddingSlaHoursLabelPretty]);
 
   return (
@@ -2610,7 +2498,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             "Headline KPIs reflect all active (non-deleted) quotes — the same pool as the stage tab counts.\n\n" +
             "Total Quoted sums quote value for Approval + Payment (with the customer). Bidding shows the same count as the Bidding tab.\n\n" +
             "SLA overdue counts open Bidding quotes past the configured SLA window (Settings → Setup).\n\n" +
-            "Tabs: New → Ready to send → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row)."
+            "Tabs: New → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row).\n\n" +
+            "New holds API / intake drafts. From New: Start Bidding (partners) or Send (awaiting approval)."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -3071,7 +2960,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               setManualReviewSnapshot(snapshot);
               setCreateOpen(false);
               setManualReviewOpen(true);
-              setStatus("ready_to_send");
+              setStatus("draft");
               toast.success(`Quote ${quote.reference} saved — review the PDF, then send when ready.`);
             }}
             onCancel={() => {
@@ -3096,7 +2985,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           setManualReviewSnapshot(null);
           if (manualReviewQuote) {
             setSelectedQuote(manualReviewQuote);
-            setStatus("ready_to_send");
+            setStatus("draft");
           }
         }}
         onSend={async () => {
@@ -7212,8 +7101,8 @@ function getQuoteActions(quote: Quote) {
         ];
       }
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
+        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
+        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":

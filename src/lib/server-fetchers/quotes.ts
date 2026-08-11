@@ -12,7 +12,6 @@
  * Legacy: `won` / `lost` still map to each DB status individually.
  */
 import { getServerSupabase } from "@/lib/supabase/server-cached";
-import { rpcGetQuoteFunnelBundle } from "@/lib/quote-funnel-rpc";
 import { fetchVirtualTabQuotes } from "@/lib/quote-virtual-tab-list";
 import type { Quote } from "@/types/database";
 import type { ListResult } from "@/services/base";
@@ -95,17 +94,12 @@ export async function fetchInitialQuotes(
       };
     }
 
-    /** Virtual funnel tabs — RPC (fallback to client-side bucket if migration not applied). */
+    /** New tab = all drafts (Ready to send tab removed). */
     if (status === "draft" || status === "ready_to_send") {
-      const tab = status === "draft" ? "new" : "ready_to_send";
       try {
-        return await rpcGetQuoteFunnelBundle(supabase, tab, { page: 1, pageSize });
+        return await fetchVirtualTabQuotes(supabase, "new", { page: 1, pageSize });
       } catch {
-        try {
-          return await fetchVirtualTabQuotes(supabase, tab, { page: 1, pageSize });
-        } catch {
-          return null;
-        }
+        return null;
       }
     }
 

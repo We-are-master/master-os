@@ -222,7 +222,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const getPartnersAllCached = useCallback(async (): Promise<Partner[]> => {
     if (allPartnersCacheRef.current) return allPartnersCacheRef.current;
     const t0 = performance.now();
-    const list = await listPartnersAll({ status: "all" });
+    const list = await listPartnersAll({ status: "active" });
     allPartnersCacheRef.current = list;
     trackUiPerf("requests.partners_cache_fill_ms", performance.now() - t0, { count: list.length });
     return list;

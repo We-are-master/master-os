@@ -3,7 +3,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
-import { ForceApproveBlock } from "./components/ForceApproveBlock";
 import { MarginHero } from "./components/MarginHero";
 import { ModalFooter } from "./components/ModalFooter";
 import { ModalHeader } from "./components/ModalHeader";
@@ -39,31 +38,17 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     onConfirmedChange,
     sentToAccounts,
     onSentToAccountsChange,
-    forceMode,
-    onForceModeChange,
-    forceReason,
-    onForceReasonChange,
     onApprove,
-    onForceApprove,
     submitting,
     hourlySlot,
     paymentSchedule,
   } = props;
 
-  const allStepsComplete =
-    invoiceStatus === "issued" &&
-    selfBillStatus === "issued" &&
-    reports.length > 0 &&
-    reports.every((r) => r.uploaded) &&
-    reports.every((r) => r.approved);
-
-  // Client-communication choice removed from this modal — defaults to internal-only
-  // ("stage_only"). Approval gating now depends only on attestations + steps.
+  // Docs must exist; report upload/approve is no longer a hard gate —
+  // office attests “report submitted to the customer” (partners rarely use the app).
+  const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = attestationsOk && allStepsComplete && !forceMode && !submitting;
-  // Keep this aligned with ForceApproveBlock's counter copy (min. 10 chars).
-  const canForceApprove =
-    attestationsOk && forceMode && forceReason.trim().length >= 10 && !submitting;
+  const canApprove = attestationsOk && docsReady && !submitting;
 
   return (
     <AnimatePresence>
@@ -109,21 +94,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 jobValue={jobValue}
                 partnerPayout={partnerPayout}
                 reports={reports}
-                forceMode={forceMode}
-                onForceApproveClick={() => onForceModeChange(true)}
               />
-
-              {forceMode ? (
-                <ForceApproveBlock
-                  reason={forceReason}
-                  onReasonChange={onForceReasonChange}
-                  onCancel={() => {
-                    onForceModeChange(false);
-                    onForceReasonChange("");
-                  }}
-                  currentUserName={currentUserName}
-                />
-              ) : null}
 
               <FinanceCards
                 clientName={clientName}
@@ -162,13 +133,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
             />
 
             <ModalFooter
-              forceMode={forceMode}
               canApprove={canApprove}
-              canForceApprove={canForceApprove}
               submitting={submitting}
               onCancel={onClose}
               onApprove={onApprove}
-              onForceApprove={onForceApprove}
             />
           </motion.div>
         </div>

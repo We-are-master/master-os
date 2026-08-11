@@ -427,6 +427,54 @@ export function buildFullMandatoryDocsForComplianceScore(
   return [...base, ...tradeMandatory.filter((d) => !seen.has(d.id))];
 }
 
+/**
+ * Directory / activation compliance — only the three essentials.
+ * Insurance, Photo ID, Right to Work. Everything else is extra (certs, PoA, etc.).
+ */
+export const CORE_COMPLIANCE_DOC_IDS = ["photo_id", "right_to_work", "public_liability"] as const;
+
+export function buildCoreComplianceDocs(): RequiredDocDef[] {
+  return REQUIRED_PARTNER_DOCS.filter((d) =>
+    (CORE_COMPLIANCE_DOC_IDS as readonly string[]).includes(d.id),
+  ).map((d) => ({ ...d }));
+}
+
+/** 0–100 from Insurance + ID + Right to Work only (approved, not expired). */
+export function computeCorePartnerComplianceScore(docs: PartnerDocLike[]): number {
+  return computeComplianceScore(docs, buildCoreComplianceDocs());
+}
+
+export type CoreComplianceBreakdown = {
+  score: number;
+  valid: number;
+  total: number;
+  items: Array<{ id: string; label: string; ok: boolean }>;
+};
+
+export function getCoreComplianceBreakdown(docs: PartnerDocLike[]): CoreComplianceBreakdown {
+  const required = buildCoreComplianceDocs();
+  const items = required.map((req) => ({
+    id: req.id,
+    label:
+      req.id === "photo_id"
+        ? "ID"
+        : req.id === "public_liability"
+          ? "Insurance"
+          : req.id === "right_to_work"
+            ? "Right to work"
+            : req.name,
+    ok: getRequiredDocComplianceStatus(docs, req) === "valid",
+  }));
+  const valid = items.filter((i) => i.ok).length;
+  const total = items.length;
+  return {
+    score: total === 0 ? 100 : Math.round((valid / total) * 100),
+    valid,
+    total,
+    items,
+  };
+}
+
 /** Enabled portal extras (DBS, etc.) respecting Setup rules. */
 export function buildEnabledPortalExtraDocs(rules?: PartnerDocRuleRow[] | null): RequiredDocDef[] {
   return filterDefsByRules(PORTAL_EXTRA_DOC_DEFS, rules);

@@ -23,7 +23,6 @@ import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalRe
 import type {
   CompletionDelivery,
   FinalReviewSummarySnapshot,
-  ReportItem,
 } from "@/components/job-card/FinalReviewModal/types";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
@@ -1187,8 +1186,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [finalReviewBillingLoading, setFinalReviewBillingLoading] = useState(false);
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
-  const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
-  const [forceApprovalReason, setForceApprovalReason] = useState("");
   /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
   const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
@@ -2520,7 +2517,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!partnerModalOpen) return;
     setLoadingPartners(true);
-    listPartners({ pageSize: 200, status: "all" })
+    listPartners({ pageSize: 200, status: "active" })
       .then((r) => setPartners(r.data ?? []))
       .catch(() => {
         setPartners([]);
@@ -2541,7 +2538,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!quickRescheduleOpen) return;
     setLoadingPartners(true);
-    listPartners({ pageSize: 200, status: "all" })
+    listPartners({ pageSize: 200, status: "active" })
       .then((r) => setPartners(r.data ?? []))
       .catch(() => {
         setPartners([]);
@@ -4145,8 +4142,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setResumeJobOpen(false);
     setApprovalMode("review_approve");
     setOwnerApprovalChecked(true);
-    setForceApprovalChecked(false);
-    setForceApprovalReason("");
     setSentToAccountsChecked(false);
     setValidateCompleteOpen(true);
   }, []);
@@ -5194,23 +5189,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const handleValidateAndComplete = useCallback(async () => {
     const j = jobRef.current;
     if (!j) return;
-    const localPhaseIndexes = reportPhaseIndices(normalizeTotalPhases(j.total_phases));
-    const localReportsUploaded = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_uploaded` as keyof Job]));
-    const localReportsApproved = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_approved` as keyof Job]));
-    if ((!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) && !forceApprovalChecked) {
-      toast.error("Complete all mandatory checks: reports uploaded/approved and owner authorization.");
+    if (!ownerApprovalChecked || !sentToAccountsChecked) {
+      toast.error(
+        "Confirm both attestations — including that the report was submitted to the customer — before finalising.",
+      );
       return;
     }
-    if (
-      (!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) &&
-      forceApprovalChecked &&
-      !forceApprovalReason.trim()
-    ) {
-      toast.error("Enter a written reason for force approval.");
-      return;
-    }
-    const usedForceApprove =
-      (!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) && forceApprovalChecked;
     setValidatingComplete(true);
     try {
       let current = j;
@@ -5458,32 +5442,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       if (current.self_bill_id) {
         void syncSelfBillAfterJobChange(current).catch(() => {});
       }
-      if (usedForceApprove && forceApprovalReason.trim()) {
-        const reason = forceApprovalReason.trim();
-        const stampLine = `[${new Date().toISOString().slice(0, 19)}Z] Forced approval (mandatory checks incomplete). Reason: ${reason} — ${profile?.full_name?.trim() || "User"}`;
-        const prevNotes = (current.internal_notes ?? "").trim();
-        const combined = prevNotes ? `${prevNotes}\n\n${stampLine}` : stampLine;
-        /** Audit log + notes update are independent writes — run them in parallel. */
-        const [, withNotes] = await Promise.all([
-          logAudit({
-            entityType: "job",
-            entityId: current.id,
-            entityRef: current.reference,
-            action: "note",
-            fieldName: "review_force_approve",
-            newValue: stampLine,
-            userId: profile?.id,
-            userName: profile?.full_name,
-            metadata: { forced: true, reason },
-          }),
-          handleJobUpdate(current.id, { internal_notes: combined }, {
-            notifyPartner: false,
-            silent: true,
-            skipSelfBillSync: true,
-          }),
-        ]);
-        if (withNotes) current = withNotes;
-      }
       if (completionDelivery === "email") {
         const wantInv = includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice;
         const wantRep = includeReportInEmail && accountEmailPolicy.canIncludeReport;
@@ -5514,8 +5472,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       void refreshJobFinance().catch(() => {});
       setValidateCompleteOpen(false);
       setOwnerApprovalChecked(false);
-      setForceApprovalChecked(false);
-      setForceApprovalReason("");
       setSentToAccountsChecked(false);
       setApprovalBilledHoursInput("");
       setCompletionDelivery(null);
@@ -5537,8 +5493,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     customerPayments,
     partnerPayments,
     ownerApprovalChecked,
-    forceApprovalChecked,
-    forceApprovalReason,
+    sentToAccountsChecked,
     approvalBilledHoursInput,
     profile?.id,
     profile?.full_name,
@@ -6271,7 +6226,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const reportsProgressPercent =
     reportsTotalCount > 0 ? Math.min(100, Math.round((reportsValidatedCount / reportsTotalCount) * 100)) : 0;
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
-  const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
   const primaryInvoiceForBadge = job.invoice_id
     ? jobInvoices.find((inv) => inv.id === job.invoice_id) ?? jobInvoices[0]
     : jobInvoices[0];
@@ -6344,7 +6298,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job.status !== "completed";
   const reportsApproved = allConfiguredReportsApproved(job);
   const phaseIndexes = reportPhaseIndices(phaseCount);
-  const reportsUploaded = phaseIndexes.every((n) => Boolean(job[`report_${n}_uploaded` as keyof Job]));
   const reportMediaUrls = extractReportMediaUrls(job.report_notes);
   const hasRecordedWorkTime = Number(job.timer_elapsed_seconds ?? 0) > 0 || (job.job_type === "hourly" && hourlyBilledSeconds > 0);
   const timeSpentLabel = job.job_type === "hourly"
@@ -6384,15 +6337,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const jobStatusContext = buildJobDetailStatusContext(job, { forcedPaidBySystemOwner });
-  const mandatoryChecksOk =
-    reportsUploaded && reportsApproved && ownerApprovalChecked && sentToAccountsChecked;
-  /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 10 chars). */
-  const canSubmitApproval =
-    mandatoryChecksOk ||
-    (forceApprovalChecked &&
-      ownerApprovalChecked &&
-      sentToAccountsChecked &&
-      forceApprovalReason.trim().length >= 10);
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
@@ -6667,8 +6611,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(toneClass, "h-8 px-2.5 text-xs")}
                   size="sm"
                   icon={<action.icon className="h-3.5 w-3.5" />}
-                  disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
-                  title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
                   onClick={() => {
                     if (action.special === "put_on_hold") {
                       setPutOnHoldReason("");
@@ -6683,8 +6625,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     if (action.special === "send_report_invoice") {
                       setApprovalMode("review_approve");
                       setOwnerApprovalChecked(true);
-                      setForceApprovalChecked(false);
-                      setForceApprovalReason("");
                       setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
@@ -6692,8 +6632,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     if (job.status === "need_attention" && action.status === "completed") {
                       setApprovalMode("validate_complete");
                       setOwnerApprovalChecked(false);
-                      setForceApprovalChecked(false);
-                      setForceApprovalReason("");
                       setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
@@ -9442,8 +9380,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           if (validatingComplete) return;
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
-          setForceApprovalChecked(false);
-          setForceApprovalReason("");
           setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
           setApprovalInvoiceDueYmd("");
@@ -9471,20 +9407,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         selfBillStatus={job.self_bill_id ? "issued" : "pending"}
         invoiceReference={approvalPrimaryInvoice?.reference ?? null}
         selfBillReference={jobSelfBill?.reference ?? null}
-        reports={phaseIndexes.map<ReportItem>((n) => ({
-          id: `report-${n}`,
-          name: `Report ${n}`,
-          uploaded: Boolean(job[`report_${n}_uploaded` as keyof Job]),
-          approved: Boolean(job[`report_${n}_approved` as keyof Job]),
-        }))}
+        reports={[
+          {
+            id: "final-report",
+            name: "Final report",
+            uploaded:
+              v2FinalSubmitted ||
+              phaseIndexes.some((n) => Boolean(job[`report_${n}_uploaded` as keyof Job])),
+            approved: reportsApproved,
+          },
+        ]}
         confirmed={ownerApprovalChecked}
         onConfirmedChange={setOwnerApprovalChecked}
         sentToAccounts={sentToAccountsChecked}
         onSentToAccountsChange={setSentToAccountsChecked}
-        forceMode={forceApprovalChecked}
-        onForceModeChange={setForceApprovalChecked}
-        forceReason={forceApprovalReason}
-        onForceReasonChange={setForceApprovalReason}
         completionDelivery={completionDelivery}
         onCompletionDeliveryChange={setCompletionDelivery}
         includeInvoiceInEmail={includeInvoiceInEmail}
@@ -9494,11 +9430,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
         onApprove={() => {
-          setForceApprovalChecked(false);
-          setForceApprovalReason("");
           void handleValidateAndComplete();
         }}
-        onForceApprove={() => void handleValidateAndComplete()}
         paymentSchedule={{
           invoiceDueYmd: approvalInvoiceDueYmd,
           onInvoiceDueYmdChange: (v) => {

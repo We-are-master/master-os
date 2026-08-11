@@ -70,15 +70,11 @@ export type FinalReviewModalProps = {
   /** From linked account; if both false, only “internal” is available. */
   accountEmailPolicy: AccountFinalEmailPolicy;
 
-  /** UI state lifted to parent so the existing handler can read forceReason etc. */
+  /** UI state lifted to parent so the existing handler can read attestations. */
   confirmed: boolean;
   onConfirmedChange: (v: boolean) => void;
   sentToAccounts: boolean;
   onSentToAccountsChange: (v: boolean) => void;
-  forceMode: boolean;
-  onForceModeChange: (v: boolean) => void;
-  forceReason: string;
-  onForceReasonChange: (v: string) => void;
 
   /** Optional slot for hourly-job billed-hours input (rendered before the attestation section). */
   hourlySlot?: React.ReactNode;
@@ -100,6 +96,5 @@ export type FinalReviewModalProps = {
 
   /** Wired to existing mutation handler */
   onApprove: () => void;
-  onForceApprove: () => void;
   submitting?: boolean;
 };

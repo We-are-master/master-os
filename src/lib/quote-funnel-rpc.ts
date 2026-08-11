@@ -60,8 +60,11 @@ export async function rpcGetQuoteMetricsBundle(
   return {
     status_counts: payload.status_counts ?? {},
     funnel_counts: {
-      draft: Number(payload.funnel_counts?.draft ?? 0),
-      ready_to_send: Number(payload.funnel_counts?.ready_to_send ?? 0),
+      // New tab = all drafts (RPC still splits ready_to_send; merge for UI).
+      draft:
+        Number(payload.funnel_counts?.draft ?? 0) +
+        Number(payload.funnel_counts?.ready_to_send ?? 0),
+      ready_to_send: 0,
     },
     total_sent_to_customer_value: Number(payload.total_sent_to_customer_value ?? 0),
     awaiting_customer_value: Number(payload.awaiting_customer_value ?? 0),

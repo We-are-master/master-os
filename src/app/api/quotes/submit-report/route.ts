@@ -165,6 +165,9 @@ export async function POST(req: NextRequest) {
       final_report_skipped:       false,
       final_report_approved_at:   now,
       status:                     "final_check",
+      // Match trade portal: close the on-site timer when the report lands.
+      partner_timer_ended_at:     now,
+      partner_timer_is_paused:    false,
       updated_at:                 now,
     })
     .eq("id", job.id);

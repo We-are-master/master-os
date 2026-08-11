@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 /** Documents expected RPC payload shape (parsed in rpcGetQuoteMetricsBundle). */
 describe("QuoteMetricsBundle shape", () => {
-  it("maps funnel_counts draft and ready_to_send", () => {
+  it("merges ready_to_send into draft for New tab badge", () => {
     const raw = {
       status_counts: { draft: 5, bidding: 1 },
       funnel_counts: { draft: 3, ready_to_send: 1 },
@@ -13,8 +13,8 @@ describe("QuoteMetricsBundle shape", () => {
       total_count: 50,
       conversion_pct: 7.9,
     };
-    assert.equal(raw.funnel_counts.draft, 3);
-    assert.equal(raw.funnel_counts.ready_to_send, 1);
+    const mergedDraft = raw.funnel_counts.draft + raw.funnel_counts.ready_to_send;
+    assert.equal(mergedDraft, 4);
     assert.equal(raw.status_counts.bidding, 1);
   });
 });

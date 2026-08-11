@@ -1,13 +1,18 @@
 import type { Quote } from "@/types/database";
 import { bidPayloadTrimmedString } from "@/lib/quote-bid-payload";
 
-/** Quotes list tab **New**: any draft not yet in **Ready to send** (routing intake, partner draft, zero-value manual, etc.). */
+/**
+ * Quotes list tab **New**: every draft (API intake, manual create, partner path).
+ * Ready-to-send is no longer a separate tab — those rows stay in New until Send or Start Bidding.
+ */
 export function isQuoteListNew(q: Quote): boolean {
-  if (q.status !== "draft") return false;
-  return !isQuoteReadyToSend(q);
+  return q.status === "draft";
 }
 
-/** Quotes list tab **Ready to send**: manual quote built, PDF-ready, not yet emailed. */
+/**
+ * @deprecated Kept for drawer context chips / helpers. Not a list tab anymore.
+ * Manual quote built, PDF-ready, not yet emailed.
+ */
 export function isQuoteReadyToSend(q: Quote): boolean {
   if (q.status !== "draft") return false;
   if (q.draft_route_completed !== true) return false;
@@ -18,7 +23,9 @@ export function isQuoteReadyToSend(q: Quote): boolean {
 }
 
 export type QuoteFunnelTabCounts = {
+  /** All draft quotes (New tab). */
   draft: number;
+  /** Always 0 — Ready to send tab removed; field kept for older callers. */
   ready_to_send: number;
 };
 
@@ -29,10 +36,8 @@ export function bucketDraftQuoteRows(
   >[],
 ): QuoteFunnelTabCounts {
   let draft = 0;
-  let ready_to_send = 0;
   for (const row of rows) {
-    if (isQuoteListNew(row as Quote)) draft += 1;
-    else if (isQuoteReadyToSend(row as Quote)) ready_to_send += 1;
+    if (row.status === "draft") draft += 1;
   }
-  return { draft, ready_to_send };
+  return { draft, ready_to_send: 0 };
 }

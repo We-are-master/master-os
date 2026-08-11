@@ -50,16 +50,7 @@ describe("isQuoteReadyToSend", () => {
 });
 
 describe("isQuoteListNew", () => {
-  it("includes draft with route complete and zero value (not orphaned)", () => {
-    assert.equal(
-      isQuoteListNew(
-        draftRow({ draft_route_completed: true, total_value: 0 }) as Quote,
-      ),
-      true,
-    );
-  });
-
-  it("excludes ready-to-send drafts", () => {
+  it("includes every draft (including priced ready-to-send rows)", () => {
     assert.equal(
       isQuoteListNew(
         draftRow({
@@ -67,7 +58,7 @@ describe("isQuoteListNew", () => {
           total_value: 500,
         }) as Quote,
       ),
-      false,
+      true,
     );
   });
 
@@ -79,10 +70,17 @@ describe("isQuoteListNew", () => {
       true,
     );
   });
+
+  it("excludes non-draft statuses", () => {
+    assert.equal(
+      isQuoteListNew({ ...draftRow(), status: "bidding" } as Quote),
+      false,
+    );
+  });
 });
 
 describe("bucketDraftQuoteRows", () => {
-  it("partitions draft rows into new and ready_to_send without overlap", () => {
+  it("counts all drafts under New; ready_to_send is always 0", () => {
     const rows = [
       draftRow({ draft_route_completed: false }),
       draftRow({ draft_route_completed: true, total_value: 0 }),
@@ -90,9 +88,8 @@ describe("bucketDraftQuoteRows", () => {
       draftRow({ draft_route_completed: true, quote_type: "partner", total_value: 0 }),
     ];
     const counts = bucketDraftQuoteRows(rows);
-    assert.equal(counts.draft, 3);
-    assert.equal(counts.ready_to_send, 1);
-    assert.equal(counts.draft + counts.ready_to_send, rows.length);
+    assert.equal(counts.draft, 4);
+    assert.equal(counts.ready_to_send, 0);
   });
 
   it("counts route-complete drafts with null total_value as New", () => {
