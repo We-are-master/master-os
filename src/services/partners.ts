@@ -3,6 +3,67 @@ import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
 import { PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
 import type { Partner } from "@/types/database";
 import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
+import {
+  isSupabaseMissingColumnError,
+  parsePostgrestUnknownColumnName,
+} from "@/lib/supabase-schema-compat";
+
+/**
+ * Retry partner writes by dropping only the column PostgREST says is missing.
+ * Older code stripped `trades` whenever *any* column in the payload failed, which
+ * silently saved only `trade` (primary) — list icons then showed a single trade.
+ */
+async function writePartnerWithSchemaCompat(
+  mode: "insert" | "update",
+  id: string | null,
+  input: Record<string, unknown>,
+): Promise<Partner> {
+  const supabase = getSupabase();
+  const payload: Record<string, unknown> = { ...input };
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const res =
+      mode === "insert"
+        ? await supabase.from("partners").insert(payload).select().single()
+        : await supabase.from("partners").update(payload).eq("id", id!).select().single();
+
+    if (!res.error) return res.data as Partner;
+    lastErr = res.error;
+
+    const col = parsePostgrestUnknownColumnName(res.error);
+    if (col && col in payload && col !== "id") {
+      delete payload[col];
+      continue;
+    }
+
+    if (!isSupabaseMissingColumnError(res.error)) break;
+
+    // Unknown missing-column shape — drop the least-critical optional keys one group at a time.
+    const optionalGroups: string[][] = [
+      ["partner_status_reasons"],
+      ["catalog_service_ids"],
+      ["vat_registered"],
+      ["partner_legal_type", "utr"],
+      ["uk_coverage_regions", "partner_address", "partner_address_latitude", "partner_address_longitude"],
+      ["coverage_mode", "service_radius_miles", "coverage_latitude", "coverage_longitude", "coverage_base_postcode", "included_postcodes", "coverage_cities"],
+      ["bank_sort_code", "bank_account_number", "bank_account_holder", "bank_name"],
+      // Drop `trades` last so multi-trade saves survive other schema gaps.
+      ["trades"],
+    ];
+    let dropped = false;
+    for (const group of optionalGroups) {
+      if (group.some((k) => k in payload)) {
+        for (const k of group) delete payload[k];
+        dropped = true;
+        break;
+      }
+    }
+    if (!dropped) break;
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "Partner write failed"));
+}
 
 export interface PartnerListParams extends ListParams {
   trade?: string;
@@ -170,216 +231,12 @@ export async function listPartnersAll(params: Omit<PartnerListParams, "page" | "
 export async function createPartner(
   input: Omit<Partner, "id" | "joined_at" | "rating" | "jobs_completed" | "total_earnings" | "compliance_score">
 ): Promise<Partner> {
-  const supabase = getSupabase();
-  const withRating = { ...input, rating: PARTNER_RATING_MAX };
-  let { data, error } = await supabase
-    .from("partners")
-    .insert(withRating)
-    .select()
-    .single();
-  if (error && "trades" in input) {
-    const { trades: _ignored, ...legacyInput } = input as Omit<Partner, "trades"> & { trades?: string[] | null };
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && ("partner_legal_type" in input || "utr" in input)) {
-    const { partner_legal_type: _pl, utr: _u, ...legacyInput } = input as typeof input & {
-      partner_legal_type?: unknown;
-      utr?: unknown;
-    };
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && ("uk_coverage_regions" in input || "partner_address" in input || "partner_address_latitude" in input)) {
-    const {
-      uk_coverage_regions: _uk,
-      partner_address: _pa,
-      partner_address_latitude: _palat,
-      partner_address_longitude: _palng,
-      ...legacyInput
-    } = input as typeof input & {
-      uk_coverage_regions?: unknown;
-      partner_address?: unknown;
-      partner_address_latitude?: unknown;
-      partner_address_longitude?: unknown;
-    };
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && "vat_registered" in input) {
-    const { vat_registered: _vr, ...legacyInput } = input as typeof input & { vat_registered?: unknown };
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && "catalog_service_ids" in input) {
-    const { catalog_service_ids: _csi, ...legacyInput } = input as typeof input & {
-      catalog_service_ids?: unknown;
-    };
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (
-    error &&
-    ("coverage_mode" in input ||
-      "service_radius_miles" in input ||
-      "included_postcodes" in input)
-  ) {
-    const {
-      coverage_mode: _cm,
-      service_radius_miles: _sr,
-      coverage_latitude: _clat,
-      coverage_longitude: _clng,
-      coverage_base_postcode: _cbp,
-      included_postcodes: _inc,
-      coverage_cities: _cc,
-      ...legacyInput
-    } = input as typeof input;
-    const fallback = await supabase.from("partners").insert({ ...legacyInput, rating: PARTNER_RATING_MAX }).select().single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error) throw error;
-  return data as Partner;
+  return writePartnerWithSchemaCompat("insert", null, {
+    ...(input as unknown as Record<string, unknown>),
+    rating: PARTNER_RATING_MAX,
+  });
 }
 
 export async function updatePartner(id: string, input: Partial<Partner>): Promise<Partner> {
-  const supabase = getSupabase();
-  let { data, error } = await supabase
-    .from("partners")
-    .update(input)
-    .eq("id", id)
-    .select()
-    .single();
-  if (error && "trades" in input) {
-    const { trades: _ignored, ...legacyInput } = input as Partial<Partner> & { trades?: string[] | null };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && ("partner_legal_type" in input || "utr" in input)) {
-    const { partner_legal_type: _pl, utr: _u, ...legacyInput } = input as typeof input & {
-      partner_legal_type?: unknown;
-      utr?: unknown;
-    };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && ("uk_coverage_regions" in input || "partner_address" in input || "partner_address_latitude" in input)) {
-    const {
-      uk_coverage_regions: _uk,
-      partner_address: _pa,
-      partner_address_latitude: _palat,
-      partner_address_longitude: _palng,
-      ...legacyInput
-    } = input as typeof input & {
-      uk_coverage_regions?: unknown;
-      partner_address?: unknown;
-      partner_address_latitude?: unknown;
-      partner_address_longitude?: unknown;
-    };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && "vat_registered" in input) {
-    const { vat_registered: _vr, ...legacyInput } = input as Partial<Partner> & { vat_registered?: unknown };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error && "catalog_service_ids" in input) {
-    const { catalog_service_ids: _csi, ...legacyInput } = input as Partial<Partner> & {
-      catalog_service_ids?: unknown;
-    };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (
-    error &&
-    ("coverage_mode" in input ||
-      "service_radius_miles" in input ||
-      "coverage_latitude" in input ||
-      "included_postcodes" in input)
-  ) {
-    const {
-      coverage_mode: _cm,
-      service_radius_miles: _sr,
-      coverage_latitude: _clat,
-      coverage_longitude: _clng,
-      coverage_base_postcode: _cbp,
-      included_postcodes: _inc,
-      coverage_cities: _cc,
-      ...legacyInput
-    } = input as Partial<Partner>;
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (
-    error &&
-    ("bank_sort_code" in input ||
-      "bank_account_number" in input ||
-      "bank_account_holder" in input ||
-      "bank_name" in input)
-  ) {
-    const {
-      bank_sort_code: _bs,
-      bank_account_number: _ba,
-      bank_account_holder: _bh,
-      bank_name: _bn,
-      ...legacyInput
-    } = input as Partial<Partner> & {
-      bank_sort_code?: unknown;
-      bank_account_number?: unknown;
-      bank_account_holder?: unknown;
-      bank_name?: unknown;
-    };
-    const fallback = await supabase
-      .from("partners")
-      .update(legacyInput)
-      .eq("id", id)
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-  if (error) throw error;
-  return data as Partner;
+  return writePartnerWithSchemaCompat("update", id, { ...(input as unknown as Record<string, unknown>) });
 }

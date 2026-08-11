@@ -241,7 +241,17 @@ export function CatalogTradesSkillsTab(props: Props) {
           catalog_service_ids: catalogIds,
         });
         props.onPartnerUpdate(updated);
-        toast.success("Trades saved");
+        const savedTradeCount = updated.trades?.length ?? (updated.trade ? 1 : 0);
+        const savedCatalogCount = updated.catalog_service_ids?.length ?? 0;
+        if (primaryFirst.length > 1 && savedTradeCount < primaryFirst.length && savedCatalogCount < catalogIds.length) {
+          toast.error(
+            `Only ${savedTradeCount || 1} trade saved — multi-trade columns may be missing in the database. Check partners.trades / catalog_service_ids.`,
+          );
+        } else if (primaryFirst.length > 1 && savedTradeCount < primaryFirst.length) {
+          toast.success(`Trades saved (${savedCatalogCount} catalogue services; trades array partial)`);
+        } else {
+          toast.success("Trades saved");
+        }
       } else {
         const catalogIds = orderedEnabledCatalogIds(catalog, enabledIds, primaryId);
         const supabase = getSupabase();
