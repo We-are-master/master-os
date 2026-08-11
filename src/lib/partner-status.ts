@@ -34,6 +34,11 @@ export function mergeUniqueReasons(existing: string[] | null | undefined, add: s
   return Array.from(s);
 }
 
+/** Drop force-activation override (used when staff manually deactivates / demotes). */
+export function withoutForceActivated(reasons: string[] | null | undefined): string[] {
+  return (reasons ?? []).filter((r) => r !== "force_activated");
+}
+
 /** Only **active** partners may be invited to bid or assigned on jobs/quotes/requests. */
 export function isPartnerEligibleForWork(p: Pick<Partner, "status">): boolean {
   return p.status === "active";
@@ -95,6 +100,7 @@ export function deriveAutoStatusAndReasons(
     return { status: "onboarding", partner_status_reasons: merged.filter((r) => r !== "was_activated") };
   }
   // Manual force activation wins over compliance automation while partner remains non-inactive.
+  // (Deactivate must strip `force_activated` first — see withoutForceActivated.)
   if (isForceActivated) {
     return { status: "active", partner_status_reasons: merged };
   }
