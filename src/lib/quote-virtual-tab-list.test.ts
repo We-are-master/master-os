@@ -44,20 +44,18 @@ describe("filterQuotesForVirtualTab", () => {
     }),
   ];
 
-  it("new tab matches bucketDraftQuoteRows.draft count", () => {
+  it("new tab includes all drafts (sorted newest first)", () => {
     const filtered = filterQuotesForVirtualTab(rows, "new");
     const counts = bucketDraftQuoteRows(rows);
     assert.equal(filtered.length, counts.draft);
     assert.deepEqual(
       filtered.map((q) => q.id),
-      ["3", "1"],
+      ["3", "2", "1"],
     );
   });
 
-  it("ready_to_send tab matches bucketDraftQuoteRows.ready_to_send count", () => {
+  it("ready_to_send helper still matches priced manual drafts (legacy)", () => {
     const filtered = filterQuotesForVirtualTab(rows, "ready_to_send");
-    const counts = bucketDraftQuoteRows(rows);
-    assert.equal(filtered.length, counts.ready_to_send);
     assert.deepEqual(filtered.map((q) => q.id), ["2"]);
   });
 
@@ -104,7 +102,7 @@ describe("quoteMatchesVirtualTabSearch", () => {
 });
 
 describe("matchesQuoteVirtualTab", () => {
-  it("delegates to isQuoteListNew / isQuoteReadyToSend", () => {
+  it("new includes priced drafts; ready_to_send helper still distinguishes them", () => {
     const ready = quote({
       id: "r",
       reference: "R",
@@ -112,7 +110,7 @@ describe("matchesQuoteVirtualTab", () => {
       draft_route_completed: true,
       total_value: 100,
     });
-    assert.equal(matchesQuoteVirtualTab(ready, "new"), false);
+    assert.equal(matchesQuoteVirtualTab(ready, "new"), true);
     assert.equal(matchesQuoteVirtualTab(ready, "ready_to_send"), true);
   });
 });

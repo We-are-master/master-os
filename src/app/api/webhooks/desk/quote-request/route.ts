@@ -2,12 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
-import {
-  dispatchQuoteBidInvites,
-  resolveQuoteCatalogServiceId,
-} from "@/lib/quote-bid-invites";
-import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
-import { extractUkPostcode } from "@/lib/uk-postcode";
+import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { resolveDeskWebhookClientEmail } from "@/lib/desk-webhook-client-email";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +14,10 @@ export const runtime = "nodejs";
  * Inbound webhook from Zoho Desk. Creates a quote in Master OS.
  *
  * quote_mode:
- *   "bid"    → status = bidding, notify matching partners (email + portal + app)
- *   "manual" → status = draft, stays in office for manual pricing
- *   omitted  → defaults to "draft"
+ *   "bid"    → status = draft, quote_type = partner (Quotes → New).
+ *              Office starts bidding from the UI; partners invited then.
+ *   "manual" → status = draft, quote_type = internal
+ *   omitted  → defaults to "manual"/draft
  *
  * Expected JSON body:
  *   {
@@ -119,22 +115,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Match partners + catalog for bid mode ──────────────────────────
-  let matchedPartnerIds: string[] = [];
+  // Bid mode lands in New as a partner draft — invites fire when office Starts Bidding.
   let catalogServiceId: string | null = null;
-
   if (quoteMode === "bid") {
     catalogServiceId = await resolveQuoteCatalogServiceId(supabase, normalizedServiceType);
-    const postcode = extractUkPostcode(propertyAddress) ?? (propertyAddress || null);
-    matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
-      serviceType: normalizedServiceType,
-      catalogServiceId,
-      postcode,
-      kind: "lead",
-    });
   }
 
-  const status = quoteMode === "bid" && matchedPartnerIds.length > 0 ? "bidding" : "draft";
+  const status = "draft";
   const depositRequired = totalValue > 0 ? Math.round(totalValue * depositPercent) / 100 : 0;
 
   // ─── Generate reference + insert ───────────────────────────────────
@@ -159,13 +146,14 @@ export async function POST(req: NextRequest) {
     sell_price: totalValue,
     margin_percent: 0,
     partner_cost: 0,
-    partner_quotes_count: quoteMode === "bid" ? matchedPartnerIds.length : 0,
+    partner_quotes_count: 0,
     quote_type: quoteMode === "bid" ? "partner" : "internal",
     deposit_percent: depositPercent,
     deposit_required: depositRequired,
     scope: scopeOut ?? "",
     customer_accepted: false,
     customer_deposit_paid: false,
+    draft_route_completed: true,
     external_source: "zendesk",
     external_ref: ticketId,
   };
@@ -184,34 +172,13 @@ export async function POST(req: NextRequest) {
   const quoteId = (inserted as { id: string }).id;
   const quoteRef = (inserted as { reference: string }).reference;
 
-  let dispatch = { partnerIds: [] as string[], pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
-
-  if (quoteMode === "bid" && matchedPartnerIds.length > 0) {
-    try {
-      dispatch = await dispatchQuoteBidInvites(supabase, {
-        quoteId,
-        quoteReference: quoteRef,
-        title: canonicalTitle,
-        serviceType: normalizedServiceType,
-        propertyAddress,
-        scope: scopeOut,
-        partnerIds: matchedPartnerIds,
-        catalogServiceId,
-      });
-    } catch (err) {
-      console.error("[webhook/desk/quote] bid dispatch failed:", err);
-    }
-  }
-
   return NextResponse.json({
     ok: true,
     quoteId,
     reference: quoteRef,
     status,
+    quote_type: quoteMode === "bid" ? "partner" : "internal",
     action: "created",
-    partnersInvited: dispatch.partnerIds.length,
-    pushSent: dispatch.pushSent,
-    emailsSent: dispatch.emailsSent,
   });
 }
 

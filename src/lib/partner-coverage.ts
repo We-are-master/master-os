@@ -236,33 +236,49 @@ export type PartnerCoverageDisplay = {
   secondary: string;
 };
 
-/** Two-line coverage label for directory tables (city/pick on top, detail below). */
+/** Two-line coverage label: principal place + districts around, or miles. */
 export function formatPartnerCoverageDisplay(partner: PartnerCoverageFields): PartnerCoverageDisplay {
   const mode = effectiveCoverageMode(partner);
+  const placeFallback =
+    partner.coverage_base_postcode?.trim() ||
+    partner.location?.trim() ||
+    "";
+
   if (mode === "radius") {
     const miles = partner.service_radius_miles;
-    const pick =
-      partner.coverage_base_postcode?.trim() ||
-      partner.location?.trim() ||
-      "";
+    const place = placeFallback || "Radius";
     if (miles != null && miles > 0) {
-      return {
-        primary: pick || "Radius",
-        secondary: `${miles} mi`,
-      };
+      return { primary: place, secondary: `${miles} mi` };
     }
-    return { primary: "Radius (not set)", secondary: "" };
+    return { primary: placeFallback || "Radius (not set)", secondary: miles == null ? "" : "0 mi" };
   }
+
   if (mode === "postcodes") {
     const n = effectiveIncludedPostcodes(partner).length;
     const cities = resolveCoverageCityLabels(partner);
+    const place = cities || placeFallback || "Postcodes";
     if (n === 0) {
-      if (cities) return { primary: cities, secondary: "Postcodes (not set)" };
-      return { primary: "Postcodes (not set)", secondary: "" };
+      return {
+        primary: placeFallback || cities || "Postcodes (not set)",
+        secondary: cities || placeFallback ? "0 districts" : "",
+      };
     }
-    if (cities) return { primary: cities, secondary: `${n} districts` };
-    return { primary: "Postcodes", secondary: `${n} districts` };
+    return { primary: place, secondary: `${n} districts` };
   }
+
+  // Unknown / unset mode — still surface whatever place + footprint we have.
+  const n = effectiveIncludedPostcodes(partner).length;
+  const miles = partner.service_radius_miles;
+  if (n > 0) {
+    return {
+      primary: resolveCoverageCityLabels(partner) || placeFallback || "Postcodes",
+      secondary: `${n} districts`,
+    };
+  }
+  if (miles != null && miles > 0) {
+    return { primary: placeFallback || "Radius", secondary: `${miles} mi` };
+  }
+  if (placeFallback) return { primary: placeFallback, secondary: "" };
   return { primary: "", secondary: "" };
 }
 

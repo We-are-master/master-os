@@ -120,11 +120,13 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "in_progress": {
       return [
         {
-          label: "Complete Job",
+          label: "Job completed",
           status: "final_check",
           icon: CheckCircle2,
           primary: true,
           tone: "success",
+          /** Opens Final review modal (report + finalise) — office completes when partners skip the app. */
+          special: "send_report_invoice",
         },
         onHoldAction,
         cancelAction,

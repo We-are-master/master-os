@@ -3,7 +3,6 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import { dispatchQuoteBidInvites } from "@/lib/quote-bid-invites";
 import { syncQuoteZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { resolveClientIdForZendeskJob } from "@/lib/zendesk-job-client-resolve";
@@ -44,12 +43,11 @@ export const runtime  = "nodejs";
  *     linkage flows through clients.source_account_id → accounts.id.
  *   - date + hour are combined into quotes.start_date_option_1 (ISO).
  *   - type_of_quoting='manual'  → status='draft', quote_type='internal'
- *   - type_of_quoting='bidding' → status='bidding', quote_type='partner',
- *     and active partners whose trades match service_type get an Expo
- *     push notification with the quote details. service_type is required
- *     in this mode (no trade = no one to invite).
+ *   - type_of_quoting='bidding' → status='draft', quote_type='partner'
+ *     (lands in Quotes → New). Office starts bidding from the UI; partners
+ *     are invited then. service_type is still required so matching works.
  *
- * Response: 201 { id, reference, status, partners_notified? }
+ * Response: 201 { id, reference, status, quote_type }
  */
 export async function POST(req: NextRequest) {
   // ─── Auth ────────────────────────────────────────────────────────────
@@ -242,8 +240,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Insert the quote.
-  const status    = typeOfQuoting === "bidding" ? "bidding"  : "draft";
+  // Always land in New (draft). Bidding-type API quotes are partner drafts —
+  // office starts bidding from the Quotes UI when ready.
+  const status    = "draft";
   const quoteType = typeOfQuoting === "bidding" ? "partner"  : "internal";
 
   const baseQuoteRow = {
@@ -314,41 +313,12 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Broadcast to matching partners if this is a bidding quote.
-  // Don't fail the whole request if dispatch fails — quote is already saved.
-  let partnersNotified:
-    | { partnerIds: number; pushSent: number; emailsSent: number; invitationsTracked: number }
-    | undefined;
-  if (typeOfQuoting === "bidding" && (resolvedServiceType || catalogServiceId)) {
-    try {
-      const dispatch = await dispatchQuoteBidInvites(supabase, {
-        quoteId: String(inserted.id),
-        quoteReference: String(inserted.reference),
-        title: effectiveTitle,
-        serviceType: resolvedServiceType ?? "",
-        catalogServiceId,
-        propertyAddress,
-        scope: description,
-        startIso,
-      });
-      partnersNotified = {
-        partnerIds: dispatch.partnerIds.length,
-        pushSent: dispatch.pushSent,
-        emailsSent: dispatch.emailsSent,
-        invitationsTracked: dispatch.invitationsTracked,
-      };
-    } catch (err) {
-      console.error("[api/quotes] partner dispatch failed:", err);
-      partnersNotified = { partnerIds: 0, pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
-    }
-  }
-
   return NextResponse.json(
     {
-      id:        inserted.id,
-      reference: inserted.reference,
-      status:    inserted.status,
-      ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
+      id:         inserted.id,
+      reference:  inserted.reference,
+      status:     inserted.status,
+      quote_type: quoteType,
     },
     { status: 201 },
   );

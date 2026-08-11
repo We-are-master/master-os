@@ -82,7 +82,7 @@ export function OutreachClient() {
   useEffect(() => {
     let cancelled = false;
     setPartnersLoading(true);
-    listPartnersAll({})
+    listPartnersAll({ status: "active" })
       .then((rows) => {
         if (!cancelled) setPartners(rows);
       })

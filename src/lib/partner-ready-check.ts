@@ -2,7 +2,7 @@ import type { Partner } from "@/types/database";
 import {
   type PartnerDocLike,
   type PartnerDocRuleRow,
-  buildFullMandatoryDocsForComplianceScore,
+  buildCoreComplianceDocs,
   getRequiredDocComplianceStatus,
 } from "@/lib/partner-required-docs";
 
@@ -14,46 +14,30 @@ type ReadyPartnerLike =
   | null;
 
 export interface PartnerOnboardingProgress {
-  /** Mandatory docs the partner has uploaded (any review state except missing). */
+  /** Core docs uploaded (Insurance, ID, Right to work) — any review state except missing. */
   submitted: number;
-  /** Total mandatory docs required for this partner (core + legal + agreements + trade certs). */
+  /** Always 3 (core compliance set). */
   total: number;
   /** submitted / total as an integer 0–100. */
   pct: number;
-  /** True once every mandatory doc is uploaded — i.e. the partner belongs in the Ready queue. */
+  /** True once Insurance + ID + Right to work are uploaded — ready to Activate. */
   ready: boolean;
 }
 
 /**
- * How far a partner is through the *upload* side of onboarding.
- *
- * "Uploaded" means the partner has at least one row for that requirement
- * regardless of admin review state (pending / rejected / expired all count) —
- * a partner should surface for admin review as soon as they finish uploading,
- * not only after each doc is approved. This is the number the Onboarding/Ready
- * tab bar shows, and it hits 100% exactly when the partner enters the Ready queue.
+ * How far a partner is through core onboarding uploads.
+ * Only Insurance, Photo ID, and Right to Work count — everything else is extra.
  */
 export function computePartnerOnboardingProgress(
   partner: ReadyPartnerLike,
   docsByPartnerId: PartnerDocLike[] | null | undefined,
-  rules?: PartnerDocRuleRow[] | null,
+  _rules?: PartnerDocRuleRow[] | null,
 ): PartnerOnboardingProgress {
   const empty: PartnerOnboardingProgress = { submitted: 0, total: 0, pct: 0, ready: false };
   if (!partner) return empty;
-  // The Onboarding tab covers both onboarding and needs_attention partners, so the
-  // progress bar must fill for either; the Ready queue is gated to `onboarding` by the caller.
   if (partner.status !== "onboarding" && partner.status !== "needs_attention") return empty;
 
-  const trades = Array.isArray(partner.trades) && partner.trades.length > 0
-    ? partner.trades
-    : partner.trade
-      ? [String(partner.trade)]
-      : [];
-  const mandatory = buildFullMandatoryDocsForComplianceScore(
-    partner as unknown as Partner,
-    trades,
-    rules,
-  );
+  const mandatory = buildCoreComplianceDocs();
   if (mandatory.length === 0) return empty;
 
   const docs = docsByPartnerId ?? [];
@@ -67,8 +51,8 @@ export function computePartnerOnboardingProgress(
 }
 
 /**
- * True when a partner belongs in the "Ready" review queue: still in the
- * onboarding stage but has already uploaded every mandatory document.
+ * True when Insurance + ID + Right to work are uploaded (Activate is one click away).
+ * Kept for callers; the Ready directory tab has been removed.
  */
 export function partnerIsReadyForReview(
   partner: ReadyPartnerLike,

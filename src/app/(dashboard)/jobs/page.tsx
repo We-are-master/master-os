@@ -3423,7 +3423,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   useEffect(() => {
     if (!open) return;
     Promise.all([
-      listPartners({ pageSize: 200, status: "all" }).then((r) => r.data ?? []).catch(() => []),
+      listPartners({ pageSize: 200, status: "active" }).then((r) => r.data ?? []).catch(() => []),
       listCatalogServicesForPicker().catch(() => []),
     ]).then(([ps, catalog]) => {
       setPartners(ps);

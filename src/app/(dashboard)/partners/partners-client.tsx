@@ -36,7 +36,6 @@ import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
 import { enrichPartnersDirectoryEarnings, type PartnerWithEarnings } from "@/lib/partner-directory-earnings";
-import { PartnerLevelBadge, PartnerLevelCard } from "@/components/partners/partner-level-badge";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
@@ -75,11 +74,9 @@ import {
 } from "@/lib/partner-coverage";
 import type { PartnerCoverageMode } from "@/types/database";
 import {
-  computeProfileCompletenessScore,
   countExpiredDocuments,
   getProfileCompletenessItems,
   inferPartnerLegal,
-  mergePartnerComplianceScore,
 } from "@/lib/partner-compliance";
 import {
   pickRequiredDocMatches,
@@ -87,7 +84,10 @@ import {
   buildRequiredDocumentChecklist,
   buildFullMandatoryDocsForComplianceScore,
   buildTradeCertificateRequirements,
+  buildCoreComplianceDocs,
   computeComplianceScore,
+  computeCorePartnerComplianceScore,
+  getCoreComplianceBreakdown,
   getRequiredDocComplianceStatus,
   getOptionalDbsStatus,
   resolvePartnerDocExpiresAt,
@@ -183,7 +183,6 @@ function complianceTier(score: number): {
 const PARTNER_DIRECTORY_STAGE_FILTERS = [
   { id: "all", label: "All" },
   { id: "onboarding", label: "Onboarding" },
-  { id: "ready", label: "Ready" },
   { id: "active", label: "Active" },
   { id: "inactive", label: "Inactive" },
 ] as const;
@@ -489,15 +488,6 @@ function PartnersDirectoryGridView({
                           amount={item.total_earnings}
                           maxAmount={maxEarningsInView}
                           valueClassName="text-lg"
-                        />
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-text-tertiary uppercase tracking-wide mb-0.5">Level</dt>
-                      <dd>
-                        <PartnerLevelBadge
-                          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
-                          dense
                         />
                       </dd>
                     </div>
@@ -1190,9 +1180,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
-  /** Onboarding partners that have already uploaded every mandatory document — surface in the "Ready" tab for admin review. */
-  const [readyPartnerIds, setReadyPartnerIds] = useState<Set<string>>(() => new Set());
-  /** Per-onboarding-partner upload progress (submitted/total mandatory docs) for the Onboarding tab bar. */
+  /** Per-onboarding-partner core upload progress (Insurance / ID / Right to work) for the Onboarding tab bar. */
   const [onboardingProgress, setOnboardingProgress] = useState<Map<string, PartnerOnboardingProgress>>(() => new Map());
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
@@ -1318,14 +1306,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   }, [viewMode, loadTeam]);
 
   const fetcher = useCallback(async (params: ListParams) => {
-    // The virtual "ready" tab shares a DB status with "onboarding" — the split
-    // between the two is derived from `readyPartnerIds`. We translate here so
-    // the RPC still runs, then the client-side filter in `sortedPartners`
-    // narrows the page down to the right subset.
-    const effectiveStatus = params.status === "ready" ? "onboarding" : params.status;
     const result = await listPartners({
       ...params,
-      status: effectiveStatus,
+      status: params.status,
       trade: tradeFilter !== "all" ? tradeFilter : undefined,
     });
     try {
@@ -1509,9 +1492,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
       setPartnersBelow50Count(below50Res.count ?? 0);
 
-      // Compute "Ready" set — onboarding partners with every mandatory doc uploaded.
-      // Keep this pass small: only onboarding rows plus a single partner_documents
-      // fetch scoped to those ids.
+      // Core onboarding progress (Insurance / ID / Right to work) for the Onboarding tab bar.
       try {
         const { data: onboardingPartners } = await supabase
           .from("partners")
@@ -1525,35 +1506,26 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           >
         >;
         if (onboardingRows.length === 0) {
-          setReadyPartnerIds(new Set());
           setOnboardingProgress(new Map());
         } else {
           const ids = onboardingRows.map((p) => p.id);
-          const [docsRes, rules] = await Promise.all([
-            supabase
-              .from("partner_documents")
-              .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
-              .in("partner_id", ids),
-            fetchPartnerDocumentRules(supabase).catch(() => null),
-          ]);
+          const docsRes = await supabase
+            .from("partner_documents")
+            .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
+            .in("partner_id", ids);
           const docsByPartnerId = new Map<string, PartnerDocLike[]>();
           for (const row of (docsRes.data ?? []) as Array<PartnerDocLike & { partner_id: string }>) {
             const arr = docsByPartnerId.get(row.partner_id) ?? [];
             arr.push(row);
             docsByPartnerId.set(row.partner_id, arr);
           }
-          const readySet = new Set<string>();
           const progress = new Map<string, PartnerOnboardingProgress>();
           for (const p of onboardingRows) {
-            const prog = computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id), rules);
-            progress.set(p.id, prog);
-            if (p.status === "onboarding" && prog.ready) readySet.add(p.id);
+            progress.set(p.id, computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id)));
           }
-          setReadyPartnerIds(readySet);
           setOnboardingProgress(progress);
         }
       } catch {
-        setReadyPartnerIds(new Set());
         setOnboardingProgress(new Map());
       }
     } catch { /* cosmetic */ }
@@ -1704,17 +1676,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
   const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
-  const readyCount = readyPartnerIds.size;
-  // Onboarding tab folds in needs_attention (no separate tab), minus the ones
-  // that have moved to the Ready review queue.
-  const onboardingRawCount = (statusCounts["onboarding"] ?? 0) + (statusCounts["needs_attention"] ?? 0);
-  const onboardingTabCount = Math.max(0, onboardingRawCount - readyCount);
+  // Onboarding tab folds in needs_attention (no separate tab).
+  const onboardingTabCount = (statusCounts["onboarding"] ?? 0) + (statusCounts["needs_attention"] ?? 0);
 
   const partnerDirectoryTabs = useMemo(
     () =>
       PARTNER_DIRECTORY_STAGE_FILTERS.map((s) => {
         if (s.id === "inactive") return { id: s.id, label: s.label, count: inactiveStageCount };
-        if (s.id === "ready") return { id: s.id, label: s.label, count: readyCount };
         if (s.id === "onboarding") return { id: s.id, label: s.label, count: onboardingTabCount };
         return {
           id: s.id,
@@ -1722,7 +1690,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           count: statusCounts[s.id] ?? (s.id === "all" ? totalPartners : 0),
         };
       }),
-    [statusCounts, totalPartners, inactiveStageCount, readyCount, onboardingTabCount],
+    [statusCounts, totalPartners, inactiveStageCount, onboardingTabCount],
   );
 
   const createWizardStepIndex = CREATE_PARTNER_WIZARD_STEPS.findIndex((s) => s.id === createWizardStep);
@@ -2029,15 +1997,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
 
   const sortedPartners = useMemo(() => {
     const sortKey = listSortKey ?? "total_earnings";
-    // Client-side filter for the "ready" / "onboarding" split. Both tabs pull
-    // the same DB rows (status = onboarding) — the difference is whether the
-    // partner has already uploaded every mandatory document.
-    let rows = [...partners];
-    if (statusFilter === "ready") {
-      rows = rows.filter((p) => readyPartnerIds.has(p.id));
-    } else if (statusFilter === "onboarding") {
-      rows = rows.filter((p) => !readyPartnerIds.has(p.id));
-    }
+    const rows = [...partners];
     const dir = listSortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
       const av =
@@ -2051,7 +2011,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       return (av - bv) * dir;
     });
     return rows;
-  }, [partners, listSortKey, listSortDir, statusFilter, readyPartnerIds]);
+  }, [partners, listSortKey, listSortDir]);
 
   const maxEarningsInView = useMemo(
     () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
@@ -2135,24 +2095,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       ),
     },
     {
-      key: "month_earnings",
-      label: "Level",
-      width: "12%",
-      align: "center",
-      headerClassName: partnersTableHeader,
-      cellClassName: partnersTableCell,
-      render: (item) => (
-        <PartnerLevelBadge
-          monthEarned={(item as PartnerWithEarnings).month_earnings ?? 0}
-          dense
-          className="mx-auto w-fit max-w-[9rem]"
-        />
-      ),
-    },
-    {
       key: "compliance_score",
       label: "Compliance",
-      width: "14%",
+      width: "16%",
       align: "center",
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
@@ -2160,16 +2105,21 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         const raw = item.compliance_score;
         const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
         const tier = complianceTier(s);
+        const approxOk = Math.round((Math.max(0, Math.min(100, s)) / 100) * 3);
         return (
-          <div className="mx-auto min-w-0 max-w-[9rem] space-y-1 text-center" title="Blended score (documents + profile), 0–100">
+          <div
+            className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
+            title="Insurance · ID · Right to work (extras don’t count)"
+          >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", tier.textClass)}>
-                {Math.round(s)}%
+                {approxOk}/3
               </span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", tier.textClass)}>
                 {tier.label}
               </span>
             </div>
+            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", tier.barClass)}
@@ -2291,14 +2241,19 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         return (
           <div
             className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
-            title={prog ? `${prog.submitted}/${prog.total} mandatory documents uploaded` : "Onboarding progress"}
+            title={
+              prog
+                ? `${prog.submitted}/${prog.total} core docs (Insurance · ID · Right to work) — Activate when complete`
+                : "Core onboarding progress"
+            }
           >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", textClass)}>{pct}%</span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", textClass)}>
-                {done ? "READY" : prog ? `${prog.submitted}/${prog.total} DOCS` : "—"}
+                {done ? "ACTIVATE" : prog ? `${prog.submitted}/${prog.total}` : "—"}
               </span>
             </div>
+            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", barClass)}
@@ -2319,8 +2274,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     ];
   })();
 
-  const activeColumns =
-    statusFilter === "onboarding" || statusFilter === "ready" ? onboardingListColumns : columns;
+  const activeColumns = statusFilter === "onboarding" ? onboardingListColumns : columns;
 
   const tradeCatalogSelectOptions = useMemo(
     () => [{ value: "all", label: "All trades" }, ...tradePickOptions.map((t) => ({ value: t, label: t }))],
@@ -2394,7 +2348,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
             format={complianceAvg == null ? "none" : "percent"}
-            description="Profile & documents"
+            description="Insurance · ID · Right to work"
             icon={ShieldCheck}
             accent="primary"
           />
@@ -4788,9 +4742,9 @@ function PartnerDetailDrawer({
     () => (partner ? partnerTradesForDisplay(partner, partnerCatalogForIds) : []),
     [partner, partnerCatalogForIds],
   );
-  const mandatoryDocsForScore = partner
-    ? buildFullMandatoryDocsForComplianceScore(partner, partnerTradesForCompliance, partnerDocumentRules)
-    : [];
+  /** Score / Activate gate: Insurance + ID + Right to work only. */
+  const mandatoryDocsForScore = partner ? buildCoreComplianceDocs() : [];
+  const coreCompliance = partner ? getCoreComplianceBreakdown(documents) : null;
   const tradeCertificateDocs = partner
     ? buildTradeCertificateRequirements(partnerTradesForCompliance, partnerDocumentRules)
     : [];
@@ -4801,18 +4755,13 @@ function PartnerDetailDrawer({
         : [],
     [partner, partnerTradesForCompliance, partnerDocumentRules],
   );
-  const documentComplianceScore = partner ? computeComplianceScore(documents, mandatoryDocsForScore) : 0;
-  const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner, partnerRegistrationRules) : 0;
   const expiredDocCount = countExpiredDocuments(documents);
-  const computedCompliance = partner
-    ? mergePartnerComplianceScore(documentComplianceScore, profileCompletenessScore, expiredDocCount)
-    : 0;
+  const computedCompliance = partner ? computeCorePartnerComplianceScore(documents) : 0;
 
   const profileCompletenessItems = partner ? getProfileCompletenessItems(partner, partnerRegistrationRules) : [];
   const complianceAttentionCount =
     partner
-      ? profileCompletenessItems.filter((i) => i.scoresTowardCompliance !== false && !i.done).length +
-        mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
+      ? mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
       : 0;
 
   const missingRequiredDocs =
@@ -5456,29 +5405,41 @@ function PartnerDetailDrawer({
               editingOverview || editingName ? "overflow-y-auto max-h-full" : "",
             )}
           >
-            <div className="grid grid-cols-2 gap-2">
-              <PartnerLevelCard
-                compact
-                monthEarned={(partner as PartnerWithEarnings).month_earnings ?? 0}
+            <button
+              type="button"
+              onClick={() => openDocuments("compliance")}
+              className="w-full p-3 rounded-lg bg-surface-hover border border-border-light text-left transition-colors hover:border-primary/25 hover:bg-primary/[0.03] min-w-0"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">
+                  Compliance · Insurance · ID · Right to work
+                </p>
+                <span className="text-sm font-bold tabular-nums text-text-primary">
+                  {coreCompliance ? `${coreCompliance.valid}/${coreCompliance.total}` : "—"}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {(coreCompliance?.items ?? []).map((it) => (
+                  <span
+                    key={it.id}
+                    className={cn(
+                      "rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                      it.ok
+                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                        : "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                    )}
+                  >
+                    {it.ok ? "✓" : "·"} {it.label}
+                  </span>
+                ))}
+              </div>
+              <Progress
+                value={computedCompliance}
+                size="sm"
+                color={computedCompliance >= 100 ? "emerald" : computedCompliance >= 67 ? "primary" : "amber"}
+                className="mt-2"
               />
-              <button
-                type="button"
-                onClick={() => openDocuments("compliance")}
-                className="p-2 rounded-lg bg-surface-hover border border-border-light text-left transition-colors hover:border-primary/25 hover:bg-primary/[0.03] min-w-0"
-              >
-                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
-                <div className="flex items-baseline gap-1 mt-0.5">
-                  <span className="text-sm font-bold text-text-primary">{computedCompliance}</span>
-                  <span className="text-[10px] text-text-tertiary">/100</span>
-                </div>
-                <Progress
-                  value={computedCompliance}
-                  size="sm"
-                  color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
-                  className="mt-1"
-                />
-              </button>
-            </div>
+            </button>
             {overviewAlerts.length > 0 && (
               <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/20 px-2.5 py-2">
                 <div className="flex items-start gap-1.5">
@@ -6022,7 +5983,7 @@ function PartnerDetailDrawer({
                     variant="primary"
                     className="h-7 text-[11px]"
                     icon={<Play className="h-3 w-3" />}
-                    onClick={() => void runActivate(false)}
+                    onClick={() => void runActivate(true, { accountType: activateAccountType || "free" })}
                   >
                     Activate
                   </Button>
@@ -6149,36 +6110,20 @@ function PartnerDetailDrawer({
             <div className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-primary/[0.03] p-5 shadow-sm">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Overall score</p>
-                  <p className="mt-1 text-4xl font-bold tabular-nums text-text-primary">
-                    {computedCompliance}
-                    <span className="text-lg font-semibold text-text-tertiary">/100</span>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    Core compliance
                   </p>
-                  {computedCompliance < 100 ? (
-                    <p className="mt-2 max-w-md text-xs text-text-secondary">
-                      About <span className="font-semibold text-text-primary">{100 - computedCompliance}</span> points to go.
-                      The score blends required documents (~52%), profile fields (~33%), and expired files (extra penalty).
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">Fully compliant on current rules.</p>
-                  )}
+                  <p className="mt-1 text-4xl font-bold tabular-nums text-text-primary">
+                    {coreCompliance ? `${coreCompliance.valid}/${coreCompliance.total}` : "—"}
+                  </p>
+                  <p className="mt-2 max-w-md text-xs text-text-secondary">
+                    Only <span className="font-semibold text-text-primary">Insurance</span>,{" "}
+                    <span className="font-semibold text-text-primary">Photo ID</span>, and{" "}
+                    <span className="font-semibold text-text-primary">Right to work</span> count.
+                    Trade certs, PoA, and agreements are extras.
+                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setTab("overview")}>
-                    Overview
-                  </Button>
-                  {isAdmin && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setTab("overview");
-                        setEditingOverview(true);
-                      }}
-                    >
-                      Edit profile
-                    </Button>
-                  )}
                   <Button size="sm" onClick={() => openDocuments("files")}>
                     Upload files
                   </Button>
@@ -6187,26 +6132,37 @@ function PartnerDetailDrawer({
               <Progress
                 value={computedCompliance}
                 size="sm"
-                color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
+                color={computedCompliance >= 100 ? "emerald" : computedCompliance >= 67 ? "primary" : "amber"}
                 className="mt-4"
               />
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
-                  <p className="text-[10px] font-medium text-text-tertiary">Mandatory + agreements</p>
-                  <p className="text-xl font-bold text-text-primary">{documentComplianceScore}%</p>
-                  <p className="text-[10px] text-text-tertiary">Excludes trade-only certificates</p>
-                </div>
-                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
-                  <p className="text-[10px] font-medium text-text-tertiary">Profile</p>
-                  <p className="text-xl font-bold text-text-primary">{profileCompletenessScore}%</p>
-                  <p className="text-[10px] text-text-tertiary">Contact, coverage, address, tax IDs</p>
-                </div>
-                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
-                  <p className="text-[10px] font-medium text-text-tertiary">Expired files</p>
-                  <p className="text-xl font-bold text-text-primary">{expiredDocCount}</p>
-                  <p className="text-[10px] text-text-tertiary">Each one hurts the blended score</p>
-                </div>
+                {(coreCompliance?.items ?? []).map((it) => (
+                  <div
+                    key={it.id}
+                    className={cn(
+                      "rounded-xl border px-3 py-2.5",
+                      it.ok
+                        ? "border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+                        : "border-border-light bg-card/90",
+                    )}
+                  >
+                    <p className="text-[10px] font-medium text-text-tertiary">{it.label}</p>
+                    <p
+                      className={cn(
+                        "text-xl font-bold",
+                        it.ok ? "text-emerald-700 dark:text-emerald-400" : "text-text-primary",
+                      )}
+                    >
+                      {it.ok ? "OK" : "Missing"}
+                    </p>
+                  </div>
+                ))}
               </div>
+              {expiredDocCount > 0 ? (
+                <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-300">
+                  {expiredDocCount} expired file{expiredDocCount === 1 ? "" : "s"} on record — renew under Files.
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">

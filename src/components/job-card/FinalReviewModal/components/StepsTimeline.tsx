@@ -10,8 +10,6 @@ type Props = {
   jobValue: number;
   partnerPayout: number;
   reports: ReportItem[];
-  forceMode: boolean;
-  onForceApproveClick: () => void;
 };
 
 function fmtGBP(n: number) {
@@ -81,8 +79,6 @@ export function StepsTimeline({
   jobValue,
   partnerPayout,
   reports,
-  forceMode,
-  onForceApproveClick,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -159,19 +155,11 @@ export function StepsTimeline({
           ))}
         </div>
       ),
-      trailing:
-        !allUploaded && !forceMode ? (
-          <button
-            type="button"
-            onClick={onForceApproveClick}
-            className="text-[11px] text-white font-medium border-none px-[11px] py-[6px] rounded-md cursor-pointer whitespace-nowrap flex items-center gap-[4px]"
-            style={{ background: "#ED4B00" }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#D43F00")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
-          >
-            <span className="text-[11px]">⚠</span> Force approve
-          </button>
-        ) : null,
+      trailing: (
+        <span className="text-[12px] font-medium" style={{ color: textColor(reportsUploadedState) }}>
+          {stepLabel(reportsUploadedState)}
+        </span>
+      ),
     },
     {
       index: 4,
