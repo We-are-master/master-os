@@ -95,8 +95,10 @@ export function getPartnerEnabledTrades(
     [...catalog],
     partner as Pick<Partner, "catalog_service_ids" | "trades" | "trade">,
   );
-  const categoryRows = tradeCategoryCatalogRows(offered);
-  if (categoryRows.length === 0) {
+  // Include every enabled catalogue row (trades, cleaning SKUs like "(AB) …",
+  // certificates, other). Older code only kept trade-category labels, so
+  // Cleaning/Certificate toggles never appeared on the partner list icons.
+  if (offered.length === 0) {
     const tradeList = partner.trades?.length
       ? partner.trades
       : partner.trade?.trim()
@@ -107,13 +109,22 @@ export function getPartnerEnabledTrades(
 
   const primaryLabel = (partner.trades?.[0] ?? partner.trade ?? "").trim();
   const primaryLower = primaryLabel.toLowerCase();
+  const primaryId = (partner.catalog_service_ids ?? [])[0]?.trim() ?? "";
 
-  const sorted = [...categoryRows].sort((a, b) => {
+  const sorted = [...offered].sort((a, b) => {
     const aName = (a.name ?? "").trim();
     const bName = (b.name ?? "").trim();
-    const aIsPrimary = Boolean(primaryLower && aName.toLowerCase() === primaryLower);
-    const bIsPrimary = Boolean(primaryLower && bName.toLowerCase() === primaryLower);
+    const aIsPrimary =
+      Boolean(primaryLower && aName.toLowerCase() === primaryLower) ||
+      Boolean(primaryId && a.id === primaryId);
+    const bIsPrimary =
+      Boolean(primaryLower && bName.toLowerCase() === primaryLower) ||
+      Boolean(primaryId && b.id === primaryId);
     if (aIsPrimary !== bIsPrimary) return aIsPrimary ? -1 : 1;
+    // Prefer trade categories before SKU-style rows when neither is primary.
+    const aTrade = tradeCategoryCatalogRows([a]).length > 0;
+    const bTrade = tradeCategoryCatalogRows([b]).length > 0;
+    if (aTrade !== bTrade) return aTrade ? -1 : 1;
     const ao = a.sort_order ?? 0;
     const bo = b.sort_order ?? 0;
     if (ao !== bo) return ao - bo;

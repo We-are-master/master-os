@@ -224,24 +224,44 @@ export function CatalogTradesSkillsTab(props: Props) {
       if (props.kind === "partner") {
         const catalogIds = orderedEnabledCatalogIds(catalog, enabledIds, primaryId);
         const enabledRows = catalog.filter((r) => enabledIds.has(r.id));
-        const tradeOnly = tradeCategoryCatalogRows(enabledRows);
-        const labels = tradeOnly.map((r) => r.name.trim()).filter(Boolean);
+        // Persist every enabled catalogue label (Cleaning "(AB)/(DC)/(EOT)", certificates,
+        // and trade categories). Previously only "trade category" names (no "(XXX) " prefix)
+        // were written to `trades`, so Cleaning toggles vanished from the list icons.
+        const labels = enabledRows.map((r) => (r.name ?? "").trim()).filter(Boolean);
         const primaryRow =
           primaryId && enabledIds.has(primaryId) ? catalog.find((r) => r.id === primaryId) : null;
-        const primaryTradeName =
-          primaryRow && isCatalogTradeCategoryLabel(primaryRow.name)
-            ? primaryRow.name.trim()
-            : labels[0];
-        const primaryFirst = primaryTradeName
-          ? [primaryTradeName, ...labels.filter((l) => l !== primaryTradeName)]
+        const primaryName = primaryRow?.name?.trim() || labels[0];
+        const primaryFirst = primaryName
+          ? [primaryName, ...labels.filter((l) => l !== primaryName)]
           : labels;
+        // Keep legacy `trade` as a trade-category label when possible (job matching / filters).
+        const tradeCategoryLabels = tradeCategoryCatalogRows(enabledRows)
+          .map((r) => r.name.trim())
+          .filter(Boolean);
+        const legacyTrade =
+          (primaryRow && isCatalogTradeCategoryLabel(primaryRow.name)
+            ? primaryRow.name.trim()
+            : null) ||
+          tradeCategoryLabels[0] ||
+          primaryFirst[0] ||
+          props.partner.trade;
         const updated = await updatePartner(props.partner.id, {
           trades: primaryFirst,
-          trade: primaryFirst[0] ?? props.partner.trade,
+          trade: legacyTrade,
           catalog_service_ids: catalogIds,
         });
         props.onPartnerUpdate(updated);
-        toast.success("Trades saved");
+        const savedTradeCount = updated.trades?.length ?? (updated.trade ? 1 : 0);
+        const savedCatalogCount = updated.catalog_service_ids?.length ?? 0;
+        if (primaryFirst.length > 1 && savedTradeCount < primaryFirst.length && savedCatalogCount < catalogIds.length) {
+          toast.error(
+            `Only ${savedTradeCount || 1} trade saved — multi-trade columns may be missing in the database. Check partners.trades / catalog_service_ids.`,
+          );
+        } else if (primaryFirst.length > 1 && savedTradeCount < primaryFirst.length) {
+          toast.success(`Trades saved (${savedCatalogCount} catalogue services; trades array partial)`);
+        } else {
+          toast.success(`Trades saved (${primaryFirst.length})`);
+        }
       } else {
         const catalogIds = orderedEnabledCatalogIds(catalog, enabledIds, primaryId);
         const supabase = getSupabase();
