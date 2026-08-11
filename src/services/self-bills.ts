@@ -296,14 +296,23 @@ export async function refreshSelfBillPayoutState(
     if (SELF_BILL_PAYOUT_VOID_STATUSES.includes(before.status)) {
       const net = netPayout;
       if (net > 0.02) {
-        const { error: up } = await supabase
+        const reopenPaidPatch: Record<string, unknown> = {
+          status: "accumulating",
+          payout_void_reason: null,
+          partner_status_label: null,
+        };
+        let { error: up } = await supabase
           .from("self_bills")
-          .update({
-            status: "accumulating",
-            payout_void_reason: null,
-            partner_status_label: null,
-          })
+          .update(reopenPaidPatch)
           .eq("id", selfBillId);
+        if (up && isSupabaseMissingColumnError(up)) {
+          delete reopenPaidPatch.payout_void_reason;
+          delete reopenPaidPatch.partner_status_label;
+          ({ error: up } = await supabase
+            .from("self_bills")
+            .update(reopenPaidPatch)
+            .eq("id", selfBillId));
+        }
         if (up) throw up;
       }
     }
@@ -832,42 +841,40 @@ export async function cancelOpenSelfBillsForJobCancellation(
       commission: 0,
       net_payout: 0,
     };
-    const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
-    if (!error) return;
-    // Older DB schemas may not have partner_status_label — retry without it.
-    if (isSupabaseMissingColumnError(error)) {
-      const { partner_status_label: _psl, ...rest } = patch;
-      const { error: retryErr } = await supabase
-        .from("self_bills")
-        .update(rest)
-        .eq("id", sb.id);
-      if (!retryErr) return;
-      // fall through to check-constraint fallback below
+    // Progressive retries: drop unknown columns (PGRST204), then fall back to
+    // `rejected` when payout_cancelled is not in the status CHECK yet.
+    // Important: use the *latest* error for the check-constraint test — the old
+    // path retried without partner_status_label but still threw the original
+    // PGRST204 when payout_cancelled was also rejected.
+    let lastErr: unknown = null;
+    let triedRejectedFallback = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
+      if (!error) {
+        lastErr = null;
+        break;
+      }
+      lastErr = error;
+      const col = parsePostgrestUnknownColumnName(error);
+      if (col && col in patch && col !== "status") {
+        delete patch[col];
+        continue;
+      }
+      if (isSupabaseMissingColumnError(error)) {
+        delete patch.partner_status_label;
+        delete patch.payout_void_reason;
+        continue;
+      }
+      if (isPostgresCheckViolationError(error) && !triedRejectedFallback) {
+        patch.status = "rejected";
+        delete patch.partner_status_label;
+        delete patch.payout_void_reason;
+        triedRejectedFallback = true;
+        continue;
+      }
+      break;
     }
-    /**
-     * DB predates migration 100 (status CHECK forbids payout_cancelled).
-     * Fall back to "rejected" — Cancelled & Rejected tab still picks it up.
-     */
-    const code = (error as { code?: string }).code;
-    const msg = (error as { message?: string }).message ?? "";
-    const isStatusCheck =
-      code === "23514" ||
-      msg.includes("self_bills_status_check") ||
-      msg.includes("violates check constraint");
-    if (isStatusCheck) {
-      const fallback: Record<string, unknown> = {
-        status: "rejected" as const,
-        jobs_count: 0,
-        job_value: 0,
-        materials: 0,
-        commission: 0,
-        net_payout: 0,
-      };
-      const { error: fbErr } = await supabase.from("self_bills").update(fallback).eq("id", sb.id);
-      if (fbErr) throw fbErr;
-      return;
-    }
-    throw error;
+    if (lastErr) throw lastErr;
   }));
 }
 
