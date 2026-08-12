@@ -4,6 +4,7 @@ import { appBaseUrl } from "@/lib/app-base-url";
 import { buildPartnerQuoteBidInviteEmail } from "@/lib/emails/partner-quote-bid-invite";
 import { normalizeEmailAssetUrl } from "@/lib/email-asset-url";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { resolveQuoteTypeOfWorkLabel } from "@/lib/quote-type-of-work-label";
@@ -18,12 +19,6 @@ export interface SendQuotePartnerInviteEmailsParams {
 export interface SendQuotePartnerInviteEmailsResult {
   sent: number;
   invited: number;
-}
-
-function partnerFirstName(contactName: string | null | undefined, companyName: string | null | undefined): string {
-  const fromContact = contactName?.trim().split(/\s+/)[0];
-  if (fromContact) return fromContact;
-  return companyName?.trim() || "there";
 }
 
 /**
@@ -120,7 +115,7 @@ export async function sendQuotePartnerInviteEmails(
     const bidWebUrl = `${base}${shortPath}`;
 
     const { subject, html, text: bodyText } = buildPartnerQuoteBidInviteEmail({
-      partnerFirstName: partnerFirstName(p.contact_name, p.company_name),
+      partnerFirstName: partnerEmailGreetingName(p),
       quoteReference: quote.reference,
       typeOfWork,
       clientName: clientName || "—",

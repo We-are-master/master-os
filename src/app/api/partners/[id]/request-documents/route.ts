@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generatePartnerUploadSlug } from "@/lib/partner-upload-token";
 import { addBusinessDays } from "@/lib/business-days";
@@ -235,9 +236,7 @@ async function handlePost(
   }
 
   const html = buildPartnerUploadEmailHTML(branding, {
-    partnerName: (partner as { contact_name?: string | null; company_name?: string | null }).contact_name?.trim() ||
-      (partner as { company_name?: string | null }).company_name?.trim() ||
-      "there",
+    partnerName: partnerEmailGreetingName(partner as { company_name?: string | null; contact_name?: string | null }),
     uploadUrl,
     expiresAt,
     customMessage: customMessage ?? undefined,

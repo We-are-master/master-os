@@ -8,6 +8,7 @@ import { createSideConversation, setTicketJobReference } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
 } from "@/lib/emails/partner-job-confirmation";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { dispatchAutoAssignJobInvites, sendPushToPartners } from "@/lib/auto-assign-job-invites";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
@@ -375,8 +376,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobType: isHourly ? "hourly" : "fixed",
   });
 
-  const partnerFirstName = (p.contact_name?.trim().split(/\s+/)[0])
-    || (p.company_name?.trim() ?? "Partner");
+  const partnerFirstName = partnerEmailGreetingName(p);
 
   const reportUrl = await buildPartnerJobReportUrl(params.jobId, params.partnerId);
 

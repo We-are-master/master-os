@@ -9,6 +9,7 @@ import { createSideConversation } from "@/lib/zendesk";
 import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
@@ -478,10 +479,7 @@ export async function sendBookedSideConvReply(args: {
     job.hourly_partner_rate,
     job.partner_cost,
   );
-  const partnerFirstName =
-    partner.contact_name?.trim().split(/\s+/)[0] ||
-    partner.company_name?.trim() ||
-    "Partner";
+  const partnerFirstName = partnerEmailGreetingName(partner);
 
   const reportUrl = await buildPartnerJobReportUrl(job.id, partner.id);
 

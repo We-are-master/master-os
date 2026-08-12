@@ -18,6 +18,7 @@ import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -140,8 +141,7 @@ export async function notifyPartnerJobZendesk(
   const priceDisplay = isHourly
     ? `£${Number(job.hourly_partner_rate ?? 0).toFixed(2)}/hr`
     : `£${Number(job.partner_cost ?? 0).toFixed(2)}`;
-  const partnerFirstName = (partner.contact_name?.trim().split(/\s+/)[0])
-    || (partner.company_name?.trim() ?? "Partner");
+  const partnerFirstName = partnerEmailGreetingName(partner);
   // Partner-scoped web report link — shipped as the primary CTA in every
   // partner email (assigned/completed/etc) so the partner can submit the
   // report straight from their inbox without the app. The token binds

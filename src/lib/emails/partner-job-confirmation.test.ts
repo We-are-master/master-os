@@ -21,7 +21,7 @@ test("formatPartnerJobEmailScheduleLine includes arrival window when start/end s
 
 test("job offer HTML includes Date row with schedule line", () => {
   const { html, text } = buildPartnerJobConfirmationRequestEmail({
-    partnerFirstName: "Mo",
+    partnerFirstName: "Acme Plumbing",
     jobReference: "JOB-9270",
     jobTitle: "Carpenter",
     clientName: "Client",
@@ -42,7 +42,7 @@ test("job offer HTML includes Date row with schedule line", () => {
 
 test("job offer HTML shows TBC when no schedule", () => {
   const { html, text } = buildPartnerJobConfirmationRequestEmail({
-    partnerFirstName: "Mo",
+    partnerFirstName: "Acme Plumbing",
     jobReference: "JOB-9270",
     jobTitle: "Carpenter",
     clientName: "Client",
