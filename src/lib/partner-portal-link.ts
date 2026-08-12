@@ -13,6 +13,7 @@ import {
   PARTNER_ONBOARDING_EMAIL_SUBJECT,
 } from "@/lib/partner-onboarding-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 
 const DEFAULT_FROM_EMAIL = "Fixfy <support@getfixfy.com>";
@@ -233,10 +234,9 @@ export async function createPartnerPortalLink(
     });
   }
 
-  const partnerName =
-    (partner as { contact_name?: string | null }).contact_name?.trim() ||
-    (partner as { company_name?: string | null }).company_name?.trim() ||
-    "there";
+  const partnerName = partnerEmailGreetingName(
+    partner as { company_name?: string | null; contact_name?: string | null },
+  );
 
   const osBaseUrl = input.osBaseUrl.replace(/\/$/, "");
   const tradePortalBaseUrl = (input.tradePortalBaseUrl ?? resolvePartnerTradePortalBaseUrl()).replace(

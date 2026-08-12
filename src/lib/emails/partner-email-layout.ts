@@ -106,7 +106,7 @@ function partnerEmailTitleInlineStyle(fontSize: string, lineHeight: string): str
   return `font-family:${PARTNER_EMAIL_TITLE_FONT}; font-size:${fontSize}; line-height:${lineHeight}; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px`;
 }
 
-/** Greeting only — e.g. "Hi Victor," on its own line. */
+/** Greeting only — e.g. "Hi Acme Plumbing," on its own line (company-first). */
 export function partnerEmailGreetingH1Html(
   nameEsc: string,
   opts?: { marginBottom?: string; fontSize?: string; lineHeight?: string },

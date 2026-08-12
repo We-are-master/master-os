@@ -37,12 +37,6 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#039;");
 }
 
-function firstName(fullName: string): string {
-  const t = fullName.trim();
-  if (!t) return "there";
-  return t.split(/\s+/)[0] ?? t;
-}
-
 function replaceAll(template: string, key: string, value: string): string {
   return template.split(`{{${key}}}`).join(value);
 }
@@ -73,7 +67,8 @@ export function buildPartnerOnboardingRefreshEmailHTML(
 
   let html = loadPartnerOnboardingRefreshTemplate();
   html = replaceAll(html, "logo_url", escapeHtml(logoUrl));
-  html = replaceAll(html, "partner_first_name", escapeHtml(firstName(contactName)));
+  // `contactName` is the company-first greeting name from the portal-link sender.
+  html = replaceAll(html, "partner_first_name", escapeHtml(contactName));
   html = replaceAll(html, "partner_name", escapeHtml(contactName));
   html = replaceAll(html, "partner_email", escapeHtml(options.email.trim()));
   html = replaceAll(html, "onboarding_url", escapeHtml(options.onboardingUrl));

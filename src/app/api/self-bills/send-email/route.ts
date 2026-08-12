@@ -38,7 +38,7 @@ function buildSelfBillEmailHtml(
   dueYmd: string | null,
   args?: { partnerName?: string | null; companyName?: string | null },
 ): string {
-  const firstName = esc((args?.partnerName?.trim() || sb.partner_name || "").split(/\s+/)[0] || "there");
+  const greeting = esc((args?.partnerName?.trim() || sb.partner_name?.trim() || "there"));
   const ref = esc(sb.reference || "");
   const periodStart = sb.week_start ? fmtSbDate(sb.week_start) : null;
   const periodEnd = sb.week_end ? fmtSbDate(sb.week_end) : null;
@@ -93,7 +93,7 @@ function buildSelfBillEmailHtml(
         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:3px; color:#ED4B00; text-transform:uppercase;">SELF-BILL ISSUED</p>
       </td></tr>
       <tr><td style="padding:0 40px 8px 40px;">
-        <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${firstName},</h1>
+        <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
       </td></tr>
       <tr><td style="padding:0 40px 28px 40px;">
         <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">Your self-bill for the period is now available. No action required — this email is for your records, and the full job-by-job breakdown is attached as a PDF.</p>

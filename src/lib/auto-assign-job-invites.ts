@@ -13,6 +13,7 @@ import {
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { createSideConversation } from "@/lib/zendesk";
 import { buildPartnerJobConfirmationRequestEmail } from "@/lib/emails/partner-job-confirmation";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { createPartnerJobAcceptToken } from "@/lib/quote-response-token";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -209,8 +210,7 @@ export async function broadcastAutoAssignInvites(
     email: string | null;
     zendesk_user_id: string | null;
   }[]) {
-    const partnerFirstName =
-      row.contact_name?.trim().split(/\s+/)[0] || row.company_name?.trim() || "Partner";
+    const partnerFirstName = partnerEmailGreetingName(row);
     const priceDisplay = partnerPriceDisplayForInvite(
       ji?.job_type ?? null,
       ji?.hourly_partner_rate ?? null,
