@@ -1206,6 +1206,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [selectedPartnerId, setSelectedPartnerId] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
   const [signingOffPartner, setSigningOffPartner] = useState(false);
+  const [resendingPartnerEmail, setResendingPartnerEmail] = useState(false);
   const [dispatchingAutoAssign, setDispatchingAutoAssign] = useState(false);
   const [cancellingAutoAssign, setCancellingAutoAssign] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
@@ -2940,11 +2941,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               skipPush: true, // notifyAssignedPartnerAboutJob already pushed
             });
           } else {
-            // Detect a reschedule (date or time-window changed without
+            // Detect a real reschedule (date/time values changed without
             // changing the partner). Send the rescheduled email + push.
             const SCHEDULE_KEYS = ["scheduled_date", "scheduled_start_at", "scheduled_end_at", "scheduled_finish_date"] as const;
-            const scheduleTouched = SCHEDULE_KEYS.some((k) => k in updates);
-            if (scheduleTouched) {
+            const scheduleChanged = SCHEDULE_KEYS.some(
+              (k) => k in updates && (current?.[k] ?? null) !== (updated[k] ?? null),
+            );
+            if (scheduleChanged) {
               void notifyPartnerJobChange({
                 jobId,
                 jobReference: updated.reference,
@@ -2966,6 +2969,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
+
+  const handleResendPartnerEmail = useCallback(async () => {
+    if (!job?.partner_id?.trim()) return;
+    setResendingPartnerEmail(true);
+    try {
+      await notifyPartnerJobChange({
+        jobId: job.id,
+        jobReference: job.reference,
+        kind: "assigned",
+      });
+    } finally {
+      setResendingPartnerEmail(false);
+    }
+  }, [job?.id, job?.partner_id, job?.reference]);
 
   const handleQuickUnassignPartner = useCallback(async () => {
     if (!job?.partner_id?.trim()) return;
@@ -4119,6 +4136,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             job: updated,
             kind: "job_status_changed",
             statusLabel: statusConfig[prev]?.label ?? prev,
+          });
+          // Resume always sets a (possibly new) arrival — email the partner
+          // with old snapshot vs new schedule so they see the changed info.
+          void notifyPartnerJobChange({
+            jobId: updated.id,
+            jobReference: updated.reference,
+            kind: "rescheduled",
+            oldDateLine:
+              formatJobScheduleLine({
+                scheduled_date: job.on_hold_snapshot_scheduled_date,
+                scheduled_start_at: job.on_hold_snapshot_scheduled_start_at,
+                scheduled_end_at: job.on_hold_snapshot_scheduled_end_at,
+                scheduled_finish_date: job.on_hold_snapshot_scheduled_finish_date,
+              }) || "Previously scheduled",
+            oldTimeLine: null,
+            newDateLine: formatJobScheduleLine(updated) || "New schedule",
+            newTimeLine: null,
+            skipPush: true,
           });
         }
       }
@@ -8363,6 +8398,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   >
                     {job.partner_id ? "Swap" : "Assign"}
                   </Button>
+                  {job.partner_id?.trim() ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      icon={<Mail className="h-3.5 w-3.5" aria-hidden />}
+                      loading={resendingPartnerEmail}
+                      disabled={
+                        signingOffPartner ||
+                        savingPartner ||
+                        dispatchingAutoAssign ||
+                        cancellingAutoAssign ||
+                        resendingPartnerEmail
+                      }
+                      className="h-auto min-w-0 w-full gap-1.5 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
+                      onClick={() => void handleResendPartnerEmail()}
+                    >
+                      Resend email
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -11127,10 +11181,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         sequenceIndex={recurringScopePending?.sequenceIndex ?? null}
         onConfirm={async (scope: RecurrenceEditScope) => {
           if (!recurringScopePending) return;
+          const before = job;
+          const patch = recurringScopePending.patch;
           try {
             const { updated, detached } = await applyEditScope(
               recurringScopePending.jobId,
-              recurringScopePending.patch,
+              patch,
               scope,
             );
             const note = scope === "this_only"
@@ -11141,7 +11197,49 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             toast.success(detached ? `${note} (detached)` : note);
             setRecurringScopePending(null);
             // Refresh from the canonical handler so derived state stays in sync.
-            await handleJobUpdate(recurringScopePending.jobId, {}, { silent: true });
+            // Empty patch skips partner notify — fire reschedule/assign email here.
+            const refreshed = await handleJobUpdate(recurringScopePending.jobId, {}, { silent: true });
+            if (refreshed?.partner_id && before) {
+              const SCHEDULE_KEYS = [
+                "scheduled_date",
+                "scheduled_start_at",
+                "scheduled_end_at",
+                "scheduled_finish_date",
+              ] as const;
+              const partnerChanged = (before.partner_id ?? null) !== (refreshed.partner_id ?? null);
+              const scheduleChanged = SCHEDULE_KEYS.some(
+                (k) => k in patch && (before[k] ?? null) !== (refreshed[k] ?? null),
+              );
+              if (partnerChanged) {
+                notifyAssignedPartnerAboutJob({
+                  partnerId: refreshed.partner_id,
+                  job: refreshed,
+                  kind: "job_assigned",
+                });
+                void notifyPartnerJobChange({
+                  jobId: refreshed.id,
+                  jobReference: refreshed.reference,
+                  kind: "assigned",
+                  skipPush: true,
+                });
+              } else if (scheduleChanged) {
+                notifyAssignedPartnerAboutJob({
+                  partnerId: refreshed.partner_id,
+                  job: refreshed,
+                  kind: "job_updated",
+                });
+                void notifyPartnerJobChange({
+                  jobId: refreshed.id,
+                  jobReference: refreshed.reference,
+                  kind: "rescheduled",
+                  oldDateLine: formatJobScheduleLine(before) || "Previously scheduled",
+                  oldTimeLine: null,
+                  newDateLine: formatJobScheduleLine(refreshed) || "New schedule",
+                  newTimeLine: null,
+                  skipPush: true,
+                });
+              }
+            }
           } catch (e) {
             toast.error(e instanceof Error ? e.message : "Failed to apply change");
           }
