@@ -29,7 +29,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
   ArrowRight, Briefcase, Receipt, Wallet,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
+  AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
   Timer,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
@@ -213,7 +213,7 @@ const LEGACY_JOBS_MANAGEMENT_TAB: Partial<
   deleted: { tab: "closed", closedFilter: "archived" },
 };
 
-const JOBS_PAGE_SIZE_OPTIONS = [30, 10, 100] as const;
+const JOBS_PAGE_SIZE_OPTIONS = [50, 10, 100] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
 
@@ -347,6 +347,7 @@ const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v2";
 const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = [
   "all",
   "today",
+  "yesterday",
   "tomorrow",
   "week",
   "month",
@@ -413,6 +414,121 @@ function scheduleWindowHintLine(
     return `Scheduled ${formatMediumYmd(range.from)}`;
   }
   return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)}`;
+}
+
+function JobsPartnerFinder({
+  value,
+  partners,
+  onChange,
+}: {
+  value: string;
+  partners: { id: string; name: string }[];
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const selectedLabel =
+    value === "all"
+      ? "All partners"
+      : value === "__none__"
+        ? "Unassigned"
+        : partners.find((p) => p.id === value)?.name ?? "Partner";
+  const qn = q.trim().toLowerCase();
+  const matches = partners.filter((p) => !qn || p.name.toLowerCase().includes(qn));
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-9 min-w-[10rem] sm:w-48 items-center justify-between gap-2 rounded-lg border bg-[var(--input-bg)] px-3 text-sm transition-colors",
+          value !== "all"
+            ? "border-primary/40 text-text-primary"
+            : "border-[var(--input-border)] text-text-secondary hover:border-border",
+        )}
+        aria-label="Find by partner"
+      >
+        <span className="truncate">{selectedLabel}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-full mt-1 z-50 w-[min(calc(100vw-2rem),16rem)] rounded-xl border border-border bg-card shadow-lg p-2">
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Find partner..."
+              className="w-full h-8 rounded-md border border-border bg-card pl-8 pr-2 text-sm text-text-primary outline-none focus:border-primary/40"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("all");
+                setQ("");
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full text-left rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-hover",
+                value === "all" && "bg-primary/5 font-medium text-primary",
+              )}
+            >
+              All partners
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onChange("__none__");
+                setQ("");
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full text-left rounded-md px-2 py-1.5 text-[13px] hover:bg-surface-hover",
+                value === "__none__" && "bg-primary/5 font-medium text-primary",
+              )}
+            >
+              Unassigned
+            </button>
+            {matches.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  onChange(p.id);
+                  setQ("");
+                  setOpen(false);
+                }}
+                className={cn(
+                  "w-full text-left rounded-md px-2 py-1.5 text-[13px] truncate hover:bg-surface-hover",
+                  value === p.id && "bg-primary/5 font-medium text-primary",
+                )}
+              >
+                {p.name}
+              </button>
+            ))}
+            {qn && matches.length === 0 ? (
+              <p className="px-2 py-2 text-[12px] text-text-tertiary">No partners match</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function jobBillableAmount(j: Job) {
@@ -508,24 +624,6 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   cancelled: { label: "Lost & Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
-
-/** Account group header tint — matches Invoices list. */
-function accountHeaderAvatarBg(accountName: string): string {
-  const n = accountName.toLowerCase();
-  if (n.includes("checkatrade")) return "#185FA5";
-  if (n.includes("housekeep")) return "#7F77DD";
-  if (n.includes("express")) return "#1D9E75";
-  let h = 0;
-  for (let i = 0; i < accountName.length; i++) h = (h * 31 + accountName.charCodeAt(i)) >>> 0;
-  const hues = [221, 200, 170, 145, 25, 330];
-  const hue = hues[h % hues.length];
-  return `hsl(${hue} 45% 46%)`;
-}
-
-function firstJobAccountLabel(jobs: Job[], clientAccountMap: Record<string, string>): string {
-  const j = jobs.find((x) => x.client_id && clientAccountMap[x.client_id]);
-  return j ? clientAccountMap[j.client_id!]! : "No account";
-}
 
 const JOB_SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
 
@@ -636,14 +734,17 @@ function JobsPageContent() {
   );
 
   const [closedJobsFilter, setClosedJobsFilter] = useState<JobsClosedJobsListFilterMode>("all");
+  /** "all" · "__none__" (unassigned) · partner_id */
+  const [filterPartner, setFilterPartner] = useState<string>("all");
 
   const closedJobsFilterRef = useRef(closedJobsFilter);
   closedJobsFilterRef.current = closedJobsFilter;
 
   const listParams = useMemo<Partial<ListParams>>(() => {
-    if (!scheduleRange) return NO_SCHEDULE_LIST_PARAMS;
-    return { scheduleRange };
-  }, [scheduleRange]);
+    const partner = filterPartner !== "all" ? { jobsPartnerId: filterPartner } : {};
+    if (!scheduleRange) return Object.keys(partner).length ? partner : NO_SCHEDULE_LIST_PARAMS;
+    return { scheduleRange, ...partner };
+  }, [scheduleRange, filterPartner]);
 
   const fetchJobsManagementList = useCallback((params: ListParams) => {
     const merged: ListParams = { ...params };
@@ -653,7 +754,7 @@ function JobsPageContent() {
     return listJobs(merged);
   }, []);
 
-  const [jobsPageSize, setJobsPageSize] = useState<number>(30);
+  const [jobsPageSize, setJobsPageSize] = useState<number>(50);
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
     fetcher: fetchJobsManagementList,
     pageSize: jobsPageSize,
@@ -667,8 +768,6 @@ function JobsPageContent() {
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
-  /** "all" · "__none__" (unassigned) · partner_id */
-  const [filterPartner, setFilterPartner] = useState<string>("all");
   /** "all" · account_id (corporate account) */
   const [filterAccountId, setFilterAccountId] = useState<string>("all");
   /** Dynamic option lists for the partner + account pickers (loaded once). */
@@ -696,7 +795,6 @@ function JobsPageContent() {
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
   const [clientAccountLogoByClientId, setClientAccountLogoByClientId] = useState<Record<string, string | null>>({});
   const [clientIdToSourceAccountId, setClientIdToSourceAccountId] = useState<Record<string, string | null>>({});
-  const [expandedAwaitingPaymentAccountGroups, setExpandedAwaitingPaymentAccountGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!buFilter.selectedBuId) {
@@ -800,7 +898,12 @@ function JobsPageContent() {
     let cancelled = false;
     void (async () => {
       const supabase = getSupabase();
-      const [partnersRes, accountsRes] = await Promise.all([
+      const [directoryRes, jobPartnersRes, accountsRes] = await Promise.all([
+        supabase
+          .from("partners")
+          .select("id, company_name, contact_name")
+          .order("company_name", { ascending: true })
+          .limit(3000),
         supabase
           .from("jobs")
           .select("partner_id, partner_name")
@@ -816,7 +919,17 @@ function JobsPageContent() {
       ]);
       if (cancelled) return;
       const seen = new Map<string, string>();
-      for (const r of (partnersRes.data ?? []) as { partner_id: string | null; partner_name: string | null }[]) {
+      for (const r of (directoryRes.data ?? []) as {
+        id: string;
+        company_name: string | null;
+        contact_name: string | null;
+      }[]) {
+        const id = r.id?.trim();
+        const nm = r.company_name?.trim() || r.contact_name?.trim();
+        if (!id || !nm) continue;
+        seen.set(id, nm);
+      }
+      for (const r of (jobPartnersRes.data ?? []) as { partner_id: string | null; partner_name: string | null }[]) {
         const id = r.partner_id?.trim();
         const nm = r.partner_name?.trim();
         if (!id || !nm) continue;
@@ -2372,146 +2485,6 @@ function JobsPageContent() {
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
 
-  const awaitingPaymentAccountGroups = useMemo(() => {
-    const useAwaitingPaymentGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useAwaitingPaymentGrouping || sortedDataForTable.length === 0) return [] as { key: string; jobs: Job[] }[];
-    const awaitingRows = sortedDataForTable.filter((j) => j.status === "awaiting_payment");
-    if (awaitingRows.length === 0) return [] as { key: string; jobs: Job[] }[];
-    const m = new Map<string, Job[]>();
-    for (const job of awaitingRows) {
-      const aid = job.client_id ? clientIdToSourceAccountId[job.client_id] ?? null : null;
-      const key = aid ? `acc:${aid}` : "acc:unlinked";
-      const list = m.get(key);
-      if (list) list.push(job);
-      else m.set(key, [job]);
-    }
-    const list = [...m.entries()].map(([key, jobs]) => ({ key, jobs }));
-    list.sort((a, b) => {
-      if (a.key === "acc:unlinked") return 1;
-      if (b.key === "acc:unlinked") return -1;
-      return firstJobAccountLabel(a.jobs, clientAccountMap).localeCompare(
-        firstJobAccountLabel(b.jobs, clientAccountMap),
-      );
-    });
-    return list;
-  }, [status, closedJobsFilter, sortedDataForTable, clientIdToSourceAccountId, clientAccountMap]);
-
-  const awaitingPaymentGroupKeysSig = useMemo(
-    () => awaitingPaymentAccountGroups.map((g) => g.key).join("|"),
-    [awaitingPaymentAccountGroups],
-  );
-  const prevAwaitingPaymentGroupKeysSig = useRef<string | null>(null);
-
-  useEffect(() => {
-    const useGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useGrouping || awaitingPaymentAccountGroups.length === 0) return;
-    if (prevAwaitingPaymentGroupKeysSig.current === awaitingPaymentGroupKeysSig) return;
-    prevAwaitingPaymentGroupKeysSig.current = awaitingPaymentGroupKeysSig;
-    setExpandedAwaitingPaymentAccountGroups(() => {
-      const next: Record<string, boolean> = {};
-      awaitingPaymentAccountGroups.forEach((g) => {
-        next[g.key] = true;
-      });
-      return next;
-    });
-  }, [status, closedJobsFilter, awaitingPaymentGroupKeysSig, awaitingPaymentAccountGroups]);
-
-  const awaitingPaymentGroupedSections = useMemo(() => {
-    const useGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useGrouping || sortedDataForTable.length === 0 || awaitingPaymentAccountGroups.length === 0) {
-      return undefined;
-    }
-    return awaitingPaymentAccountGroups.map((g) => {
-      const open = expandedAwaitingPaymentAccountGroups[g.key] ?? true;
-      const accountName =
-        g.key === "acc:unlinked" ? "Unlinked account" : firstJobAccountLabel(g.jobs, clientAccountMap);
-      const first = g.jobs[0];
-      const logo =
-        first?.client_id && clientAccountLogoByClientId[first.client_id] != null
-          ? clientAccountLogoByClientId[first.client_id]?.trim() || undefined
-          : undefined;
-      const avBg = accountHeaderAvatarBg(accountName);
-      let totalJobAmount = 0;
-      let totalDue = 0;
-      for (const j of g.jobs) {
-        totalJobAmount += j.client_price + Number(j.extras_amount ?? 0);
-        if (customerPaidSumsReady) {
-          const billable = jobCustomerBillableRevenueForCollections(j);
-          const paid = customerPaidByJobId[j.id] ?? 0;
-          totalDue += Math.max(0, billable - paid);
-        }
-      }
-      return {
-        key: g.key,
-        items: open ? g.jobs : [],
-        sectionHeader: (
-          <button
-            type="button"
-            onClick={() =>
-              setExpandedAwaitingPaymentAccountGroups((prev) => {
-                const was = prev[g.key] ?? true;
-                return { ...prev, [g.key]: !was };
-              })
-            }
-            className="w-full px-[14px] py-2.5 text-left bg-surface-secondary border-b border-border-light flex items-center justify-between gap-3"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              {logo ? (
-                <Avatar name={accountName} src={logo} size="sm" className="shrink-0 ring-0" />
-              ) : (
-                <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                  style={{ backgroundColor: avBg }}
-                  aria-hidden
-                >
-                  {accountName.slice(0, 1).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-[#020040] dark:text-text-primary truncate">{accountName}</p>
-                <p className="text-[10px] text-text-tertiary">
-                  {g.jobs.length} job{g.jobs.length !== 1 ? "s" : ""} awaiting payment
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
-              <div className="text-right">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
-                <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">
-                  {customerPaidSumsReady ? formatCurrency(totalDue) : "…"}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
-                <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">
-                  {formatCurrency(totalJobAmount)}
-                </p>
-              </div>
-              {open ? (
-                <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
-              )}
-            </div>
-          </button>
-        ),
-      };
-    });
-  }, [
-    status,
-    closedJobsFilter,
-    sortedDataForTable.length,
-    awaitingPaymentAccountGroups,
-    expandedAwaitingPaymentAccountGroups,
-    clientAccountMap,
-    clientAccountLogoByClientId,
-    customerPaidSumsReady,
-    customerPaidByJobId,
-  ]);
-
   const [exportOpen, setExportOpen] = useState(false);
   const jobVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "client_price", "finance_status"];
   const jobAllFields = useMemo(
@@ -2706,6 +2679,7 @@ function JobsPageContent() {
                 ))}
               </div>
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <JobsPartnerFinder value={filterPartner} partners={filterPartnersList} onChange={setFilterPartner} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
@@ -2812,7 +2786,6 @@ function JobsPageContent() {
             <DataTable
               columns={tableColumns}
               data={sortedDataForTable}
-              groupedSections={awaitingPaymentGroupedSections}
               columnConfigKey="jobs-columns"
               columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
@@ -2824,8 +2797,9 @@ function JobsPageContent() {
               pageSize={jobsPageSize}
               pageSizeOptions={[...JOBS_PAGE_SIZE_OPTIONS]}
               onPageSizeChange={(size) => {
+                if (size === jobsPageSize) return;
                 setJobsPageSize(size);
-                setPage(1);
+                if (page !== 1) setPage(1);
               }}
               onPageChange={setPage}
               selectable

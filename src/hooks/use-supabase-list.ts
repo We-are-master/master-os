@@ -76,6 +76,8 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const [status, setStatusRaw] = useState(initialStatus);
   const [tick, setTick] = useState(0);
   const skipLoadingRef = useRef(false);
+  const prevPageSizeRef = useRef(pageSize);
+  const totalItemsRef = useRef(initialData?.count ?? 0);
   const skipFirstFetchRef = useRef(
     initialData != null && !(refetchWhenInitialEmpty && (initialData.count ?? 0) === 0),
   );
@@ -84,8 +86,9 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
     : "";
   const jobsClosedBucketKey = listParams?.jobsClosedBucket ?? "";
+  const jobsPartnerKey = listParams?.jobsPartnerId ?? "";
   /** Refetch list when jobs window filter knobs change — not only the date range title. */
-  const jobsListWindowKey = `${scheduleRangeKey}::${jobsClosedBucketKey}`;
+  const jobsListWindowKey = `${scheduleRangeKey}::${jobsClosedBucketKey}::${jobsPartnerKey}`;
   const dateRangeKey = listParams?.invoicePeriodBounds
     ? `inv|${listParams.invoicePeriodBounds.from}|${listParams.invoicePeriodBounds.to}|${listParams.invoicePeriodBounds.startIso}|${listParams.invoicePeriodBounds.endIso}`
     : listParams?.dateColumn
@@ -141,6 +144,12 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
       return;
     }
 
+    const pageSizeOnly = prevPageSizeRef.current !== pageSize;
+    if (pageSizeOnly) {
+      skipLoadingRef.current = true;
+      prevPageSizeRef.current = pageSize;
+    }
+
     let cancelled = false;
     const silent = skipLoadingRef.current;
     skipLoadingRef.current = false;
@@ -159,12 +168,18 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
         search: search || undefined,
         status: status !== "all" ? status : undefined,
         ...(listParamsRef.current ?? {}),
+        skipCount: pageSizeOnly || undefined,
       })
       .then((result) => {
         if (cancelled) return;
         setData(result.data);
-        setTotalPages(result.totalPages);
-        setTotalItems(result.count);
+        if (result.count >= 0) {
+          totalItemsRef.current = result.count;
+          setTotalItems(result.count);
+          setTotalPages(result.totalPages);
+        } else {
+          setTotalPages(Math.max(1, Math.ceil(totalItemsRef.current / pageSize)));
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;

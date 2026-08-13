@@ -24,7 +24,7 @@ type Props = {
 };
 
 /**
- * Shared date filter: Today / Tomorrow / Week / Month on the strip, plus a "…"
+ * Shared date filter: Today / Yesterday / Tomorrow / Week / Month on the strip, plus a "…"
  * overflow for All / QTD / Last month / Next month / Custom. Same presentation
  * on Pulse / Live View / Jobs / Quotes / Schedule.
  */
