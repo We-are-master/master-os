@@ -29,7 +29,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
   ArrowRight, Briefcase, Receipt, Wallet,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
+  AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search,
   Timer,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
@@ -509,24 +509,6 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
-/** Account group header tint — matches Invoices list. */
-function accountHeaderAvatarBg(accountName: string): string {
-  const n = accountName.toLowerCase();
-  if (n.includes("checkatrade")) return "#185FA5";
-  if (n.includes("housekeep")) return "#7F77DD";
-  if (n.includes("express")) return "#1D9E75";
-  let h = 0;
-  for (let i = 0; i < accountName.length; i++) h = (h * 31 + accountName.charCodeAt(i)) >>> 0;
-  const hues = [221, 200, 170, 145, 25, 330];
-  const hue = hues[h % hues.length];
-  return `hsl(${hue} 45% 46%)`;
-}
-
-function firstJobAccountLabel(jobs: Job[], clientAccountMap: Record<string, string>): string {
-  const j = jobs.find((x) => x.client_id && clientAccountMap[x.client_id]);
-  return j ? clientAccountMap[j.client_id!]! : "No account";
-}
-
 const JOB_SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
 
 const JOB_SORT_CREATED: ColumnSortOption[] = [
@@ -696,7 +678,6 @@ function JobsPageContent() {
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
   const [clientAccountLogoByClientId, setClientAccountLogoByClientId] = useState<Record<string, string | null>>({});
   const [clientIdToSourceAccountId, setClientIdToSourceAccountId] = useState<Record<string, string | null>>({});
-  const [expandedAwaitingPaymentAccountGroups, setExpandedAwaitingPaymentAccountGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!buFilter.selectedBuId) {
@@ -2372,146 +2353,6 @@ function JobsPageContent() {
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
 
-  const awaitingPaymentAccountGroups = useMemo(() => {
-    const useAwaitingPaymentGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useAwaitingPaymentGrouping || sortedDataForTable.length === 0) return [] as { key: string; jobs: Job[] }[];
-    const awaitingRows = sortedDataForTable.filter((j) => j.status === "awaiting_payment");
-    if (awaitingRows.length === 0) return [] as { key: string; jobs: Job[] }[];
-    const m = new Map<string, Job[]>();
-    for (const job of awaitingRows) {
-      const aid = job.client_id ? clientIdToSourceAccountId[job.client_id] ?? null : null;
-      const key = aid ? `acc:${aid}` : "acc:unlinked";
-      const list = m.get(key);
-      if (list) list.push(job);
-      else m.set(key, [job]);
-    }
-    const list = [...m.entries()].map(([key, jobs]) => ({ key, jobs }));
-    list.sort((a, b) => {
-      if (a.key === "acc:unlinked") return 1;
-      if (b.key === "acc:unlinked") return -1;
-      return firstJobAccountLabel(a.jobs, clientAccountMap).localeCompare(
-        firstJobAccountLabel(b.jobs, clientAccountMap),
-      );
-    });
-    return list;
-  }, [status, closedJobsFilter, sortedDataForTable, clientIdToSourceAccountId, clientAccountMap]);
-
-  const awaitingPaymentGroupKeysSig = useMemo(
-    () => awaitingPaymentAccountGroups.map((g) => g.key).join("|"),
-    [awaitingPaymentAccountGroups],
-  );
-  const prevAwaitingPaymentGroupKeysSig = useRef<string | null>(null);
-
-  useEffect(() => {
-    const useGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useGrouping || awaitingPaymentAccountGroups.length === 0) return;
-    if (prevAwaitingPaymentGroupKeysSig.current === awaitingPaymentGroupKeysSig) return;
-    prevAwaitingPaymentGroupKeysSig.current = awaitingPaymentGroupKeysSig;
-    setExpandedAwaitingPaymentAccountGroups(() => {
-      const next: Record<string, boolean> = {};
-      awaitingPaymentAccountGroups.forEach((g) => {
-        next[g.key] = true;
-      });
-      return next;
-    });
-  }, [status, closedJobsFilter, awaitingPaymentGroupKeysSig, awaitingPaymentAccountGroups]);
-
-  const awaitingPaymentGroupedSections = useMemo(() => {
-    const useGrouping =
-      status === "closed" && (closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment");
-    if (!useGrouping || sortedDataForTable.length === 0 || awaitingPaymentAccountGroups.length === 0) {
-      return undefined;
-    }
-    return awaitingPaymentAccountGroups.map((g) => {
-      const open = expandedAwaitingPaymentAccountGroups[g.key] ?? true;
-      const accountName =
-        g.key === "acc:unlinked" ? "Unlinked account" : firstJobAccountLabel(g.jobs, clientAccountMap);
-      const first = g.jobs[0];
-      const logo =
-        first?.client_id && clientAccountLogoByClientId[first.client_id] != null
-          ? clientAccountLogoByClientId[first.client_id]?.trim() || undefined
-          : undefined;
-      const avBg = accountHeaderAvatarBg(accountName);
-      let totalJobAmount = 0;
-      let totalDue = 0;
-      for (const j of g.jobs) {
-        totalJobAmount += j.client_price + Number(j.extras_amount ?? 0);
-        if (customerPaidSumsReady) {
-          const billable = jobCustomerBillableRevenueForCollections(j);
-          const paid = customerPaidByJobId[j.id] ?? 0;
-          totalDue += Math.max(0, billable - paid);
-        }
-      }
-      return {
-        key: g.key,
-        items: open ? g.jobs : [],
-        sectionHeader: (
-          <button
-            type="button"
-            onClick={() =>
-              setExpandedAwaitingPaymentAccountGroups((prev) => {
-                const was = prev[g.key] ?? true;
-                return { ...prev, [g.key]: !was };
-              })
-            }
-            className="w-full px-[14px] py-2.5 text-left bg-surface-secondary border-b border-border-light flex items-center justify-between gap-3"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              {logo ? (
-                <Avatar name={accountName} src={logo} size="sm" className="shrink-0 ring-0" />
-              ) : (
-                <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                  style={{ backgroundColor: avBg }}
-                  aria-hidden
-                >
-                  {accountName.slice(0, 1).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-[#020040] dark:text-text-primary truncate">{accountName}</p>
-                <p className="text-[10px] text-text-tertiary">
-                  {g.jobs.length} job{g.jobs.length !== 1 ? "s" : ""} awaiting payment
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
-              <div className="text-right">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
-                <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">
-                  {customerPaidSumsReady ? formatCurrency(totalDue) : "…"}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
-                <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">
-                  {formatCurrency(totalJobAmount)}
-                </p>
-              </div>
-              {open ? (
-                <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
-              )}
-            </div>
-          </button>
-        ),
-      };
-    });
-  }, [
-    status,
-    closedJobsFilter,
-    sortedDataForTable.length,
-    awaitingPaymentAccountGroups,
-    expandedAwaitingPaymentAccountGroups,
-    clientAccountMap,
-    clientAccountLogoByClientId,
-    customerPaidSumsReady,
-    customerPaidByJobId,
-  ]);
-
   const [exportOpen, setExportOpen] = useState(false);
   const jobVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "client_price", "finance_status"];
   const jobAllFields = useMemo(
@@ -2812,7 +2653,6 @@ function JobsPageContent() {
             <DataTable
               columns={tableColumns}
               data={sortedDataForTable}
-              groupedSections={awaitingPaymentGroupedSections}
               columnConfigKey="jobs-columns"
               columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}

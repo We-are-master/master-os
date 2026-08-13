@@ -453,7 +453,8 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     );
   }
 
-  if (params.scheduleRange) {
+  // Closed paginates in SQL (queryList). Overlap download of every closed row is minutes.
+  if (params.scheduleRange && params.status !== "closed") {
     return listJobsWithSchedulePeriodOverlap(params);
   }
 
