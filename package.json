@@ -54,6 +54,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "pg": "^8.21.0",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
