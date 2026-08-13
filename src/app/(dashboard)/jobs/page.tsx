@@ -535,6 +535,33 @@ function jobBillableAmount(j: Job) {
   return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
 }
 
+function JobMarginStack({ margin, marginPct }: { margin: number; marginPct: number }) {
+  return (
+    <div className="leading-tight">
+      <p
+        className={cn(
+          "text-[11px] font-medium tabular-nums",
+          margin >= 0
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-red-600 dark:text-red-400",
+        )}
+      >
+        {formatCurrency(margin)}
+      </p>
+      <p
+        className={cn(
+          "text-[11px] font-medium tabular-nums",
+          marginPct >= 20
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-amber-600 dark:text-amber-400",
+        )}
+      >
+        {marginPct}%
+      </p>
+    </div>
+  );
+}
+
 /** Mini financial strip: amount (incl. extras), partner cost, margin £, margin %. */
 function JobCardFinanceRow({ job }: { job: Job }) {
   const amount = jobBillableAmount(job);
@@ -1138,20 +1165,48 @@ function JobsPageContent() {
     clientAccountMap,
   ]);
 
-  /** Active jobs tab only — sums match Job Amount & Cost columns in the list. */
-  const activeJobsTabFinancialTotals = useMemo(() => {
-    if (status !== "all") return { revenue: 0, cost: 0 };
+  /** Page totals — Job Amount, Cost, and Ticket margin footer. */
+  const jobsListFinancialTotals = useMemo(() => {
     let revenue = 0;
     let cost = 0;
     for (const j of sortedDataForTable) {
       revenue += jobBillableAmount(j);
       cost += Number(j.partner_cost ?? 0);
     }
+    const profit = Math.round((revenue - cost) * 100) / 100;
     return {
       revenue: Math.round(revenue * 100) / 100,
       cost: Math.round(cost * 100) / 100,
+      profit,
+      marginPct: revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0,
     };
-  }, [status, sortedDataForTable]);
+  }, [sortedDataForTable]);
+
+  const activeJobsTabFinancialTotals = useMemo(
+    () =>
+      status === "all"
+        ? { revenue: jobsListFinancialTotals.revenue, cost: jobsListFinancialTotals.cost }
+        : { revenue: 0, cost: 0 },
+    [status, jobsListFinancialTotals.revenue, jobsListFinancialTotals.cost],
+  );
+
+  const hasJobsListTotals = sortedDataForTable.length > 0;
+  const jobAmountFooter = hasJobsListTotals ? (
+    <span className="text-sm font-semibold text-text-primary tabular-nums">
+      {formatCurrency(jobsListFinancialTotals.revenue)}
+    </span>
+  ) : null;
+  const jobCostFooter = hasJobsListTotals ? (
+    <span className="text-sm font-semibold text-text-secondary tabular-nums">
+      {formatCurrency(jobsListFinancialTotals.cost)}
+    </span>
+  ) : null;
+  const jobMarginFooter = hasJobsListTotals ? (
+    <JobMarginStack
+      margin={jobsListFinancialTotals.profit}
+      marginPct={jobsListFinancialTotals.marginPct}
+    />
+  ) : null;
 
   const kanbanColumns = useMemo(() => {
     const defs = [
@@ -2372,20 +2427,12 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_AMOUNT,
-      render: (item) => {
-        const amount = jobBillableAmount(item);
-        const marginPct = item.margin_percent;
-        return (
-          <div>
-            <p className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(amount)}</p>
-            <span
-              className={`text-[11px] font-medium ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}
-            >
-              {marginPct}% margin
-            </span>
-          </div>
-        );
-      },
+      footer: jobAmountFooter,
+      render: (item) => (
+        <span className="text-sm font-semibold text-text-primary tabular-nums">
+          {formatCurrency(jobBillableAmount(item))}
+        </span>
+      ),
     },
     {
       key: "amount_due",
@@ -2429,39 +2476,8 @@ function JobsPageContent() {
     },
   ];
 
-  const zendeskTicketColumn: Column<Job> = useMemo(
+  const partnerCostColumn: Column<Job> = useMemo(
     () => ({
-      key: "zendesk_ticket",
-      label: "Ticket",
-      minWidth: "96px",
-      cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap normal-case",
-      render: (item: Job) =>
-        item.external_source === "zendesk" && item.external_ref?.trim() ? (
-          <ZendeskTicketBadge source={item.external_source} ref={item.external_ref} size="sm" />
-        ) : (
-          <span className="text-xs text-text-tertiary">—</span>
-        ),
-    }),
-    [],
-  );
-
-  const replaceFinanceWithTicket = useCallback(
-    (cols: Column<Job>[]) => cols.map((c) => (c.key === "finance_status" ? zendeskTicketColumn : c)),
-    [zendeskTicketColumn],
-  );
-
-  /** Closed tab keeps Finance; all other tabs show Zendesk ticket. Active jobs also drop Amount Due and add Cost. */
-  const tableColumns = useMemo(() => {
-    if (status === "closed") return columns;
-
-    if (status !== "all") return replaceFinanceWithTicket(columns);
-
-    const withoutDue = columns.filter((c) => c.key !== "amount_due");
-    const withZendeskTicket = replaceFinanceWithTicket(withoutDue);
-    const jobAmountIdx = withZendeskTicket.findIndex((c) => c.key === "margin_percent");
-    if (jobAmountIdx < 0) return withZendeskTicket;
-    const costColumn: Column<Job> = {
       key: "partner_cost",
       label: "Cost",
       minWidth: "88px",
@@ -2469,18 +2485,44 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_COST,
-      render: (item) => (
+      footer: jobCostFooter,
+      render: (item: Job) => (
         <span className="text-sm font-semibold text-text-secondary tabular-nums">
           {formatCurrency(Number(item.partner_cost ?? 0))}
         </span>
       ),
-    };
-    return [
-      ...withZendeskTicket.slice(0, jobAmountIdx + 1),
-      costColumn,
-      ...withZendeskTicket.slice(jobAmountIdx + 1),
-    ];
-  }, [columns, status, replaceFinanceWithTicket]);
+    }),
+    [jobCostFooter],
+  );
+
+  const zendeskTicketColumn: Column<Job> = useMemo(
+    () => ({
+      key: "zendesk_ticket",
+      label: "Ticket",
+      minWidth: "96px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
+      footer: jobMarginFooter,
+      render: (item: Job) =>
+        item.external_source === "zendesk" && item.external_ref?.trim() ? (
+          <ZendeskTicketBadge source={item.external_source} ref={item.external_ref} size="sm" />
+        ) : (
+          <span className="text-xs text-text-tertiary">—</span>
+        ),
+    }),
+    [jobMarginFooter],
+  );
+
+  const replaceFinanceWithTicket = useCallback(
+    (cols: Column<Job>[]) => cols.map((c) => (c.key === "finance_status" ? zendeskTicketColumn : c)),
+    [zendeskTicketColumn],
+  );
+
+  /** Closed keeps Amount Due + Finance. Other tabs: partner Cost instead of Amount Due, Ticket instead of Finance (margin only in footer). */
+  const tableColumns = useMemo(() => {
+    if (status === "closed") return columns;
+    return replaceFinanceWithTicket(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
+  }, [columns, status, replaceFinanceWithTicket, partnerCostColumn]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
