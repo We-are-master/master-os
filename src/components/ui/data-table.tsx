@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { staggerContainer, tableRowVariant } from "@/lib/motion";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, Minus, SlidersHorizontal } from "lucide-react";
 
 /** One entry in the column header sort menu (explicit A–Z, newest, etc.). */
@@ -29,6 +28,8 @@ export interface Column<T> {
   headerClassName?: string;
   cellClassName?: string;
   render?: (item: T, index: number) => React.ReactNode;
+  /** Sticky totals row cell under this column (aligned with body cells). */
+  footer?: ReactNode;
 }
 
 interface DataTableProps<T> {
@@ -68,6 +69,8 @@ interface DataTableProps<T> {
   sortColumnKey?: string | null;
   sortDirection?: "asc" | "desc";
   onSortChange?: (key: string | null, direction: "asc" | "desc") => void;
+  /** Optional summary shown in the pagination footer between “Showing…” and the rows control. */
+  footerSummary?: ReactNode;
 }
 
 function Checkbox({ checked, indeterminate, onChange, className }: {
@@ -127,6 +130,7 @@ export function DataTable<T>({
   sortDirection = "asc",
   onSortChange,
   groupedSections,
+  footerSummary,
 }: DataTableProps<T>) {
   const configStorageKey = columnConfigKey
     ? `${columnConfigKey}:${columnConfigScope ?? "default"}`
@@ -205,6 +209,8 @@ export function DataTable<T>({
       // ignore
     }
   };
+
+  const hasColumnFooters = visibleColumns.some((c) => c.footer != null);
 
   const isGrouped = Boolean(groupedSections && groupedSections.length > 0);
   const tableRows = useMemo(
@@ -486,8 +492,7 @@ export function DataTable<T>({
               ) : null}
             </tr>
           </thead>
-          <AnimatePresence mode="wait">
-            {loading ? (
+          {loading ? (
               <tbody>
                 {Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-border-light/50">
@@ -525,11 +530,7 @@ export function DataTable<T>({
                 </tr>
               </tbody>
             ) : isGrouped ? (
-              <motion.tbody
-                variants={staggerContainer}
-                initial="hidden"
-                animate="visible"
-              >
+              <tbody>
                 {(() => {
                   let globalRowIndex = 0;
                   return groupedSections!.flatMap((section) => {
@@ -547,9 +548,8 @@ export function DataTable<T>({
                       const isChecked = selectedIds?.has(id) ?? false;
                       const isZebra = !isChecked && !isRowSelected && index % 2 === 1;
                       return (
-                        <motion.tr
+                        <tr
                           key={id}
-                          variants={tableRowVariant}
                           onClick={() => onRowClick?.(item)}
                           className={cn(
                             "border-b border-border-light/50 transition-colors duration-150",
@@ -588,19 +588,15 @@ export function DataTable<T>({
                           {supportsColumnConfig ? (
                             <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
                           ) : null}
-                        </motion.tr>
+                        </tr>
                       );
                     });
                     return [header, ...dataRows];
                   });
                 })()}
-              </motion.tbody>
+              </tbody>
             ) : (
-              <motion.tbody
-                variants={staggerContainer}
-                initial="hidden"
-                animate="visible"
-              >
+              <tbody>
                 {data.map((item, index) => {
                   const id = getRowId?.(item) ?? String(index);
                   const isRowSelected = selectedId === id;
@@ -608,9 +604,8 @@ export function DataTable<T>({
                   const isZebra = !isChecked && !isRowSelected && index % 2 === 1;
 
                   return (
-                    <motion.tr
+                    <tr
                       key={id}
-                      variants={tableRowVariant}
                       onClick={() => onRowClick?.(item)}
                       className={cn(
                         "border-b border-border-light/50 transition-colors duration-150",
@@ -649,36 +644,76 @@ export function DataTable<T>({
                       {supportsColumnConfig ? (
                         <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
                       ) : null}
-                    </motion.tr>
+                    </tr>
                   );
                 })}
-              </motion.tbody>
+              </tbody>
             )}
-          </AnimatePresence>
+          {!loading && tableRows.length > 0 && hasColumnFooters ? (
+            <tfoot>
+              <tr className="border-t-2 border-border bg-surface-secondary/90">
+                {selectable ? <td className="w-12 px-2 sm:px-3 py-2" aria-hidden /> : null}
+                {visibleColumns.map((col) => (
+                  <td
+                    key={col.key}
+                    style={{
+                      ...(col.width ? { width: col.width } : {}),
+                      minWidth: col.minWidth ?? col.width,
+                    }}
+                    className={cn(
+                      "px-2 sm:px-3 py-2 text-sm align-middle",
+                      col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
+                      col.cellClassName,
+                    )}
+                  >
+                    {col.footer ?? null}
+                  </td>
+                ))}
+                {supportsColumnConfig ? (
+                  <td className="w-10 shrink-0 px-2 py-2" aria-hidden />
+                ) : null}
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
 
-      {(totalPages && totalPages > 1) || (onPageSizeChange && totalItems != null) ? (
-        <div className="flex items-center justify-between px-5 py-3 border-t border-border-light">
-          <p className="text-xs text-text-tertiary">
-            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItems ?? 0)} of {totalItems}
+      {(totalPages && totalPages > 1) || (onPageSizeChange && totalItems != null) || footerSummary ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3 border-t border-border-light">
+          <p className="text-xs text-text-tertiary shrink-0">
+            {totalItems != null ? (
+              <>
+                Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItems)} of {totalItems}
+              </>
+            ) : null}
           </p>
-          <div className="flex items-center gap-3">
+          {footerSummary ? (
+            <div className="min-w-0 flex-1 sm:px-3 sm:text-center text-xs text-text-secondary">
+              {footerSummary}
+            </div>
+          ) : null}
+          <div className="flex items-center gap-3 shrink-0 sm:justify-end">
             {onPageSizeChange && (pageSizeOptions?.length ?? 0) > 0 ? (
-              <label className="flex items-center gap-1.5 text-xs text-text-tertiary">
+              <div className="flex items-center gap-1 text-xs text-text-tertiary">
                 <span>Rows</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                  className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-text-secondary"
-                >
-                  {pageSizeOptions!.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                {pageSizeOptions!.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => {
+                      if (size !== pageSize) onPageSizeChange(size);
+                    }}
+                    className={cn(
+                      "h-8 min-w-8 rounded-lg px-2 text-xs font-medium transition-colors",
+                      size === pageSize
+                        ? "bg-primary text-white"
+                        : "text-text-secondary hover:bg-surface-tertiary",
+                    )}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             ) : null}
             {totalPages && totalPages > 1 ? (
             <div className="flex items-center gap-1">

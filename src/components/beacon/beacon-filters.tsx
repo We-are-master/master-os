@@ -8,6 +8,7 @@ import { MicroLabel } from "@/components/fx/primitives";
 
 export type BeaconDateMode =
   | "today"
+  | "yesterday"
   | "tomorrow"
   | "week"
   | "month"
@@ -229,6 +230,11 @@ export function getBeaconScheduleYmdRange(filters: BeaconFilters): { from: strin
   switch (filters.dateMode) {
     case "today":
       return { from: localCalendarYmd(startOfToday), to: localCalendarYmd(startOfToday) };
+    case "yesterday": {
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - 1);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(s) };
+    }
     case "tomorrow": {
       const s = new Date(startOfToday);
       s.setDate(s.getDate() + 1);
@@ -279,6 +285,13 @@ export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; 
   switch (filters.dateMode) {
     case "today":
       return { fromIso: startOfToday.toISOString(), toIso: endOfToday.toISOString() };
+    case "yesterday": {
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - 1);
+      const e = new Date(endOfToday);
+      e.setDate(e.getDate() - 1);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
     case "tomorrow": {
       const s = new Date(startOfToday);
       s.setDate(s.getDate() + 1);

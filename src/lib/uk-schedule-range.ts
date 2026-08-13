@@ -3,6 +3,7 @@
 export type ScheduleDatePreset =
   | "all"
   | "today"
+  | "yesterday"
   | "tomorrow"
   | "week"
   | "month"
@@ -62,6 +63,10 @@ export function getScheduleRangeYmd(
   const anchor = ukTodayYmd(new Date());
   if (preset === "today") {
     return { from: anchor, to: anchor };
+  }
+  if (preset === "yesterday") {
+    const y = addDaysYmd(anchor, -1);
+    return { from: y, to: y };
   }
   if (preset === "tomorrow") {
     const t = addDaysYmd(anchor, 1);

@@ -21,6 +21,7 @@ type Props = {
 const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
   all: "all",
   today: "1d",
+  yesterday: "yesterday",
   tomorrow: "tomorrow",
   week: "wtd",
   month: "mtd",
@@ -33,6 +34,7 @@ const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
 const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
   all: "all",
   "1d": "today",
+  yesterday: "yesterday",
   tomorrow: "tomorrow",
   wtd: "week",
   mtd: "month",

@@ -1,5 +1,4 @@
-import { getSupabase, queryList, type ListParams, type ListResult, type SortDirection } from "./base";
-import { loadAllJobsForPeriodOverlap } from "./job-period-overlap-queries";
+import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice, listInvoicesLinkedToJob } from "./invoices";
@@ -351,73 +350,6 @@ export async function markLateJobs(): Promise<void> {
   lastMarkLateAt = Date.now();
 }
 
-function jobMatchesSearchKeyword(j: Job, search: string): boolean {
-  const s = search.trim().toLowerCase();
-  return [j.reference, j.title, j.client_name, j.partner_name, j.property_address].some((f) =>
-    String(f ?? "").toLowerCase().includes(s),
-  );
-}
-
-function compareJobsForSort(a: Job, b: Job, sortKey: string, sortDir: SortDirection): number {
-  const av = (a as unknown as Record<string, unknown>)[sortKey];
-  const bv = (b as unknown as Record<string, unknown>)[sortKey];
-  const sa = av != null ? String(av) : "";
-  const sb = bv != null ? String(bv) : "";
-  const cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
-  return sortDir === "asc" ? cmp : -cmp;
-}
-
-async function listJobsWithSchedulePeriodOverlap(params: ListParams): Promise<ListResult<Job>> {
-  const range = params.scheduleRange!;
-  let statusIn: string[];
-  if (params.statusIn && params.statusIn.length > 0) statusIn = [...params.statusIn];
-  else if (params.jobsClosedBucket === "paid") statusIn = ["completed"];
-  else if (params.jobsClosedBucket === "awaiting_payment") statusIn = ["awaiting_payment"];
-  else if (params.jobsClosedBucket === "lost") statusIn = ["cancelled"];
-  else if (params.jobsClosedBucket === "archived") statusIn = ["deleted"];
-  else if (params.status === "closed") statusIn = ["awaiting_payment", "completed", "cancelled", "deleted"];
-  else if (params.status === "in_progress") statusIn = [...JOB_ONSITE_PROGRESS_STATUSES];
-  else if (params.status === "scheduled") statusIn = ["scheduled", "late"];
-  else if (params.status === "unassigned") {
-    statusIn = [
-      "unassigned",
-      "auto_assigning",
-      "scheduled",
-      "late",
-      ...JOB_ONSITE_PROGRESS_STATUSES,
-    ];
-  } else if (params.status === "action_required") {
-    statusIn = [
-      "unassigned",
-      "auto_assigning",
-      "scheduled",
-      "late",
-      ...JOB_ONSITE_PROGRESS_STATUSES,
-      "on_hold",
-    ];
-  } else if (!params.status || params.status === "all") statusIn = [...JOB_LIST_ALL_TAB_STATUSES];
-  else statusIn = [params.status];
-
-  const all = await loadAllJobsForPeriodOverlap(statusIn, range);
-  const search = params.search?.trim();
-  let filtered = search ? all.filter((j) => jobMatchesSearchKeyword(j, search)) : all;
-  const tabId = params.status;
-  if (tabId && tabId !== "all") {
-    filtered = filtered.filter((j) => jobRowMatchesJobsManagementTab(j, tabId));
-  }
-  const sortKey = params.sortBy ?? "created_at";
-  const sortDir = (params.sortDir ?? "desc") as SortDirection;
-  const rows = [...filtered].sort((a, b) => compareJobsForSort(a, b, sortKey, sortDir));
-
-  const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 10;
-  const start = (page - 1) * pageSize;
-  const data = rows.slice(start, start + pageSize);
-  const count = rows.length;
-  const totalPages = Math.max(1, Math.ceil(count / pageSize));
-  return { data, count, page, pageSize, totalPages };
-}
-
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
   const shouldRunMarkLate =
     (params.page ?? 1) <= 1 &&
@@ -451,10 +383,6 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
         defaultSort: "deleted_at",
       },
     );
-  }
-
-  if (params.scheduleRange) {
-    return listJobsWithSchedulePeriodOverlap(params);
   }
 
   if (params.statusIn && params.statusIn.length > 0) {

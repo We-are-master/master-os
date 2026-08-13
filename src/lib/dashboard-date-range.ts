@@ -2,6 +2,7 @@
 
 export type DateRangePreset =
   | "1d"
+  | "yesterday"
   | "tomorrow"
   | "wtd"
   | "7d"
@@ -61,6 +62,11 @@ export function getBoundsForPreset(
     case "1d":
       /* Today only — same as start */
       break;
+    case "yesterday": {
+      start.setDate(start.getDate() - 1);
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 23, 59, 59, 999);
+      break;
+    }
     case "tomorrow": {
       start.setDate(start.getDate() + 1);
       end = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 23, 59, 59, 999);
@@ -125,6 +131,7 @@ export function getLocalCalendarMonthDashboardBounds(now = new Date()): Dashboar
 
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "1d", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
   { id: "tomorrow", label: "Tomorrow" },
   { id: "wtd", label: "Week to date" },
   { id: "mtd", label: "This month (full)" },
@@ -152,6 +159,7 @@ export function formatRangeHint(bounds: DashboardDateBounds | null): string {
 
 const COMPACT_PRESET_LABELS: Record<DateRangePreset, string> = {
   "1d": "Today",
+  yesterday: "Yesterday",
   tomorrow: "Tomorrow",
   wtd: "Week to date",
   mtd: "Current month",

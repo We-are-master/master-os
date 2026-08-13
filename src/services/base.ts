@@ -49,6 +49,10 @@ export interface ListParams {
   jobsClosedTab?: boolean;
   /** Jobs only: when `status === "closed"`, narrow the fetch to one UI bucket. */
   jobsClosedBucket?: "paid" | "awaiting_payment" | "archived" | "lost";
+  /** Jobs only: filter by assigned partner (`partner_id`). `"__none__"` = unassigned. */
+  jobsPartnerId?: string;
+  /** When true, skip `count: exact` (reuse the previous total). Used on page-size changes. */
+  skipCount?: boolean;
   /** Jobs only: Scheduled / In progress tabs — require `partner_id` or non-empty `partner_ids`. */
   jobsRequirePartnerSet?: boolean;
   /**
@@ -139,7 +143,9 @@ export async function queryList<T>(
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let query = supabase.from(table).select("*", { count: "exact" });
+  let query = params.skipCount
+    ? supabase.from(table).select("*")
+    : supabase.from(table).select("*", { count: "exact" });
   const closedJobsTab = table === "jobs" && params.jobsClosedTab;
   if (!closedJobsTab) {
     if (params.archivedOnly) {
@@ -186,6 +192,14 @@ export async function queryList<T>(
     query = query.or("partner_id.not.is.null,partner_ids.neq.{}");
   }
 
+  if (table === "jobs" && params.jobsPartnerId) {
+    if (params.jobsPartnerId === "__none__") {
+      query = query.is("partner_id", null);
+    } else {
+      query = query.eq("partner_id", params.jobsPartnerId);
+    }
+  }
+
   if (params.search && options?.searchColumns?.length) {
     // Sanitize the search value before interpolating into the .or() filter
     // string. PostgREST parses commas/parens/colons as filter metacharacters,
@@ -220,6 +234,16 @@ export async function queryList<T>(
   const { data, error, count } = await query;
 
   if (error) throw error;
+
+  if (params.skipCount) {
+    return {
+      data: (data ?? []) as T[],
+      count: -1,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
+  }
 
   return {
     data: (data ?? []) as T[],

@@ -30,6 +30,7 @@ type Props = {
 const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>([
   "all",
   "today",
+  "yesterday",
   "tomorrow",
   "week",
   "month",

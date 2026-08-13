@@ -10,6 +10,7 @@
 export type DateFilterMode =
   | "all"
   | "today"
+  | "yesterday"
   | "tomorrow"
   | "week"
   | "month"
@@ -39,6 +40,7 @@ export type DateFilterQuickOption = { id: Exclude<DateFilterMode, "custom">; lab
 /** Chips always visible in the strip. */
 export const DATE_FILTER_PRIMARY_OPTIONS: DateFilterQuickOption[] = [
   { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
   { id: "tomorrow", label: "Tomorrow" },
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
@@ -68,6 +70,13 @@ export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | nu
       return null;
     case "today":
       return { fromIso: startOfToday.toISOString(), toIso: endOfToday.toISOString() };
+    case "yesterday": {
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - 1);
+      const e = new Date(endOfToday);
+      e.setDate(e.getDate() - 1);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
     case "tomorrow": {
       const s = new Date(startOfToday);
       s.setDate(s.getDate() + 1);
