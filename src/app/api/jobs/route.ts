@@ -19,6 +19,7 @@ import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
+import { assignRoutedPartner, partnerRoutingEnabled, routePartnerForJob } from "@/lib/partner-routing";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import type {
   AccountServicePrice,
@@ -693,6 +694,21 @@ export async function POST(req: NextRequest) {
   if (rateType === "fixed") {
     if (catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
       resolvedCatalogServiceId = catalogServiceIdIn;
+    } else if (serviceType) {
+      // Um job de preço fixo que diz a trade tem que sair ligado ao catálogo,
+      // como já acontece no caminho hourly logo acima. Sem isso o
+      // `catalog_service_id` fica nulo e o reconcile do Zendesk o preenche a
+      // partir do campo "Type of work" do ticket, que em 2026-08-13 estava
+      // carimbando Deep Cleaning em 38 jobs que não eram de limpeza.
+      //
+      // Best-effort de propósito: aqui `service_type` também é usado como
+      // rótulo livre ("Door repair, kitchen cabinet"), e um job de preço fixo
+      // nunca dependeu do catálogo para precificar. Se não casar, segue sem
+      // vínculo, que é o comportamento de sempre.
+      const catalog = await resolveCatalogServiceForSmartPrice(supabase, null, serviceType);
+      if (catalog.ok) {
+        resolvedCatalogServiceId = catalog.row.id;
+      }
     }
     const fixedResolved = resolveFixedManualPricing({
       clientPrice,
@@ -898,6 +914,32 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ─── Rota fixa: atribui o parceiro do serviço e avisa na hora ────────
+  // Roda antes do leilão e o dispensa: onde há parceiro nomeado para o
+  // serviço, não há o que leiloar. Fica atrás de PARTNER_ROUTING_ENABLED
+  // porque a consequência é email saindo para parceiro de verdade.
+  let routedPartner: { partner_id: string; email_sent: boolean } | undefined;
+  if (partnerRoutingEnabled()) {
+    const rota = await routePartnerForJob(supabase, {
+      catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
+      scheduledDate: isoDate,
+    });
+    if (rota.routed) {
+      const r = await assignRoutedPartner(supabase, {
+        jobId: String(inserted.id),
+        partnerId: rota.partnerId,
+      });
+      if (r.assigned) routedPartner = { partner_id: rota.partnerId, email_sent: Boolean(r.emailSent) };
+    } else if (rota.reason === "cap_reached") {
+      // Sem parceiro de propósito: o dono aloca à mão o que passa do teto.
+      console.warn("[api/jobs] rota: teto diário atingido", {
+        partnerId: rota.partnerId,
+        usedToday: rota.usedToday,
+        scheduledDate: isoDate,
+      });
+    }
+  }
+
   // ─── Auto-assign invites (push + Zendesk Email 1 when ticket linked) ─
   let partnersNotified: { sent: number; tokensFound: number } | undefined;
   if (autoAssign && matchedPartnerIds.length > 0) {
@@ -931,6 +973,7 @@ export async function POST(req: NextRequest) {
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
+      ...(routedPartner ? { routed_partner: routedPartner } : {}),
       ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),

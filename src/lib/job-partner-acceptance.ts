@@ -464,6 +464,11 @@ export async function sendBookedSideConvReply(args: {
   partnerName: string | null;
 }): Promise<BookedEmailResult> {
   const { job, partner } = args;
+  // Tudo do parceiro vive na side conversation do ticket, de propósito: Zendesk
+  // e OS são o núcleo da operação, e um email por fora criaria uma conversa que
+  // ninguém encontra depois. Job sem ticket não é caso de mandar por outro
+  // canal, é caso de criar o ticket: `create_zendesk_ticket` em POST /api/jobs
+  // faz isso e grava external_source/external_ref antes deste ponto.
   const ticketId = job.external_source === "zendesk" ? job.external_ref : null;
   if (!ticketId) return { sent: false, skipped: "no_zendesk_ticket" };
   if (!partner.email?.trim()) return { sent: false, skipped: "no_partner_email" };
