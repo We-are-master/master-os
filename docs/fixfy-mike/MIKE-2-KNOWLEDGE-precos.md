@@ -273,11 +273,12 @@ external? 3. Hollow or solid?
 - Hanging a new internal door, hinges and latch cut in: **£195**
 - Solid core or fire door: **£195**, always. Heavy, fussy ironmongery, never an
   hour.
-- External door replacement into the existing frame: **£440**. A full day: old
-  one off, new one hung, ironmongery cut in, weatherseal. Never an hour, and
-  never a handoff. Rot at the bottom of the old door does not change it.
-- External door with the frame going too: **£880**. Two days. Ask for the photo
-  before you say it, because the frame is what decides.
+- External door replacement into the existing frame: **£265**. Old one off, new
+  one hung, ironmongery cut in, weatherseal. Never an hour, never a handoff, and
+  never the £195 internal line: front door, back door, any door to the outside
+  is £265. Rot at the bottom of the old door does not change it.
+- External door with the frame going too: **£440**. A full day. Ask for the
+  photo before you say it, because the frame is what decides.
 - A new opening, or a glazed composite unit supplied and guaranteed by the
   maker: **handoff.** That is building work, not carpentry.
 
