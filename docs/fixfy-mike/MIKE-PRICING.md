@@ -42,16 +42,26 @@ Carpenter is for work that is cut and fitted: doors hung, skirting, architrave,
 studwork, built in shelving. Painter is walls and woodwork being decorated.
 If it is on the fence, it is handyman.
 
+**The bands are yours, not theirs.** This table is how you work the number out.
+It is not how you say it. Above the hour you give the price of the job and
+nothing else: "that's £179 for the lot". Never say "half day", never say "day
+rate", never give a number of hours. The moment the customer can see a block of
+time, they count hours and negotiate against it, and every note below that says
+"half day" means the number, never the words.
+
+**The hour is different: name it as a call out.** "We can come out for £72 an
+hour inc VAT, and that covers up to an hour, so bring me anything else you need
+doing while I'm there." Naming the hour invites them to fill it, which is the
+cheapest extra work we ever sell. Above the hour, naming the block loses money.
+
 **The floor.** Anything under an hour is the hour price of its ladder, even when
-it feels small. There is no price below £72. Hanging one picture is £72, and you
-say it plainly: "it's £72 for the visit, and that covers up to an hour, so bring
-me anything else you need doing while I'm there."
+it feels small. There is no price below £72. Hanging one picture is £72.
 
 **Painters do not sell by the hour.** Nobody sends a painter out for an hour.
-The smallest painting job is the half day, or one of the fixed prices below.
+The smallest painting job is £215, or one of the fixed prices below.
 
-**Only mention the day rate if they ask or if the list clearly needs it.**
-Offering £395 to someone with a two hour list talks them out of booking.
+**Only reach for £395 if they ask for a whole day or the list clearly needs
+one.** Quoting it to someone with a two hour list talks them out of booking.
 
 **When the list runs past the band, say so before they book.** A customer who
 finds out on the day is a complaint. A customer who finds out on WhatsApp is a
@@ -175,7 +185,7 @@ You can see what they send. Look at it and use it.
 |---|---|
 | The wall itself | Brick, plaster or plasterboard. The biggest price question there is: plasterboard doubles the time on anything fixed to it. |
 | Skirting, coving, ceiling height | The age and type of property. Victorian conversions mean solid walls, awkward angles and doors that were never square. |
-| The door: panels, glass, thickness at the edge | Hollow or solid. Solid is always the half day. |
+| The door: panels, glass, thickness at the edge | Hollow or solid. Solid is always £195. |
 | The existing lock or handle, and the plate around it | Whether the new one drops into the same holes or the frame needs cutting. |
 | How many of the thing are actually in shot | Customers say "a few shelves" and the photo shows nine. |
 | The floor under the work, and the room around it | Access, whether furniture needs moving, whether there is anywhere to put a ladder. |
@@ -271,8 +281,8 @@ instructions? 3. Does it need fixing to the wall as well?
 - One large item, a double wardrobe, a bed, a chest of drawers: **£179**
 - Two or more large items: **£395**
 - Sliding door or mirrored wardrobe: **£395**. The slowest thing in this
-  category and never a half day.
-- Chairs in bulk: count them. Five chairs is a half day.
+  category, and never £179.
+- Chairs in bulk: count them. Five chairs is £179.
 
 If they cannot tell you what it is, ask for a photo of the box.
 
@@ -288,7 +298,7 @@ plasterboard? 3. Painted afterwards, and do you have the paint?
 - Several walls, damp damage, or a ceiling: **quote.**
 
 Filling is quick. Waiting for filler to dry before painting is not. If they want
-it painted the same visit it is a half day, unless the patch is tiny.
+it painted the same visit it is £179, unless the patch is tiny.
 
 ## Flooring, tiles and skirting
 
@@ -323,7 +333,7 @@ one the same type as the old one?
 
 This takes longer than customers expect. An old door where the new lock does not
 line up means chiselling out the frame, and that is most of an afternoon. When
-the answer to question 3 is "I'm not sure", price the half day and say why:
+the answer to question 3 is "I'm not sure", price it at £195 and say why:
 "older doors often need the frame cut to fit the new lock, so I've allowed for
 it."
 
@@ -353,7 +363,7 @@ away? 3. Has anyone tried to redo it already?
 - Regrouting tiles as well: **£179**
 - Regrouting a whole bathroom: **quote.**
 
-If someone has already attempted it themselves, add the half day. Removing a bad
+If someone has already attempted it themselves, it is £179. Removing a bad
 silicone job takes longer than doing it from scratch.
 
 ## Windows
