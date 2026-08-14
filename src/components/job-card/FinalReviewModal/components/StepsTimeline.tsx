@@ -10,6 +10,19 @@ type Props = {
   jobValue: number;
   partnerPayout: number;
   reports: ReportItem[];
+  /**
+   * Estado do envio do relatório para a plataforma de origem (Stefane).
+   *
+   * Vive no passo 3, junto com o upload do parceiro, porque as duas coisas
+   * respondem a mesma pergunta: o relatório existe onde precisa existir? Subir
+   * no OS e não subir na Housekeep é meio caminho, e é como 198 jobs viraram
+   * 16 relatórios.
+   */
+  envioExterno?: {
+    estado: "nao_enviado" | "enviando" | "enviado" | "falhou";
+    link?: string | null;
+    erro?: string | null;
+  };
 };
 
 function fmtGBP(n: number) {
@@ -79,6 +92,7 @@ export function StepsTimeline({
   jobValue,
   partnerPayout,
   reports,
+  envioExterno,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -140,7 +154,7 @@ export function StepsTimeline({
       title: "Partner reports uploaded",
       state: reportsUploadedState,
       subtitle: (
-        <div className="flex flex-wrap gap-[6px] mt-[6px]">
+        <div className="flex flex-wrap items-center gap-[6px] mt-[6px]">
           {reports.map((r) => (
             <span
               key={r.id}
@@ -153,6 +167,58 @@ export function StepsTimeline({
               {r.name} · {r.uploaded ? "uploaded" : "missing"}
             </span>
           ))}
+          {envioExterno && envioExterno.estado !== "nao_enviado" ? (
+            <span
+              className="text-[11px] px-2 py-[3px] rounded-[5px] inline-flex items-center gap-[5px]"
+              style={{
+                background:
+                  envioExterno.estado === "enviado"
+                    ? "#E9F7F0"
+                    : envioExterno.estado === "falhou"
+                      ? "#FDECEA"
+                      : "#F1F5FB",
+                color:
+                  envioExterno.estado === "enviado"
+                    ? "#12704F"
+                    : envioExterno.estado === "falhou"
+                      ? "#A32D2D"
+                      : "#020040",
+              }}
+            >
+              {envioExterno.estado === "enviando" ? (
+                <>
+                  <span
+                    aria-hidden
+                    className="inline-block h-[9px] w-[9px] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
+                  />
+                  Sending report
+                </>
+              ) : envioExterno.estado === "falhou" ? (
+                <>
+                  <span aria-hidden>✕</span>
+                  Not submitted
+                </>
+              ) : (
+                <>
+                  <span aria-hidden>✓</span>
+                  Submitted
+                </>
+              )}
+              {/* O link acompanha nos dois desfechos: no verde para conferir que
+                  chegou, no vermelho para enviar à mão. */}
+              {envioExterno.link && envioExterno.estado !== "enviando" ? (
+                <a
+                  href={envioExterno.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  check
+                </a>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       ),
       trailing: (

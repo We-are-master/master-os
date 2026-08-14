@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerReportToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import {
+  isReportTemplate,
+  parseReportPhotoEntries,
+  persistReportSubmission,
+} from "@/lib/report-submission";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
-
-const BUCKET = "job-reports";
-const VALID_TEMPLATES = new Set(["general", "gardener", "cleaner", "certificate"]);
 
 function getServiceSupabase() {
   return createClient(
@@ -33,15 +35,10 @@ function getServiceSupabase() {
  *     - cleaner:          slots "equipment" + room keys (living_room, hallways, …) for both start & final
  *     - certificate:      final "certificate" only (PDF or image)
  *
- * Behaviour:
- *   - Writes jobs.start_report + jobs.final_report JSONB in the partner-app
- *     V2 shape so the dashboard cards render identically.
- *   - Sets *_report_submitted = true and *_report_approved_at = now (the
- *     submission via public link counts as approval; office can revoke from
- *     the dashboard if needed).
- *   - Moves jobs.status → final_check so the office picks it up.
- *   - Idempotency: if both start_report and final_report were already
- *     submitted, returns 409.
+ * The write itself lives in `lib/report-submission`, shared with the office
+ * modal — both doors have to produce the same payload for Stefane to read.
+ * Idempotency: if both start_report and final_report were already submitted,
+ * returns 409.
  */
 export async function POST(req: NextRequest) {
   // Per-IP rate limit — public endpoint.
@@ -73,7 +70,7 @@ export async function POST(req: NextRequest) {
   const { jobId: tokenJobId, partnerId: tokenPartnerId } = verified;
 
   const template = String(form.get("template") ?? "").trim();
-  if (!VALID_TEMPLATES.has(template)) {
+  if (!isReportTemplate(template)) {
     return NextResponse.json({ error: "Invalid template." }, { status: 400 });
   }
 
@@ -86,22 +83,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid startData/finalData JSON." }, { status: 400 });
   }
 
-  // Group photo slots: photos[<slot>][] -> { slotKey: File[] }
-  const photoEntries: Record<string, File[]> = {};
-  for (const [key, value] of form.entries()) {
-    const m = key.match(/^photos\[([^\]]+)\]\[\]$/);
-    if (!m || !(value instanceof File)) continue;
-    const slot = m[1];
-    if (!photoEntries[slot]) photoEntries[slot] = [];
-    photoEntries[slot].push(value);
-  }
-
   const supabase = getServiceSupabase();
 
   // Resolve job from the token directly — the token is bound to job.id.
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted")
+    // Single-line literal: supabase-js infers the row type from the select
+    // string, and a concatenated one degrades every column to `unknown`.
+    .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted, partner_timer_started_at, partner_timer_ended_at")
     .eq("id", tokenJobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -134,123 +123,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Upload photos. Cleaner template gets room-by-room maps; others get
-  // a flat array per slot — matches what `normalizeReport` already handles.
-  const startPhotos = await uploadSlotPhotos(supabase, job.id, "start", photoEntries, template);
-  const finalPhotos = await uploadSlotPhotos(supabase, job.id, "final", photoEntries, template);
+  const result = await persistReportSubmission(
+    supabase,
+    {
+      id: job.id,
+      reference: job.reference,
+      status: job.status,
+      partner_timer_started_at: job.partner_timer_started_at,
+      partner_timer_ended_at: job.partner_timer_ended_at,
+    },
+    {
+      template,
+      source: "partner_link",
+      startData,
+      finalData,
+      photos: parseReportPhotoEntries(form),
+      writeStart: true,
+    },
+  );
 
-  const now = new Date().toISOString();
-  const startPayload = {
-    template,
-    submitted_at: now,
-    photos: startPhotos,
-    ...startData,
-  };
-  const finalPayload = {
-    template,
-    submitted_at: now,
-    photos: finalPhotos,
-    ...finalData,
-  };
-
-  const { error: updErr } = await supabase
-    .from("jobs")
-    .update({
-      start_report:               startPayload,
-      start_report_submitted:     true,
-      start_report_skipped:       false,
-      start_report_approved_at:   now,
-      final_report:               finalPayload,
-      final_report_submitted:     true,
-      final_report_skipped:       false,
-      final_report_approved_at:   now,
-      status:                     "final_check",
-      // Match trade portal: close the on-site timer when the report lands.
-      partner_timer_ended_at:     now,
-      partner_timer_is_paused:    false,
-      updated_at:                 now,
-    })
-    .eq("id", job.id);
-
-  if (updErr) {
-    console.error("[submit-report] update failed:", updErr);
-    return NextResponse.json({ error: "Could not save the report." }, { status: 500 });
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
   }
-
-  void supabase.from("audit_logs").insert({
-    entity_type: "job",
-    entity_id:   job.id,
-    entity_ref:  job.reference,
-    action:      "report_submitted",
-    field_name:  "start_report+final_report",
-    old_value:   job.status,
-    new_value:   "final_check",
-    metadata:    { source: "public_quote_link", template },
-  }).then(({ error }) => { if (error) console.error("audit_logs (submit-report)", error); });
 
   return NextResponse.json({ ok: true, jobReference: job.reference });
-}
-
-/** Cleaner: returns `{ slot: [urls...] }` map; others return flat array. */
-async function uploadSlotPhotos(
-  supabase: ReturnType<typeof getServiceSupabase>,
-  jobId: string,
-  kind: "start" | "final",
-  photoEntries: Record<string, File[]>,
-  template: string,
-): Promise<string[] | Record<string, string[]>> {
-  const startSlots = template === "cleaner"
-    ? new Set(["equipment", "living_room", "hallways", "kitchen", "bathrooms", "bedrooms", "steam_cleaning"])
-      : new Set(["before"]);
-  const finalSlots = template === "cleaner"
-    ? new Set(["living_room", "hallways", "kitchen", "bathrooms", "bedrooms", "steam_cleaning"])
-    : template === "certificate"
-      ? new Set(["certificate"])
-      : new Set(["after"]);
-
-  const usesSlotMap = template === "cleaner" || template === "certificate";
-  const allowed = kind === "start" ? startSlots : finalSlots;
-
-  if (!usesSlotMap) {
-    const flatSlot = kind === "start" ? "before" : "after";
-    const files = photoEntries[flatSlot] ?? [];
-    return uploadFlat(supabase, jobId, kind, files);
-  }
-
-  const result: Record<string, string[]> = {};
-  for (const [slot, files] of Object.entries(photoEntries)) {
-    if (!allowed.has(slot)) continue;
-    const urls = await uploadFlat(supabase, jobId, `${kind}-${slot}`, files);
-    result[slot] = urls;
-  }
-  return result;
-}
-
-async function uploadFlat(
-  supabase: ReturnType<typeof getServiceSupabase>,
-  jobId: string,
-  prefix: string,
-  files: File[],
-): Promise<string[]> {
-  const out: string[] = [];
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const isPdf =
-      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-    const ext = isPdf ? "pdf" : "jpg";
-    const path = `${jobId}/${prefix}-${i}-${ts}.${ext}`;
-    const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
-      contentType: isPdf ? "application/pdf" : (f.type || "image/jpeg"),
-      upsert: false,
-    });
-    if (error) {
-      console.error("[submit-report] photo upload failed:", error);
-      continue;
-    }
-    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-    if (data?.publicUrl) out.push(data.publicUrl);
-  }
-  return out;
 }

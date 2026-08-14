@@ -1,0 +1,138 @@
+TEMPLATES DE FOLLOW-UP  ·  copiar campo a campo
+respond.io  >  Workspace Settings  >  Message Templates  >  Add Template
+Canal: WhatsApp Business  ·  Categoria: Utility  ·  Idioma: English (UK)
+
+Os quatro usam duas variaveis:
+  {{1}} = primeiro nome do cliente
+  {{2}} = o trabalho, minuscula, comecando com "the"
+          ex: the door handles / the shelves in the bedroom / the bathroom reseal
+
+{{2}} nunca pode ir vazio. Sem descricao, nao manda o follow-up.
+
+
+================================================================
+TEMPLATE 1  ·  23 horas depois do preco
+================================================================
+
+NOME
+fixfy_followup_23h
+
+CATEGORIA
+Utility
+
+IDIOMA
+English (UK)
+
+CORPO
+Hi {{1}}, just following up on the price I sent through for {{2}}. Happy to go through any of it with you, and I can get a date confirmed whenever you're ready.
+
+EXEMPLOS PARA A META
+{{1}} = Sarah
+{{2}} = the door handles
+
+
+================================================================
+TEMPLATE 2  ·  48 horas, so se nao respondeu
+================================================================
+
+NOME
+fixfy_followup_48h
+
+CATEGORIA
+Utility
+
+IDIOMA
+English (UK)
+
+CORPO
+Hi {{1}}, checking in on {{2}}. We still have availability this week if you'd like to get it booked in. Just let me know which day suits you.
+
+EXEMPLOS PARA A META
+{{1}} = Sarah
+{{2}} = the shelves in the bedroom
+
+
+================================================================
+TEMPLATE 3  ·  72 horas, so se nao respondeu
+================================================================
+
+NOME
+fixfy_followup_72h
+
+CATEGORIA
+Utility
+
+IDIOMA
+English (UK)
+
+CORPO
+Hi {{1}}, still holding {{2}} on our side. If you'd like to go ahead I can confirm a date today, and if you've decided against it just let me know so I can close it off.
+
+EXEMPLOS PARA A META
+{{1}} = Sarah
+{{2}} = the bathroom reseal
+
+
+================================================================
+TEMPLATE 4  ·  90 horas  ·  fecha a conversa depois de enviar
+================================================================
+
+NOME
+fixfy_followup_90h
+
+CATEGORIA
+Utility
+
+IDIOMA
+English (UK)
+
+CORPO
+Hi {{1}}, I'm closing this one off for now. The price for {{2}} stands if you'd like to pick it up later, and you can reply here any time to get it moving again.
+
+EXEMPLOS PARA A META
+{{1}} = Sarah
+{{2}} = the TV mounting
+
+
+================================================================
+POR QUE ESTAO ESCRITOS ASSIM
+================================================================
+
+Cada um reafirma o que esta em aberto e da um proximo passo concreto. Nenhum
+pede desculpa por estar mandando mensagem, nenhum diz que vai parar de
+incomodar, nenhum trata a propria mensagem como estorvo. Quem se diminui no
+follow-up ensina o cliente a nao responder.
+
+O de 72h e o unico que pede decisao, e pede as duas: sim ou nao. Um nao limpa
+a fila tao bem quanto um sim, e chega mais rapido.
+
+O de 90h fecha sem fechar a porta. "O preco continua de pe" tira o medo de que
+voltar signifique comecar tudo de novo, e a resposta a ele reabre a conversa
+sozinha.
+
+
+================================================================
+SE A META RECUSAR
+================================================================
+
+Motivo mais comum: ela reclassifica como Marketing. Se acontecer, nao amoleca
+o texto para aprovar, porque generico aprova e nao vende. Reenvie como Utility
+argumentando que e continuacao de um orcamento que o proprio cliente pediu.
+
+Regras que os quatro ja respeitam, mantenha se editar:
+  . nao comecar nem terminar com variavel
+  . sem duas variaveis coladas
+  . tem que fazer sentido lido sozinho
+  . nada promocional: sem desconto, sem oferta, sem pressao de escassez
+  . sem travessao
+
+
+================================================================
+DEPOIS DE APROVADOS
+================================================================
+
+A sequencia so roda com os quatro aprovados. Me avisa que eu programo o
+disparo: 23h, 48h, 72h, 90h, parando no instante em que a pessoa responde
+qualquer coisa, e fechando a conversa no ultimo.
+
+Nao mandar para quem ja disse nao, ja recusou ou pediu para parar.

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
@@ -10,6 +11,45 @@ import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
 import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
 import type { FinalReviewModalProps } from "./types";
+
+type EnvioExterno = { estado: "nao_enviado" | "enviando" | "enviado" | "falhou"; link?: string | null; erro?: string | null };
+
+/**
+ * Estado do envio do relatório para a plataforma de origem.
+ *
+ * Enquanto estiver enviando, pergunta de 3 em 3 segundos e para sozinho quando
+ * termina. O envio leva de 8 a 35 segundos porque preenche um formulário de
+ * verdade do outro lado, então segurar a tela não é opção.
+ */
+function useEnvioExterno(jobId: string | null | undefined, aberto: boolean): EnvioExterno | undefined {
+  const [envio, setEnvio] = useState<EnvioExterno | undefined>(undefined);
+
+  useEffect(() => {
+    if (!aberto || !jobId) return;
+    let vivo = true;
+    const buscar = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobId}/submit-external-report`);
+        if (!r.ok || !vivo) return;
+        const d = (await r.json()) as { estado: EnvioExterno["estado"]; report_link?: string | null; error?: string | null };
+        if (vivo) setEnvio({ estado: d.estado, link: d.report_link ?? null, erro: d.error ?? null });
+      } catch {
+        // Falha de rede não pode derrubar o modal: sem estado, o passo 3 só não
+        // mostra o selo, e o resto da revisão continua utilizável.
+      }
+    };
+    void buscar();
+    const t = setInterval(() => {
+      if (envio?.estado === "enviando") void buscar();
+    }, 3000);
+    return () => {
+      vivo = false;
+      clearInterval(t);
+    };
+  }, [jobId, aberto, envio?.estado]);
+
+  return envio;
+}
 
 export function FinalReviewModal(props: FinalReviewModalProps) {
   const {
@@ -43,6 +83,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     hourlySlot,
     paymentSchedule,
   } = props;
+
+  const envioExterno = useEnvioExterno(jobId, isOpen);
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
@@ -94,6 +136,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 jobValue={jobValue}
                 partnerPayout={partnerPayout}
                 reports={reports}
+                envioExterno={envioExterno}
               />
 
               <FinanceCards

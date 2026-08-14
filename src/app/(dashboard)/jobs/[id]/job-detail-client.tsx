@@ -234,6 +234,8 @@ import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/jo
 import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submission-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
+import { FillReportModal } from "@/components/jobs/fill-report-modal";
+import { StefaneReportButton } from "@/components/job-card/StefaneReportButton";
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
@@ -241,6 +243,13 @@ import { formatPartnerPrimaryTradeLabel } from "@/lib/partner-trades-display";
 import { getAccountServicePrice } from "@/services/account-service-prices";
 import { resolveCatalogAddonChargeOptions } from "@/lib/catalog-line-pricing";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
+import {
+  defaultPricingPresetId,
+  mergeCatalogWithPricingPreset,
+  parsePricingPresets,
+  sortPricingPresetsDisplay,
+} from "@/lib/catalog-pricing-presets";
 import { TypeOfWorkPicker } from "@/components/ui/type-of-work-picker";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
@@ -569,7 +578,7 @@ const selfBillStatusConfig: Record<
 > = {
   draft: { label: "Draft", variant: "default" },
   accumulating: { label: "Open Week", variant: "default" },
-  pending_review: { label: "Review & Approve", variant: "primary" },
+  pending_review: { label: "Approve Report", variant: "primary" },
   needs_attention: { label: "Needs Attention", variant: "danger" },
   awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
   ready_to_pay: { label: "Ready To Pay", variant: "info" },
@@ -1032,6 +1041,24 @@ function accessFeeCardBorderStyle(active: boolean): React.CSSProperties {
   return { border: active ? "0.5px solid #10B981" : "0.5px solid #E4E4E8" };
 }
 
+function hourlyRatesFromCatalogService(
+  service: CatalogService,
+  presetId?: string | null,
+): { presetId: string; clientRate: number; partnerRate: number; billedHours: number } {
+  const pid = presetId?.trim() || defaultPricingPresetId(service);
+  const eff = mergeCatalogWithPricingPreset(service, pid || null);
+  const billedHours = Math.max(0.25, Number(eff.default_hours) || 1);
+  let clientRate = Math.max(0, Number(eff.hourly_rate) || 0);
+  if (clientRate <= 0 && Number(eff.fixed_price) > 0) {
+    clientRate = Math.round((Number(eff.fixed_price) / billedHours) * 100) / 100;
+  }
+  const partnerRate = Math.max(
+    0,
+    partnerHourlyRateFromCatalogBundle(eff.partner_cost, eff.default_hours),
+  );
+  return { presetId: pid, clientRate, partnerRate, billedHours };
+}
+
 export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const params = useParams();
   const router = useRouter();
@@ -1101,6 +1128,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [editExtraClientConfirmed, setEditExtraClientConfirmed] = useState(true);
   const [savingExtraEdit, setSavingExtraEdit] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
+  /** Reports tab: office types the partner's report when he never sends one. */
+  const [fillReportOpen, setFillReportOpen] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
   /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
@@ -1111,6 +1140,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
   /** Map card: linked account (label + optional `accounts.logo_url`) + client phone/email. */
   const [jobHeaderAccount, setJobHeaderAccount] = useState<{ label: string; logoUrl: string | null } | null>(null);
+  const [jobSourceAccountId, setJobSourceAccountId] = useState<string | null>(null);
   const [jobHeaderContact, setJobHeaderContact] = useState<{ phone?: string; email?: string } | null>(null);
   const [jobHeaderLinkedClient, setJobHeaderLinkedClient] = useState<{ id: string; full_name: string } | null>(() => {
     const c = initialBundle?.client as { id?: string; full_name?: string } | null | undefined;
@@ -1216,7 +1246,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerCostSectionRef = useRef<HTMLDivElement>(null);
   const [partnerAssignRateType, setPartnerAssignRateType] = useState<"fixed" | "hourly">("fixed");
   const [partnerAssignServiceId, setPartnerAssignServiceId] = useState("");
+  const [partnerAssignPresetId, setPartnerAssignPresetId] = useState("");
+  const partnerAssignApplyResolvedRef = useRef(false);
+  const partnerAssignEmptyFillKeyRef = useRef<string | null>(null);
   const [partnerAssignFixedCost, setPartnerAssignFixedCost] = useState("");
+  const [partnerAssignFixedClientPrice, setPartnerAssignFixedClientPrice] = useState("");
   const [partnerAssignBilledHours, setPartnerAssignBilledHours] = useState("2");
   const [partnerAssignClientHourlyRate, setPartnerAssignClientHourlyRate] = useState("");
   const [partnerAssignPartnerHourlyRate, setPartnerAssignPartnerHourlyRate] = useState("");
@@ -1231,6 +1265,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     parking: "",
     materials: "",
   });
+  const [partnerAssignShowCashExtras, setPartnerAssignShowCashExtras] = useState(false);
   const [finForm, setFinForm] = useState({
     client_price: "",
     extras_amount: "",
@@ -2466,6 +2501,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setJobHeaderAccount(null);
       setJobHeaderContact(null);
       setJobHeaderLinkedClient(null);
+      setJobSourceAccountId(null);
       return;
     }
     void (async () => {
@@ -2476,6 +2512,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJobHeaderAccount(null);
           setJobHeaderContact(null);
           setJobHeaderLinkedClient(null);
+          setJobSourceAccountId(null);
           return;
         }
         const phone = c.phone?.trim() || "";
@@ -2483,6 +2520,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         setJobHeaderContact(phone || email ? { phone: phone || undefined, email: email || undefined } : null);
         setJobHeaderLinkedClient({ id: c.id, full_name: c.full_name?.trim() || "" });
         const sid = c.source_account_id?.trim();
+        setJobSourceAccountId(sid || null);
         if (!sid) {
           setJobHeaderAccount(null);
           return;
@@ -2502,6 +2540,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJobHeaderAccount(null);
           setJobHeaderContact(null);
           setJobHeaderLinkedClient(null);
+          setJobSourceAccountId(null);
         }
       }
     })();
@@ -2579,11 +2618,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!partnerModalOpen || !job) return;
     setPartnerAssignRateType(job.job_type === "hourly" ? "hourly" : "fixed");
     setPartnerAssignServiceId(job.catalog_service_id ?? "");
+    setPartnerAssignPresetId(job.catalog_pricing_preset_id ?? "");
+    partnerAssignApplyResolvedRef.current = false;
+    partnerAssignEmptyFillKeyRef.current = null;
     const existingPartnerExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
     const existingMaterials = Math.max(0, Number(job.materials_cost ?? 0));
     setPartnerAssignFixedCost(
       String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
     );
+    setPartnerAssignFixedClientPrice(String(Math.max(0, Number(job.client_price ?? 0))));
     if (job.job_type === "hourly") {
       setPartnerAssignBilledHours(String(resolveInitialBilledHours(job.billed_hours)));
       setPartnerAssignClientHourlyRate(String(Math.max(0, Number(job.hourly_client_rate) || 0)));
@@ -2601,15 +2644,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       parking: parkingDefault,
       materials: existingMaterials > 0 ? String(existingMaterials) : "",
     });
+    setPartnerAssignShowCashExtras(existingPartnerExtras > 0 || existingMaterials > 0);
   }, [
     partnerModalOpen,
     job?.id,
     job?.job_type,
     job?.catalog_service_id,
+    job?.catalog_pricing_preset_id,
     job?.billed_hours,
     job?.hourly_client_rate,
     job?.hourly_partner_rate,
     job?.partner_cost,
+    job?.client_price,
     job?.partner_extras_amount,
     job?.materials_cost,
     job?.in_ccz,
@@ -2695,6 +2741,67 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     () => catalogServicesJobType.find((s) => s.id === partnerAssignServiceId) ?? null,
     [catalogServicesJobType, partnerAssignServiceId],
   );
+  const partnerAssignPresetOptions = useMemo(
+    () =>
+      partnerAssignService
+        ? sortPricingPresetsDisplay(parsePricingPresets(partnerAssignService.pricing_presets))
+        : [],
+    [partnerAssignService],
+  );
+  const applyPartnerAssignHourlyFromCatalog = useCallback(
+    (service: CatalogService, presetId?: string | null) => {
+      const next = hourlyRatesFromCatalogService(service, presetId);
+      setPartnerAssignServiceId(service.id);
+      setPartnerAssignPresetId(next.presetId);
+      setPartnerAssignClientHourlyRate(next.clientRate > 0 ? String(next.clientRate) : "");
+      setPartnerAssignPartnerHourlyRate(next.partnerRate > 0 ? String(next.partnerRate) : "");
+      setPartnerAssignBilledHours(String(next.billedHours));
+      partnerAssignApplyResolvedRef.current = true;
+    },
+    [],
+  );
+  const { pricing: partnerAssignResolvedPricing } = useResolvedJobPricing({
+    accountId: partnerModalOpen ? jobSourceAccountId : null,
+    partnerId: partnerModalOpen ? selectedPartnerId : null,
+    catalogServiceId:
+      partnerModalOpen && partnerAssignRateType === "hourly" ? partnerAssignServiceId : null,
+    pricingPresetId: partnerAssignPresetId,
+  });
+  useEffect(() => {
+    if (!partnerModalOpen || partnerAssignRateType !== "hourly") return;
+    if (!partnerAssignApplyResolvedRef.current || !partnerAssignResolvedPricing) return;
+    const client = partnerAssignResolvedPricing.client.hourly_rate;
+    const partner = partnerAssignResolvedPricing.partner.hourly_partner_rate;
+    const hours = partnerAssignResolvedPricing.client.default_hours;
+    if (client != null && client > 0) setPartnerAssignClientHourlyRate(String(client));
+    if (partner != null && partner > 0) setPartnerAssignPartnerHourlyRate(String(partner));
+    if (hours != null && hours > 0) {
+      setPartnerAssignBilledHours(String(Math.max(0.25, hours)));
+    }
+    partnerAssignApplyResolvedRef.current = false;
+  }, [partnerAssignResolvedPricing, partnerModalOpen, partnerAssignRateType]);
+
+  useEffect(() => {
+    if (!partnerModalOpen || partnerAssignRateType !== "hourly") return;
+    if (!partnerAssignService) return;
+    const hasRates =
+      (Number(partnerAssignClientHourlyRate) || 0) > 0 ||
+      (Number(partnerAssignPartnerHourlyRate) || 0) > 0;
+    if (hasRates) return;
+    const fillKey = `${partnerAssignService.id}:${partnerAssignPresetId || ""}`;
+    if (partnerAssignEmptyFillKeyRef.current === fillKey) return;
+    partnerAssignEmptyFillKeyRef.current = fillKey;
+    applyPartnerAssignHourlyFromCatalog(partnerAssignService, partnerAssignPresetId || null);
+  }, [
+    partnerModalOpen,
+    partnerAssignRateType,
+    partnerAssignService,
+    partnerAssignClientHourlyRate,
+    partnerAssignPartnerHourlyRate,
+    partnerAssignPresetId,
+    applyPartnerAssignHourlyFromCatalog,
+  ]);
+
   const partnerAssignHourlyPreview = useMemo(() => {
     const billedHours = Math.max(0.5, Number(partnerAssignBilledHours) || 0);
     const clientRate = Math.max(0, Number(partnerAssignClientHourlyRate) || 0);
@@ -2746,7 +2853,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
         Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0 &&
         Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0) > 0
-      : partnerAssignBaseCost > 0);
+      : partnerAssignBaseCost > 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0);
 
   useEffect(() => {
     if (!job) return;
@@ -6710,6 +6817,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           Add visit
                         </button>
                       ) : null}
+                      {job.status !== "cancelled" &&
+                      job.status !== "deleted" &&
+                      job.status !== "completed" ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                          onClick={() => {
+                            setJobMoreMenuOpen(false);
+                            setApprovalMode("review_approve");
+                            setOwnerApprovalChecked(true);
+                            setSentToAccountsChecked(false);
+                            setValidateCompleteOpen(true);
+                          }}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          Finish
+                        </button>
+                      ) : null}
                       {job.status !== "cancelled" && job.status !== "deleted" ? (
                         <button
                           type="button"
@@ -7985,6 +8111,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 hasPartner={!!job.partner_id}
                 isZendeskLinked={job.external_source === "zendesk" && !!job.external_ref}
                 bothReportsSubmitted={v2FinalSubmitted}
+                onFillManually={() => setFillReportOpen(true)}
+              />
+              {/* Partner who never opens the app: the office types the report
+                  here so the PDF and Stefane get the same payload as always.
+                  With a final report on the job it reopens as edit — fields
+                  prefilled, saved photos kept, new files appended. A start
+                  report without `source` came live from the partner app and is
+                  never rewritten. */}
+              <FillReportModal
+                open={fillReportOpen}
+                onClose={() => setFillReportOpen(false)}
+                jobId={job.id}
+                jobReference={job.reference}
+                jobTitle={job.title}
+                scheduledDate={job.scheduled_date ?? null}
+                startAlreadySubmitted={
+                  !!job.start_report_submitted &&
+                  typeof (job.start_report as Record<string, unknown> | null)?.source !== "string"
+                }
+                existingStart={(job.start_report as Record<string, unknown> | null) ?? null}
+                existingFinal={v2FinalSubmitted ? ((job.final_report as Record<string, unknown> | null) ?? null) : null}
+                timerStartedAt={job.partner_timer_started_at ?? null}
+                timerEndedAt={job.partner_timer_ended_at ?? null}
+                onSubmitted={() => router.refresh()}
               />
               <JobReportV2Card
                 jobId={job.id}
@@ -7993,6 +8143,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 approvedAt={job.final_report_approved_at ?? null}
                 onApprovalChange={() => router.refresh()}
               />
+              {/* Stefane: sobe o relatório na plataforma de origem. Fica logo
+                  abaixo do relatório do parceiro porque é o passo seguinte dele:
+                  chegou no OS, agora precisa chegar na Housekeep. */}
+              <StefaneReportButton jobId={job.id} onEnviado={() => router.refresh()} />
               <JobPartnerMediaCard jobId={job.id} />
               <JobOnHoldSubmissionCard jobId={job.id} />
               {v2FinalSubmitted ? (
@@ -8003,7 +8157,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <p className="text-[11px]" style={{ color: "#6B6B70" }}>
                     {v2ApprovedCount}/{v2SubmittedCount} final report validated
                   </p>
-                  <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
+                  <div className="flex items-center gap-2">
+                    {/* Reopens the fill modal prefilled — fixes a typo, adds the
+                        photos that arrived later, without redoing the report. */}
+                    <button
+                      type="button"
+                      onClick={() => setFillReportOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer"
+                      style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                    >
+                      Edit report
+                    </button>
+                    <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
+                  </div>
                 </div>
               ) : null}
               </div>
@@ -10618,6 +10784,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           onClick={() => {
                             setSelectedPartnerId(p.id);
                             setPartnerPickerOpen(false);
+                            if (partnerAssignRateType === "hourly") {
+                              partnerAssignApplyResolvedRef.current = true;
+                            }
                             queueMicrotask(() => partnerCostSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
                           }}
                         >
@@ -10661,7 +10830,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </button>
               <button
                 type="button"
-                onClick={() => setPartnerAssignRateType("hourly")}
+                onClick={() => {
+                  setPartnerAssignRateType("hourly");
+                  const service =
+                    catalogServicesJobType.find((s) => s.id === partnerAssignServiceId) ??
+                    catalogServicesJobType.find((s) => s.id === (job?.catalog_service_id ?? ""));
+                  if (service) {
+                    applyPartnerAssignHourlyFromCatalog(
+                      service,
+                      partnerAssignPresetId || job?.catalog_pricing_preset_id,
+                    );
+                  }
+                }}
                 className={cn(
                   "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "hourly"
@@ -10674,40 +10854,44 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
             {partnerAssignRateType === "hourly" ? (
               <div className={cn("space-y-2", loadingJobTypeCatalog && "opacity-70 pointer-events-none")}>
-                <label className="block text-xs font-medium text-text-secondary">Service</label>
-                <select
+                <ServiceCatalogSelect
+                  label="Service"
+                  emptyOptionLabel="Select service…"
+                  compactOptionLabels
+                  catalog={catalogServicesJobType}
                   value={partnerAssignServiceId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setPartnerAssignServiceId(id);
-                    const service = catalogServicesJobType.find((s) => s.id === id);
-                    if (!service) return;
-                    setPartnerAssignClientHourlyRate(String(Math.max(0, Number(service.hourly_rate) || 0)));
-                    setPartnerAssignPartnerHourlyRate(
-                      String(
-                        Math.max(
-                          0,
-                          partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours),
-                        ),
-                      ),
-                    );
-                    setPartnerAssignBilledHours(String(resolveInitialBilledHours(service.default_hours)));
+                  onChange={(_id, service) => {
+                    if (!service) {
+                      setPartnerAssignServiceId("");
+                      setPartnerAssignPresetId("");
+                      setPartnerAssignClientHourlyRate("");
+                      setPartnerAssignPartnerHourlyRate("");
+                      return;
+                    }
+                    applyPartnerAssignHourlyFromCatalog(service);
                   }}
-                  className="h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                >
-                  <option value="">Select service...</option>
-                  {catalogServicesJobType.map((service) => {
-                    const perHour = Math.max(
-                      0,
-                      partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours),
-                    );
-                    return (
-                      <option key={service.id} value={service.id}>
-                        {`${service.name} · ${formatCurrency(perHour)}/h partner rate`}
-                      </option>
-                    );
-                  })}
-                </select>
+                />
+                {partnerAssignPresetOptions.length > 0 ? (
+                  <Select
+                    label="Price band"
+                    value={partnerAssignPresetId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      if (!partnerAssignService) {
+                        setPartnerAssignPresetId(id);
+                        return;
+                      }
+                      applyPartnerAssignHourlyFromCatalog(partnerAssignService, id);
+                    }}
+                    options={[
+                      { value: "", label: "Default" },
+                      ...partnerAssignPresetOptions.map((p) => ({
+                        value: p.id,
+                        label: p.label,
+                      })),
+                    ]}
+                  />
+                ) : null}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <label className="flex flex-col gap-1 text-xs text-text-secondary">
                     <span>Client rate £/h</span>
@@ -10744,69 +10928,187 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </label>
                 </div>
                 {partnerAssignHourlyPreview ? (
-                  <div className="rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2 text-[11px] text-text-secondary space-y-1">
-                    <p>
-                      Client labour:{" "}
-                      <span className="font-semibold text-text-primary tabular-nums">
+                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client</p>
+                      <p className="text-sm font-semibold tabular-nums text-text-primary">
                         {formatCurrency(partnerAssignHourlyPreview.clientTotal)}
-                      </span>
-                      <span className="text-text-tertiary">
-                        {" "}
-                        ({partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignClientHourlyRate) || 0))}/h)
-                      </span>
-                    </p>
-                    <p>
-                      Partner labour:{" "}
-                      <span className="font-semibold text-text-primary tabular-nums">
+                      </p>
+                      <p className="text-[10px] text-text-tertiary tabular-nums">
+                        {partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignClientHourlyRate) || 0))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner</p>
+                      <p className="text-sm font-semibold tabular-nums text-text-primary">
                         {formatCurrency(partnerAssignHourlyPreview.partnerTotal)}
-                      </span>
-                      <span className="text-text-tertiary">
-                        {" "}
-                        ({partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0))}/h)
-                      </span>
-                    </p>
+                      </p>
+                      <p className="text-[10px] text-text-tertiary tabular-nums">
+                        {partnerAssignHourlyPreview.billedHours}h × {formatCurrency(Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
+                      <p
+                        className={cn(
+                          "text-sm font-semibold tabular-nums",
+                          partnerAssignHourlyPreview.clientTotal - partnerAssignHourlyPreview.partnerTotal >= 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-red-600 dark:text-red-400",
+                        )}
+                      >
+                        {formatCurrency(
+                          partnerAssignHourlyPreview.clientTotal - partnerAssignHourlyPreview.partnerTotal,
+                        )}
+                      </p>
+                      <p
+                        className={cn(
+                          "text-[10px] font-medium tabular-nums",
+                          partnerAssignHourlyPreview.clientTotal > 0 &&
+                            ((partnerAssignHourlyPreview.clientTotal - partnerAssignHourlyPreview.partnerTotal) /
+                              partnerAssignHourlyPreview.clientTotal) *
+                              100 >=
+                              20
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-amber-600 dark:text-amber-400",
+                        )}
+                      >
+                        {partnerAssignHourlyPreview.clientTotal > 0
+                          ? `${Math.round(
+                              ((partnerAssignHourlyPreview.clientTotal - partnerAssignHourlyPreview.partnerTotal) /
+                                partnerAssignHourlyPreview.clientTotal) *
+                                1000,
+                            ) / 10}%`
+                          : "—"}
+                      </p>
+                    </div>
                   </div>
                 ) : null}
               </div>
             ) : (
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner cost £</label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={partnerAssignFixedCost}
-                  onChange={(e) => setPartnerAssignFixedCost(e.target.value)}
-                  className="h-9"
-                />
-              </div>
-            )}
-            <div className="space-y-2.5 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
-              <div className="grid grid-cols-2 gap-2">
-                {([
-                  { key: "extra", label: "Labour" },
-                  { key: "materials", label: "Materials" },
-                ] as const).map((row) => (
-                  <label key={row.key} className="flex flex-col gap-1 text-xs text-text-secondary">
-                    <span>{row.label}</span>
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Client price £</span>
                     <Input
                       type="number"
                       min={0}
                       step="0.01"
-                      value={partnerAssignExtraInputs[row.key]}
-                      onChange={(e) =>
-                        setPartnerAssignExtraInputs((prev) => ({
-                          ...prev,
-                          [row.key]: e.target.value,
-                        }))
-                      }
-                      className="h-8 text-xs"
-                      placeholder="0.00"
+                      value={partnerAssignFixedClientPrice}
+                      onChange={(e) => setPartnerAssignFixedClientPrice(e.target.value)}
+                      className="h-9"
                     />
                   </label>
-                ))}
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Partner cost £</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerAssignFixedCost}
+                      onChange={(e) => setPartnerAssignFixedCost(e.target.value)}
+                      className="h-9"
+                    />
+                  </label>
+                </div>
+                {Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0 ||
+                Math.max(0, Number(partnerAssignFixedCost) || 0) > 0 ? (
+                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client</p>
+                      <p className="text-sm font-semibold tabular-nums text-text-primary">
+                        {formatCurrency(Math.max(0, Number(partnerAssignFixedClientPrice) || 0))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner</p>
+                      <p className="text-sm font-semibold tabular-nums text-text-primary">
+                        {formatCurrency(Math.max(0, Number(partnerAssignFixedCost) || 0))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
+                      {(() => {
+                        const client = Math.max(0, Number(partnerAssignFixedClientPrice) || 0);
+                        const partner = Math.max(0, Number(partnerAssignFixedCost) || 0);
+                        const margin = client - partner;
+                        const pct = client > 0 ? Math.round((margin / client) * 1000) / 10 : 0;
+                        return (
+                          <>
+                            <p
+                              className={cn(
+                                "text-sm font-semibold tabular-nums",
+                                margin >= 0
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-red-600 dark:text-red-400",
+                              )}
+                            >
+                              {formatCurrency(margin)}
+                            </p>
+                            <p
+                              className={cn(
+                                "text-[10px] font-medium tabular-nums",
+                                pct >= 20
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-amber-600 dark:text-amber-400",
+                              )}
+                            >
+                              {client > 0 ? `${pct}%` : "—"}
+                            </p>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              <div className="grid grid-cols-2 gap-2 border-t border-border-light pt-2.5">
+            )}
+            <div className="space-y-2.5 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
+              {partnerAssignShowCashExtras ||
+              Number(partnerAssignExtraInputs.extra) > 0 ||
+              Number(partnerAssignExtraInputs.materials) > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { key: "extra", label: "Extra labour" },
+                    { key: "materials", label: "Materials" },
+                  ] as const).map((row) => (
+                    <label key={row.key} className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>{row.label}</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={partnerAssignExtraInputs[row.key]}
+                        onChange={(e) =>
+                          setPartnerAssignExtraInputs((prev) => ({
+                            ...prev,
+                            [row.key]: e.target.value,
+                          }))
+                        }
+                        className="h-8 text-xs"
+                        placeholder="Optional"
+                      />
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setPartnerAssignShowCashExtras(true)}
+                  className="text-[11px] font-medium text-text-tertiary hover:text-text-secondary"
+                >
+                  + Extra labour or materials
+                </button>
+              )}
+              <div
+                className={cn(
+                  "grid grid-cols-2 gap-2",
+                  (partnerAssignShowCashExtras ||
+                    Number(partnerAssignExtraInputs.extra) > 0 ||
+                    Number(partnerAssignExtraInputs.materials) > 0) &&
+                    "border-t border-border-light pt-2.5",
+                )}
+              >
                 {([
                   { key: "ccz", label: "CCZ", fee: accessFees.cczFeeGbp },
                   { key: "parking", label: "Parking", fee: accessFees.parkingFeeGbp },
@@ -10894,6 +11196,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         normalizeTypeOfWork(partnerAssignService.name) || partnerAssignService.name;
                       partnerPatch.job_type = "hourly";
                       partnerPatch.catalog_service_id = partnerAssignService.id;
+                      partnerPatch.catalog_pricing_preset_id = partnerAssignPresetId || null;
                       partnerPatch.title = titleOut;
                       partnerPatch.hourly_client_rate = clientRate;
                       partnerPatch.hourly_partner_rate = partnerRate;
@@ -10910,6 +11213,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     } else {
                       partnerPatch.job_type = "fixed";
                       partnerPatch.partner_cost = partnerAssignBaseCost;
+                      const clientPrice = Math.round(Math.max(0, Number(partnerAssignFixedClientPrice) || 0) * 100) / 100;
+                      partnerPatch.client_price = clientPrice;
+                      partnerPatch.hourly_client_rate = null;
+                      partnerPatch.hourly_partner_rate = null;
+                      partnerPatch.billed_hours = null;
+                      const deposit = Math.max(0, Number(job.customer_deposit) || 0);
+                      const extrasAmount = Math.max(0, Number(job.extras_amount) || 0);
+                      partnerPatch.customer_final_payment =
+                        Math.round(Math.max(0, clientPrice + extrasAmount - deposit) * 100) / 100;
                     }
                     partnerPatch.partner_cost = Math.round((Number(partnerPatch.partner_cost ?? 0) + extrasCombined) * 100) / 100;
                     partnerPatch.partner_extras_amount = extrasCombined;

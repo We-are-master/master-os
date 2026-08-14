@@ -26,6 +26,8 @@ interface ReportEnvelope {
   template: ReportTemplate;
   submitted_at: string;
   photos?: ReportPhotos;
+  /** Which door the report came through — see lib/report-submission. */
+  source?: string;
 }
 
 /** Per-template payload shapes. Anything outside these is ignored on render. */
@@ -89,6 +91,8 @@ export interface CertificateFinalData {
 export interface NormalizedReport {
   template: ReportTemplate;
   submittedAt: Date | null;
+  /** "office_manual" when someone in the office typed it for the partner. */
+  source: string | null;
   /** Flat array view of all photos. Cleaner room maps are flattened with the room as a label. */
   photosFlat: Array<{ url: string; label?: string }>;
   /** Original room-by-room map for cleaner; null for flat templates. */
@@ -99,7 +103,8 @@ export interface NormalizedReport {
   durationMs: number | null;
 }
 
-const ENVELOPE_KEYS = new Set<string>(["template", "submitted_at", "photos"]);
+// `source` is envelope, not a field: it must never reach the client-facing PDF.
+const ENVELOPE_KEYS = new Set<string>(["template", "submitted_at", "photos", "source"]);
 
 export function normalizeReport(raw: unknown): NormalizedReport | null {
   if (!raw || typeof raw !== "object") return null;
@@ -107,6 +112,7 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
 
   const template = (typeof r.template === "string" ? r.template : "general") as ReportTemplate;
   const submittedAt = typeof r.submitted_at === "string" ? new Date(r.submitted_at) : null;
+  const source = typeof r.source === "string" && r.source.trim() ? r.source : null;
 
   // Photos can be array (general/gardener) OR room map (cleaner OR general
   // with a single 'before' bucket). Normalize both shapes for rendering.
@@ -138,7 +144,7 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
       ? (fields.duration_ms as number)
       : null;
 
-  return { template, submittedAt, photosFlat, photosByRoom, fields, durationMs };
+  return { template, submittedAt, source, photosFlat, photosByRoom, fields, durationMs };
 }
 
 /** Per-key human label for the dashboard + PDF. Unknown keys fall back to title-case. */
