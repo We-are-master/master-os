@@ -88,6 +88,44 @@ test("gardener conclui por all_tasks_done, que é o campo que ele tem", () => {
   assert.equal(pendente.ok && pendente.payload.conclusao, CONCLUSAO.maisTempo);
 });
 
+test("material e nota de cobrança chegam na descrição, em vez de sumir", () => {
+  // O formulário de trade só tem um radio sim/não para cobrança e nenhum campo
+  // de material: a descrição é o único lugar onde isso chega a um humano.
+  const r = payloadDoReport({
+    final: {
+      description: "Assembled the wardrobe.",
+      materials_used: "2 wall brackets, 8 screws",
+      additional_charges: true,
+      additional_charges_note: "£15 for the brackets",
+    },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok, true);
+  const d = r.ok ? r.payload.descricao : "";
+  assert.match(d, /^Assembled the wardrobe\./);
+  assert.match(d, /Materials\/parts used: 2 wall brackets, 8 screws/);
+  assert.match(d, /Additional charges: £15 for the brackets/);
+});
+
+test("sem material nem cobrança, a descrição sai intacta", () => {
+  const r = payloadDoReport({
+    final: { description: "Assembled the wardrobe." },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok && r.payload.descricao, "Assembled the wardrobe.");
+});
+
+test("gardener: a nota de material dele também para de ser descartada", () => {
+  const r = payloadDoReport({
+    final: { description: "Hedges trimmed.", materials_charges_note: "3 bags of compost" },
+    inicio: null,
+    fim: null,
+  });
+  assert.match(r.ok ? r.payload.descricao : "", /Materials\/parts used: 3 bags of compost/);
+});
+
 test("certificado envia usando inspection_summary como descrição", () => {
   // O template de certificado não grava `description`; sem a segunda chave,
   // todo job de certificado morria em "sem descrição do trabalho".

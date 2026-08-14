@@ -99,6 +99,16 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         showIf: { key: "additional_charges", equals: true },
       },
       {
+        // Sem `showIf`: exigir marcar um booleano antes é um clique a mais para
+        // quem está transcrevendo um WhatsApp, e um handyman não tinha onde
+        // registrar peça nenhuma — só o `gardener` tinha campo de material.
+        key: "materials_used",
+        label: "Materials or parts used",
+        hint: "Parts, fittings, consumables — what went into the job.",
+        type: "longtext",
+        optional: true,
+      },
+      {
         key: "completion_status",
         label: "Completion status",
         type: "select",

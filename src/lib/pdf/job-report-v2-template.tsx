@@ -390,6 +390,10 @@ function formatFieldValue(key: string, v: unknown): string {
   }
   if (key === "chargeable_hours" && typeof v === "number") return `${v.toFixed(2)} h`;
   if (typeof v === "boolean") return v ? "Yes" : "No";
+  // Este PDF vai para o cliente: `partially_complete` cru não pode aparecer.
+  if ((key === "completion_status" || key === "certificate_outcome") && typeof v === "string") {
+    return v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
   if (typeof v === "string") return v.trim();
   if (typeof v === "number") return String(v);
   return JSON.stringify(v);

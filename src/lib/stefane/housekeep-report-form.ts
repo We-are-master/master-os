@@ -173,6 +173,26 @@ export function conclusaoParaHousekeep(status: string | null | undefined): numbe
  * reportado como incompleto: jardinagem cai no formulário de trade (`ehLimpeza`
  * não casa "garden"), onde o campo simplesmente não existe.
  */
+/**
+ * A descrição que a Housekeep recebe, com o que se perdia no caminho.
+ *
+ * O formulário de trade só tem um radio sim/não para cobrança adicional e
+ * nenhum campo para material, então a descrição é o único lugar em prosa onde
+ * um humano do outro lado lê o que foi usado e o que foi cobrado. Antes disso,
+ * `additional_charges_note` e `materials_charges_note` eram digitados pelo
+ * parceiro e descartados no transporte.
+ */
+function montarDescricao(f: Record<string, unknown>, base: string): string {
+  const texto = (v: unknown) => String(v ?? "").trim();
+  const materiais = texto(f.materials_used) || texto(f.materials_charges_note);
+  const cobranca = texto(f.additional_charges_note);
+
+  const linhas = [base];
+  if (materiais) linhas.push(`Materials/parts used: ${materiais}`);
+  if (cobranca) linhas.push(`Additional charges: ${cobranca}`);
+  return linhas.join("\n\n");
+}
+
 export function conclusaoDoReport(f: Record<string, unknown>): number {
   const status = String(f.completion_status ?? "").trim();
   if (status) return conclusaoParaHousekeep(status);
@@ -280,7 +300,9 @@ export function payloadDoReport(input: {
     payload: {
       inicio: horaLondres(input.inicio),
       fim: horaLondres(input.fim),
-      descricao,
+      // A validação acima olha só a descrição base: relatório que só tem
+      // material e nenhuma descrição continua não valendo envio.
+      descricao: montarDescricao(f, descricao),
       cobrancaExtra: Boolean(f.additional_charges),
       conclusao: conclusaoDoReport(f),
       faltaFazer: (f.what_needs_completing as string | null)?.trim() || null,

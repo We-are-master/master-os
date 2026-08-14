@@ -38,6 +38,7 @@ export interface GeneralFinalData {
   description?: string;
   additional_charges?: boolean;
   additional_charges_note?: string | null;
+  materials_used?: string | null;
   completion_status?: string;
   what_needs_completing?: string | null;
   follow_up_required?: boolean;
@@ -154,6 +155,7 @@ export const REPORT_FIELD_LABELS: Record<string, string> = {
   description:                   "Work description",
   additional_charges:            "Additional charges",
   additional_charges_note:       "Charges note",
+  materials_used:                "Materials or parts used",
   completion_status:             "Completion status",
   what_needs_completing:         "What still needs completing",
   follow_up_required:            "Follow-up required",
@@ -232,7 +234,9 @@ function formatFieldValue(key: string, value: unknown): string {
   if (key === "duration_ms" && typeof value === "number") return formatDurationMs(value);
   if (key === "chargeable_hours" && typeof value === "number") return `${value.toFixed(2)} h`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (key === "certificate_outcome" && typeof value === "string") {
+  // Valores de select: sem isto o PDF que vai ao cliente imprime
+  // `partially_complete` cru, com underscore e tudo.
+  if ((key === "certificate_outcome" || key === "completion_status") && typeof value === "string") {
     return value
       .replace(/_/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase());
