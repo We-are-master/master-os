@@ -790,6 +790,20 @@ export interface Partner {
   contact_name: string;
   email: string;
   phone?: string;
+  /**
+   * WhatsApp, separado de `phone` porque nem todo telefone de contato recebe
+   * mensagem. Nulo é a resposta "não manda": parceiro sem este campo continua
+   * recebendo só o email, e nunca se copia `phone` para cá, porque isso
+   * transformaria silêncio em consentimento.
+   */
+  whatsapp?: string | null;
+  /**
+   * Aceite explícito para receber aviso de job por WhatsApp. Ter o número e
+   * querer ser avisado são decisões diferentes: o parceiro pode dar o WhatsApp
+   * para compartilhar o link do relatório com a equipe e ainda assim não querer
+   * mensagem a cada job. Só envia quando isto é `true` E `whatsapp` existe.
+   */
+  whatsapp_job_alerts?: boolean;
   trade: string;
   /** Multi-category support. Kept in sync with `trade` (first element). */
   trades?: string[] | null;
