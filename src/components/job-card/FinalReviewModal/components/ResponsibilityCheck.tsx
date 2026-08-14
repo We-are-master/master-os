@@ -32,8 +32,9 @@ export function ResponsibilityCheck({
           className="rounded-[8px] px-3 py-2 text-[12px]"
           style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#7A3D00" }}
         >
-          The report has not reached the client platform yet. You can still finalise, but
-          the report stays pending — send it from step 3 above, or from the Reports tab later.
+          The OS has not sent this report to the client platform. If it was submitted by hand
+          there, nothing is missing. Otherwise, send it from step 3 above or from the Reports
+          tab — finalising does not send it.
         </div>
       ) : null}
       <label

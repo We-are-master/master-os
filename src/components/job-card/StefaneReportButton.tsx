@@ -189,8 +189,11 @@ export function StefaneReportButton({
       className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] px-3 py-2"
       style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8" }}
     >
+      {/* "Não enviamos" e não "não chegou": a coluna registra o que a Stefane
+          mandou, não o que existe do lado deles. Sete jobs antigos estavam
+          entregues à mão na Housekeep e a tela dizia que faltavam. */}
       <p className="text-[12px]" style={{ color: "#7A3D00" }}>
-        The report has not gone to the client platform yet.
+        The OS has not sent this report to the client platform.
       </p>
       <button
         type="button"
