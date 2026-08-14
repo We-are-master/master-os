@@ -14,7 +14,8 @@
  * verdade, então a linha acompanha por polling em vez de segurar o clique.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RotateCcw, Send } from "lucide-react";
 
 type Estado = "nao_enviado" | "enviando" | "enviado" | "falhou";
 
@@ -36,12 +37,34 @@ export function StefaneReportButton({
   onEnviado?: () => void;
 }) {
   const [estado, setEstado] = useState<EstadoResposta | null>(null);
+  const [tentando, setTentando] = useState(false);
   const jaAvisou = useRef(false);
   const estadoRef = useRef<EstadoResposta["estado"] | null>(null);
+  const recarregarRef = useRef<() => void>(() => {});
   const onEnviadoRef = useRef(onEnviado);
   useEffect(() => {
     onEnviadoRef.current = onEnviado;
   }, [onEnviado]);
+
+  /**
+   * Reenvia sem sair da aba.
+   *
+   * O primeiro envio passa pela conferência campo a campo, no passo 3 da
+   * revisão. Uma nova tentativa não precisa: o conteúdo é o mesmo que já foi
+   * revisado, e o que falhou foi o transporte. Sem este botão o caminho de um
+   * envio que não foi é abrir o modal de novo ou fazer à mão — que é o que
+   * deixou 8 jobs fechados com o relatório parado no OS.
+   */
+  const tentarDeNovo = useCallback(async () => {
+    if (tentando) return;
+    setTentando(true);
+    try {
+      await fetch(`/api/jobs/${jobId}/submit-external-report`, { method: "POST" });
+      recarregarRef.current();
+    } finally {
+      setTentando(false);
+    }
+  }, [jobId, tentando]);
 
   // Um efeito só, com bandeira de vivo: busca ao montar e, enquanto estiver
   // enviando, repete de 3 em 3 segundos. Para sozinho quando termina, para não
@@ -66,6 +89,8 @@ export function StefaneReportButton({
         // Sem estado a linha some, e o resto da aba continua utilizável.
       }
     };
+
+    recarregarRef.current = () => void buscar();
 
     void buscar();
     const t = setInterval(() => {
@@ -113,25 +138,44 @@ export function StefaneReportButton({
         className="rounded-[8px] px-3 py-2 text-[12px]"
         style={{ background: "#FDECEA", border: "0.5px solid #F5C6C0", color: "#A32D2D" }}
       >
-        <strong>Not submitted:</strong> {estado.error}
-        {estado.attempts > 0 ? ` (attempt ${estado.attempts})` : ""}
-        {estado.report_link ? (
-          <>
-            {" · "}
-            <a href={estado.report_link} target="_blank" rel="noreferrer" className="underline">
-              send by hand
-            </a>
-          </>
-        ) : null}
-        <p className="mt-1" style={{ color: "#6B6B70" }}>
-          Retry from Review &amp; approve, step 3.
+        <p>
+          <strong>Not submitted:</strong> {estado.error}
+          {estado.attempts > 0 ? ` (attempt ${estado.attempts} of 3)` : ""}
         </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {estado.bloqueio ? (
+            <span className="text-[11px]" style={{ color: "#6B6B70" }}>{estado.bloqueio}</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void tentarDeNovo()}
+              disabled={tentando}
+              className="inline-flex items-center gap-1.5 rounded-[6px] px-[12px] py-[6px] text-[12px] font-semibold text-white cursor-pointer disabled:opacity-50"
+              style={{ background: "#020040" }}
+            >
+              <RotateCcw className="h-3 w-3" />
+              {tentando ? "Starting…" : "Try again"}
+            </button>
+          )}
+          {estado.report_link ? (
+            <a
+              href={estado.report_link}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-[6px] bg-white px-[12px] py-[6px] text-[12px] font-medium"
+              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+            >
+              Send by hand
+            </a>
+          ) : null}
+        </div>
       </div>
     );
   }
 
-  // Ainda não enviado: quem manda é a revisão final, então aqui só o motivo,
-  // quando houver um. Sem motivo, a linha não tem o que dizer e some.
+  // Ainda não enviado. O primeiro envio passa pela conferência do passo 3, mas
+  // o job pode já ter fechado — e aí o modal fica fora de mão. Se está
+  // elegível, o botão aparece aqui também.
   if (estado.bloqueio) {
     return (
       <div className="text-[12px]" style={{ color: "#6B6B70" }}>
@@ -140,5 +184,24 @@ export function StefaneReportButton({
     );
   }
 
-  return null;
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] px-3 py-2"
+      style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8" }}
+    >
+      <p className="text-[12px]" style={{ color: "#7A3D00" }}>
+        The report has not gone to the client platform yet.
+      </p>
+      <button
+        type="button"
+        onClick={() => void tentarDeNovo()}
+        disabled={tentando}
+        className="inline-flex items-center gap-1.5 rounded-[6px] px-[12px] py-[6px] text-[12px] font-semibold text-white cursor-pointer disabled:opacity-50"
+        style={{ background: "#020040" }}
+      >
+        <Send className="h-3 w-3" />
+        {tentando ? "Starting…" : "Send to Housekeep"}
+      </button>
+    </div>
+  );
 }

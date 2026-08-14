@@ -205,6 +205,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               sentToAccounts={sentToAccounts}
               onSentToAccountsChange={onSentToAccountsChange}
               currentUserName={currentUserName}
+              relatorioNaoSubiu={
+                !!envioExterno && envioExterno.estado !== "enviado" && reports.some((r) => r.uploaded)
+              }
             />
 
             <ModalFooter

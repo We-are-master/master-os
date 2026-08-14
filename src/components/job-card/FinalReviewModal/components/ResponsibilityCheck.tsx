@@ -4,6 +4,8 @@ type Props = {
   sentToAccounts: boolean;
   onSentToAccountsChange: (v: boolean) => void;
   currentUserName: string;
+  /** True quando o job tem relatório mas ele ainda não subiu na plataforma. */
+  relatorioNaoSubiu?: boolean;
 };
 
 export function ResponsibilityCheck({
@@ -12,6 +14,7 @@ export function ResponsibilityCheck({
   sentToAccounts,
   onSentToAccountsChange,
   currentUserName,
+  relatorioNaoSubiu,
 }: Props) {
   return (
     <div
@@ -21,6 +24,18 @@ export function ResponsibilityCheck({
         borderTop: "0.5px solid var(--color-border-tertiary, #E4E4E7)",
       }}
     >
+      {/* Avisa, não bloqueia: se a plataforma do cliente cair, o job ainda
+          precisa poder ser finalizado. Mas fechar sem o relatório ter subido é
+          como 8 jobs terminaram com o relatório parado no OS, e ninguém viu. */}
+      {relatorioNaoSubiu ? (
+        <div
+          className="rounded-[8px] px-3 py-2 text-[12px]"
+          style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#7A3D00" }}
+        >
+          The report has not reached the client platform yet. You can still finalise, but
+          the report stays pending — send it from step 3 above, or from the Reports tab later.
+        </div>
+      ) : null}
       <label
         className="flex items-start gap-[10px] text-[12px] cursor-pointer leading-[1.5]"
         style={{ color: "#6B6B70" }}
