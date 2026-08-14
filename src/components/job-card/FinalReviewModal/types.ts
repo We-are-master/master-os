@@ -36,7 +36,16 @@ export type FinalReviewModalProps = {
   reviewSummary?: FinalReviewSummarySnapshot | null;
 
   /** Display meta */
+  /** Human reference (`JOB-9427`) — **rótulo**, impresso no cabeçalho. */
   jobId: string;
+  /**
+   * UUID da linha — **chave**, usada para falar com a API.
+   *
+   * São dois campos de propósito. Enquanto existia só o `jobId`, o hook do
+   * envio externo consultava `/api/jobs/JOB-9427/...`, que responde 404 porque
+   * a rota busca por UUID, e o selo do passo 3 nunca apareceu.
+   */
+  jobUuid: string;
   jobTitle: string;
   clientName: string;
   partnerName: string;

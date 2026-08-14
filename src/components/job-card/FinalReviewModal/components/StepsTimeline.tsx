@@ -22,7 +22,12 @@ type Props = {
     estado: "nao_enviado" | "enviando" | "enviado" | "falhou";
     link?: string | null;
     erro?: string | null;
+    bloqueio?: string | null;
+    attempts?: number;
   };
+  /** Dispara o envio para a plataforma, sem sair da revisão. */
+  onEnviarRelatorio?: () => void;
+  enviandoRelatorio?: boolean;
 };
 
 function fmtGBP(n: number) {
@@ -93,6 +98,8 @@ export function StepsTimeline({
   partnerPayout,
   reports,
   envioExterno,
+  onEnviarRelatorio,
+  enviandoRelatorio,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -167,6 +174,29 @@ export function StepsTimeline({
               {r.name} · {r.uploaded ? "uploaded" : "missing"}
             </span>
           ))}
+          {/* Não enviado: ou dá para enviar daqui, ou o motivo de não dar.
+              Antes este ramo não existia e o passo ficava mudo justamente no
+              estado em que há algo a fazer. */}
+          {envioExterno?.estado === "nao_enviado" ? (
+            envioExterno.bloqueio ? (
+              <span
+                className="text-[11px] px-2 py-[3px] rounded-[5px]"
+                style={{ background: "#F4F4F6", color: "#6B6B70" }}
+              >
+                Client platform: {envioExterno.bloqueio}
+              </span>
+            ) : onEnviarRelatorio ? (
+              <button
+                type="button"
+                onClick={onEnviarRelatorio}
+                disabled={enviandoRelatorio}
+                className="text-[11px] px-2.5 py-[4px] rounded-[5px] font-semibold text-white cursor-pointer disabled:opacity-50"
+                style={{ background: "#020040" }}
+              >
+                {enviandoRelatorio ? "Starting…" : "Send to Housekeep"}
+              </button>
+            ) : null
+          ) : null}
           {envioExterno && envioExterno.estado !== "nao_enviado" ? (
             <span
               className="text-[11px] px-2 py-[3px] rounded-[5px] inline-flex items-center gap-[5px]"
@@ -218,6 +248,28 @@ export function StepsTimeline({
                 </a>
               ) : null}
             </span>
+          ) : null}
+          {/* Falhou: o motivo, e a chance de tentar de novo sem sair daqui. */}
+          {envioExterno?.estado === "falhou" ? (
+            <>
+              {envioExterno.erro ? (
+                <span className="text-[11px]" style={{ color: "#A32D2D" }}>
+                  {envioExterno.erro}
+                  {envioExterno.attempts ? ` (attempt ${envioExterno.attempts})` : ""}
+                </span>
+              ) : null}
+              {onEnviarRelatorio && !envioExterno.bloqueio ? (
+                <button
+                  type="button"
+                  onClick={onEnviarRelatorio}
+                  disabled={enviandoRelatorio}
+                  className="text-[11px] px-2.5 py-[4px] rounded-[5px] font-semibold cursor-pointer disabled:opacity-50"
+                  style={{ background: "#fff", color: "#020040", border: "0.5px solid #D8D8DD" }}
+                >
+                  {enviandoRelatorio ? "Starting…" : "Try again"}
+                </button>
+              ) : null}
+            </>
           ) : null}
         </div>
       ),

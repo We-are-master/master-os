@@ -9611,6 +9611,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setIncludeReportInEmail(true);
         }}
         jobId={job.reference}
+        jobUuid={job.id}
         jobTitle={job.title ?? ""}
         clientName={job.client_name ?? ""}
         partnerName={job.partner_name ?? ""}
