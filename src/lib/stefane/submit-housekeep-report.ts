@@ -70,7 +70,27 @@ async function baixarFotos(urls: string[], prefixo: string): Promise<Anexo[]> {
   return out;
 }
 
-/** Põe os arquivos no bloco de índice `indice` (0 = antes, 1 = depois). */
+/**
+ * Quantas fotos JÁ estão no servidor deles, por bloco.
+ *
+ * Depois do upload o input esvazia e a miniatura passa a vir do S3 da
+ * Housekeep. Contar o input daria zero e faria toda tentativa subir de novo.
+ */
+async function fotosJaEnviadas(page: Page): Promise<number[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll("div.section-collapse"))
+      .filter((s) => s.querySelector('input[type="file"]'))
+      .map((s) => s.querySelectorAll("img.uploaded-image, .uploaded-image-container img").length),
+  );
+}
+
+/**
+ * Põe os arquivos no bloco de índice `indice` (0 = antes, 1 = depois).
+ *
+ * Bloco que já tem foto é pulado. Sem isso cada nova tentativa empilha outra
+ * cópia do lado deles — foi o que aconteceu no JOB-9427, que terminou com três
+ * "before" e dois "after" iguais depois de duas rodadas.
+ */
 async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise<void> {
   if (anexos.length === 0) return;
   const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
@@ -78,7 +98,59 @@ async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise
     console.error(`[stefane] bloco de foto ${indice} não existe nesta página`);
     return;
   }
+  const jaLa = (await fotosJaEnviadas(page))[indice] ?? 0;
+  if (jaLa > 0) {
+    console.warn(`[stefane] bloco ${indice} já tem ${jaLa} foto(s) na plataforma; não subo de novo`);
+    return;
+  }
   await inputs.nth(indice).setInputFiles(anexos, { timeout: 60_000 });
+}
+
+/**
+ * Aperta o "Save" de cada seção que tem foto anexada.
+ *
+ * Descoberto em 14 ago, na primeira tentativa real: o texto e os horários
+ * persistem sozinhos, mas a foto **não**. Ela fica só no input até o Save da
+ * seção subir o arquivo, e o Submit então barra pedindo a foto que, do lado
+ * deles, nunca chegou. A tentativa devolveu a página com `fotos: [0, 0]`.
+ *
+ * Cada bloco da sanfona tem o seu próprio Save, então o clique é por seção.
+ */
+async function salvarSecoesComFoto(page: Page): Promise<number> {
+  const secoes = page.locator("div.section-collapse");
+  const total = await secoes.count();
+  let salvas = 0;
+
+  for (let i = 0; i < total; i++) {
+    const secao = secoes.nth(i);
+    const inputs = secao.locator(HOUSEKEEP_FOTOS.seletor);
+    if ((await inputs.count()) === 0) continue;
+    const anexados = await inputs
+      .first()
+      .evaluate((el) => (el as HTMLInputElement).files?.length ?? 0);
+    if (anexados === 0) continue;
+
+    const save = secao.locator("button", { hasText: /^\s*save\s*$/i });
+    if ((await save.count()) === 0) continue;
+    try {
+      await save.first().click({ timeout: 15_000 });
+      // O upload é por arquivo; sem a folga o Submit chega antes de terminar.
+      await page.waitForTimeout(2000 + anexados * 1500);
+      salvas += 1;
+    } catch (err) {
+      console.error(`[stefane] Save da seção ${i} falhou:`, err);
+    }
+  }
+  return salvas;
+}
+
+/** Quantos arquivos cada bloco de foto está segurando agora. */
+async function fotosNosBlocos(page: Page): Promise<number[]> {
+  return page.evaluate(
+    (sel) =>
+      Array.from(document.querySelectorAll(sel)).map((el) => (el as HTMLInputElement).files?.length ?? 0),
+    HOUSEKEEP_FOTOS.seletor,
+  );
 }
 
 export type ResultadoEnvio =
@@ -211,9 +283,12 @@ export async function submeterRelatorioHousekeep(args: {
       ]);
       await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
       await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
-      // A página processa cada arquivo (miniatura, upload) antes de aceitar o
-      // submit; sem essa folga o Submit chega antes das fotos.
-      if (antes.length || depois.length) await page.waitForTimeout(3000);
+      if (antes.length || depois.length) {
+        await page.waitForTimeout(1500);
+        // Sem o Save da seção a foto não sai do input, e o Submit é recusado
+        // pedindo a foto que do lado deles nunca chegou.
+        await salvarSecoesComFoto(page);
+      }
     }
 
     // A confirmação de veracidade é o único checkbox visível da página.
@@ -223,34 +298,52 @@ export async function submeterRelatorioHousekeep(args: {
     if (args.simular) {
       // Conta o que de fato entrou nos inputs, não o que pretendíamos anexar:
       // é a única forma de saber que o upload pegou sem apertar Submit.
-      const estado = await page.evaluate((sel) => ({
-        fotos: Array.from(document.querySelectorAll(sel)).map(
-          (el) => (el as HTMLInputElement).files?.length ?? 0,
-        ),
-        // Angular marca cada campo; sobrar inválido é o formulário dizendo que
-        // recusaria o Submit, e é o que se quer descobrir sem apertá-lo.
-        invalidos: document.querySelectorAll("input.ng-invalid, textarea.ng-invalid").length,
-      }), HOUSEKEEP_FOTOS.seletor);
+      // Angular marca cada campo; sobrar inválido é o formulário dizendo que
+      // recusaria o Submit, e é o que se quer descobrir sem apertá-lo.
+      const invalidos = await page.evaluate(
+        () => document.querySelectorAll("input.ng-invalid, textarea.ng-invalid").length,
+      );
+      const fotos = await fotosNosBlocos(page);
       return {
         ok: false,
         motivo:
-          `dry run: ${forma} form filled, photos [${estado.fotos.join(", ")}], ` +
-          `${estado.invalidos} invalid field(s), not submitted`,
+          `dry run: ${forma} form filled, photos [${fotos.join(", ")}], ` +
+          `${invalidos} invalid field(s), not submitted`,
         segundos: seg(),
       };
     }
 
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(5000);
 
-    const depois = await page.locator("body").innerText();
-    if (/thank you|submitted|received/i.test(depois)) {
+    // Sucesso é o formulário sumir, não uma palavra aparecer. A confirmação
+    // deles substitui a página inteira.
+    const aindaTemCampos = (await page.locator("input,textarea").count()) > 0;
+    const textoDepois = await page.locator("body").innerText();
+    if (!aindaTemCampos || /thank you|report submitted|received your report/i.test(textoDepois)) {
       return { ok: true, forma, segundos: seg() };
     }
-    const erro = depois.match(/required|error|invalid|must be/i);
+
+    // Continuamos no formulário: diga QUAL campo barrou.
+    //
+    // A versão antiga procurava /required|error|invalid/ no texto inteiro da
+    // página e sempre casava — o job details diz "Yes, I have the required
+    // parts". Toda falha virava `rejected: "required"`, que não diz nada.
+    const invalidos = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("input.ng-invalid, textarea.ng-invalid")).map((el) => {
+        const e = el as HTMLInputElement;
+        if (e.type === "checkbox") return "confirmation checkbox";
+        if (e.type === "file") return "photos";
+        return e.name || e.id || e.type;
+      }),
+    );
+    const fotos = await fotosNosBlocos(page);
+    const detalhe = invalidos.length
+      ? `still invalid: ${[...new Set(invalidos)].join(", ")}`
+      : `photos on the page: [${fotos.join(", ")}]`;
     return {
       ok: false,
-      motivo: erro ? `Housekeep rejected it: "${erro[0]}"` : "submitted but the page showed no confirmation",
+      motivo: `Housekeep did not accept the report — ${detalhe}`,
       segundos: seg(),
     };
   } catch (err) {
