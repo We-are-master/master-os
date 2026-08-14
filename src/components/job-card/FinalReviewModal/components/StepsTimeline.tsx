@@ -1,4 +1,5 @@
 import type { InvoiceDisplayStatus, ReportItem, SelfBillDisplayStatus } from "../types";
+import { ExternalReportStep, type EstadoEnvioExterno } from "./ExternalReportStep";
 
 type StepState = "issued" | "approved" | "pending" | "on_hold" | "blocked";
 
@@ -18,16 +19,11 @@ type Props = {
    * no OS e não subir na Housekeep é meio caminho, e é como 198 jobs viraram
    * 16 relatórios.
    */
-  envioExterno?: {
-    estado: "nao_enviado" | "enviando" | "enviado" | "falhou";
-    link?: string | null;
-    erro?: string | null;
-    bloqueio?: string | null;
-    attempts?: number;
-  };
-  /** Dispara o envio para a plataforma, sem sair da revisão. */
-  onEnviarRelatorio?: () => void;
-  enviandoRelatorio?: boolean;
+  envioExterno?: EstadoEnvioExterno;
+  /** UUID do job — o passo 3 fala com a API por conta própria. */
+  jobUuid?: string;
+  /** Avisa o modal de que um envio começou, para o polling assumir. */
+  onEnvioDisparado: () => void;
 };
 
 function fmtGBP(n: number) {
@@ -98,8 +94,8 @@ export function StepsTimeline({
   partnerPayout,
   reports,
   envioExterno,
-  onEnviarRelatorio,
-  enviandoRelatorio,
+  jobUuid,
+  onEnvioDisparado,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -174,102 +170,13 @@ export function StepsTimeline({
               {r.name} · {r.uploaded ? "uploaded" : "missing"}
             </span>
           ))}
-          {/* Não enviado: ou dá para enviar daqui, ou o motivo de não dar.
-              Antes este ramo não existia e o passo ficava mudo justamente no
-              estado em que há algo a fazer. */}
-          {envioExterno?.estado === "nao_enviado" ? (
-            envioExterno.bloqueio ? (
-              <span
-                className="text-[11px] px-2 py-[3px] rounded-[5px]"
-                style={{ background: "#F4F4F6", color: "#6B6B70" }}
-              >
-                Client platform: {envioExterno.bloqueio}
-              </span>
-            ) : onEnviarRelatorio ? (
-              <button
-                type="button"
-                onClick={onEnviarRelatorio}
-                disabled={enviandoRelatorio}
-                className="text-[11px] px-2.5 py-[4px] rounded-[5px] font-semibold text-white cursor-pointer disabled:opacity-50"
-                style={{ background: "#020040" }}
-              >
-                {enviandoRelatorio ? "Starting…" : "Send to Housekeep"}
-              </button>
-            ) : null
-          ) : null}
-          {envioExterno && envioExterno.estado !== "nao_enviado" ? (
-            <span
-              className="text-[11px] px-2 py-[3px] rounded-[5px] inline-flex items-center gap-[5px]"
-              style={{
-                background:
-                  envioExterno.estado === "enviado"
-                    ? "#E9F7F0"
-                    : envioExterno.estado === "falhou"
-                      ? "#FDECEA"
-                      : "#F1F5FB",
-                color:
-                  envioExterno.estado === "enviado"
-                    ? "#12704F"
-                    : envioExterno.estado === "falhou"
-                      ? "#A32D2D"
-                      : "#020040",
-              }}
-            >
-              {envioExterno.estado === "enviando" ? (
-                <>
-                  <span
-                    aria-hidden
-                    className="inline-block h-[9px] w-[9px] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
-                  />
-                  Sending report
-                </>
-              ) : envioExterno.estado === "falhou" ? (
-                <>
-                  <span aria-hidden>✕</span>
-                  Not submitted
-                </>
-              ) : (
-                <>
-                  <span aria-hidden>✓</span>
-                  Submitted
-                </>
-              )}
-              {/* O link acompanha nos dois desfechos: no verde para conferir que
-                  chegou, no vermelho para enviar à mão. */}
-              {envioExterno.link && envioExterno.estado !== "enviando" ? (
-                <a
-                  href={envioExterno.link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  check
-                </a>
-              ) : null}
-            </span>
-          ) : null}
-          {/* Falhou: o motivo, e a chance de tentar de novo sem sair daqui. */}
-          {envioExterno?.estado === "falhou" ? (
-            <>
-              {envioExterno.erro ? (
-                <span className="text-[11px]" style={{ color: "#A32D2D" }}>
-                  {envioExterno.erro}
-                  {envioExterno.attempts ? ` (attempt ${envioExterno.attempts})` : ""}
-                </span>
-              ) : null}
-              {onEnviarRelatorio && !envioExterno.bloqueio ? (
-                <button
-                  type="button"
-                  onClick={onEnviarRelatorio}
-                  disabled={enviandoRelatorio}
-                  className="text-[11px] px-2.5 py-[4px] rounded-[5px] font-semibold cursor-pointer disabled:opacity-50"
-                  style={{ background: "#fff", color: "#020040", border: "0.5px solid #D8D8DD" }}
-                >
-                  {enviandoRelatorio ? "Starting…" : "Try again"}
-                </button>
-              ) : null}
-            </>
+          {/* Todo o envio externo — estado, conferência e ação — mora aqui.
+              Antes o passo só falava depois que o envio já tinha acontecido,
+              calado justamente quando havia algo a fazer. */}
+          {jobUuid && envioExterno ? (
+            <div className="w-full">
+              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} />
+            </div>
           ) : null}
         </div>
       ),

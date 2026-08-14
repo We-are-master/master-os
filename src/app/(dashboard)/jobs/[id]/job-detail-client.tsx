@@ -64,6 +64,7 @@ import {
   Briefcase,
   Upload,
   ShieldCheck,
+  PencilLine,
   Plus,
   ImagePlus,
   ExternalLink,
@@ -1214,7 +1215,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     linkedAccountName: string | null;
   } | null>(null);
   const [finalReviewBillingLoading, setFinalReviewBillingLoading] = useState(false);
-  const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
   const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
@@ -4280,13 +4280,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     profile?.full_name,
   ]);
 
-  const openCompleteFromResumeModal = useCallback(() => {
-    setResumeJobOpen(false);
-    setApprovalMode("review_approve");
+  /**
+   * Abre a revisão final — a mesma, venha de onde vier.
+   *
+   * São quatro portas para este modal: o botão do topo, o ⋮ → Finish, o modal
+   * de retomar, o `?action=approve` vindo do Beacon, e agora o botão da aba
+   * Reports. Todas repetiam o mesmo bloco de setState, e o carregamento do
+   * modal é chaveado em `validateCompleteOpen`, não em quem abriu: entrar por
+   * uma porta ou por outra dá exatamente no mesmo.
+   */
+  const openFinalReview = useCallback(() => {
     setOwnerApprovalChecked(true);
     setSentToAccountsChecked(false);
     setValidateCompleteOpen(true);
   }, []);
+
+  const openCompleteFromResumeModal = useCallback(() => {
+    setResumeJobOpen(false);
+    openFinalReview();
+  }, [openFinalReview]);
 
   const handleResumeModalAction = useCallback(async () => {
     if (resumeAction === "cancel") {
@@ -6765,14 +6777,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       return;
                     }
                     if (action.special === "send_report_invoice") {
-                      setApprovalMode("review_approve");
-                      setOwnerApprovalChecked(true);
-                      setSentToAccountsChecked(false);
-                      setValidateCompleteOpen(true);
+                      openFinalReview();
                       return;
                     }
                     if (job.status === "need_attention" && action.status === "completed") {
-                      setApprovalMode("validate_complete");
+                      // Validar um job em atenção começa sem atestado marcado:
+                      // é o único caminho em que ninguém ainda revisou nada.
                       setOwnerApprovalChecked(false);
                       setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
@@ -6826,10 +6836,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
                           onClick={() => {
                             setJobMoreMenuOpen(false);
-                            setApprovalMode("review_approve");
-                            setOwnerApprovalChecked(true);
-                            setSentToAccountsChecked(false);
-                            setValidateCompleteOpen(true);
+                            openFinalReview();
                           }}
                         >
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
@@ -8106,12 +8113,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="p-[18px] space-y-[14px]">
+              {/* O painel do link é ferramenta, não ação principal: o botão de
+                  preencher vive no rodapé da aba, um só, para não haver dois
+                  "Upload report" na mesma tela. */}
               <PartnerReportLinkPanel
                 jobId={job.id}
                 hasPartner={!!job.partner_id}
                 isZendeskLinked={job.external_source === "zendesk" && !!job.external_ref}
                 bothReportsSubmitted={v2FinalSubmitted}
-                onFillManually={() => setFillReportOpen(true)}
               />
               {/* Partner who never opens the app: the office types the report
                   here so the PDF and Stefane get the same payload as always.
@@ -8143,35 +8152,62 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 approvedAt={job.final_report_approved_at ?? null}
                 onApprovalChange={() => router.refresh()}
               />
-              {/* Stefane: sobe o relatório na plataforma de origem. Fica logo
-                  abaixo do relatório do parceiro porque é o passo seguinte dele:
-                  chegou no OS, agora precisa chegar na Housekeep. */}
+              {/* Stefane: o estado do envio na plataforma de origem. Só estado —
+                  a ação de enviar vive no passo 3 da revisão final, para não
+                  haver dois botões "approve" a dois centímetros um do outro. */}
               <StefaneReportButton jobId={job.id} onEnviado={() => router.refresh()} />
               <JobPartnerMediaCard jobId={job.id} />
               <JobOnHoldSubmissionCard jobId={job.id} />
-              {v2FinalSubmitted ? (
-                <div
-                  className="flex items-center justify-between gap-2 pt-[12px]"
-                  style={{ borderTop: "0.5px solid #E4E4E8" }}
-                >
-                  <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-                    {v2ApprovedCount}/{v2SubmittedCount} final report validated
-                  </p>
-                  <div className="flex items-center gap-2">
-                    {/* Reopens the fill modal prefilled — fixes a typo, adds the
-                        photos that arrived later, without redoing the report. */}
+
+              {/* A única ação principal da aba, e o que ela diz depende do que
+                  falta: sem relatório, preencher; com relatório, revisar e
+                  aprovar — que é a mesma revisão do botão do topo. */}
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 pt-[12px]"
+                style={{ borderTop: "0.5px solid #E4E4E8" }}
+              >
+                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+                  {v2FinalSubmitted
+                    ? `${v2ApprovedCount}/${v2SubmittedCount} final report validated`
+                    : "No final report yet."}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {v2FinalSubmitted ? (
+                    <>
+                      {/* Reabre o modal preenchido: corrige um typo, junta a foto
+                          que chegou depois, sem refazer o relatório. */}
+                      <button
+                        type="button"
+                        onClick={() => setFillReportOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer"
+                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                      >
+                        Edit report
+                      </button>
+                      <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
+                      <button
+                        type="button"
+                        onClick={openFinalReview}
+                        className="inline-flex items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer"
+                        style={{ background: "#020040" }}
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Review &amp; approve
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
                       onClick={() => setFillReportOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer"
-                      style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                      className="inline-flex items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer"
+                      style={{ background: "#020040" }}
                     >
-                      Edit report
+                      <PencilLine className="h-3.5 w-3.5" />
+                      Upload report
                     </button>
-                    <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
-                  </div>
+                  )}
                 </div>
-              ) : null}
+              </div>
               </div>
             </div>
             </>

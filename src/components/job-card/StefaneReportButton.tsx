@@ -1,20 +1,20 @@
 "use client";
 
 /**
- * STEFANE — botão "Approve Report" do card, com conferência antes do envio.
+ * STEFANE — o estado do envio do relatório na plataforma de origem.
  *
- * O fluxo tem um passo a mais de propósito. Em vez de mandar direto, ele abre o
- * que a Stefane vai preencher, campo a campo, e só envia depois que você
- * confere. Nos primeiros jobs isso vale mais que velocidade: o preview já pegou
- * um relatório cuja descrição era a letra "K" e cujo timer terminava antes de
- * começar, e nenhum dos dois é erro técnico, é coisa que ninguém quer mandar
- * para a Housekeep.
+ * Só estado. A ação de enviar, com a conferência campo a campo antes, vive no
+ * passo 3 da revisão final (`FinalReviewModal/components/ExternalReportStep`),
+ * que é onde a pergunta aparece no fluxo. Aqui isto era um botão chamado
+ * "Approve Report", a dois centímetros de outro chamado "Approve report" que
+ * aprovava o relatório localmente: dois pesos completamente diferentes
+ * separados por uma letra maiúscula.
  *
  * O envio leva de 8 a 35 segundos porque preenche um formulário React de
- * verdade, então a tela acompanha por polling em vez de segurar o clique.
+ * verdade, então a linha acompanha por polling em vez de segurar o clique.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Estado = "nao_enviado" | "enviando" | "enviado" | "falhou";
 
@@ -27,10 +27,6 @@ type EstadoResposta = {
   bloqueio: string | null;
 };
 
-type Preview =
-  | { ok: true; forma: "trade" | "limpeza"; campos: Array<{ rotulo: string; valor: string }>; avisos: string[] }
-  | { ok: false; motivo: string };
-
 export function StefaneReportButton({
   jobId,
   onEnviado,
@@ -40,75 +36,62 @@ export function StefaneReportButton({
   onEnviado?: () => void;
 }) {
   const [estado, setEstado] = useState<EstadoResposta | null>(null);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [aberto, setAberto] = useState(false);
-  const [carregando, setCarregando] = useState(false);
   const jaAvisou = useRef(false);
-
-  const rota = `/api/jobs/${jobId}/submit-external-report`;
-
-  const buscarEstado = useCallback(async () => {
-    const r = await fetch(rota);
-    if (!r.ok) return null;
-    const d = (await r.json()) as EstadoResposta;
-    setEstado(d);
-    return d;
-  }, [rota]);
-
+  const estadoRef = useRef<EstadoResposta["estado"] | null>(null);
+  const onEnviadoRef = useRef(onEnviado);
   useEffect(() => {
-    void buscarEstado();
-  }, [buscarEstado]);
+    onEnviadoRef.current = onEnviado;
+  }, [onEnviado]);
 
-  // Enquanto estiver enviando, pergunta de 3 em 3 segundos. Para sozinho quando
-  // termina, para não deixar um timer vivo na página inteira.
+  // Um efeito só, com bandeira de vivo: busca ao montar e, enquanto estiver
+  // enviando, repete de 3 em 3 segundos. Para sozinho quando termina, para não
+  // deixar um timer vivo na página inteira.
   useEffect(() => {
-    if (estado?.estado !== "enviando") return;
-    const t = setInterval(() => {
-      void buscarEstado().then((d) => {
-        if (d?.estado === "enviado" && !jaAvisou.current) {
+    let vivo = true;
+    const rota = `/api/jobs/${jobId}/submit-external-report`;
+
+    const buscar = async () => {
+      try {
+        const r = await fetch(rota);
+        if (!r.ok || !vivo) return;
+        const d = (await r.json()) as EstadoResposta;
+        if (!vivo) return;
+        estadoRef.current = d.estado;
+        setEstado(d);
+        if (d.estado === "enviado" && !jaAvisou.current) {
           jaAvisou.current = true;
-          onEnviado?.();
+          onEnviadoRef.current?.();
         }
-      });
+      } catch {
+        // Sem estado a linha some, e o resto da aba continua utilizável.
+      }
+    };
+
+    void buscar();
+    const t = setInterval(() => {
+      if (estadoRef.current === "enviando") void buscar();
     }, 3000);
-    return () => clearInterval(t);
-  }, [estado?.estado, buscarEstado, onEnviado]);
-
-  const abrirConferencia = async () => {
-    setCarregando(true);
-    try {
-      const r = await fetch(`${rota}?preview=1`);
-      setPreview((await r.json()) as Preview);
-      setAberto(true);
-    } finally {
-      setCarregando(false);
-    }
-  };
-
-  const enviar = async () => {
-    setCarregando(true);
-    try {
-      await fetch(rota, { method: "POST" });
-      setAberto(false);
-      await buscarEstado();
-    } finally {
-      setCarregando(false);
-    }
-  };
+    return () => {
+      vivo = false;
+      clearInterval(t);
+    };
+  }, [jobId]);
 
   if (!estado) return null;
 
   if (estado.estado === "enviado") {
     return (
-      <div className="flex items-center gap-2 text-sm text-emerald-700">
+      <div className="flex flex-wrap items-center gap-2 text-[12px]" style={{ color: "#12704F" }}>
         <span aria-hidden>✓</span>
         <span>
-          Relatório na plataforma
-          {estado.submitted_at ? ` · ${new Date(estado.submitted_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : ""}
+          Report submitted to the client platform
+          {estado.submitted_at
+            ? ` · ${new Date(estado.submitted_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+            : ""}
         </span>
         {estado.report_link ? (
           <a href={estado.report_link} target="_blank" rel="noreferrer" className="underline">
-            abrir
+            open
           </a>
         ) : null}
       </div>
@@ -117,95 +100,45 @@ export function StefaneReportButton({
 
   if (estado.estado === "enviando") {
     return (
-      <div className="flex items-center gap-2 text-sm text-slate-600">
+      <div className="flex items-center gap-2 text-[12px]" style={{ color: "#6B6B70" }}>
         <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-        <span>Enviando para a plataforma. Costuma levar de 10 a 30 segundos.</span>
+        <span>Sending to the client platform. Usually 10 to 30 seconds.</span>
       </div>
     );
   }
 
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={abrirConferencia}
-          disabled={Boolean(estado.bloqueio) || carregando}
-          className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          Approve Report
-        </button>
-        {estado.bloqueio ? <span className="text-sm text-slate-500">{estado.bloqueio}</span> : null}
+  if (estado.estado === "falhou" && estado.error) {
+    return (
+      <div
+        className="rounded-[8px] px-3 py-2 text-[12px]"
+        style={{ background: "#FDECEA", border: "0.5px solid #F5C6C0", color: "#A32D2D" }}
+      >
+        <strong>Not submitted:</strong> {estado.error}
+        {estado.attempts > 0 ? ` (attempt ${estado.attempts})` : ""}
+        {estado.report_link ? (
+          <>
+            {" · "}
+            <a href={estado.report_link} target="_blank" rel="noreferrer" className="underline">
+              send by hand
+            </a>
+          </>
+        ) : null}
+        <p className="mt-1" style={{ color: "#6B6B70" }}>
+          Retry from Review &amp; approve, step 3.
+        </p>
       </div>
+    );
+  }
 
-      {estado.estado === "falhou" && estado.error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          <strong>Não subiu:</strong> {estado.error}
-          {estado.attempts > 0 ? ` (tentativa ${estado.attempts})` : ""}
-          {estado.report_link ? (
-            <>
-              {" · "}
-              <a href={estado.report_link} target="_blank" rel="noreferrer" className="underline">
-                enviar à mão
-              </a>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+  // Ainda não enviado: quem manda é a revisão final, então aqui só o motivo,
+  // quando houver um. Sem motivo, a linha não tem o que dizer e some.
+  if (estado.bloqueio) {
+    return (
+      <div className="text-[12px]" style={{ color: "#6B6B70" }}>
+        Client platform: {estado.bloqueio}
+      </div>
+    );
+  }
 
-      {aberto && preview ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
-            <h3 className="text-base font-semibold">Confira antes de enviar</h3>
-            {!preview.ok ? (
-              <p className="mt-3 text-sm text-slate-600">{preview.motivo}</p>
-            ) : (
-              <>
-                <p className="mt-1 text-sm text-slate-500">
-                  Formulário {preview.forma === "limpeza" ? "de limpeza" : "de trade"} da Housekeep.
-                </p>
-
-                {preview.avisos.length > 0 ? (
-                  <ul className="mt-3 space-y-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    {preview.avisos.map((a) => (
-                      <li key={a}>⚠ {a}</li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                <dl className="mt-4 space-y-2">
-                  {preview.campos.map((c) => (
-                    <div key={c.rotulo} className="grid grid-cols-[minmax(0,14rem)_1fr] gap-3 text-sm">
-                      <dt className="text-slate-500">{c.rotulo}</dt>
-                      <dd className="whitespace-pre-wrap text-slate-900">{c.valor}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </>
-            )}
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setAberto(false)}
-                className="rounded-md border px-3 py-2 text-sm"
-              >
-                Cancelar
-              </button>
-              {preview.ok ? (
-                <button
-                  type="button"
-                  onClick={enviar}
-                  disabled={carregando}
-                  className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:bg-slate-300"
-                >
-                  Enviar para a Housekeep
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
+  return null;
 }

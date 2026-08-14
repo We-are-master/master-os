@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
@@ -10,16 +10,10 @@ import { ModalHeader } from "./components/ModalHeader";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
 import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
+import type { EstadoEnvioExterno } from "./components/ExternalReportStep";
 import type { FinalReviewModalProps } from "./types";
 
-export type EnvioExterno = {
-  estado: "nao_enviado" | "enviando" | "enviado" | "falhou";
-  link?: string | null;
-  erro?: string | null;
-  /** Motivo de o envio não estar disponível, já em inglês, ou null se pode. */
-  bloqueio?: string | null;
-  attempts?: number;
-};
+type EnvioExterno = EstadoEnvioExterno;
 
 /**
  * Estado do envio do relatório para a plataforma de origem.
@@ -52,6 +46,7 @@ function useEnvioExterno(
           error?: string | null;
           bloqueio?: string | null;
           attempts?: number;
+          submitted_at?: string | null;
         };
         if (!vivo) return;
         estadoRef.current = d.estado;
@@ -61,6 +56,7 @@ function useEnvioExterno(
           erro: d.error ?? null,
           bloqueio: d.bloqueio ?? null,
           attempts: d.attempts ?? 0,
+          submittedAt: d.submitted_at ?? null,
         });
       } catch {
         // Falha de rede não pode derrubar o modal: sem estado, o passo 3 só não
@@ -116,28 +112,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     paymentSchedule,
   } = props;
 
+  // O envio para a plataforma de origem vive no passo 3 (ver ExternalReportStep):
+  // é lá que a pergunta aparece, e aqui só o estado que ele consome.
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
-  const [enviandoRelatorio, setEnviandoRelatorio] = useState(false);
-
-  /**
-   * Manda o relatório para a plataforma sem sair da revisão.
-   *
-   * Antes isto vivia num botão solto na aba Reports, chamado "Approve Report",
-   * colado num outro botão chamado "Approve report" que fazia coisa diferente.
-   * Aqui é o passo 3 da própria lista, que é onde a pergunta aparece.
-   */
-  const enviarRelatorio = useCallback(async () => {
-    if (!jobUuid || enviandoRelatorio) return;
-    setEnviandoRelatorio(true);
-    try {
-      await fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" });
-      // A rota devolve na hora e o preenchimento corre atrás; quem acompanha é
-      // o polling, que passa a rodar assim que o estado vira "enviando".
-      recarregar();
-    } finally {
-      setEnviandoRelatorio(false);
-    }
-  }, [jobUuid, enviandoRelatorio, recarregar]);
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
@@ -190,8 +167,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 partnerPayout={partnerPayout}
                 reports={reports}
                 envioExterno={envioExterno}
-                onEnviarRelatorio={enviarRelatorio}
-                enviandoRelatorio={enviandoRelatorio}
+                jobUuid={jobUuid}
+                onEnvioDisparado={recarregar}
               />
 
               <FinanceCards
