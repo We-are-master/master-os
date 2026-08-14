@@ -62,16 +62,49 @@ o critério da escalada. Se o launchd voltar a rodar antes da visita, eles
 entram na fila de novo. Ou o parceiro confirma, ou a escalada fica desligada
 até passar o dia 14.
 
+### 0b. A Stefane nunca teria conseguido enviar. Corrigido em 14 ago
+
+Abrindo o formulário real do JOB-9427 apareceram quatro bugs que, juntos,
+significam que **o primeiro envio teria falhado, e falhado sem diagnóstico**:
+
+1. **A conclusão mentia.** `could_not_complete` virava "Yes, no further work
+   required" na Housekeep, porque a string contém "complete" e o casamento era
+   por regex. Um job não feito era reportado como concluído, o que fecha o job
+   do lado deles. `partially_complete` virava "materiais", porque contém "part".
+2. **O formulário é uma sanfona de quatro seções** e só as duas primeiras vêm
+   abertas. `page.fill` recusa campo invisível, então o preenchimento morria em
+   "Finish time".
+3. **`#9vzq8kmtvz6p` é seletor CSS inválido** — id não pode começar com dígito,
+   e todos os ids da Housekeep começam. A descrição do trabalho nunca teria sido
+   preenchida.
+4. **As fotos não abriam.** O bucket `job-reports` é privado, mas o que fica
+   gravado no report é o `getPublicUrl`, que responde 400. Agora são assinadas.
+
+Também: jardinagem sempre reportava "more time needed" (o template `gardener`
+não tem `completion_status`), e certificado nunca podia ser enviado (usa
+`inspection_summary`, não `description`).
+
+Verificado contra o formulário real em modo simulação: **fotos [4, 6], 0 campos
+inválidos**. O `?simular=1` preenche e não aperta Submit — use sempre antes de
+um envio real.
+
 ### 1. Testar a Stefane ponta a ponta
 Job **JOB-9427** (`07af21bb-dffb-4489-b012-e3e902724ec0`): relatório do
 parceiro **preenchido e aprovado** via Fill it myself (13 ago). O botão
 **Approve Report** da Stefane destravou. Raine, da Housekeep, confirmou no
 ticket 48647 que está esperando o report — era pra ser no mesmo dia da visita.
 
-Antes de apertar: **as fotos**. A Housekeep exige before/after no report e o
-nosso foi salvo sem, porque as fotos do Tony ainda estão no WhatsApp. Fluxo:
-exportar do WhatsApp → **Edit report** → Add files → Save changes → aí sim
-Approve Report, conferir o preview campo a campo, e enviar.
+Antes de apertar: **as fotos**. Sem foto o envio agora é **recusado**, com o
+motivo na tela ("no photos on the report: Housekeep requires before and after"),
+porque a Housekeep exige before/after. As do Tony ainda estão no WhatsApp.
+
+Fluxo: exportar do WhatsApp → **Edit report** → Add files → Save changes →
+**Review & approve** → no passo 3, "Send to the client platform" → conferir o
+preview campo a campo → **Confirm and send**.
+
+A aba agora tem **um botão principal só**: "Upload report" quando não há
+relatório, "Review & approve" quando há. O envio para a Housekeep mora dentro
+da revisão, no passo 3, com o estado e o link ali mesmo.
 
 Nunca foi apertado Submit de verdade na Housekeep. O primeiro envio real ainda
 não aconteceu.
