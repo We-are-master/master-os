@@ -129,7 +129,7 @@ export async function enviarRelatorioExterno(
   opcoes?: { simular?: boolean },
 ): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
-  if (!job) return { estado: "nao_elegivel", motivo: "job não encontrado" };
+  if (!job) return { estado: "nao_elegivel", motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
   if (bloqueio) return { estado: "nao_elegivel", motivo: bloqueio };
@@ -155,7 +155,7 @@ export async function enviarRelatorioExterno(
     .is("external_report_started_at", null)
     .select("id")
     .maybeSingle();
-  if (!travado) return { estado: "enviando", motivo: "envio já em andamento" };
+  if (!travado) return { estado: "enviando", motivo: "a submission is already running" };
 
   // O bloco "before" da Housekeep é o report de chegada; o "after", o final.
   const [fotosAntes, fotosDepois] = await Promise.all([
@@ -228,7 +228,7 @@ export async function previewEnvio(
   | { ok: false; motivo: string }
 > {
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
-  if (!job) return { ok: false, motivo: "job não encontrado" };
+  if (!job) return { ok: false, motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
   if (bloqueio) return { ok: false, motivo: bloqueio };
@@ -255,8 +255,8 @@ export async function previewEnvio(
   const FEEDBACKS = ["Bad", "Okay", "Good"];
 
   const campos: Array<{ rotulo: string; valor: string }> = [
-    { rotulo: "Start time", valor: String(p.inicio ?? "(em branco)") },
-    { rotulo: "Finish time", valor: String(p.fim ?? "(em branco)") },
+    { rotulo: "Start time", valor: String(p.inicio ?? "(blank)") },
+    { rotulo: "Finish time", valor: String(p.fim ?? "(blank)") },
   ];
 
   if (limpeza) {
@@ -272,7 +272,7 @@ export async function previewEnvio(
       { rotulo: "Description of work done", valor: String(p.descricao ?? "") },
       { rotulo: "Any additional charges?", valor: simNao(p.cobrancaExtra) },
       { rotulo: "Job complete?", valor: CONCLUSOES[Number(p.conclusao) || 0] },
-      { rotulo: "What still needs completing?", valor: String(p.faltaFazer ?? "(em branco)") },
+      { rotulo: "What still needs completing?", valor: String(p.faltaFazer ?? "(blank)") },
       { rotulo: "Follow up required?", valor: simNao(p.precisaRetorno) },
     );
   }
@@ -289,13 +289,13 @@ export async function previewEnvio(
   const avisos: string[] = [];
   const desc = String(p.descricao ?? "");
   if (!limpeza && desc.length > 0 && desc.trim().length < 15) {
-    avisos.push(`a descrição do trabalho tem ${desc.trim().length} caracteres: "${desc.trim()}"`);
+    avisos.push(`the work description is only ${desc.trim().length} characters: "${desc.trim()}"`);
   }
   if (p.inicio && p.fim && String(p.fim) < String(p.inicio)) {
-    avisos.push(`o horário termina antes de começar (${p.inicio} → ${p.fim}): o timer do parceiro ficou aberto`);
+    avisos.push(`the finish time is before the start (${p.inicio} → ${p.fim}): the partner timer was left running`);
   }
   if (!p.inicio || !p.fim) {
-    avisos.push("sem horário de início ou fim: a Housekeep vai receber o campo em branco");
+    avisos.push("no start or finish time: the client platform will get the field blank");
   }
 
   return { ok: true, forma: limpeza ? "limpeza" : "trade", campos, avisos };

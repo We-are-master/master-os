@@ -224,7 +224,7 @@ export function payloadLimpeza(input: {
   inicio: string | null;
   fim: string | null;
 }): { ok: true; payload: PayloadLimpeza } | { ok: false; motivo: string } {
-  if (!input.final) return { ok: false, motivo: "sem report final do parceiro" };
+  if (!input.final) return { ok: false, motivo: "no final report from the partner" };
   const s = input.start ?? {};
   const f = input.final;
   return {
@@ -273,7 +273,7 @@ export function payloadDoReport(input: {
   // Sem essa segunda chave nenhum job de certificado conseguia ser enviado:
   // morria aqui dizendo que o report não tinha descrição.
   const descricao = String(f.description ?? f.inspection_summary ?? "").trim();
-  if (!descricao) return { ok: false, motivo: "report final sem descrição do trabalho" };
+  if (!descricao) return { ok: false, motivo: "the final report has no work description" };
 
   return {
     ok: true,

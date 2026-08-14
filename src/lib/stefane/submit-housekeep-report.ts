@@ -192,7 +192,7 @@ export async function submeterRelatorioHousekeep(args: {
       // Tem campos, mas nenhum que a gente conhece: aí sim o formulário mudou.
       return {
         ok: false,
-        motivo: `formulário da Housekeep mudou: ${ids.length} campos na página, nenhum conhecido`,
+        motivo: `the Housekeep form changed: ${ids.length} fields on the page, none recognised`,
         segundos: seg(),
       };
     }
@@ -234,8 +234,8 @@ export async function submeterRelatorioHousekeep(args: {
       return {
         ok: false,
         motivo:
-          `simulação: ${forma} preenchido, fotos [${estado.fotos.join(", ")}], ` +
-          `${estado.invalidos} campo(s) inválido(s), não submetido`,
+          `dry run: ${forma} form filled, photos [${estado.fotos.join(", ")}], ` +
+          `${estado.invalidos} invalid field(s), not submitted`,
         segundos: seg(),
       };
     }
@@ -250,11 +250,11 @@ export async function submeterRelatorioHousekeep(args: {
     const erro = depois.match(/required|error|invalid|must be/i);
     return {
       ok: false,
-      motivo: erro ? `a Housekeep recusou: "${erro[0]}"` : "submetido mas sem confirmação na página",
+      motivo: erro ? `Housekeep rejected it: "${erro[0]}"` : "submitted but the page showed no confirmation",
       segundos: seg(),
     };
   } catch (err) {
-    return { ok: false, motivo: err instanceof Error ? err.message : "erro desconhecido", segundos: seg() };
+    return { ok: false, motivo: err instanceof Error ? err.message : "unknown error", segundos: seg() };
   } finally {
     await browser.close();
   }

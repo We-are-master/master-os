@@ -133,7 +133,8 @@ test("hora sai no fuso de Londres, não no do Mac", () => {
 test("report sem descrição não vira payload", () => {
   const r = payloadDoReport({ final: { completion_status: "Completed" }, inicio: null, fim: null });
   assert.equal(r.ok, false);
-  assert.match(r.ok === false ? r.motivo : "", /descrição/);
+  // O motivo aparece na tela, então é inglês; o nome do teste é nosso.
+  assert.match(r.ok === false ? r.motivo : "", /work description/);
 });
 
 test("report completo vira payload inteiro", () => {
