@@ -22,7 +22,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   UserPlus, Filter, Users, Star, Briefcase, ShieldCheck, MapPin,
-  ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
+  ArrowRight, Mail, Phone, MessageCircle, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus, Share2,
@@ -3461,6 +3461,8 @@ function partnerOverviewFormFromPartner(partner: Partner) {
     contact_name: partner.contact_name ?? "",
     email: partner.email ?? "",
     phone: partner.phone ?? "",
+    whatsapp: partner.whatsapp ?? "",
+    whatsapp_job_alerts: partner.whatsapp_job_alerts === true,
     partner_address: partner.partner_address ?? "",
   };
 }
@@ -4186,6 +4188,8 @@ function PartnerDetailDrawer({
     contact_name: "",
     email: "",
     phone: "",
+    whatsapp: "",
+    whatsapp_job_alerts: false,
     partner_address: "",
   });
   const [ratingMeta, setRatingMeta] = useState({
@@ -4652,6 +4656,10 @@ function PartnerDetailDrawer({
         contact_name: overviewForm.contact_name.trim(),
         email: emailNorm,
         phone: overviewForm.phone.trim() || undefined,
+        // Número vazio zera o aceite junto: manter "quero ser avisado" marcado sem
+        // ter para onde mandar é um consentimento que não descreve nada.
+        whatsapp: overviewForm.whatsapp.trim() || null,
+        whatsapp_job_alerts: overviewForm.whatsapp.trim() ? overviewForm.whatsapp_job_alerts : false,
         ...homeAddressPatch,
       });
       onPartnerUpdate?.(updated);
@@ -5785,6 +5793,45 @@ function PartnerDetailDrawer({
                   ) : null}
                 </>
               )}
+              {editingOverview ? (
+                <div className="col-span-2 flex flex-col gap-1.5 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <MessageCircle className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                    <Input
+                      type="tel"
+                      value={overviewForm.whatsapp}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, whatsapp: e.target.value }))}
+                      placeholder="WhatsApp (+44 7700 900123)"
+                      className="h-8 flex-1 min-w-0"
+                    />
+                  </div>
+                  {/* Desabilitado sem número: marcar "quero ser avisado" sem ter
+                      para onde mandar guarda um consentimento que não descreve nada. */}
+                  <label className="flex items-start gap-2 pl-5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand cursor-pointer disabled:cursor-not-allowed"
+                      checked={overviewForm.whatsapp_job_alerts}
+                      disabled={!overviewForm.whatsapp.trim()}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, whatsapp_job_alerts: e.target.checked }))}
+                    />
+                    <span className="text-xs text-text-secondary">
+                      Send job notifications to this WhatsApp
+                      <span className="block text-text-tertiary">
+                        Leave this off and they only get the email.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              ) : partner.whatsapp?.trim() ? (
+                <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                  <MessageCircle className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                  <span className="truncate">{partner.whatsapp}</span>
+                  {partner.whatsapp_job_alerts ? null : (
+                    <span className="text-xs text-text-tertiary shrink-0">(no alerts)</span>
+                  )}
+                </div>
+              ) : null}
               {(editingOverview || partner.phone?.trim()) && (
                 <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
                   <Phone className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
