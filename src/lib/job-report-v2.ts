@@ -105,7 +105,15 @@ export interface NormalizedReport {
 }
 
 // `source` is envelope, not a field: it must never reach the client-facing PDF.
-const ENVELOPE_KEYS = new Set<string>(["template", "submitted_at", "photos", "source"]);
+// `certificate_ai` likewise — it is the audit trail of what the model read off
+// the attached certificate, not something the client should see printed.
+const ENVELOPE_KEYS = new Set<string>([
+  "template",
+  "submitted_at",
+  "photos",
+  "source",
+  "certificate_ai",
+]);
 
 export function normalizeReport(raw: unknown): NormalizedReport | null {
   if (!raw || typeof raw !== "object") return null;

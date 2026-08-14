@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerReportToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -7,6 +7,7 @@ import {
   parseReportPhotoEntries,
   persistReportSubmission,
 } from "@/lib/report-submission";
+import { fillCertificateExpiry } from "@/lib/certificate-reader";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -144,6 +145,12 @@ export async function POST(req: NextRequest) {
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
+  }
+
+  // The partner is on a phone, on site, and the read takes several seconds:
+  // it runs after the response so the form closes at the speed it always did.
+  if (template === "certificate") {
+    after(() => fillCertificateExpiry(supabase, job.id));
   }
 
   return NextResponse.json({ ok: true, jobReference: job.reference });

@@ -2846,14 +2846,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     () => Math.round((partnerAssignBaseCost + partnerAssignExtrasTotal + partnerAssignMaterialsTotal) * 100) / 100,
     [partnerAssignBaseCost, partnerAssignExtrasTotal, partnerAssignMaterialsTotal],
   );
+  // Custo de parceiro zero é válido e acontece: job feito em casa, cortesia,
+  // retorno de garantia, ou valor ainda não acordado com quem vai executar. O
+  // que não pode ser zero é o preço do cliente, que é a receita. Exigir custo
+  // acima de zero só desabilitava o botão sem dizer por quê, e a saída era
+  // inventar um número que depois virava margem errada no relatório.
   const partnerAssignCanConfirm =
     !!selectedPartnerId &&
     (partnerAssignRateType === "hourly"
       ? !!partnerAssignServiceId &&
         Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
-        Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0 &&
-        Math.max(0, Number(partnerAssignPartnerHourlyRate) || 0) > 0
-      : partnerAssignBaseCost > 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0);
+        Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0
+      : partnerAssignBaseCost >= 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0);
 
   useEffect(() => {
     if (!job) return;
