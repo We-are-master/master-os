@@ -369,11 +369,16 @@ export async function persistReportSubmission(
       entity_type: "job",
       entity_id: job.id,
       entity_ref: job.reference ?? null,
-      action: input.overwrite ? "report_edited" : "report_submitted",
+      // `action` is constrained to a fixed vocabulary in the database, so the
+      // specific event rides in metadata. Naming it in `action` looked right
+      // and inserted nothing: the check rejected every row and only the
+      // console heard about it.
+      action: "updated",
       field_name: input.writeStart ? "start_report+final_report" : "final_report",
       old_value: job.status ?? null,
       new_value: input.moveToFinalCheck !== false ? "final_check" : job.status ?? null,
       metadata: {
+        event: input.overwrite ? "report_edited" : "report_submitted",
         source: input.source,
         template: input.template,
         filled_by: input.filledBy ?? null,

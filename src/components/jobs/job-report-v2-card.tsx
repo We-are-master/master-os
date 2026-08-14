@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { CheckCircle2, FileText, ImageIcon, Loader2, ShieldCheck, Upload, ExternalLink, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   normalizeReport,
@@ -9,6 +9,14 @@ import {
   type NormalizedReport,
   type ReportKind,
 } from "@/lib/job-report-v2";
+import {
+  certificateAiEnvelope,
+  certificateAttachmentUrls,
+  certificateValidity,
+  expiryHeadline,
+  expirySourceNote,
+  type CertificateValidity,
+} from "@/lib/certificate-expiry";
 import { createSignedJobReportAssetUrl } from "@/services/job-reports";
 
 interface JobReportV2CardProps {
@@ -37,8 +45,21 @@ export function JobReportV2Card({
   const report = useMemo(() => normalizeReport(rawReport), [rawReport]);
   const fields = useMemo(() => (report ? renderableFields(report) : []), [report]);
 
+  // Certificate jobs answer one question before any other: until when is this
+  // valid? It comes from the typed field or from what the model read off the
+  // attached document, and the strip below says which.
+  const validity = useMemo(() => certificateValidity(rawReport), [rawReport]);
+  const certificate = useMemo(() => {
+    if (kind !== "final" || report?.template !== "certificate") return null;
+    return {
+      hasAttachment: certificateAttachmentUrls(rawReport).length > 0,
+      ai: certificateAiEnvelope(rawReport),
+    };
+  }, [kind, report?.template, rawReport]);
+
   const [openingImageKey, setOpeningImageKey] = useState<string | null>(null);
   const [savingApproval, setSavingApproval] = useState(false);
+  const [readingCertificate, setReadingCertificate] = useState(false);
 
   const isApproved = !!approvedAt;
   const titleLabel = kind === "start" ? "Start report" : "Final report";
@@ -76,6 +97,26 @@ export function JobReportV2Card({
       setSavingApproval(false);
     }
   }, [jobId, kind, onApprovalChange]);
+
+  const readCertificate = useCallback(async () => {
+    setReadingCertificate(true);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/read-certificate`, { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(body?.error ?? "Could not read the certificate.");
+        return;
+      }
+      toast.success(
+        body?.applied
+          ? "Expiry date read from the certificate."
+          : "Certificate read, but the expiry date was not usable.",
+      );
+      onApprovalChange?.();
+    } finally {
+      setReadingCertificate(false);
+    }
+  }, [jobId, onApprovalChange]);
 
   if (!report) {
     return (
@@ -165,6 +206,18 @@ export function JobReportV2Card({
           </span>
         ) : null}
       </div>
+
+      {validity ? <ValidityStrip validity={validity} /> : null}
+
+      {certificate && !validity ? (
+        <CertificateReadPrompt
+          hasAttachment={certificate.hasAttachment}
+          error={certificate.ai?.error ?? null}
+          reading={readingCertificate}
+          readOnly={readOnly}
+          onRead={readCertificate}
+        />
+      ) : null}
 
       {fields.length > 0 ? (
         <div className="rounded-[8px] p-3 bg-white space-y-1.5" style={{ border: "0.5px solid #E4E4E8" }}>
@@ -259,6 +312,95 @@ export function JobReportV2Card({
             </button>
           )}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Three tones, so "expired" is never mistaken for the brand orange. */
+const VALIDITY_TONE = {
+  valid:    { fg: "#0F6E56", bg: "#F0FBF7", border: "#B5E3D1", Icon: ShieldCheck },
+  expiring: { fg: "#B45309", bg: "#FFFBEB", border: "#F5DFA8", Icon: CalendarClock },
+  expired:  { fg: "#A32D2D", bg: "#FDF3F3", border: "#EFC9C9", Icon: AlertTriangle },
+} as const;
+
+/** The one line that matters on a certificate job: until when is this good? */
+function ValidityStrip({ validity }: { validity: CertificateValidity }) {
+  const tone = VALIDITY_TONE[validity.state];
+  return (
+    <div
+      className="rounded-[8px] px-3 py-[10px] flex items-start gap-2"
+      style={{ background: tone.bg, border: `0.5px solid ${tone.border}` }}
+    >
+      <tone.Icon className="h-4 w-4 shrink-0 mt-[1px]" style={{ color: tone.fg }} />
+      <div className="min-w-0">
+        <p className="text-[12px] font-semibold" style={{ color: tone.fg }}>
+          {expiryHeadline(validity)}
+        </p>
+        {/* Inline, not flex: a long note wraps around the icon instead of
+            stranding it alone on the line above. */}
+        <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+          {validity.source === "ai" ? (
+            <Sparkles
+              className="h-3 w-3 inline-block align-[-1.5px] mr-1"
+              style={{ color: "#9A9AA0" }}
+            />
+          ) : null}
+          {expirySourceNote(validity)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown on a certificate report that has no expiry on it yet.
+ *
+ * New reports get read automatically when they are saved, so this is here for
+ * the ones filed before that existed and for a document the model choked on.
+ */
+function CertificateReadPrompt({
+  hasAttachment,
+  error,
+  reading,
+  readOnly,
+  onRead,
+}: {
+  hasAttachment: boolean;
+  error:         string | null;
+  reading:       boolean;
+  readOnly?:     boolean;
+  onRead:        () => void;
+}) {
+  const message = !hasAttachment
+    ? "No certificate attached, so there is no expiry date to read."
+    : error
+      ? `Could not read the expiry date: ${error}`
+      : "No expiry date on this certificate yet.";
+
+  return (
+    <div
+      className="rounded-[8px] px-3 py-[10px] flex flex-wrap items-center justify-between gap-2"
+      style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+    >
+      <p className="text-[11px] min-w-0" style={{ color: "#6B6B70" }}>
+        {message}
+      </p>
+      {hasAttachment && !readOnly ? (
+        <button
+          type="button"
+          onClick={onRead}
+          disabled={reading}
+          className="inline-flex items-center gap-1.5 shrink-0 rounded-[6px] px-[10px] py-[5px] text-[11px] font-medium cursor-pointer disabled:opacity-40 bg-white hover:bg-[#F1F1F3]"
+          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+        >
+          {reading ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Sparkles className="h-3 w-3" />
+          )}
+          {reading ? "Reading" : error ? "Try again" : "Read expiry date"}
+        </button>
       ) : null}
     </div>
   );

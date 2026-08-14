@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -8,6 +8,7 @@ import {
   parseReportPhotoEntries,
   persistReportSubmission,
 } from "@/lib/report-submission";
+import { fillCertificateExpiry } from "@/lib/certificate-reader";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -159,6 +160,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
+  }
+
+  // Read the expiry off the attached certificate once the report is safely
+  // saved. It takes several seconds, so it runs after the response — the modal
+  // closes as fast as it always did and the date lands on the next refresh.
+  // An edit that attaches a new certificate re-reads; an edit that only fixes
+  // text keeps the reading already on the report.
+  if (template === "certificate") {
+    const freshCertificate = (parseReportPhotoEntries(form).certificate ?? []).length > 0;
+    after(() => fillCertificateExpiry(admin, job.id, { force: overwrite && freshCertificate }));
   }
 
   return NextResponse.json({
