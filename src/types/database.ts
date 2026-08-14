@@ -790,6 +790,13 @@ export interface Partner {
   contact_name: string;
   email: string;
   phone?: string;
+  /**
+   * WhatsApp, separado de `phone` porque nem todo telefone de contato recebe
+   * mensagem. Nulo é a resposta "não manda": parceiro sem este campo continua
+   * recebendo só o email, e nunca se copia `phone` para cá, porque isso
+   * transformaria silêncio em consentimento.
+   */
+  whatsapp?: string | null;
   trade: string;
   /** Multi-category support. Kept in sync with `trade` (first element). */
   trades?: string[] | null;

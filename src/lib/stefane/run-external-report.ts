@@ -11,6 +11,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
 import { submeterRelatorioHousekeep } from "./submit-housekeep-report";
+import { photoSlotsForTemplate, type ReportTemplate } from "@/lib/public-report-templates";
+import { isReportTemplate } from "@/lib/report-submission";
 
 const AVISAR = "victor@getfixfy.com";
 const MAX_TENTATIVAS = 3;
@@ -79,6 +81,20 @@ async function assinarFotos(supabase: SupabaseClient, urls: string[]): Promise<s
     .filter((u): u is string => typeof u === "string" && u.length > 0);
 }
 
+/**
+ * Template gravado no envelope do relatório, com `general` como padrão.
+ *
+ * Serve só para saber se aquele template tem seção de chegada, ou seja, se faz
+ * sentido exigir foto de "antes".
+ */
+function templateDoReport(job: { final_report?: unknown; start_report?: unknown }): ReportTemplate {
+  for (const r of [job.final_report, job.start_report]) {
+    const t = (r as { template?: unknown } | null)?.template;
+    if (typeof t === "string" && isReportTemplate(t)) return t;
+  }
+  return "general";
+}
+
 /** Motivo pelo qual o job não pode ser enviado agora, ou null se pode. */
 export function motivoNaoElegivel(job: {
   status?: string | null;
@@ -93,12 +109,23 @@ export function motivoNaoElegivel(job: {
   if (!job.final_report_submitted) return "the partner has not sent the final report yet";
   if (!job.report_link) return "this job has no platform link: nowhere to upload";
   if (!ehHousekeep(job.report_link)) return "platform not automated yet (Housekeep only for now)";
-  // Housekeep asks for before and after photos in every report. Sending without
-  // them is how a report comes back rejected — and the whole point of sending
-  // is that it lands accepted the same day.
-  if (urlsDeFoto(job.start_report).length + urlsDeFoto(job.final_report).length === 0) {
+  // A Housekeep pede foto de antes E de depois em todo relatório, e mandar sem
+  // uma das metades é como o relatório volta recusado. O guarda antigo somava as
+  // duas e só exigia que o total passasse de zero, então três fotos do antes e
+  // nenhuma do depois passava direto: bloqueava o caso vazio e deixava passar
+  // justamente o caso pela metade.
+  //
+  // A exigência do "antes" só vale para template que TEM seção de chegada. O de
+  // certificado não tem: o anexo dele mora na conclusão, e exigir antes ali
+  // recusaria todo certificado por um motivo que não existe.
+  const antes = urlsDeFoto(job.start_report).length;
+  const depois = urlsDeFoto(job.final_report).length;
+  const temSecaoDeChegada = photoSlotsForTemplate(templateDoReport(job)).start.length > 0;
+  if (antes === 0 && depois === 0) {
     return "no photos on the report: Housekeep requires before and after";
   }
+  if (temSecaoDeChegada && antes === 0) return "no before photos: Housekeep requires both";
+  if (depois === 0) return "no after photos: Housekeep requires both";
   if ((job.external_report_attempts ?? 0) >= MAX_TENTATIVAS) return "out of attempts: needs a person";
   return null;
 }
