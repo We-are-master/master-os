@@ -62,18 +62,44 @@ export const HOUSEKEEP_CAMPOS = {
   fim: { seletor: 'input[name="rnorwrdu5b26"]', tipo: "time" as const, rotulo: "Finish time" },
   /** "Can you recommend any additional Housekeep services...?" */
   recomendaServicos: { prefixo: "9vzq8kmt3vz6", tipo: "sim_nao" as const, rotulo: "Recommend additional services" },
-  /** "Description of work done" */
-  descricao: { seletor: "#9vzq8kmtvz6p", tipo: "texto" as const, rotulo: "Description of work done" },
+  /**
+   * "Description of work done".
+   *
+   * Endereçado por atributo, e não por `#id`: todos os ids da Housekeep começam
+   * com dígito, e `#9vzq...` é seletor CSS inválido — o navegador recusa a
+   * consulta inteira antes de procurar qualquer coisa.
+   */
+  descricao: { seletor: 'textarea[name="9vzq8kmtvz6p"]', tipo: "texto" as const, rotulo: "Description of work done" },
   /** "Are there any additional charges on today's job?" */
   cobrancaExtra: { prefixo: "6wbkjmy0x2z7", tipo: "sim_nao" as const, rotulo: "Additional charges" },
   /** Conclusão. Quatro opções, na ordem em que aparecem. */
   conclusao: { prefixo: "vxowxmk0gvz2", tipo: "escolha" as const, rotulo: "Job complete" },
-  /** "What still needs to be completed?" */
-  faltaFazer: { seletor: "#2kz3prnfmrbr", tipo: "texto" as const, rotulo: "What still needs completing" },
+  /** "What still needs to be completed?" — mesma razão do `descricao` acima. */
+  faltaFazer: { seletor: 'textarea[name="2kz3prnfmrbr"]', tipo: "texto" as const, rotulo: "What still needs completing" },
   /** "Is any follow up work required?" */
   precisaRetorno: { prefixo: "6jovglk0ylop", tipo: "sim_nao" as const, rotulo: "Follow up required" },
   /** Feedback para a Housekeep: 😞 Bad / 😐 Okay / 🙂 Good */
   feedback: { prefixo: "vxowxmk0npz2", tipo: "escolha" as const, rotulo: "Feedback" },
+} as const;
+
+/**
+ * Os dois blocos de foto do formulário, que a Housekeep exige.
+ *
+ * Não têm `id` nem `name` — por isso `formaDoFormulario`, que enumera id/name
+ * não vazios, nunca os viu, e por isso ficaram um ano sem ser mapeados. A única
+ * âncora estável é a ordem: o primeiro vem logo depois de "Start time" e pede
+ * "photos that show the condition of the job site before work began"; o segundo
+ * vem depois de "Finish time" e pede "the completed work or job site after".
+ *
+ * Ambos ficam dentro de sanfonas recolhidas, invisíveis na página.
+ * `setInputFiles` não se importa com visibilidade; `click()` se importaria.
+ */
+export const HOUSEKEEP_FOTOS = {
+  seletor: 'input[type="file"]',
+  antes: 0,
+  depois: 1,
+  /** "Upload or take photos — between 1-20 images", diz o botão. */
+  maximoPorBloco: 20,
 } as const;
 
 /** Índice do radio de conclusão, na ordem do formulário. */
