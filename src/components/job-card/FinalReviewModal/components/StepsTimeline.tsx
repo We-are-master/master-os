@@ -1,4 +1,5 @@
 import type { InvoiceDisplayStatus, ReportItem, SelfBillDisplayStatus } from "../types";
+import { ExternalReportStep, type EstadoEnvioExterno } from "./ExternalReportStep";
 
 type StepState = "issued" | "approved" | "pending" | "on_hold" | "blocked";
 
@@ -10,6 +11,19 @@ type Props = {
   jobValue: number;
   partnerPayout: number;
   reports: ReportItem[];
+  /**
+   * Estado do envio do relatório para a plataforma de origem (Stefane).
+   *
+   * Vive no passo 3, junto com o upload do parceiro, porque as duas coisas
+   * respondem a mesma pergunta: o relatório existe onde precisa existir? Subir
+   * no OS e não subir na Housekeep é meio caminho, e é como 198 jobs viraram
+   * 16 relatórios.
+   */
+  envioExterno?: EstadoEnvioExterno;
+  /** UUID do job — o passo 3 fala com a API por conta própria. */
+  jobUuid?: string;
+  /** Avisa o modal de que um envio começou, para o polling assumir. */
+  onEnvioDisparado: () => void;
 };
 
 function fmtGBP(n: number) {
@@ -79,6 +93,9 @@ export function StepsTimeline({
   jobValue,
   partnerPayout,
   reports,
+  envioExterno,
+  jobUuid,
+  onEnvioDisparado,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -140,7 +157,7 @@ export function StepsTimeline({
       title: "Partner reports uploaded",
       state: reportsUploadedState,
       subtitle: (
-        <div className="flex flex-wrap gap-[6px] mt-[6px]">
+        <div className="flex flex-wrap items-center gap-[6px] mt-[6px]">
           {reports.map((r) => (
             <span
               key={r.id}
@@ -153,6 +170,14 @@ export function StepsTimeline({
               {r.name} · {r.uploaded ? "uploaded" : "missing"}
             </span>
           ))}
+          {/* Todo o envio externo — estado, conferência e ação — mora aqui.
+              Antes o passo só falava depois que o envio já tinha acontecido,
+              calado justamente quando havia algo a fazer. */}
+          {jobUuid && envioExterno ? (
+            <div className="w-full">
+              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} />
+            </div>
+          ) : null}
         </div>
       ),
       trailing: (

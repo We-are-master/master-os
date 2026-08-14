@@ -47,6 +47,97 @@ test("limpeza sem report final não é enviada", () => {
   assert.equal(r.ok, false);
 });
 
+test("conclusão: os três valores do select viram o radio certo", () => {
+  // O select do OS manda exatamente estes três. O regex sozinho mandava
+  // `could_not_complete` como concluído (contém "complete") e
+  // `partially_complete` como materiais (contém "part").
+  assert.equal(conclusaoParaHousekeep("complete"), CONCLUSAO.completo);
+  assert.equal(conclusaoParaHousekeep("partially_complete"), CONCLUSAO.maisTempo);
+  assert.equal(conclusaoParaHousekeep("could_not_complete"), CONCLUSAO.maisTempo);
+});
+
+test("job que não deu para fazer NUNCA é reportado como concluído", () => {
+  // O erro caro: fecha o job do lado deles e some com a chance de voltar.
+  assert.notEqual(conclusaoParaHousekeep("could_not_complete"), CONCLUSAO.completo);
+  assert.notEqual(conclusaoParaHousekeep("partially_complete"), CONCLUSAO.completo);
+  assert.notEqual(conclusaoParaHousekeep("could not complete"), CONCLUSAO.completo);
+});
+
+test("'partially_complete' não pode virar 'materiais' por conter 'part'", () => {
+  assert.notEqual(conclusaoParaHousekeep("partially_complete"), CONCLUSAO.materiais);
+  // E "parts" solto continua sendo materiais, que é a intenção real.
+  assert.equal(conclusaoParaHousekeep("waiting on parts"), CONCLUSAO.materiais);
+});
+
+test("gardener conclui por all_tasks_done, que é o campo que ele tem", () => {
+  // Jardinagem cai no formulário de trade, mas o template gardener não tem
+  // completion_status: sem a ponte, jardim inteiro feito ia como incompleto.
+  const feito = payloadDoReport({
+    final: { description: "Hedges trimmed, lawn mowed.", all_tasks_done: true },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(feito.ok, true);
+  assert.equal(feito.ok && feito.payload.conclusao, CONCLUSAO.completo);
+
+  const pendente = payloadDoReport({
+    final: { description: "Ran out of daylight.", all_tasks_done: false },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(pendente.ok && pendente.payload.conclusao, CONCLUSAO.maisTempo);
+});
+
+test("material e nota de cobrança chegam na descrição, em vez de sumir", () => {
+  // O formulário de trade só tem um radio sim/não para cobrança e nenhum campo
+  // de material: a descrição é o único lugar onde isso chega a um humano.
+  const r = payloadDoReport({
+    final: {
+      description: "Assembled the wardrobe.",
+      materials_used: "2 wall brackets, 8 screws",
+      additional_charges: true,
+      additional_charges_note: "£15 for the brackets",
+    },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok, true);
+  const d = r.ok ? r.payload.descricao : "";
+  assert.match(d, /^Assembled the wardrobe\./);
+  assert.match(d, /Materials\/parts used: 2 wall brackets, 8 screws/);
+  assert.match(d, /Additional charges: £15 for the brackets/);
+});
+
+test("sem material nem cobrança, a descrição sai intacta", () => {
+  const r = payloadDoReport({
+    final: { description: "Assembled the wardrobe." },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok && r.payload.descricao, "Assembled the wardrobe.");
+});
+
+test("gardener: a nota de material dele também para de ser descartada", () => {
+  const r = payloadDoReport({
+    final: { description: "Hedges trimmed.", materials_charges_note: "3 bags of compost" },
+    inicio: null,
+    fim: null,
+  });
+  assert.match(r.ok ? r.payload.descricao : "", /Materials\/parts used: 3 bags of compost/);
+});
+
+test("certificado envia usando inspection_summary como descrição", () => {
+  // O template de certificado não grava `description`; sem a segunda chave,
+  // todo job de certificado morria em "sem descrição do trabalho".
+  const r = payloadDoReport({
+    final: { inspection_summary: "EICR carried out on all circuits.", certificate_issued: true },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.payload.descricao, "EICR carried out on all circuits.");
+});
+
 test("conclusão: texto do parceiro vira o radio certo", () => {
   assert.equal(conclusaoParaHousekeep("Completed"), CONCLUSAO.completo);
   assert.equal(conclusaoParaHousekeep("job done, all good"), CONCLUSAO.completo);
@@ -80,7 +171,8 @@ test("hora sai no fuso de Londres, não no do Mac", () => {
 test("report sem descrição não vira payload", () => {
   const r = payloadDoReport({ final: { completion_status: "Completed" }, inicio: null, fim: null });
   assert.equal(r.ok, false);
-  assert.match(r.ok === false ? r.motivo : "", /descrição/);
+  // O motivo aparece na tela, então é inglês; o nome do teste é nosso.
+  assert.match(r.ok === false ? r.motivo : "", /work description/);
 });
 
 test("report completo vira payload inteiro", () => {

@@ -16,9 +16,12 @@ import { enviarRelatorioExterno, motivoNaoElegivel, previewEnvio } from "@/lib/s
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// `start_report`/`final_report` entram porque a elegibilidade agora exige foto,
+// e a foto vive dentro do envelope do report.
 const SELECT =
   "id, reference, status, report_link, final_report_submitted, external_report_started_at, " +
-  "external_report_submitted_at, external_report_error, external_report_attempts";
+  "external_report_submitted_at, external_report_error, external_report_attempts, " +
+  "start_report, final_report";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

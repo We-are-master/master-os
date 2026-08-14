@@ -152,7 +152,15 @@ export function Modal({
                 isWizard
                   ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                   : effectiveScrollBody
-                    ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(85vh,calc(90dvh - 5rem),920px)]"
+                    // Sem `max-h` aqui de propósito. A que existia,
+                    // `max-h-[min(85vh,calc(90dvh - 5rem),920px)]`, tinha
+                    // espaços literais dentro do arbitrary value: o atributo
+                    // `class` quebra no espaço e o Tailwind nunca gerou a
+                    // regra. Era letra morta, e ligá-la agora mudaria o
+                    // recorte de 42 modais de uma vez. O painel já é
+                    // `flex flex-col` com `max-h`, e isto aqui já encolhe e
+                    // rola sozinho.
+                    ? "min-h-0 overflow-y-auto overscroll-contain"
                     : "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
               )}
             >

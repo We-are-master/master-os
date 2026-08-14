@@ -31,6 +31,54 @@ function ehHousekeep(link: string | null): boolean {
   return /housekeep\.com\/job-reports/i.test(String(link ?? ""));
 }
 
+/**
+ * Achata as fotos de um report para uma lista de URLs.
+ *
+ * O envelope guarda duas formas: array plano (general, gardener) e mapa por
+ * cômodo (cleaner, certificate). Aqui os dois viram lista, na ordem em que
+ * foram gravados.
+ */
+export function urlsDeFoto(report: unknown): string[] {
+  const p = (report as { photos?: unknown } | null)?.photos;
+  const limpa = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((u): u is string => typeof u === "string" && u.trim().length > 0) : [];
+  if (Array.isArray(p)) return limpa(p);
+  if (p && typeof p === "object") return Object.values(p as Record<string, unknown>).flatMap(limpa);
+  return [];
+}
+
+const BUCKET_FOTOS = "job-reports";
+
+/**
+ * Troca as URLs guardadas no report por URLs assinadas, que abrem de fato.
+ *
+ * O bucket `job-reports` é privado, mas o que fica gravado no envelope é o
+ * `getPublicUrl` — um endereço que responde 400 para quem não é o service role.
+ * Sem assinar, o Playwright baixava zero foto e o relatório subia vazio.
+ *
+ * Dez minutos bastam: o envio inteiro leva de 25 a 35 segundos.
+ */
+async function assinarFotos(supabase: SupabaseClient, urls: string[]): Promise<string[]> {
+  if (urls.length === 0) return [];
+  const marcador = `/${BUCKET_FOTOS}/`;
+  const caminhos = urls
+    .map((u) => {
+      const i = u.indexOf(marcador);
+      return i === -1 ? null : decodeURIComponent(u.slice(i + marcador.length).split("?")[0]);
+    })
+    .filter((p): p is string => !!p);
+  if (caminhos.length === 0) return urls;
+
+  const { data, error } = await supabase.storage.from(BUCKET_FOTOS).createSignedUrls(caminhos, 600);
+  if (error) {
+    console.error("[stefane] não consegui assinar as fotos:", error.message);
+    return [];
+  }
+  return (data ?? [])
+    .map((d) => d.signedUrl)
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+}
+
 /** Motivo pelo qual o job não pode ser enviado agora, ou null se pode. */
 export function motivoNaoElegivel(job: {
   status?: string | null;
@@ -38,12 +86,20 @@ export function motivoNaoElegivel(job: {
   final_report_submitted?: boolean | null;
   external_report_submitted_at?: string | null;
   external_report_attempts?: number | null;
+  start_report?: unknown;
+  final_report?: unknown;
 }): string | null {
-  if (job.external_report_submitted_at) return "relatório já foi enviado";
-  if (!job.final_report_submitted) return "o parceiro ainda não enviou o relatório final";
-  if (!job.report_link) return "job sem link de plataforma: não há onde subir";
-  if (!ehHousekeep(job.report_link)) return "plataforma ainda não automatizada (só Housekeep por enquanto)";
-  if ((job.external_report_attempts ?? 0) >= MAX_TENTATIVAS) return "tentativas esgotadas: precisa de uma pessoa";
+  if (job.external_report_submitted_at) return "the report has already been sent";
+  if (!job.final_report_submitted) return "the partner has not sent the final report yet";
+  if (!job.report_link) return "this job has no platform link: nowhere to upload";
+  if (!ehHousekeep(job.report_link)) return "platform not automated yet (Housekeep only for now)";
+  // Housekeep asks for before and after photos in every report. Sending without
+  // them is how a report comes back rejected — and the whole point of sending
+  // is that it lands accepted the same day.
+  if (urlsDeFoto(job.start_report).length + urlsDeFoto(job.final_report).length === 0) {
+    return "no photos on the report: Housekeep requires before and after";
+  }
+  if ((job.external_report_attempts ?? 0) >= MAX_TENTATIVAS) return "out of attempts: needs a person";
   return null;
 }
 
@@ -73,7 +129,7 @@ export async function enviarRelatorioExterno(
   opcoes?: { simular?: boolean },
 ): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
-  if (!job) return { estado: "nao_elegivel", motivo: "job não encontrado" };
+  if (!job) return { estado: "nao_elegivel", motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
   if (bloqueio) return { estado: "nao_elegivel", motivo: bloqueio };
@@ -99,11 +155,18 @@ export async function enviarRelatorioExterno(
     .is("external_report_started_at", null)
     .select("id")
     .maybeSingle();
-  if (!travado) return { estado: "enviando", motivo: "envio já em andamento" };
+  if (!travado) return { estado: "enviando", motivo: "a submission is already running" };
+
+  // O bloco "before" da Housekeep é o report de chegada; o "after", o final.
+  const [fotosAntes, fotosDepois] = await Promise.all([
+    assinarFotos(supabase, urlsDeFoto(j.start_report)),
+    assinarFotos(supabase, urlsDeFoto(j.final_report)),
+  ]);
 
   const res = await submeterRelatorioHousekeep({
     url: String(j.report_link).split("?")[0],
     payload: montado.payload,
+    fotos: { antes: fotosAntes, depois: fotosDepois },
     simular: opcoes?.simular,
   });
 
@@ -165,7 +228,7 @@ export async function previewEnvio(
   | { ok: false; motivo: string }
 > {
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
-  if (!job) return { ok: false, motivo: "job não encontrado" };
+  if (!job) return { ok: false, motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
   if (bloqueio) return { ok: false, motivo: bloqueio };
@@ -192,8 +255,8 @@ export async function previewEnvio(
   const FEEDBACKS = ["Bad", "Okay", "Good"];
 
   const campos: Array<{ rotulo: string; valor: string }> = [
-    { rotulo: "Start time", valor: String(p.inicio ?? "(em branco)") },
-    { rotulo: "Finish time", valor: String(p.fim ?? "(em branco)") },
+    { rotulo: "Start time", valor: String(p.inicio ?? "(blank)") },
+    { rotulo: "Finish time", valor: String(p.fim ?? "(blank)") },
   ];
 
   if (limpeza) {
@@ -209,7 +272,7 @@ export async function previewEnvio(
       { rotulo: "Description of work done", valor: String(p.descricao ?? "") },
       { rotulo: "Any additional charges?", valor: simNao(p.cobrancaExtra) },
       { rotulo: "Job complete?", valor: CONCLUSOES[Number(p.conclusao) || 0] },
-      { rotulo: "What still needs completing?", valor: String(p.faltaFazer ?? "(em branco)") },
+      { rotulo: "What still needs completing?", valor: String(p.faltaFazer ?? "(blank)") },
       { rotulo: "Follow up required?", valor: simNao(p.precisaRetorno) },
     );
   }
@@ -226,13 +289,13 @@ export async function previewEnvio(
   const avisos: string[] = [];
   const desc = String(p.descricao ?? "");
   if (!limpeza && desc.length > 0 && desc.trim().length < 15) {
-    avisos.push(`a descrição do trabalho tem ${desc.trim().length} caracteres: "${desc.trim()}"`);
+    avisos.push(`the work description is only ${desc.trim().length} characters: "${desc.trim()}"`);
   }
   if (p.inicio && p.fim && String(p.fim) < String(p.inicio)) {
-    avisos.push(`o horário termina antes de começar (${p.inicio} → ${p.fim}): o timer do parceiro ficou aberto`);
+    avisos.push(`the finish time is before the start (${p.inicio} → ${p.fim}): the partner timer was left running`);
   }
   if (!p.inicio || !p.fim) {
-    avisos.push("sem horário de início ou fim: a Housekeep vai receber o campo em branco");
+    avisos.push("no start or finish time: the client platform will get the field blank");
   }
 
   return { ok: true, forma: limpeza ? "limpeza" : "trade", campos, avisos };

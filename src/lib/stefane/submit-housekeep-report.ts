@@ -15,6 +15,7 @@ import { chromium, type Page } from "playwright";
 import {
   FEEDBACK,
   HOUSEKEEP_CAMPOS,
+  HOUSEKEEP_FOTOS,
   HOUSEKEEP_LIMPEZA,
   NAO,
   SIM,
@@ -23,14 +24,99 @@ import {
   type PayloadLimpeza,
 } from "./housekeep-report-form";
 
+/** Fotos de um envio: antes e depois, na ordem dos dois blocos do formulário. */
+export type FotosDoEnvio = { antes: string[]; depois: string[] };
+
+/** Anexo pronto para o `setInputFiles`, já em memória. */
+type Anexo = { name: string; mimeType: string; buffer: Buffer };
+
+const TIPOS_ACEITOS = /^image\//;
+
+/**
+ * Baixa as fotos do nosso bucket e devolve em memória.
+ *
+ * O input da Housekeep é `accept="image/*"`, então PDF (certificado) é
+ * descartado aqui em vez de ser recusado lá. Falha de download não derruba o
+ * envio: relatório com foto a menos ainda é melhor que relatório nenhum, e o
+ * que ficou de fora vai para o log.
+ */
+async function baixarFotos(urls: string[], prefixo: string): Promise<Anexo[]> {
+  const out: Anexo[] = [];
+  for (let i = 0; i < urls.length && out.length < HOUSEKEEP_FOTOS.maximoPorBloco; i++) {
+    const url = urls[i];
+    try {
+      const r = await fetch(url);
+      if (!r.ok) {
+        console.error(`[stefane] foto ${prefixo} ${i} respondeu ${r.status}`);
+        continue;
+      }
+      const mimeType = r.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+      if (!TIPOS_ACEITOS.test(mimeType)) continue;
+      out.push({
+        name: `${prefixo}-${i + 1}.${mimeType.includes("png") ? "png" : "jpg"}`,
+        mimeType,
+        buffer: Buffer.from(await r.arrayBuffer()),
+      });
+    } catch (err) {
+      console.error(`[stefane] foto ${prefixo} ${i} não baixou:`, err);
+    }
+  }
+  if (urls.length > HOUSEKEEP_FOTOS.maximoPorBloco) {
+    console.warn(
+      `[stefane] ${prefixo}: ${urls.length} fotos, a Housekeep aceita ${HOUSEKEEP_FOTOS.maximoPorBloco}. ` +
+        `${urls.length - HOUSEKEEP_FOTOS.maximoPorBloco} ficaram de fora.`,
+    );
+  }
+  return out;
+}
+
+/** Põe os arquivos no bloco de índice `indice` (0 = antes, 1 = depois). */
+async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise<void> {
+  if (anexos.length === 0) return;
+  const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
+  if ((await inputs.count()) <= indice) {
+    console.error(`[stefane] bloco de foto ${indice} não existe nesta página`);
+    return;
+  }
+  await inputs.nth(indice).setInputFiles(anexos, { timeout: 60_000 });
+}
+
 export type ResultadoEnvio =
   /** `jaEstava` = a plataforma já tinha o relatório; ninguém submeteu nada agora. */
   | { ok: true; forma: "trade" | "limpeza"; segundos: number; jaEstava?: boolean }
   | { ok: false; motivo: string; segundos: number };
 
+/**
+ * Abre todas as seções recolhidas do formulário.
+ *
+ * A página é uma sanfona de quatro blocos — Job details, Start job, Finish job,
+ * Feedback — e só o primeiro par vem aberto. `page.fill` recusa campo invisível,
+ * então sem isto o preenchimento morria no primeiro campo da seção fechada, que
+ * é justamente "Finish time". Foi o que impediu qualquer envio até hoje.
+ *
+ * Abrir é só apertar o `h5.collapsible`, que carrega o `aria-expanded`.
+ */
+async function abrirTodasAsSecoes(page: Page): Promise<void> {
+  const cabecalhos = page.locator("h5.collapsible");
+  const total = await cabecalhos.count();
+  for (let i = 0; i < total; i++) {
+    const h = cabecalhos.nth(i);
+    if ((await h.getAttribute("aria-expanded")) === "true") continue;
+    try {
+      await h.click({ timeout: 5000 });
+      await page.waitForTimeout(300);
+    } catch {
+      // Uma seção que não abre vira erro de campo lá embaixo, com nome e tudo.
+      // Falhar aqui só trocaria uma mensagem clara por uma genérica.
+    }
+  }
+}
+
 /** Marca um radio pelo prefixo do id (`vxowxmk0gvz2` → `vxowxmk0gvz2-2`). */
 async function marcarRadio(page: Page, prefixo: string, indice: number): Promise<void> {
-  const el = page.locator(`#${prefixo}-${indice}`);
+  // `[id="..."]` e não `#...`: os ids da Housekeep começam com dígito, e o
+  // seletor `#9vzq…` é inválido em CSS.
+  const el = page.locator(`[id="${prefixo}-${indice}"]`);
   // `check()` falha em input escondido atrás de um label estilizado, que é o
   // caso aqui; clicar no label é o caminho que o usuário real percorre.
   const label = page.locator(`label[for="${prefixo}-${indice}"]`);
@@ -72,7 +158,7 @@ async function preencherLimpeza(page: Page, p: PayloadLimpeza): Promise<void> {
 export async function submeterRelatorioHousekeep(args: {
   url: string;
   payload: PayloadHousekeep | PayloadLimpeza;
-  fotos?: string[];
+  fotos?: FotosDoEnvio;
   simular?: boolean;
 }): Promise<ResultadoEnvio> {
   const t0 = Date.now();
@@ -106,20 +192,52 @@ export async function submeterRelatorioHousekeep(args: {
       // Tem campos, mas nenhum que a gente conhece: aí sim o formulário mudou.
       return {
         ok: false,
-        motivo: `formulário da Housekeep mudou: ${ids.length} campos na página, nenhum conhecido`,
+        motivo: `the Housekeep form changed: ${ids.length} fields on the page, none recognised`,
         segundos: seg(),
       };
     }
 
+    await abrirTodasAsSecoes(page);
+
     if (forma === "trade") await preencherTrade(page, args.payload as PayloadHousekeep);
     else await preencherLimpeza(page, args.payload as PayloadLimpeza);
+
+    // Fotos por último: o download é a parte lenta, e não faz sentido pagar por
+    // ele se o preenchimento já falhou acima.
+    if (args.fotos) {
+      const [antes, depois] = await Promise.all([
+        baixarFotos(args.fotos.antes, "before"),
+        baixarFotos(args.fotos.depois, "after"),
+      ]);
+      await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
+      await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
+      // A página processa cada arquivo (miniatura, upload) antes de aceitar o
+      // submit; sem essa folga o Submit chega antes das fotos.
+      if (antes.length || depois.length) await page.waitForTimeout(3000);
+    }
 
     // A confirmação de veracidade é o único checkbox visível da página.
     const confirmar = page.locator('input[type="checkbox"]:visible');
     if (await confirmar.count()) await confirmar.first().check({ force: true });
 
     if (args.simular) {
-      return { ok: false, motivo: `simulação: ${forma} preenchido, não submetido`, segundos: seg() };
+      // Conta o que de fato entrou nos inputs, não o que pretendíamos anexar:
+      // é a única forma de saber que o upload pegou sem apertar Submit.
+      const estado = await page.evaluate((sel) => ({
+        fotos: Array.from(document.querySelectorAll(sel)).map(
+          (el) => (el as HTMLInputElement).files?.length ?? 0,
+        ),
+        // Angular marca cada campo; sobrar inválido é o formulário dizendo que
+        // recusaria o Submit, e é o que se quer descobrir sem apertá-lo.
+        invalidos: document.querySelectorAll("input.ng-invalid, textarea.ng-invalid").length,
+      }), HOUSEKEEP_FOTOS.seletor);
+      return {
+        ok: false,
+        motivo:
+          `dry run: ${forma} form filled, photos [${estado.fotos.join(", ")}], ` +
+          `${estado.invalidos} invalid field(s), not submitted`,
+        segundos: seg(),
+      };
     }
 
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
@@ -132,11 +250,11 @@ export async function submeterRelatorioHousekeep(args: {
     const erro = depois.match(/required|error|invalid|must be/i);
     return {
       ok: false,
-      motivo: erro ? `a Housekeep recusou: "${erro[0]}"` : "submetido mas sem confirmação na página",
+      motivo: erro ? `Housekeep rejected it: "${erro[0]}"` : "submitted but the page showed no confirmation",
       segundos: seg(),
     };
   } catch (err) {
-    return { ok: false, motivo: err instanceof Error ? err.message : "erro desconhecido", segundos: seg() };
+    return { ok: false, motivo: err instanceof Error ? err.message : "unknown error", segundos: seg() };
   } finally {
     await browser.close();
   }

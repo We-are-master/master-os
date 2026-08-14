@@ -26,6 +26,8 @@ interface ReportEnvelope {
   template: ReportTemplate;
   submitted_at: string;
   photos?: ReportPhotos;
+  /** Which door the report came through — see lib/report-submission. */
+  source?: string;
 }
 
 /** Per-template payload shapes. Anything outside these is ignored on render. */
@@ -36,6 +38,7 @@ export interface GeneralFinalData {
   description?: string;
   additional_charges?: boolean;
   additional_charges_note?: string | null;
+  materials_used?: string | null;
   completion_status?: string;
   what_needs_completing?: string | null;
   follow_up_required?: boolean;
@@ -89,6 +92,8 @@ export interface CertificateFinalData {
 export interface NormalizedReport {
   template: ReportTemplate;
   submittedAt: Date | null;
+  /** "office_manual" when someone in the office typed it for the partner. */
+  source: string | null;
   /** Flat array view of all photos. Cleaner room maps are flattened with the room as a label. */
   photosFlat: Array<{ url: string; label?: string }>;
   /** Original room-by-room map for cleaner; null for flat templates. */
@@ -99,7 +104,8 @@ export interface NormalizedReport {
   durationMs: number | null;
 }
 
-const ENVELOPE_KEYS = new Set<string>(["template", "submitted_at", "photos"]);
+// `source` is envelope, not a field: it must never reach the client-facing PDF.
+const ENVELOPE_KEYS = new Set<string>(["template", "submitted_at", "photos", "source"]);
 
 export function normalizeReport(raw: unknown): NormalizedReport | null {
   if (!raw || typeof raw !== "object") return null;
@@ -107,6 +113,7 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
 
   const template = (typeof r.template === "string" ? r.template : "general") as ReportTemplate;
   const submittedAt = typeof r.submitted_at === "string" ? new Date(r.submitted_at) : null;
+  const source = typeof r.source === "string" && r.source.trim() ? r.source : null;
 
   // Photos can be array (general/gardener) OR room map (cleaner OR general
   // with a single 'before' bucket). Normalize both shapes for rendering.
@@ -138,7 +145,7 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
       ? (fields.duration_ms as number)
       : null;
 
-  return { template, submittedAt, photosFlat, photosByRoom, fields, durationMs };
+  return { template, submittedAt, source, photosFlat, photosByRoom, fields, durationMs };
 }
 
 /** Per-key human label for the dashboard + PDF. Unknown keys fall back to title-case. */
@@ -148,6 +155,7 @@ export const REPORT_FIELD_LABELS: Record<string, string> = {
   description:                   "Work description",
   additional_charges:            "Additional charges",
   additional_charges_note:       "Charges note",
+  materials_used:                "Materials or parts used",
   completion_status:             "Completion status",
   what_needs_completing:         "What still needs completing",
   follow_up_required:            "Follow-up required",
@@ -226,7 +234,9 @@ function formatFieldValue(key: string, value: unknown): string {
   if (key === "duration_ms" && typeof value === "number") return formatDurationMs(value);
   if (key === "chargeable_hours" && typeof value === "number") return `${value.toFixed(2)} h`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (key === "certificate_outcome" && typeof value === "string") {
+  // Valores de select: sem isto o card e o PDF imprimem `partially_complete`
+  // cru, com underscore e tudo.
+  if ((key === "certificate_outcome" || key === "completion_status") && typeof value === "string") {
     return value
       .replace(/_/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase());

@@ -241,7 +241,7 @@ export function JobReportV2Card({
               style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
             >
               {savingApproval ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
-              Revoke approval
+              Revoke validation
             </button>
           ) : (
             <button
@@ -252,7 +252,10 @@ export function JobReportV2Card({
               style={{ background: "#0F6E56", color: "#FFFFFF" }}
             >
               {savingApproval ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-              Approve report
+              {/* "Validate" e não "Approve": aprovar, nesta operação, é o que
+                  acontece na revisão final. Aqui é atestar que o conteúdo do
+                  relatório está bom — o passo 4 da revisão. */}
+              Validate report
             </button>
           )}
         </div>

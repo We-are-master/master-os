@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Loader2, Send, ExternalLink, Check } from "lucide-react";
+import { Copy, Loader2, Send, ExternalLink, Check, PencilLine } from "lucide-react";
 import { toast } from "sonner";
 
 interface PartnerReportLinkPanelProps {
@@ -11,6 +11,8 @@ interface PartnerReportLinkPanelProps {
   /** Hide the panel once both reports are already submitted. */
   hideWhenSubmitted?:  boolean;
   bothReportsSubmitted?: boolean;
+  /** Opens the office modal for partners who never send anything themselves. */
+  onFillManually?:     () => void;
 }
 
 /**
@@ -27,6 +29,7 @@ export function PartnerReportLinkPanel({
   hasPartner,
   isZendeskLinked,
   bothReportsSubmitted,
+  onFillManually,
 }: PartnerReportLinkPanelProps) {
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [loadingUrl, setLoadingUrl] = useState(false);
@@ -103,15 +106,35 @@ export function PartnerReportLinkPanel({
     }
   }, [jobId]);
 
+  // Primary action. The link is the happy path, but when it fails — partner
+  // ignores it, link expired, wrong phone — the office needs the report typed
+  // NOW, so this is the big button and the link tools shrink to icons.
+  const uploadButton = onFillManually ? (
+    <button
+      type="button"
+      onClick={onFillManually}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-[6px] px-[14px] py-[8px] text-[12px] font-semibold cursor-pointer"
+      style={{ background: "#020040", color: "#fff" }}
+    >
+      <PencilLine className="h-3.5 w-3.5" />
+      Upload report
+    </button>
+  ) : null;
+
+  const iconButtonClass =
+    "inline-flex h-[30px] w-[30px] items-center justify-center rounded-[6px] bg-white cursor-pointer disabled:opacity-40 transition-colors hover:bg-[#EEEFF7]";
+  const iconButtonStyle = { color: "#020040", border: "0.5px solid #D8D8DD" } as const;
+
   if (!hasPartner) {
     return (
       <div
-        className="rounded-[10px] p-[14px]"
+        className="rounded-[10px] p-[14px] flex items-center justify-between gap-3"
         style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
       >
         <p className="text-[12px]" style={{ color: "#6B6B70" }}>
-          Assign a partner first to generate the report submission link.
+          No partner assigned — the report link needs one, but you can type the report now.
         </p>
+        {uploadButton}
       </div>
     );
   }
@@ -123,78 +146,80 @@ export function PartnerReportLinkPanel({
       className="rounded-[10px] p-[14px] space-y-3"
       style={{ background: "#F4F5FB", border: "0.5px solid #D8DBEE" }}
     >
-      <div className="flex items-start gap-2">
-        <Send className="h-4 w-4 shrink-0" style={{ color: "#020040" }} />
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold" style={{ color: "#020040" }}>
-            Send report link to partner
-          </p>
-          <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-            Partner-scoped link — locked to the assigned partner. Reassigning the partner invalidates older links.
-          </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-start gap-2 min-w-0">
+          <Send className="h-4 w-4 shrink-0 mt-[2px]" style={{ color: "#020040" }} />
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold" style={{ color: "#020040" }}>
+              Partner work report
+            </p>
+            <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+              Send the partner the link, or upload the report yourself when the link fails.
+            </p>
+          </div>
         </div>
+        {uploadButton}
       </div>
 
-      {reportUrl ? (
-        <div
-          className="rounded-[6px] p-2 text-[11px] font-mono break-all select-all"
-          style={{ background: "#FFFFFF", color: "#020040", border: "0.5px solid #D8DBEE" }}
-        >
-          {reportUrl}
-        </div>
-      ) : loadingUrl ? (
-        <p className="text-[11px]" style={{ color: "#6B6B70" }}>Loading link…</p>
-      ) : loadError ? (
+      {loadError ? (
         <div className="text-[11px]" style={{ color: "#ED4B00" }}>
           {loadError}
           <button
             type="button"
             onClick={() => void fetchUrl()}
-            className="ml-2 underline"
+            className="ml-2 underline cursor-pointer"
           >
             Retry
           </button>
         </div>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => void onCopy()}
-          disabled={loadingUrl}
-          className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40"
-          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+      ) : (
+        <div
+          className="flex items-center gap-1.5 rounded-[6px] pl-2.5 pr-1.5 py-[5px]"
+          style={{ background: "#FFFFFF", border: "0.5px solid #D8DBEE" }}
         >
-          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-          {copied ? "Copied" : "Copy link"}
-        </button>
-        <button
-          type="button"
-          onClick={() => void onSend()}
-          disabled={sending}
-          className="inline-flex items-center gap-1.5 rounded-[6px] px-[12px] py-[7px] text-[12px] font-semibold cursor-pointer disabled:opacity-40"
-          style={{ background: "#020040", color: "#fff" }}
-        >
-          {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-          {sending
-            ? "Sending…"
-            : isZendeskLinked
-              ? "Send via Zendesk"
-              : "Email partner"}
-        </button>
-        {reportUrl ? (
-          <a
-            href={reportUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium"
-            style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+          <span
+            className="flex-1 truncate text-[11px] font-mono select-all"
+            style={{ color: loadingUrl && !reportUrl ? "#9A9AAE" : "#020040" }}
           >
-            <ExternalLink className="h-3 w-3" />
-            Preview
-          </a>
-        ) : null}
-      </div>
+            {reportUrl ?? (loadingUrl ? "Loading link…" : "—")}
+          </span>
+          <button
+            type="button"
+            onClick={() => void onCopy()}
+            disabled={loadingUrl && !reportUrl}
+            title="Copy link"
+            aria-label="Copy report link"
+            className={iconButtonClass}
+            style={iconButtonStyle}
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSend()}
+            disabled={sending}
+            title={isZendeskLinked ? "Send via Zendesk" : "Email partner"}
+            aria-label={isZendeskLinked ? "Send link via Zendesk" : "Email link to partner"}
+            className={iconButtonClass}
+            style={iconButtonStyle}
+          >
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          </button>
+          {reportUrl ? (
+            <a
+              href={reportUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the partner form"
+              aria-label="Open the partner form"
+              className={iconButtonClass}
+              style={iconButtonStyle}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

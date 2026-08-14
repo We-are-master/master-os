@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
@@ -9,7 +10,73 @@ import { ModalHeader } from "./components/ModalHeader";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
 import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
+import type { EstadoEnvioExterno } from "./components/ExternalReportStep";
 import type { FinalReviewModalProps } from "./types";
+
+type EnvioExterno = EstadoEnvioExterno;
+
+/**
+ * Estado do envio do relatório para a plataforma de origem.
+ *
+ * Enquanto estiver enviando, pergunta de 3 em 3 segundos e para sozinho quando
+ * termina. O envio leva de 8 a 35 segundos porque preenche um formulário de
+ * verdade do outro lado, então segurar a tela não é opção.
+ */
+function useEnvioExterno(
+  jobUuid: string | null | undefined,
+  aberto: boolean,
+): { envio: EnvioExterno | undefined; recarregar: () => void } {
+  const [envio, setEnvio] = useState<EnvioExterno | undefined>(undefined);
+  // Ref e não dep do efeito: com `envio?.estado` na lista, cada resposta
+  // remontava o intervalo, e o polling dependia de o estado ter mudado.
+  const estadoRef = useRef<EnvioExterno["estado"] | undefined>(undefined);
+  const buscarRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!aberto || !jobUuid) return;
+    let vivo = true;
+
+    const buscar = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report`);
+        if (!r.ok || !vivo) return;
+        const d = (await r.json()) as {
+          estado: EnvioExterno["estado"];
+          report_link?: string | null;
+          error?: string | null;
+          bloqueio?: string | null;
+          attempts?: number;
+          submitted_at?: string | null;
+        };
+        if (!vivo) return;
+        estadoRef.current = d.estado;
+        setEnvio({
+          estado: d.estado,
+          link: d.report_link ?? null,
+          erro: d.error ?? null,
+          bloqueio: d.bloqueio ?? null,
+          attempts: d.attempts ?? 0,
+          submittedAt: d.submitted_at ?? null,
+        });
+      } catch {
+        // Falha de rede não pode derrubar o modal: sem estado, o passo 3 só não
+        // mostra o selo, e o resto da revisão continua utilizável.
+      }
+    };
+    buscarRef.current = () => void buscar();
+
+    void buscar();
+    const t = setInterval(() => {
+      if (estadoRef.current === "enviando") void buscar();
+    }, 3000);
+    return () => {
+      vivo = false;
+      clearInterval(t);
+    };
+  }, [jobUuid, aberto]);
+
+  return { envio, recarregar: () => buscarRef.current() };
+}
 
 export function FinalReviewModal(props: FinalReviewModalProps) {
   const {
@@ -17,6 +84,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     onClose,
     reviewSummary,
     jobId,
+    jobUuid,
     jobTitle,
     clientName,
     partnerName,
@@ -43,6 +111,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     hourlySlot,
     paymentSchedule,
   } = props;
+
+  // O envio para a plataforma de origem vive no passo 3 (ver ExternalReportStep):
+  // é lá que a pergunta aparece, e aqui só o estado que ele consome.
+  const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
@@ -94,6 +166,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 jobValue={jobValue}
                 partnerPayout={partnerPayout}
                 reports={reports}
+                envioExterno={envioExterno}
+                jobUuid={jobUuid}
+                onEnvioDisparado={recarregar}
               />
 
               <FinanceCards

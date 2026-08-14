@@ -4,6 +4,7 @@ import { FileText, Upload } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   fieldsForTemplate,
+  isFieldVisible,
   photoSlotsForTemplate,
   reportSectionTitles,
   reportTemplateDisplayLabel,
@@ -11,6 +12,7 @@ import {
   type ReportPhotoSlot,
   type ReportTemplate,
 } from "@/lib/public-report-templates";
+import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
 import {
   FIXFY_BORDER,
   FIXFY_MUTED,
@@ -27,42 +29,6 @@ interface PublicReportFormProps {
   serviceType:     string | null;
   template:        ReportTemplate;
   onSubmitted:     () => void;
-}
-
-const MAX_PHOTO_LONG_EDGE = 1600;
-const PHOTO_JPEG_QUALITY  = 0.75;
-
-async function downscaleImage(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  const longest = Math.max(bitmap.width, bitmap.height);
-  const scale = longest > MAX_PHOTO_LONG_EDGE ? MAX_PHOTO_LONG_EDGE / longest : 1;
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not get canvas context.");
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("Image encode failed."))),
-      "image/jpeg",
-      PHOTO_JPEG_QUALITY,
-    );
-  });
-  bitmap.close();
-  return blob;
-}
-
-function isPdfFile(file: File): boolean {
-  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-}
-
-async function prepareUploadFile(file: File, slotKey: string, index: number): Promise<File> {
-  if (isPdfFile(file)) return file;
-  const blob = await downscaleImage(file);
-  return new File([blob], `${slotKey}-${index}.jpg`, { type: "image/jpeg" });
 }
 
 function fieldInputClass(): string {
@@ -128,10 +94,7 @@ export default function PublicReportForm({
   );
 
   const renderField = (f: ReportField) => {
-    if (f.showIf) {
-      const gateValue = data[f.showIf.key];
-      if (gateValue !== f.showIf.equals) return null;
-    }
+    if (!isFieldVisible(f, data)) return null;
     const val = data[f.key];
     const label = (
       <label className="block text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>
@@ -342,20 +305,7 @@ export default function PublicReportForm({
   const submit = async () => {
     setError(null);
 
-    const startFields: Record<string, unknown> = {};
-    for (const f of spec.start) {
-      if (f.showIf && data[f.showIf.key] !== f.showIf.equals) continue;
-      const v = data[f.key];
-      if (v === undefined || v === null || v === "") continue;
-      startFields[f.key] = v;
-    }
-    const finalFields: Record<string, unknown> = {};
-    for (const f of spec.final) {
-      if (f.showIf && data[f.showIf.key] !== f.showIf.equals) continue;
-      const v = data[f.key];
-      if (v === undefined || v === null || v === "") continue;
-      finalFields[f.key] = v;
-    }
+    const { startFields, finalFields } = splitReportFields(spec, data);
 
     const h = Number(hours) || 0;
     const m = Number(minutes) || 0;
