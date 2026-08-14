@@ -5,6 +5,8 @@
  * network. PDFs (certificates) pass through untouched.
  */
 
+import { isFieldVisible, type ReportField } from "@/lib/public-report-templates";
+
 const MAX_PHOTO_LONG_EDGE = 1600;
 const PHOTO_JPEG_QUALITY = 0.75;
 
@@ -47,16 +49,13 @@ export async function prepareUploadFile(file: File, slotKey: string, index: numb
  * forms: a field you cannot see is a field you did not answer.
  */
 export function splitReportFields(
-  spec: {
-    start: Array<{ key: string; showIf?: { key: string; equals: unknown } }>;
-    final: Array<{ key: string; showIf?: { key: string; equals: unknown } }>;
-  },
+  spec: { start: ReportField[]; final: ReportField[] },
   data: Record<string, unknown>,
 ): { startFields: Record<string, unknown>; finalFields: Record<string, unknown> } {
-  const collect = (fields: Array<{ key: string; showIf?: { key: string; equals: unknown } }>) => {
+  const collect = (fields: ReportField[]) => {
     const out: Record<string, unknown> = {};
     for (const f of fields) {
-      if (f.showIf && data[f.showIf.key] !== f.showIf.equals) continue;
+      if (!isFieldVisible(f, data)) continue;
       const v = data[f.key];
       if (v === undefined || v === null || v === "") continue;
       out[f.key] = v;

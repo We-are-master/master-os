@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
 import {
   fieldsForTemplate,
+  isFieldVisible,
   photoSlotsForTemplate,
   pickReportTemplate,
   reportSectionTitles,
@@ -160,7 +161,7 @@ export function FillReportModal({
     "w-full rounded-[6px] border px-3 py-2 text-[13px] text-[#020040] placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/20 focus:border-[#ED4B00]";
 
   const renderField = (f: ReportField) => {
-    if (f.showIf && data[f.showIf.key] !== f.showIf.equals) return null;
+    if (!isFieldVisible(f, data)) return null;
     const val = data[f.key];
     const label = (
       <label className="block text-[12px] font-semibold" style={{ color: NAVY }}>

@@ -42,8 +42,27 @@ export interface ReportField {
   options?:      Array<{ value: string; label: string }>;
   /** When true, treat blank as "skip" (don't send the key at all). */
   optional?:     boolean;
-  /** When set: a key whose true/false value gates whether this field is shown. */
-  showIf?:       { key: string; equals: unknown };
+  /**
+   * Gate: the field only shows when another field holds a given value. Use
+   * `equals` for one value, `in` when several answers open the same follow-up.
+   */
+  showIf?:       { key: string; equals?: unknown; in?: unknown[] };
+}
+
+/**
+ * Whether a gated field should be shown (and therefore collected).
+ *
+ * Single source of truth for the three renderers — the office modal, the public
+ * partner form and `splitReportFields`. A field you cannot see is a field you
+ * did not answer, so all three have to agree or the payload disagrees with the
+ * screen.
+ */
+export function isFieldVisible(field: ReportField, data: Record<string, unknown>): boolean {
+  const gate = field.showIf;
+  if (!gate) return true;
+  const value = data[gate.key];
+  if (gate.in) return gate.in.includes(value);
+  return value === gate.equals;
 }
 
 interface TemplateSpec {
@@ -92,9 +111,12 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       {
         key: "what_needs_completing",
         label: "What still needs completing",
+        hint: "The client platform asks this whenever the job is not fully done.",
         type: "longtext",
         optional: true,
-        showIf: { key: "completion_status", equals: "partially_complete" },
+        // Também quando não deu para fazer: era justo o caso mais grave que
+        // chegava na Housekeep com "What still needs to be completed?" vazio.
+        showIf: { key: "completion_status", in: ["partially_complete", "could_not_complete"] },
       },
       {
         key: "follow_up_required",

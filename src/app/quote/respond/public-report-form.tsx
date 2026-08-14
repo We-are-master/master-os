@@ -4,6 +4,7 @@ import { FileText, Upload } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   fieldsForTemplate,
+  isFieldVisible,
   photoSlotsForTemplate,
   reportSectionTitles,
   reportTemplateDisplayLabel,
@@ -93,10 +94,7 @@ export default function PublicReportForm({
   );
 
   const renderField = (f: ReportField) => {
-    if (f.showIf) {
-      const gateValue = data[f.showIf.key];
-      if (gateValue !== f.showIf.equals) return null;
-    }
+    if (!isFieldVisible(f, data)) return null;
     const val = data[f.key];
     const label = (
       <label className="block text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>

@@ -92,20 +92,70 @@ export const SIM = 0;
 export const NAO = 1;
 
 /**
+ * Os três valores do select de `completion_status`, casados por igualdade.
+ *
+ * Nenhum dos dois negativos diz a **causa**, e as quatro opções da Housekeep
+ * afirmam uma. `maisTempo` é a única que diz "não terminou" sem inventar
+ * motivo; o porquê vai no campo de texto ao lado.
+ */
+const CONCLUSAO_POR_VALOR: Record<string, number> = {
+  complete: CONCLUSAO.completo,
+  partially_complete: CONCLUSAO.maisTempo,
+  could_not_complete: CONCLUSAO.maisTempo,
+};
+
+/**
  * Traduz o `completion_status` do nosso report para o radio da Housekeep.
  *
- * O nosso campo é texto livre vindo do app do parceiro, então o casamento é por
- * intenção e não por igualdade. Na dúvida devolve `maisTempo`, que é a resposta
- * honesta quando não se sabe: dizer "concluído" sem certeza é o único erro caro
- * aqui, porque fecha o job do lado deles e some com a chance de voltar.
+ * Duas origens escrevem esse campo: o modal do OS e o link público mandam um
+ * dos três valores do select (`public-report-templates.ts`), e o app do
+ * parceiro manda texto livre. Por isso o casamento é exato primeiro, por
+ * intenção depois.
+ *
+ * O regex sozinho não servia: `could_not_complete` contém "complete" e virava
+ * **concluído**, e `partially_complete` contém "part" e virava "materiais". O
+ * teste antigo só cobria frases com espaço ("not complete"), então passou o
+ * tempo todo enquanto os valores reais quebravam.
+ *
+ * Na dúvida devolve `maisTempo`, que é a resposta honesta quando não se sabe:
+ * dizer "concluído" sem certeza é o único erro caro aqui, porque fecha o job do
+ * lado deles e some com a chance de voltar.
  */
 export function conclusaoParaHousekeep(status: string | null | undefined): number {
   const s = String(status ?? "").toLowerCase().trim();
   if (!s) return CONCLUSAO.maisTempo;
+
+  const exato = CONCLUSAO_POR_VALOR[s];
+  if (exato !== undefined) return exato;
+
+  // Texto livre do app do parceiro. `\bparts?\b` para "part" não casar dentro
+  // de "partially"; o separador em `[ _-]` para o underscore não escapar.
   if (/scope|different|not what|wrong job/.test(s)) return CONCLUSAO.escopoDiferente;
-  if (/material|part|specialist|supply/.test(s)) return CONCLUSAO.materiais;
-  if (/more time|incomplete|not (finished|complete)|partial|return/.test(s)) return CONCLUSAO.maisTempo;
+  if (/\bparts?\b|material|specialist|supply/.test(s)) return CONCLUSAO.materiais;
+  if (/more time|incomplete|(could[ _-]?not|not)[ _-](finished|complete)|partial|return/.test(s)) {
+    return CONCLUSAO.maisTempo;
+  }
   if (/complete|done|finished|yes|no further/.test(s)) return CONCLUSAO.completo;
+  return CONCLUSAO.maisTempo;
+}
+
+/**
+ * O radio de conclusão a partir do report final, seja qual for o template.
+ *
+ * Só `general` e `certificate` têm `completion_status`. O `gardener` diz a mesma
+ * coisa por `all_tasks_done`, e sem essa ponte um jardim inteiro concluído era
+ * reportado como incompleto: jardinagem cai no formulário de trade (`ehLimpeza`
+ * não casa "garden"), onde o campo simplesmente não existe.
+ */
+export function conclusaoDoReport(f: Record<string, unknown>): number {
+  const status = String(f.completion_status ?? "").trim();
+  if (status) return conclusaoParaHousekeep(status);
+  if (typeof f.all_tasks_done === "boolean") {
+    return f.all_tasks_done ? CONCLUSAO.completo : CONCLUSAO.maisTempo;
+  }
+  if (typeof f.job_complete === "boolean") {
+    return f.job_complete ? CONCLUSAO.completo : CONCLUSAO.maisTempo;
+  }
   return CONCLUSAO.maisTempo;
 }
 
@@ -193,7 +243,10 @@ export function payloadDoReport(input: {
   recomendaServicos?: boolean;
 }): { ok: true; payload: PayloadHousekeep } | { ok: false; motivo: string } {
   const f = input.final ?? {};
-  const descricao = String(f.description ?? "").trim();
+  // `inspection_summary` é como o template de certificado chama a descrição.
+  // Sem essa segunda chave nenhum job de certificado conseguia ser enviado:
+  // morria aqui dizendo que o report não tinha descrição.
+  const descricao = String(f.description ?? f.inspection_summary ?? "").trim();
   if (!descricao) return { ok: false, motivo: "report final sem descrição do trabalho" };
 
   return {
@@ -203,7 +256,7 @@ export function payloadDoReport(input: {
       fim: horaLondres(input.fim),
       descricao,
       cobrancaExtra: Boolean(f.additional_charges),
-      conclusao: conclusaoParaHousekeep(f.completion_status as string | null),
+      conclusao: conclusaoDoReport(f),
       faltaFazer: (f.what_needs_completing as string | null)?.trim() || null,
       precisaRetorno: Boolean(f.follow_up_required),
       recomendaServicos: Boolean(input.recomendaServicos),
