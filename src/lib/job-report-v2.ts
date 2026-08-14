@@ -234,8 +234,8 @@ function formatFieldValue(key: string, value: unknown): string {
   if (key === "duration_ms" && typeof value === "number") return formatDurationMs(value);
   if (key === "chargeable_hours" && typeof value === "number") return `${value.toFixed(2)} h`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  // Valores de select: sem isto o PDF que vai ao cliente imprime
-  // `partially_complete` cru, com underscore e tudo.
+  // Valores de select: sem isto o card e o PDF imprimem `partially_complete`
+  // cru, com underscore e tudo.
   if ((key === "certificate_outcome" || key === "completion_status") && typeof value === "string") {
     return value
       .replace(/_/g, " ")

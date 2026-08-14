@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileText, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
+import { FixfyModalFooter } from "@/components/ui/fixfy-modal/fixfy-modal-footer";
 import {
   fieldsForTemplate,
   isFieldVisible,
@@ -334,7 +335,7 @@ export function FillReportModal({
 
   const section = (title: string, children: ReactNode) => (
     <section
-      className="space-y-3 rounded-[10px] p-[14px]"
+      className="space-y-3 rounded-[10px] p-3 sm:p-[14px]"
       style={{ background: "#FAFAFB", border: `0.5px solid ${BORDER}` }}
     >
       <h3 className="text-[10px] font-bold uppercase" style={{ color: ORANGE, letterSpacing: "0.6px" }}>
@@ -406,39 +407,44 @@ export function FillReportModal({
       subtitle={`${jobReference} · ${reportTemplateDisplayLabel(template)} template`}
       size="lg"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px]" style={{ color: MUTED }}>
-            {isEdit
-              ? existingPhotoCount > 0
-                ? `Fields are replaced · the ${existingPhotoCount} photo(s) already saved stay, new files are added.`
-                : "Fields are replaced · new files are added to the report."
-              : "Saved as an office-typed report and marked validated."}
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-[6px] bg-white px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40"
-              style={{ color: NAVY, border: `0.5px solid #D8D8DD` }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={submitting}
-              className="inline-flex items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer disabled:opacity-40"
-              style={{ background: NAVY }}
-            >
-              {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-              {submitting ? progress || "Saving…" : isEdit ? "Save changes" : "Save report"}
-            </button>
-          </div>
-        </div>
+        <FixfyModalFooter
+          leading={
+            // Escondido no celular: a 375px é esta frase que espremia os dois
+            // botões contra a borda.
+            <span className="hidden sm:block">
+              {isEdit
+                ? existingPhotoCount > 0
+                  ? `Fields are replaced · the ${existingPhotoCount} photo(s) already saved stay, new files are added.`
+                  : "Fields are replaced · new files are added to the report."
+                : "Saved as an office-typed report and marked validated."}
+            </span>
+          }
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="shrink-0 rounded-[6px] bg-white px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40"
+            style={{ color: NAVY, border: `0.5px solid #D8D8DD` }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={submitting}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer disabled:opacity-40"
+            style={{ background: NAVY }}
+          >
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            {submitting ? progress || "Saving…" : isEdit ? "Save changes" : "Save report"}
+          </button>
+        </FixfyModalFooter>
       }
     >
-      <div className="space-y-3">
+      {/* O `Modal` não injeta padding no corpo: cada modal traz o seu, e a
+          falta dele era o conteúdo colado na borda. */}
+      <div className="space-y-3 p-4 sm:p-5">
         {startAlreadySubmitted ? (
           <div
             className="rounded-[8px] px-3 py-2 text-[11px]"

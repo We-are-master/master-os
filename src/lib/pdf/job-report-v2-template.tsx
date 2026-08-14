@@ -390,7 +390,8 @@ function formatFieldValue(key: string, v: unknown): string {
   }
   if (key === "chargeable_hours" && typeof v === "number") return `${v.toFixed(2)} h`;
   if (typeof v === "boolean") return v ? "Yes" : "No";
-  // Este PDF vai para o cliente: `partially_complete` cru não pode aparecer.
+  // Valor de select não se imprime cru: `partially_complete`, com underscore e
+  // tudo, é chave de banco vazando para uma página que alguém lê.
   if ((key === "completion_status" || key === "certificate_outcome") && typeof v === "string") {
     return v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }
