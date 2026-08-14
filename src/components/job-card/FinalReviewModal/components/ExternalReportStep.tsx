@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * O envio do relatório para a plataforma de origem, dentro do passo 3.
@@ -42,6 +42,7 @@ export function ExternalReportStep({
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const jaAbriu = useRef(false);
 
   const rota = `/api/jobs/${jobUuid}/submit-external-report`;
 
@@ -56,6 +57,28 @@ export function ExternalReportStep({
       setCarregando(false);
     }
   };
+
+  // Envio pendente e liberado: já abre os campos para conferir. Este passo é
+  // agora o que trava o fechamento do job, então esconder a conferência atrás
+  // de mais um clique só adiciona atrito ao caminho obrigatório.
+  const precisaConferir = envio?.estado === "nao_enviado" && !envio.bloqueio;
+  useEffect(() => {
+    if (!precisaConferir || jaAbriu.current) return;
+    jaAbriu.current = true;
+    let vivo = true;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report?preview=1`);
+        const d = (await r.json()) as Preview;
+        if (vivo) setPreview(d);
+      } catch {
+        if (vivo) setPreview({ ok: false, motivo: "Could not load the preview." });
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [precisaConferir, jobUuid]);
 
   const enviar = async () => {
     setCarregando(true);

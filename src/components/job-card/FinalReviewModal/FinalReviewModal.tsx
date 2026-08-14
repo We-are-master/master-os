@@ -120,7 +120,25 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   // office attests “report submitted to the customer” (partners rarely use the app).
   const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = attestationsOk && docsReady && !submitting;
+
+  /**
+   * O relatório existe no OS mas ainda não subiu na plataforma do cliente.
+   *
+   * Isto passou a travar o "Finalise & approve", e não é excesso de zelo: um
+   * job que fecha com o relatório parado só reaparece se alguém voltar nele de
+   * propósito, e o email de aviso chega quando a atenção já foi embora.
+   */
+  const envioPendente =
+    !!envioExterno && envioExterno.estado !== "enviado" && reports.some((r) => r.uploaded);
+
+  /** Saída para quando a plataforma deles não coopera. Volta ao fechar. */
+  const [forcar, setForcar] = useState(false);
+  const fechar = () => {
+    setForcar(false);
+    onClose();
+  };
+
+  const canApprove = attestationsOk && docsReady && !submitting && (!envioPendente || forcar);
 
   return (
     <AnimatePresence>
@@ -131,7 +149,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            onClick={submitting ? undefined : onClose}
+            onClick={submitting ? undefined : fechar}
             className="final-review-modal-overlay absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
@@ -146,7 +164,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               jobId={jobId}
               jobTitle={jobTitle}
               clientName={clientName}
-              onClose={onClose}
+              onClose={fechar}
               reviewSummary={reviewSummary ?? null}
             />
 
@@ -205,15 +223,15 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               sentToAccounts={sentToAccounts}
               onSentToAccountsChange={onSentToAccountsChange}
               currentUserName={currentUserName}
-              relatorioNaoSubiu={
-                !!envioExterno && envioExterno.estado !== "enviado" && reports.some((r) => r.uploaded)
-              }
+              relatorioNaoSubiu={envioPendente}
+              bloqueadoPeloEnvio={envioPendente && !forcar}
+              onForcar={() => setForcar(true)}
             />
 
             <ModalFooter
               canApprove={canApprove}
               submitting={submitting}
-              onCancel={onClose}
+              onCancel={fechar}
               onApprove={onApprove}
             />
           </motion.div>
