@@ -385,6 +385,9 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     jobReference: params.jobReference,
     jobTitle: params.jobTitle,
     clientName: params.clientName,
+    // Job já nasce alocado a um parceiro: o telefone vai. O convite de
+    // auto-assign usa outro builder e continua sem ele.
+    clientPhone: params.clientPhone,
     propertyAddress: params.propertyAddress,
     scheduledDate: params.scheduledDate,
     scope: params.scope,

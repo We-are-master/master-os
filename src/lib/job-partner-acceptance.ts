@@ -10,6 +10,7 @@ import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
 import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
+import { clientPhoneForPartnerEmail } from "@/lib/partner-email-client-phone";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
@@ -21,6 +22,7 @@ export type JobForPartnerAcceptance = {
   title: string | null;
   status: string;
   partner_id: string | null;
+  client_id: string | null;
   client_name: string | null;
   property_address: string | null;
   scheduled_date: string | null;
@@ -55,7 +57,7 @@ export type BookedEmailResult = {
 };
 
 const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, catalog_pricing_preset_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_id, client_name, property_address, scheduled_date, catalog_service_id, catalog_pricing_preset_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
 
 const CATALOG_PRICING_SELECT =
   "id, pricing_mode, partner_cost, default_hours, pricing_presets, pricing_addons";
@@ -494,11 +496,15 @@ export async function sendBookedSideConvReply(args: {
     jobType: isHourly ? "hourly" : "fixed",
   });
 
+  // Só o email do parceiro já alocado leva o telefone do cliente.
+  const clientPhone = await clientPhoneForPartnerEmail(supabase, job.client_id);
+
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName,
     jobReference: job.reference,
     jobTitle: job.title || "Maintenance job",
     clientName: job.client_name || "—",
+    clientPhone,
     propertyAddress: job.property_address || "—",
     scheduledDate: job.scheduled_date,
     scope: job.scope || "(no scope provided)",

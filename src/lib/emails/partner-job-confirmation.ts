@@ -46,7 +46,14 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   jobReference: string;
   jobTitle: string;
   clientName: string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  /**
+   * Telefone do cliente. Só o email de job **confirmado** o mostra, porque vai
+   * para o parceiro já alocado. O convite de auto-assign
+   * (`buildPartnerJobConfirmationRequestEmail`) não recebe este campo: ele sai
+   * para todos os parceiros que casam com o trade, e a maioria nunca vai pisar
+   * naquele endereço.
+   */
+  clientPhone?: string | null;
   propertyAddress: string;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
@@ -186,6 +193,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     ref: escapeHtml(data.jobReference),
     title: escapeHtml(data.jobTitle),
     client: escapeHtml(data.clientName),
+    clientPhone: escapeHtml(data.clientPhone?.trim() ?? ""),
     address: escapeHtml(data.propertyAddress),
     schedule: escapeHtml(scheduleLine),
     scope: escapeHtml(data.scope),
@@ -201,8 +209,24 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
   const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
   const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
-  /** Customer phone is intentionally NOT rendered — partner emails carry name + address only. */
-  const phoneRow = "";
+  /**
+   * O telefone do cliente só aparece aqui, no email de job confirmado.
+   *
+   * Este email vai para **um** parceiro, o que já foi alocado, e ele precisa
+   * conseguir avisar que está a caminho ou que o portão está trancado. O
+   * convite de auto-assign é outro builder e continua sem telefone de
+   * propósito: ele sai para todos os parceiros que casam com o trade, e a
+   * maioria nunca vai pisar naquele endereço.
+   */
+  const phoneRow = safe.clientPhone
+    ? `<tr>
+                <td colspan="2" style="padding:0;"><div style="border-top:1px solid #E4E4EC; height:1px; line-height:1px; font-size:1px;">&nbsp;</div></td>
+              </tr>
+              <tr>
+                <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Phone</td>
+                <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;"><a href="tel:${telHref(data.clientPhone ?? "")}" style="color:#0A0A1F; text-decoration:none;">${safe.clientPhone}</a></td>
+              </tr>`
+    : "";
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
@@ -320,7 +344,7 @@ Earnings: ${moneyIncVatLabel(data.priceDisplay)} (${data.jobType === "hourly" ? 
 Date: ${scheduleLine}
 
 Client: ${data.clientName}
-Address: ${data.propertyAddress}
+${data.clientPhone?.trim() ? `Phone: ${data.clientPhone.trim()}\n` : ""}Address: ${data.propertyAddress}
 
 Scope of work
 ${data.scope}

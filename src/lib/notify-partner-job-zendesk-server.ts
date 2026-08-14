@@ -24,6 +24,7 @@ import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
+import { clientPhoneForPartnerEmail } from "@/lib/partner-email-client-phone";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -75,7 +76,7 @@ export async function notifyPartnerJobZendesk(
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
+    .select("id, reference, title, status, client_id, client_name, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -85,6 +86,7 @@ export async function notifyPartnerJobZendesk(
     reference: string;
     title: string | null;
     status: string;
+    client_id: string | null;
     client_name: string | null;
     property_address: string | null;
     scheduled_date: string | null;
@@ -172,6 +174,10 @@ export async function notifyPartnerJobZendesk(
   };
 
   // ─── Email build ──────────────────────────────────────────────────
+  // Só o email de job confirmado leva o telefone; o convite de auto-assign
+  // (`buildPartnerJobConfirmationRequestEmail`, abaixo) sai sem ele.
+  const clientPhone = await clientPhoneForPartnerEmail(supabase, job.client_id);
+
   let email: { subject: string; html: string; text: string };
   if (kind === "assigned") {
     email = buildPartnerJobConfirmationEmail({
@@ -179,6 +185,7 @@ export async function notifyPartnerJobZendesk(
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
+      clientPhone,
       propertyAddress: job.property_address || "—",
       ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
@@ -260,6 +267,7 @@ export async function notifyPartnerJobZendesk(
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
+      clientPhone,
       propertyAddress: job.property_address || "—",
       ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
