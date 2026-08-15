@@ -46,7 +46,15 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   jobReference: string;
   jobTitle: string;
   clientName: string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  /**
+   * Telefone do cliente, só neste email.
+   *
+   * A confirmação vai para o parceiro que já ganhou o job e vai à casa: sem o
+   * número, ele liga para o escritório para pedir o número, e o escritório
+   * repassa. O convite de auto-assign continua sem, porque lá o job ainda não
+   * é de ninguém e o número iria para vários parceiros de uma vez.
+   */
+  clientPhone?: string | null;
   propertyAddress: string;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
@@ -201,8 +209,15 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
   const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
   const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
-  /** Customer phone is intentionally NOT rendered — partner emails carry name + address only. */
-  const phoneRow = "";
+  // Quem já ganhou o job precisa conseguir avisar que está chegando. Clicável
+  // porque quase todo parceiro abre isto no celular, a caminho.
+  const telefone = data.clientPhone?.trim() || "";
+  const phoneRow = telefone
+    ? `<tr>
+                <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Phone</td>
+                <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;"><a href="tel:${escapeHtml(telHref(telefone))}" style="color:#0A0A1F; text-decoration:none;">${escapeHtml(telefone)}</a></td>
+              </tr>`
+    : "";
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>

@@ -75,7 +75,7 @@ export async function notifyPartnerJobZendesk(
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
+    .select("id, reference, title, status, client_name, property_address, client_id, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -86,6 +86,7 @@ export async function notifyPartnerJobZendesk(
     title: string | null;
     status: string;
     client_name: string | null;
+    client_id: string | null;
     property_address: string | null;
     scheduled_date: string | null;
     scheduled_start_at: string | null;
@@ -134,9 +135,6 @@ export async function notifyPartnerJobZendesk(
 
   const base = appBaseUrl();
 
-  // Customer phone is intentionally NOT looked up — partner emails carry
-  // name + address only (privacy decision: customer phone stays with OS).
-
   const isHourly = job.job_type === "hourly";
   const priceDisplay = isHourly
     ? `£${Number(job.hourly_partner_rate ?? 0).toFixed(2)}/hr`
@@ -171,6 +169,23 @@ export async function notifyPartnerJobZendesk(
     scheduledFinishDate: job.scheduled_finish_date,
   };
 
+  /**
+   * O telefone do cliente, só para a confirmação.
+   *
+   * Vive em `clients.phone` e não no job, então é uma consulta a mais, feita só
+   * quando vai ser usada. Falha em silêncio: um email sem telefone é bem melhor
+   * do que nenhum email por causa de uma coluna.
+   */
+  let clientPhone: string | null = null;
+  if (kind === "assigned" && job.client_id) {
+    const { data: cliente } = await supabase
+      .from("clients")
+      .select("phone")
+      .eq("id", job.client_id)
+      .maybeSingle();
+    clientPhone = (cliente?.phone as string | null) ?? null;
+  }
+
   // ─── Email build ──────────────────────────────────────────────────
   let email: { subject: string; html: string; text: string };
   if (kind === "assigned") {
@@ -179,6 +194,7 @@ export async function notifyPartnerJobZendesk(
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
+      clientPhone,
       propertyAddress: job.property_address || "—",
       ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
