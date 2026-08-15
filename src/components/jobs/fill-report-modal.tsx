@@ -392,8 +392,8 @@ export function FillReportModal({
       <p className="flex items-center gap-1.5 text-[10.5px]" style={{ color: ORANGE }}>
         <Info className="h-3 w-3 shrink-0" />
         {n === 0
-          ? "Housekeep needs at least one photo here, or the report cannot be sent."
-          : `${n} photos · Housekeep takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`}
+          ? "The client platform needs at least one photo here, or the report cannot be sent."
+          : `${n} photos · the client platform takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`}
       </p>
     );
   };
@@ -410,8 +410,8 @@ export function FillReportModal({
         style={{ color: faltando || excedeu ? ORANGE : MUTED }}
         title={
           excedeu
-            ? `Housekeep takes ${slot.max} photos per block. The extras will not be sent.`
-            : `We ask for at least ${slot.min}: one photo cannot show everything Housekeep wants to see here.`
+            ? `The client platform takes ${slot.max} photos per block. The extras will not be sent.`
+            : `We ask for at least ${slot.min}: one photo cannot show everything the client platform wants to see here.`
         }
       >
         {n > 0 ? `${n} · ` : ""}
