@@ -9679,6 +9679,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         selfBillStatus={job.self_bill_id ? "issued" : "pending"}
         invoiceReference={approvalPrimaryInvoice?.reference ?? null}
         selfBillReference={jobSelfBill?.reference ?? null}
+        rawFinalReport={job.final_report}
+        onEditReport={() => {
+          setValidateCompleteOpen(false);
+          setFillReportOpen(true);
+        }}
         reports={[
           {
             id: "final-report",

@@ -12,6 +12,7 @@ import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
 import type { EstadoEnvioExterno } from "./components/ExternalReportStep";
 import type { FinalReviewModalProps } from "./types";
+import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
 
 type EnvioExterno = EstadoEnvioExterno;
 
@@ -110,7 +111,33 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     submitting,
     hourlySlot,
     paymentSchedule,
+    rawFinalReport,
+    onEditReport,
   } = props;
+
+  /**
+   * Duas etapas, nesta ordem: o relatório e depois o dinheiro.
+   *
+   * Aprovar sem ter visto o relatório era o buraco: o botão dizia "Review &
+   * approve" e abria direto no financeiro, então "review" queria dizer conferir
+   * margem e datas, nunca o que o parceiro escreveu. Agora a primeira tela é o
+   * relatório inteiro, com as fotos, e dela se sai por "Edit" ou seguindo.
+   *
+   * Só aparece quando há relatório. Job sem relatório abre direto no
+   * financeiro, como antes: não há o que conferir e uma tela vazia no caminho
+   * seria só um clique a mais.
+   */
+  const temRelatorio = !!rawFinalReport && Object.keys(rawFinalReport as object).length > 0;
+  const [etapa, setEtapa] = useState<"relatorio" | "financeiro">(
+    temRelatorio ? "relatorio" : "financeiro",
+  );
+  // O componente continua montado com o modal fechado, então a etapa volta ao
+  // começo no fechamento e não na abertura: é handler, roda uma vez, e não
+  // precisa de efeito nem de ref no render, que este repo proíbe.
+  const fechar = () => {
+    setEtapa(temRelatorio ? "relatorio" : "financeiro");
+    onClose();
+  };
 
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
 
@@ -157,7 +184,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            onClick={submitting ? undefined : onClose}
+            onClick={submitting ? undefined : fechar}
             className="final-review-modal-overlay absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
@@ -172,10 +199,42 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               jobId={jobId}
               jobTitle={jobTitle}
               clientName={clientName}
-              onClose={onClose}
+              onClose={fechar}
               reviewSummary={reviewSummary ?? null}
             />
 
+            {etapa === "relatorio" ? (
+              <>
+                <div className="min-h-0 overflow-y-auto overscroll-contain p-4">
+                  <p className="mb-2 text-[11px]" style={{ color: "#6B6B70" }}>
+                    This is the report as it was filled in. Check it before the money.
+                  </p>
+                  <JobReportV2Card jobId={jobUuid} kind="final" rawReport={rawFinalReport} approvedAt={null} readOnly />
+                </div>
+                <div
+                  className="flex items-center justify-between gap-2 px-4 py-3"
+                  style={{ borderTop: "0.5px solid #E4E4E8" }}
+                >
+                  <button
+                    type="button"
+                    onClick={onEditReport}
+                    disabled={!onEditReport}
+                    className="rounded-[6px] px-3 py-[6px] text-[12px] font-medium cursor-pointer disabled:opacity-40"
+                    style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                  >
+                    Edit report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEtapa("financeiro")}
+                    className="rounded-[6px] px-3.5 py-[6px] text-[12px] font-semibold text-white cursor-pointer"
+                    style={{ background: "#020040" }}
+                  >
+                    Looks right, continue →
+                  </button>
+                </div>
+              </>
+            ) : (
             <div className="min-h-0 overflow-y-auto overscroll-contain">
               <MarginHero
                 margin={margin}
@@ -224,21 +283,28 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 />
               ) : null}
             </div>
+            )}
 
-            <ResponsibilityCheck
-              confirmed={confirmed}
-              onChange={onConfirmedChange}
-              sentToAccounts={sentToAccounts}
-              onSentToAccountsChange={onSentToAccountsChange}
-              currentUserName={currentUserName}
-            />
-
-            <ModalFooter
-              canApprove={canApprove}
-              submitting={submitting}
-              onCancel={onClose}
-              onApprove={aprovarEEnviar}
-            />
+            {/* Aceite e aprovação só na etapa do dinheiro: assinar
+                responsabilidade enquanto ainda se está lendo o relatório é
+                assinar antes de ter conferido. */}
+            {etapa === "financeiro" ? (
+              <>
+                <ResponsibilityCheck
+                  confirmed={confirmed}
+                  onChange={onConfirmedChange}
+                  sentToAccounts={sentToAccounts}
+                  onSentToAccountsChange={onSentToAccountsChange}
+                  currentUserName={currentUserName}
+                />
+                <ModalFooter
+                  canApprove={canApprove}
+                  submitting={submitting}
+                  onCancel={fechar}
+                  onApprove={aprovarEEnviar}
+                />
+              </>
+            ) : null}
           </motion.div>
         </div>
       )}
