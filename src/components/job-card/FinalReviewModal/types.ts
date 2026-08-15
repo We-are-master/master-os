@@ -75,6 +75,13 @@ export type FinalReviewModalProps = {
    * diz, e aprovar virava um ato de fé.
    */
   rawFinalReport?: unknown;
+  /**
+   * O relatório de chegada, que é onde moram as fotos do "antes".
+   *
+   * Vai junto porque conferir só a conclusão é conferir metade: a Housekeep
+   * pede antes E depois, e o que prova o trabalho é o par.
+   */
+  rawStartReport?: unknown;
   /** Abre o modal de edição do relatório. Sem isso, "Edit" não tem para onde ir. */
   onEditReport?: () => void;
 

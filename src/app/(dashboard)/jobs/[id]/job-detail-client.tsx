@@ -9680,6 +9680,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         invoiceReference={approvalPrimaryInvoice?.reference ?? null}
         selfBillReference={jobSelfBill?.reference ?? null}
         rawFinalReport={job.final_report}
+        rawStartReport={job.start_report}
         onEditReport={() => {
           setValidateCompleteOpen(false);
           setFillReportOpen(true);
