@@ -247,9 +247,38 @@ export async function submeterRelatorioHousekeep(args: {
       if (antes.length || depois.length) await page.waitForTimeout(3000);
     }
 
-    // A confirmação de veracidade é o único checkbox visível da página.
-    const confirmar = page.locator('input[type="checkbox"]:visible');
-    if (await confirmar.count()) await confirmar.first().check({ force: true });
+    /**
+     * "I confirm that the information provided in this report is true and
+     * accurate", o único checkbox da página, e sem ele o formulário não passa.
+     *
+     * Era `check({ force: true })` e não pegava, e ninguém via porque
+     * `check({force})` não confere o resultado: a falha só aparecia depois do
+     * submit, como um "This field is required" que não dizia qual campo.
+     *
+     * O clique nativo vem primeiro porque foi o único que funcionou quando se
+     * testou no formulário aberto, em 15/08/2026. O label ao lado do checkbox
+     * não tem `for`, o input não tem `id` e o label não o envolve: clicar no
+     * label não alterna nada, ao contrário do que acontece nos radios. E o
+     * input tem `appearance: none` e fica fora da viewport, que é o que fazia
+     * o clique por coordenada errar o alvo.
+     */
+    const confirmar = page.locator('input[type="checkbox"]').first();
+    if (await confirmar.count()) {
+      // `el.click()` no próprio input: alterna e dispara o change, que é o que
+      // o framework da página escuta.
+      await confirmar.evaluate((el) => (el as HTMLInputElement).click()).catch(() => {});
+      if (!(await confirmar.isChecked().catch(() => false))) {
+        await confirmar.scrollIntoViewIfNeeded().catch(() => {});
+        await confirmar.check({ force: true, timeout: 5000 }).catch(() => {});
+      }
+      if (!(await confirmar.isChecked().catch(() => false))) {
+        return {
+          ok: false,
+          motivo: 'could not tick "I confirm that the information provided is true and accurate"',
+          segundos: seg(),
+        };
+      }
+    }
 
     if (args.simular) {
       // Conta o que de fato entrou nos inputs, não o que pretendíamos anexar:
