@@ -177,7 +177,9 @@ export async function notifyPartnerJobZendesk(
    * do que nenhum email por causa de uma coluna.
    */
   let clientPhone: string | null = null;
-  if (kind === "assigned" && job.client_id) {
+  // O convite (`confirmation_request`) fica de fora: lá o job ainda não é de
+  // ninguém e o número iria para vários parceiros que talvez nem aceitem.
+  if (kind !== "confirmation_request" && job.client_id) {
     const { data: cliente } = await supabase
       .from("clients")
       .select("phone")
@@ -292,6 +294,7 @@ export async function notifyPartnerJobZendesk(
       jobTitle: job.title || "Maintenance job",
       scheduledDate: job.scheduled_date,
       clientName: job.client_name || "—",
+      clientPhone,
       propertyAddress: job.property_address || "—",
       scope: job.scope || "(no scope provided)",
       newStatusLabel: effectiveStatusLabel,
