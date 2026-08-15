@@ -122,6 +122,29 @@ async function marcarRadio(page: Page, prefixo: string, indice: number): Promise
   const label = page.locator(`label[for="${prefixo}-${indice}"]`);
   if (await label.count()) await label.first().click({ timeout: 5000 });
   else await el.first().check({ timeout: 5000, force: true });
+
+  /**
+   * Confere que marcou, porque marcar sem efeito não dava erro nenhum.
+   *
+   * Em 15/08/2026 a Housekeep recusou o JOB-9428 dizendo que "Is any follow up
+   * work required?" era obrigatório, com o campo preenchido do nosso lado e o
+   * mapeamento certo nos dois. O clique acertava um label que não governa o
+   * input, ou o id daquele grupo mudou: nos dois casos o Playwright seguia
+   * satisfeito e só a página deles reclamava, depois do submit, sem dizer qual
+   * campo era.
+   *
+   * Falhar aqui é melhor: nomeia o campo antes de gastar a tentativa, e o card
+   * mostra o nome em vez de "rejected it".
+   */
+  const marcado = await el
+    .first()
+    .isChecked({ timeout: 2000 })
+    .catch(() => false);
+  if (!marcado) {
+    throw new Error(
+      `could not tick "${prefixo}" option ${indice}: the field stayed empty, so Housekeep would reject it`,
+    );
+  }
 }
 
 async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
