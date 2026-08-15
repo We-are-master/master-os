@@ -83,6 +83,18 @@ export function ExternalReportStep({
     }
   };
 
+  /** Zera o contador e tenta de novo. Só existe quando as três acabaram. */
+  const reiniciarEEnviar = async () => {
+    setCarregando(true);
+    try {
+      await fetch(`${rota}?reiniciar=1`, { method: "POST" });
+      setPreview(null);
+      onEnviado();
+    } finally {
+      setCarregando(false);
+    }
+  };
+
   if (!envio) return null;
 
   if (envio.estado === "enviando") {
@@ -117,10 +129,46 @@ export function ExternalReportStep({
   // Bloqueado: o motivo é a instrução. "no photos on the report" é o mais comum,
   // e diz exatamente o que fazer antes de tentar de novo.
   if (envio.bloqueio) {
+    /**
+     * Ficar sem tentativas é o único bloqueio que ninguém consegue resolver
+     * mexendo no relatório, e por isso é o único com saída aqui.
+     *
+     * O teto de três impede o robô de bater a cabeça a noite inteira, e é bom
+     * que exista. Mas virava beco sem saída: consertada a causa, o job ficava
+     * preso em "out of attempts: needs a person" sem botão nenhum, e só o banco
+     * destravava. Os outros bloqueios continuam sem botão de propósito: sem
+     * foto, insistir dá na mesma até alguém subir a foto.
+     */
+    const semTentativas = /out of attempts/i.test(envio.bloqueio);
     return (
-      <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
-        Client platform: {envio.bloqueio}
-      </span>
+      <div className="flex flex-col gap-2">
+        <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
+          Client platform: {envio.bloqueio}
+        </span>
+        {semTentativas ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {onEditReport ? (
+              <button
+                type="button"
+                onClick={onEditReport}
+                className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold cursor-pointer"
+                style={{ color: "#020040", border: "0.5px solid #D8D8DD", background: "#fff" }}
+              >
+                Edit report
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void reiniciarEEnviar()}
+              disabled={carregando}
+              className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
+              style={{ background: "#020040" }}
+            >
+              {carregando ? "Sending…" : "Reset attempts and try again"}
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   }
 
