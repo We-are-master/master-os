@@ -16,6 +16,8 @@
  * espelhando este formulário. Stefane transporta, não interpreta.
  */
 
+import { HOUSEKEEP_MAX_FOTOS } from "@/lib/public-report-templates";
+
 /**
  * A Housekeep tem DOIS formulários, e a diferença não é cosmética.
  *
@@ -99,7 +101,7 @@ export const HOUSEKEEP_FOTOS = {
   antes: 0,
   depois: 1,
   /** "Upload or take photos — between 1-20 images", diz o botão. */
-  maximoPorBloco: 20,
+  maximoPorBloco: HOUSEKEEP_MAX_FOTOS,
 } as const;
 
 /** Índice do radio de conclusão, na ordem do formulário. */

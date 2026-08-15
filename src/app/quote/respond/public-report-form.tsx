@@ -298,9 +298,20 @@ export default function PublicReportForm({
 
     return (
       <div key={slot.key} className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>{slot.label}</label>
-          <label className="cursor-pointer text-[12px] font-semibold underline" style={{ color: FIXFY_ORANGE }}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>{slot.label}</label>
+            {/*
+              O que a Housekeep quer ver nesta foto, com as palavras deles.
+              Só o `prominent` mostrava a dica, e nenhum bloco de cômodo é
+              prominent: a orientação existia no tipo e nunca chegava à tela de
+              quem estava com o celular na mão dentro da casa.
+            */}
+            {slot.hint ? (
+              <p className="mt-0.5 text-[11.5px] leading-snug" style={{ color: FIXFY_MUTED }}>{slot.hint}</p>
+            ) : null}
+          </div>
+          <label className="shrink-0 cursor-pointer text-[12px] font-semibold underline" style={{ color: FIXFY_ORANGE }}>
             Add photos
             <input
               type="file"

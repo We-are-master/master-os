@@ -54,6 +54,21 @@ export function usesCleaningForm(template: ReportTemplate): boolean {
   return template === "cleaner";
 }
 
+/**
+ * Quantas fotos a Housekeep aceita em cada metade do relatório.
+ *
+ * O botão deles diz "Upload or take photos, between 1-20 images", e o piso é
+ * tão real quanto o teto: sem foto o envio é recusado. Mora aqui, e não só do
+ * lado da Stefane, porque os dois formulários precisam dizer isso a quem está
+ * digitando, e um número repetido em dois arquivos foi exatamente o defeito que
+ * mandou End of Tenancy para o template errado.
+ *
+ * Vale por metade e não por cômodo: o formulário da Housekeep tem dois blocos
+ * de arquivo, chegada e conclusão, e os cômodos daqui são achatados nos dois.
+ */
+export const HOUSEKEEP_MIN_FOTOS = 1;
+export const HOUSEKEEP_MAX_FOTOS = 20;
+
 // ─── Field declarations ──────────────────────────────────────────────────────
 
 export type ReportFieldType = "boolean" | "number" | "text" | "longtext" | "select";
@@ -356,16 +371,29 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
   final: ReportPhotoSlot[];
 } {
   if (template === "cleaner") {
+    /**
+     * As dicas são o texto literal do formulário da Housekeep, lido da página
+     * real em 15/08/2026 (job report do JOB-9416).
+     *
+     * Eles não pedem um número mínimo de fotos por cômodo, pedem que certas
+     * coisas apareçam nelas: forno, mata-juntas, espelhos. Quem tira a foto
+     * sem saber disso manda uma panorâmica da cozinha e o relatório volta.
+     * Copiar a lista deles palavra por palavra é o que faz o parceiro tirar a
+     * foto certa da primeira vez, e é de graça.
+     */
     const rooms = [
-      { key: "living_room",   label: "Living room" },
-      { key: "hallways",      label: "Hallways" },
-      { key: "kitchen",       label: "Kitchen" },
-      { key: "bathrooms",     label: "Bathrooms" },
-      { key: "bedrooms",      label: "Bedrooms" },
-      { key: "steam_cleaning", label: "Steam cleaning" },
+      { key: "living_room",   label: "Living room", hint: "Include: windows, skirting boards and floors." },
+      { key: "hallways",      label: "Hallways",    hint: "Include: skirting boards and floors." },
+      { key: "kitchen",       label: "Kitchen",     hint: "Include: oven, hob, fridge/freezer, sink and floors." },
+      { key: "bathrooms",     label: "Bathrooms",   hint: "Include: sink, toilet, showers, mirrors and floors." },
+      { key: "bedrooms",      label: "Bedrooms",    hint: "Include: mirrors, windows, skirting boards and floors." },
+      { key: "steam_cleaning", label: "Steam cleaning", hint: "Only if steam cleaning was booked in.", optional: true },
     ];
     return {
-      start: [{ key: "equipment", label: "Equipment" }, ...rooms],
+      start: [
+        { key: "equipment", label: "Cleaning equipment", hint: "The equipment you are using on the job." },
+        ...rooms,
+      ],
       final: rooms,
     };
   }

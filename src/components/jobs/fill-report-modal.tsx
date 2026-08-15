@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { FileText, Loader2, Upload } from "lucide-react";
+import { FileText, Info, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter } from "@/components/ui/fixfy-modal/fixfy-modal-footer";
 import {
   fieldsForTemplate,
   isFieldVisible,
+  HOUSEKEEP_MAX_FOTOS,
   photoSlotsForTemplate,
   pickReportTemplate,
   reportSectionTitles,
@@ -359,14 +360,62 @@ export function FillReportModal({
     );
   };
 
+  /**
+   * Quantas fotos esta metade do relatório já tem, contando as que o parceiro
+   * mandou antes.
+   *
+   * A conta é por metade e não por cômodo porque é assim que chega do outro
+   * lado: o formulário da Housekeep tem dois blocos de arquivo, um de chegada e
+   * um de conclusão, e os sete cômodos daqui são achatados nesses dois.
+   */
+  const contarMetade = (metade: "start" | "final") => {
+    const doSlot = photoSlots[metade].reduce((n, s) => n + (photos[s.key]?.length ?? 0), 0);
+    return doSlot + countPhotos(metade === "start" ? existingStart : existingFinal);
+  };
+
+  /**
+   * A regra da Housekeep, dita na tela e com a contagem do momento.
+   *
+   * Sem foto o envio é recusado, e o motivo só aparecia depois, na aba, quando
+   * quem digitou já tinha ido embora. Acima de 20 a Stefane corta o excesso,
+   * então avisar antes é a diferença entre escolher quais 20 e descobrir depois
+   * que sumiram.
+   */
+  const avisoDeFotos = (metade: "start" | "final") => {
+    const n = contarMetade(metade);
+    const falta = n === 0;
+    const demais = n > HOUSEKEEP_MAX_FOTOS;
+    const texto = falta
+      ? "Housekeep needs at least one photo here, or the report cannot be sent."
+      : demais
+        ? `${n} photos · Housekeep takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`
+        : `${n} of up to ${HOUSEKEEP_MAX_FOTOS} · Housekeep needs at least one.`;
+    return (
+      <p
+        className="flex items-center gap-1.5 text-[10.5px]"
+        title={`Housekeep accepts between 1 and ${HOUSEKEEP_MAX_FOTOS} photos in this half of the report. Rooms are grouped together when the report is sent.`}
+        style={{ color: falta || demais ? ORANGE : MUTED }}
+      >
+        <Info className="h-3 w-3 shrink-0" />
+        {texto}
+      </p>
+    );
+  };
+
   const renderPhotoSlot = (slot: ReportPhotoSlot) => {
     const files = photos[slot.key] ?? [];
     return (
       <div key={slot.key} className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-[12px] font-semibold" style={{ color: NAVY }}>{slot.label}</label>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <label className="text-[12px] font-semibold" style={{ color: NAVY }}>{slot.label}</label>
+            {/* O que a Housekeep quer ver nesta foto, com as palavras deles. */}
+            {slot.hint ? (
+              <p className="mt-0.5 text-[10.5px] leading-snug" style={{ color: MUTED }}>{slot.hint}</p>
+            ) : null}
+          </div>
           <label
-            className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold"
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] font-semibold"
             style={{ color: ORANGE }}
           >
             <Upload className="h-3 w-3" />
@@ -601,6 +650,7 @@ export function FillReportModal({
                 <div className="space-y-3">{spec.start.map(renderField)}</div>
                 {photoSlots.start.length > 0 ? (
                   <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
+                    {avisoDeFotos("start")}
                     {photoSlots.start.map(renderPhotoSlot)}
                   </div>
                 ) : null}
@@ -614,6 +664,7 @@ export function FillReportModal({
             <div className="space-y-3">{spec.final.map(renderField)}</div>
             {photoSlots.final.length > 0 ? (
               <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
+                {avisoDeFotos("final")}
                 {photoSlots.final.map(renderPhotoSlot)}
               </div>
             ) : null}
