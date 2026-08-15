@@ -158,14 +158,42 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
    * aba já disse isso antes de a pessoa chegar aqui.
    */
-  const aprovarEEnviar = () => {
+  const [enviandoNoApprove, setEnviandoNoApprove] = useState(false);
+
+  const aprovarEEnviar = async () => {
     const podeEnviar =
       jobUuid && envioExterno && !envioExterno.bloqueio &&
       envioExterno.estado !== "enviado" && envioExterno.estado !== "enviando";
-    if (podeEnviar) {
-      void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
-        .then(() => recarregar())
-        .catch((err) => console.error("[final-review] envio externo falhou ao aprovar:", err));
+    if (!podeEnviar) {
+      onApprove();
+      return;
+    }
+    setEnviandoNoApprove(true);
+    try {
+      const rota = `/api/jobs/${jobUuid}/submit-external-report`;
+      await fetch(rota, { method: "POST" });
+      // Avisa o passo 3 na hora, senão ele fica no texto de espera: o polling
+      // dele só liga depois de ver o estado "enviando" uma vez, e sem isto a
+      // rodinha nunca apareceria.
+      recarregar();
+      // A rota devolve na hora e o envio segue no servidor, então quem quer o
+      // desfecho pergunta. Vale a espera: sair sem saber é o que fazia o
+      // relatório virar surpresa no dia seguinte.
+      const limite = Date.now() + 60_000;
+      while (Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const r = await fetch(rota);
+        if (!r.ok) break;
+        const d = (await r.json()) as { estado?: string };
+        if (d.estado === "enviado" || d.estado === "falhou") break;
+      }
+      recarregar();
+    } catch (err) {
+      // Falha de rede aqui não pode impedir a finalização: o passo mostra o
+      // estado e o "Try again" continua ali.
+      console.error("[final-review] envio externo falhou ao aprovar:", err);
+    } finally {
+      setEnviandoNoApprove(false);
     }
     onApprove();
   };
@@ -307,10 +335,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   currentUserName={currentUserName}
                 />
                 <ModalFooter
-                  canApprove={canApprove}
-                  submitting={submitting}
+                  canApprove={canApprove && !enviandoNoApprove}
+                  submitting={submitting || enviandoNoApprove}
                   onCancel={fechar}
-                  onApprove={aprovarEEnviar}
+                  onApprove={() => void aprovarEEnviar()}
                 />
               </>
             ) : null}
