@@ -192,8 +192,55 @@ test("report completo vira payload inteiro", () => {
   assert.equal(r.payload.descricao, "Rehung the kitchen cabinet door and adjusted the hinges.");
   assert.equal(r.payload.cobrancaExtra, true);
   assert.equal(r.payload.conclusao, CONCLUSAO.completo);
+  assert.ok(r.ok);
   assert.equal(r.payload.precisaRetorno, false);
   assert.equal(r.payload.inicio, "15:00");
   assert.equal(r.payload.fim, "16:30");
   assert.equal(r.payload.feedback, FEEDBACK.bom);
+});
+
+/**
+ * "Describe additional work" nasce escondido e só aparece quando o retorno é
+ * "Yes", e nesse instante vira obrigatório. Ficou fora do mapa porque a
+ * varredura do formulário só enumera o que está na página, e ele não está até
+ * alguém responder Yes.
+ *
+ * O JOB-9428 foi recusado duas vezes por isso, com a mensagem "This field is
+ * required" colada na pergunta do retorno, que já estava respondida. É o tipo
+ * de campo que só se descobre com o formulário aberto na frente.
+ */
+test("retorno com Yes leva o texto do trabalho adicional", () => {
+  const r = payloadDoReport({
+    final: {
+      description: "Fixed the leak under the sink.",
+      follow_up_required: true,
+      what_needs_completing: "Needs a new trap, coming back once the part arrives.",
+    },
+    inicio: null,
+    fim: null,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.payload.precisaRetorno, true);
+  assert.equal(r.payload.trabalhoAdicional, "Needs a new trap, coming back once the part arrives.");
+});
+
+test("sem o que falta, o trabalho adicional cai na descrição em vez de ir vazio", () => {
+  const r = payloadDoReport({
+    final: { description: "Fixed the leak.", follow_up_required: true },
+    inicio: null,
+    fim: null,
+  });
+  assert.ok(r.ok);
+  assert.equal(r.payload.trabalhoAdicional, "Fixed the leak.");
+});
+
+test("sem retorno o campo fica nulo, porque nem existe na página", () => {
+  const r = payloadDoReport({
+    final: { description: "All done.", follow_up_required: false, what_needs_completing: "nada" },
+    inicio: null,
+    fim: null,
+  });
+  assert.ok(r.ok);
+  assert.equal(r.payload.precisaRetorno, false);
+  assert.equal(r.payload.trabalhoAdicional, null);
 });

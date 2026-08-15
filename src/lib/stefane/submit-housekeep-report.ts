@@ -156,6 +156,14 @@ async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
   await marcarRadio(page, HOUSEKEEP_CAMPOS.conclusao.prefixo, p.conclusao);
   if (p.faltaFazer) await page.fill(HOUSEKEEP_CAMPOS.faltaFazer.seletor, p.faltaFazer);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.precisaRetorno.prefixo, p.precisaRetorno ? SIM : NAO);
+  // Depois do radio, e não antes: "Describe additional work" só existe na
+  // página depois que o retorno vira "Yes", e aí passa a ser obrigatório.
+  // Preencher antes seria escrever num campo que ainda não nasceu.
+  if (p.precisaRetorno && p.trabalhoAdicional) {
+    const campo = page.locator(HOUSEKEEP_CAMPOS.trabalhoAdicional.seletor);
+    await campo.waitFor({ state: "attached", timeout: 5000 });
+    await campo.fill(p.trabalhoAdicional);
+  }
   await marcarRadio(page, HOUSEKEEP_CAMPOS.feedback.prefixo, p.feedback ?? FEEDBACK.bom);
 }
 
