@@ -247,10 +247,27 @@ export async function submeterRelatorioHousekeep(args: {
     if (/thank you|submitted|received/i.test(depois)) {
       return { ok: true, forma, segundos: seg() };
     }
-    const erro = depois.match(/required|error|invalid|must be/i);
+    /**
+     * A frase inteira da recusa, não a palavra que casou.
+     *
+     * O regex antigo devolvia `erro[0]`, que era literalmente "required": o
+     * card dizia `Housekeep rejected it: "required"` e ninguém ficava sabendo
+     * qual campo faltou. A frase que a Housekeep escreve na tela costuma nomear
+     * o campo, e é ela que diz o que consertar antes de tentar de novo.
+     *
+     * Junta as linhas que reclamam, sem repetir, porque o formulário marca cada
+     * campo que faltou e o motivo real pode ser o terceiro da lista.
+     */
+    const linhas = depois
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && l.length < 160 && /required|invalid|must be|cannot be|please /i.test(l));
+    const unicas = [...new Set(linhas)].slice(0, 3);
     return {
       ok: false,
-      motivo: erro ? `Housekeep rejected it: "${erro[0]}"` : "submitted but the page showed no confirmation",
+      motivo: unicas.length
+        ? `Housekeep rejected it: ${unicas.join(" · ")}`
+        : "submitted but the page showed no confirmation",
       segundos: seg(),
     };
   } catch (err) {

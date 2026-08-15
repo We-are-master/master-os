@@ -143,22 +143,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
 
   /**
-   * Aprovar manda o relatório para a plataforma do cliente, sem pedir de novo.
-   *
-   * Antes o envio era um botão à parte, dois centímetros acima do Approve: o
-   * job era finalizado, a tela fechava, e o relatório ficava para trás sem
-   * ninguém perceber. Aprovar já significa "está bom e pode ir"; pedir a mesma
-   * confirmação duas vezes só cria a chance de esquecer a segunda.
-   *
-   * Dispara e não espera. O envio preenche um formulário de verdade do outro
-   * lado e leva de 8 a 35 segundos; segurar a finalização por isso trocaria um
-   * relatório esquecido por uma tela travada. O passo 3 acompanha o estado e
-   * mostra "Try again" se falhar, então nada some em silêncio.
-   *
-   * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
-   * aba já disse isso antes de a pessoa chegar aqui.
-   */
-  /**
    * Manda o relatório assim que ele é aprovado, não no fim.
    *
    * Aprovar o relatório é o instante em que se disse "está bom": é aí que ele
@@ -289,6 +273,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 envioExterno={envioExterno}
                 jobUuid={jobUuid}
                 onEnvioDisparado={recarregar}
+                onEditReport={onEditReport}
               />
 
               <FinanceCards

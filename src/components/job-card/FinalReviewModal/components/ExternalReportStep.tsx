@@ -43,11 +43,17 @@ export function ExternalReportStep({
   jobUuid,
   envio,
   onEnviado,
+  onEditReport,
 }: {
   jobUuid: string;
   envio?: EstadoEnvioExterno;
   /** Chamado logo após disparar, para o polling do modal assumir. */
   onEnviado: () => void;
+  /**
+   * Abre o relatório para edição. Existe porque a recusa quase sempre é campo
+   * faltando, e insistir sem mudar nada só repete a recusa.
+   */
+  onEditReport?: () => void;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -182,18 +188,30 @@ export function ExternalReportStep({
           )}
         </div>
       ) : envio.estado === "falhou" ? (
-        // A única ação que sobrou neste passo, e só quando falhou. Aprovar já
-        // manda; se o envio voltou com erro, alguém precisa poder insistir sem
-        // reabrir o job inteiro.
-        <button
-          type="button"
-          onClick={() => void conferir()}
-          disabled={carregando}
-          className="self-start rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
-          style={{ background: "#020040" }}
-        >
-          {carregando ? "Loading…" : "Try again"}
-        </button>
+        // Duas saídas, e a ordem importa: a recusa quase sempre é campo
+        // faltando, então editar vem primeiro. Insistir sem mudar nada só
+        // repete a recusa e gasta uma das três tentativas.
+        <div className="flex flex-wrap items-center gap-2">
+          {onEditReport ? (
+            <button
+              type="button"
+              onClick={onEditReport}
+              className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold cursor-pointer"
+              style={{ color: "#020040", border: "0.5px solid #D8D8DD", background: "#fff" }}
+            >
+              Edit report
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void conferir()}
+            disabled={carregando}
+            className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
+            style={{ background: "#020040" }}
+          >
+            {carregando ? "Loading…" : "Try again"}
+          </button>
+        </div>
       ) : (
         // Nem enviado, nem falhado, nem bloqueado: vai sair no Approve. Dizer
         // isso é melhor do que um botão que pede a mesma confirmação de novo.
