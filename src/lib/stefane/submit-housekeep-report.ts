@@ -122,6 +122,29 @@ async function marcarRadio(page: Page, prefixo: string, indice: number): Promise
   const label = page.locator(`label[for="${prefixo}-${indice}"]`);
   if (await label.count()) await label.first().click({ timeout: 5000 });
   else await el.first().check({ timeout: 5000, force: true });
+
+  /**
+   * Confere que marcou, porque marcar sem efeito não dava erro nenhum.
+   *
+   * Em 15/08/2026 a Housekeep recusou o JOB-9428 dizendo que "Is any follow up
+   * work required?" era obrigatório, com o campo preenchido do nosso lado e o
+   * mapeamento certo nos dois. O clique acertava um label que não governa o
+   * input, ou o id daquele grupo mudou: nos dois casos o Playwright seguia
+   * satisfeito e só a página deles reclamava, depois do submit, sem dizer qual
+   * campo era.
+   *
+   * Falhar aqui é melhor: nomeia o campo antes de gastar a tentativa, e o card
+   * mostra o nome em vez de "rejected it".
+   */
+  const marcado = await el
+    .first()
+    .isChecked({ timeout: 2000 })
+    .catch(() => false);
+  if (!marcado) {
+    throw new Error(
+      `could not tick "${prefixo}" option ${indice}: the field stayed empty, so Housekeep would reject it`,
+    );
+  }
 }
 
 async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
@@ -133,6 +156,14 @@ async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
   await marcarRadio(page, HOUSEKEEP_CAMPOS.conclusao.prefixo, p.conclusao);
   if (p.faltaFazer) await page.fill(HOUSEKEEP_CAMPOS.faltaFazer.seletor, p.faltaFazer);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.precisaRetorno.prefixo, p.precisaRetorno ? SIM : NAO);
+  // Depois do radio, e não antes: "Describe additional work" só existe na
+  // página depois que o retorno vira "Yes", e aí passa a ser obrigatório.
+  // Preencher antes seria escrever num campo que ainda não nasceu.
+  if (p.precisaRetorno && p.trabalhoAdicional) {
+    const campo = page.locator(HOUSEKEEP_CAMPOS.trabalhoAdicional.seletor);
+    await campo.waitFor({ state: "attached", timeout: 5000 });
+    await campo.fill(p.trabalhoAdicional);
+  }
   await marcarRadio(page, HOUSEKEEP_CAMPOS.feedback.prefixo, p.feedback ?? FEEDBACK.bom);
 }
 
@@ -216,9 +247,38 @@ export async function submeterRelatorioHousekeep(args: {
       if (antes.length || depois.length) await page.waitForTimeout(3000);
     }
 
-    // A confirmação de veracidade é o único checkbox visível da página.
-    const confirmar = page.locator('input[type="checkbox"]:visible');
-    if (await confirmar.count()) await confirmar.first().check({ force: true });
+    /**
+     * "I confirm that the information provided in this report is true and
+     * accurate", o único checkbox da página, e sem ele o formulário não passa.
+     *
+     * Era `check({ force: true })` e não pegava, e ninguém via porque
+     * `check({force})` não confere o resultado: a falha só aparecia depois do
+     * submit, como um "This field is required" que não dizia qual campo.
+     *
+     * O clique nativo vem primeiro porque foi o único que funcionou quando se
+     * testou no formulário aberto, em 15/08/2026. O label ao lado do checkbox
+     * não tem `for`, o input não tem `id` e o label não o envolve: clicar no
+     * label não alterna nada, ao contrário do que acontece nos radios. E o
+     * input tem `appearance: none` e fica fora da viewport, que é o que fazia
+     * o clique por coordenada errar o alvo.
+     */
+    const confirmar = page.locator('input[type="checkbox"]').first();
+    if (await confirmar.count()) {
+      // `el.click()` no próprio input: alterna e dispara o change, que é o que
+      // o framework da página escuta.
+      await confirmar.evaluate((el) => (el as HTMLInputElement).click()).catch(() => {});
+      if (!(await confirmar.isChecked().catch(() => false))) {
+        await confirmar.scrollIntoViewIfNeeded().catch(() => {});
+        await confirmar.check({ force: true, timeout: 5000 }).catch(() => {});
+      }
+      if (!(await confirmar.isChecked().catch(() => false))) {
+        return {
+          ok: false,
+          motivo: 'could not tick "I confirm that the information provided is true and accurate"',
+          segundos: seg(),
+        };
+      }
+    }
 
     if (args.simular) {
       // Conta o que de fato entrou nos inputs, não o que pretendíamos anexar:
@@ -247,10 +307,27 @@ export async function submeterRelatorioHousekeep(args: {
     if (/thank you|submitted|received/i.test(depois)) {
       return { ok: true, forma, segundos: seg() };
     }
-    const erro = depois.match(/required|error|invalid|must be/i);
+    /**
+     * A frase inteira da recusa, não a palavra que casou.
+     *
+     * O regex antigo devolvia `erro[0]`, que era literalmente "required": o
+     * card dizia `Housekeep rejected it: "required"` e ninguém ficava sabendo
+     * qual campo faltou. A frase que a Housekeep escreve na tela costuma nomear
+     * o campo, e é ela que diz o que consertar antes de tentar de novo.
+     *
+     * Junta as linhas que reclamam, sem repetir, porque o formulário marca cada
+     * campo que faltou e o motivo real pode ser o terceiro da lista.
+     */
+    const linhas = depois
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && l.length < 160 && /required|invalid|must be|cannot be|please /i.test(l));
+    const unicas = [...new Set(linhas)].slice(0, 3);
     return {
       ok: false,
-      motivo: erro ? `Housekeep rejected it: "${erro[0]}"` : "submitted but the page showed no confirmation",
+      motivo: unicas.length
+        ? `Housekeep rejected it: ${unicas.join(" · ")}`
+        : "submitted but the page showed no confirmation",
       segundos: seg(),
     };
   } catch (err) {

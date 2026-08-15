@@ -232,6 +232,7 @@ import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { JobReportV2Card, JobReportV2DownloadButton } from "@/components/jobs/job-report-v2-card";
+import { ReportHealthCard } from "@/components/jobs/report-health-card";
 import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submission-card";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
@@ -8149,6 +8150,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 timerEndedAt={job.partner_timer_ended_at ?? null}
                 onSubmitted={() => router.refresh()}
               />
+              {/* A nota vem antes dos cards porque a conta é das duas metades
+                  juntas, e antes do Approve porque é lá que ela serve. */}
+              <ReportHealthCard
+                jobTitle={job.title ?? null}
+                startReport={job.start_report}
+                finalReport={job.final_report}
+                finalReportSubmitted={job.final_report_submitted ?? null}
+                timerStartedAt={job.partner_timer_started_at ?? null}
+                timerEndedAt={job.partner_timer_ended_at ?? null}
+              />
               <JobReportV2Card
                 jobId={job.id}
                 kind="final"
@@ -9668,6 +9679,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         selfBillStatus={job.self_bill_id ? "issued" : "pending"}
         invoiceReference={approvalPrimaryInvoice?.reference ?? null}
         selfBillReference={jobSelfBill?.reference ?? null}
+        rawFinalReport={job.final_report}
+        rawStartReport={job.start_report}
+        onEditReport={() => {
+          setValidateCompleteOpen(false);
+          setFillReportOpen(true);
+        }}
         reports={[
           {
             id: "final-report",

@@ -69,6 +69,21 @@ export type FinalReviewModalProps = {
 
   /** Reports */
   reports: ReportItem[];
+  /**
+   * O relatório final cru, para a tela de conferência que abre antes do
+   * financeiro. Sem ele o modal só sabia que existe relatório, não o que ele
+   * diz, e aprovar virava um ato de fé.
+   */
+  rawFinalReport?: unknown;
+  /**
+   * O relatório de chegada, que é onde moram as fotos do "antes".
+   *
+   * Vai junto porque conferir só a conclusão é conferir metade: a Housekeep
+   * pede antes E depois, e o que prova o trabalho é o par.
+   */
+  rawStartReport?: unknown;
+  /** Abre o modal de edição do relatório. Sem isso, "Edit" não tem para onde ir. */
+  onEditReport?: () => void;
 
   completionDelivery: CompletionDelivery | null;
   onCompletionDeliveryChange: (v: CompletionDelivery) => void;

@@ -46,7 +46,15 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   jobReference: string;
   jobTitle: string;
   clientName: string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  /**
+   * Telefone do cliente, só neste email.
+   *
+   * A confirmação vai para o parceiro que já ganhou o job e vai à casa: sem o
+   * número, ele liga para o escritório para pedir o número, e o escritório
+   * repassa. O convite de auto-assign continua sem, porque lá o job ainda não
+   * é de ninguém e o número iria para vários parceiros de uma vez.
+   */
+  clientPhone?: string | null;
   propertyAddress: string;
   scope: string;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
@@ -201,8 +209,15 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
   const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
   const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
-  /** Customer phone is intentionally NOT rendered — partner emails carry name + address only. */
-  const phoneRow = "";
+  // Quem já ganhou o job precisa conseguir avisar que está chegando. Clicável
+  // porque quase todo parceiro abre isto no celular, a caminho.
+  const telefone = data.clientPhone?.trim() || "";
+  const phoneRow = telefone
+    ? `<tr>
+                <td width="38%" valign="top" class="info-label" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; color:#6B6B85;">Phone</td>
+                <td width="62%" valign="top" style="padding:10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;"><a href="tel:${escapeHtml(telHref(telefone))}" style="color:#0A0A1F; text-decoration:none;">${escapeHtml(telefone)}</a></td>
+              </tr>`
+    : "";
 
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
@@ -319,7 +334,7 @@ Earnings: ${moneyIncVatLabel(data.priceDisplay)} (${data.jobType === "hourly" ? 
 
 Date: ${scheduleLine}
 
-Client: ${data.clientName}
+Client: ${data.clientName}${data.clientPhone?.trim() ? `\nPhone: ${data.clientPhone.trim()}` : ""}
 Address: ${data.propertyAddress}
 
 Scope of work
@@ -353,7 +368,12 @@ export interface PartnerJobStatusUpdateData {
   /** YYYY-MM-DD — used in cancelled email subject. */
   scheduledDate?: string | null;
   clientName: string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  /**
+   * Telefone do cliente. O parceiro já é o dono deste job: reagendamento e
+   * on-hold são exatamente as horas em que ele precisa falar com a pessoa, e
+   * sem o número a ligação vem para o escritório repassar.
+   */
+  clientPhone?: string | null;
   propertyAddress: string;
   scope: string;
   /** Display label for the new status (e.g. "Cancelled", "On Hold", "In Progress"). */
@@ -431,6 +451,8 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     address: escapeHtml(data.propertyAddress),
     scope: escapeHtml(data.scope),
     status: escapeHtml(data.newStatusLabel),
+    telefone: data.clientPhone?.trim() ? escapeHtml(data.clientPhone.trim()) : "",
+    telefoneHref: data.clientPhone?.trim() ? escapeHtml(telHref(data.clientPhone.trim())) : "",
     reason: data.reason ? escapeHtml(data.reason) : null,
     url: escapeHtml(data.reportUrl),
     support: escapeHtml(supportEmail),
@@ -440,6 +462,12 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
 
   const reasonBlock = safe.reason
     ? `<div style="margin-top:14px; padding:14px; background:#FFF5EE; border:1px solid #FEE5D6; border-radius:6px; font-size:13px; color:#9A2A00;"><strong>Reason:</strong> ${safe.reason}</div>`
+    : "";
+
+  // Reagendamento e on-hold são as horas em que o parceiro precisa falar com a
+  // pessoa. Clicável porque ele abre isto no celular, a caminho.
+  const telefoneLinha = safe.telefone
+    ? `<tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Phone</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;"><a href="tel:${safe.telefoneHref}" style="color:#0A0A1F; text-decoration:none;">${safe.telefone}</a></td></tr>`
     : "";
 
   const bodyFont =
@@ -489,6 +517,7 @@ ${partnerEmailLogoHeaderRow()}
             <p style="margin:0 0 20px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="info-row">
               <tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Client</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.client}</td></tr>
+              ${telefoneLinha}
               <tr><td colspan="2"><div style="border-top:1px solid #E4E4EC; height:1px;">&nbsp;</div></td></tr>
               <tr><td width="38%" valign="top" style="padding:10px 0; font-size:13px; color:#6B6B85;">Address</td><td width="62%" valign="top" style="padding:10px 0; font-size:14px; line-height:21px; color:#0A0A1F; font-weight:500;">${safe.address}</td></tr>
             </table>
@@ -541,7 +570,7 @@ ${reasonText}
 Job #${data.jobReference}
 ${data.jobTitle}
 
-Client: ${data.clientName}
+Client: ${data.clientName}${data.clientPhone?.trim() ? `\nPhone: ${data.clientPhone.trim()}` : ""}
 Address: ${data.propertyAddress}
 
 Scope of work
@@ -963,7 +992,11 @@ export interface PartnerJobConfirmationRequestData extends PartnerJobEmailSchedu
   jobReference:     string;
   jobTitle:         string;
   clientName:       string;
-  /** Partner-facing emails NEVER show the customer's phone — only name + address. */
+  /**
+   * Sem telefone, e de propósito: este é o convite, o job ainda não é de
+   * ninguém, e o número iria para vários parceiros que talvez nem aceitem.
+   * O telefone entra na confirmação, quando já há um dono.
+   */
   propertyAddress:  string;
   scope:            string;
   /** £ display value (e.g. "£280.00"). */

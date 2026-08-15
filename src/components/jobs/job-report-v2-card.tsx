@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, CheckCircle2, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -64,19 +64,70 @@ export function JobReportV2Card({
   const isApproved = !!approvedAt;
   const titleLabel = kind === "start" ? "Start report" : "Final report";
 
-  const openImage = useCallback(async (rawUrl: string, key: string) => {
-    setOpeningImageKey(key);
-    try {
-      const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
-      if (!signed) {
-        toast.error("Could not sign image URL.");
+  /**
+   * URLs assinadas de todas as fotos, buscadas na montagem.
+   *
+   * O bucket é privado, então o que está gravado no relatório não abre sozinho.
+   * Antes a assinatura só acontecia no clique e a foto ia para outra aba: dava
+   * para saber que existia uma foto, nunca para ver o que ela mostra. Quem
+   * aprova precisa olhar o que o cliente vai olhar, e uma lista de botões
+   * escritos "Image" não é olhar.
+   */
+  const [assinadas, setAssinadas] = useState<Record<string, string>>({});
+  const [ampliada, setAmpliada] = useState<string | null>(null);
+
+  const todasAsFotos = useMemo(() => {
+    if (!report) return [] as string[];
+    const doMapa = report.photosByRoom
+      ? Object.values(report.photosByRoom).flatMap((v) => (Array.isArray(v) ? v : []))
+      : [];
+    // `photosByRoom` guarda string; `photosFlat` guarda `{ url }`. Achatar as
+    // duas formas aqui é o que faz a assinatura valer para os dois templates.
+    return [...doMapa, ...report.photosFlat.map((p) => p.url)].filter(
+      (u): u is string => typeof u === "string" && u.trim().length > 0,
+    );
+  }, [report]);
+
+  useEffect(() => {
+    let vivo = true;
+    const faltando = todasAsFotos.filter((u) => !assinadas[u]);
+    if (faltando.length === 0) return;
+    void (async () => {
+      const pares = await Promise.all(
+        faltando.map(async (u) => [u, await createSignedJobReportAssetUrl(u, 60 * 60)] as const),
+      );
+      if (!vivo) return;
+      const novas: Record<string, string> = {};
+      for (const [cru, assinada] of pares) if (assinada) novas[cru] = assinada;
+      if (Object.keys(novas).length > 0) setAssinadas((p) => ({ ...p, ...novas }));
+    })();
+    return () => {
+      vivo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- assinar só o que falta, sem religar a cada assinatura
+  }, [todasAsFotos]);
+
+  const openImage = useCallback(
+    async (rawUrl: string, key: string) => {
+      const jaTem = assinadas[rawUrl];
+      if (jaTem) {
+        setAmpliada(jaTem);
         return;
       }
-      window.open(signed, "_blank", "noopener,noreferrer");
-    } finally {
-      setOpeningImageKey(null);
-    }
-  }, []);
+      setOpeningImageKey(key);
+      try {
+        const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
+        if (!signed) {
+          toast.error("Could not sign image URL.");
+          return;
+        }
+        setAmpliada(signed);
+      } finally {
+        setOpeningImageKey(null);
+      }
+    },
+    [assinadas],
+  );
 
   const setApproval = useCallback(async (approve: boolean) => {
     setSavingApproval(true);
@@ -146,6 +197,7 @@ export function JobReportV2Card({
 
   return (
     <div className="rounded-[10px] p-[14px] space-y-3" style={cardStyle}>
+      {ampliada ? <Lightbox url={ampliada} onClose={() => setAmpliada(null)} /> : null}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {isApproved ? (
@@ -254,6 +306,7 @@ export function JobReportV2Card({
                       label={`${room}-${i}`}
                       onOpen={openImage}
                       opening={openingImageKey === `${room}-${i}`}
+                      signedUrl={assinadas[u]}
                     />
                   ))}
                 </div>
@@ -277,6 +330,7 @@ export function JobReportV2Card({
                 label={`flat-${i}`}
                 onOpen={openImage}
                 opening={openingImageKey === `flat-${i}`}
+                signedUrl={assinadas[p.url]}
               />
             ))}
           </div>
@@ -406,17 +460,40 @@ function CertificateReadPrompt({
   );
 }
 
+/**
+ * Miniatura da foto, do tamanho que dá para julgar se está boa.
+ *
+ * Enquanto a URL assinada não chega, e para PDF, cai no botão de antes: é o
+ * mesmo destino, só sem a imagem. Melhor um botão do que um quadrado quebrado.
+ */
 function ImageButton({
   url,
   label,
   onOpen,
   opening,
+  signedUrl,
 }: {
-  url:     string;
-  label:   string;
-  onOpen:  (url: string, label: string) => void;
-  opening: boolean;
+  url:        string;
+  label:      string;
+  onOpen:     (url: string, label: string) => void;
+  opening:    boolean;
+  signedUrl?: string;
 }) {
+  const ehPdf = /\.pdf(\?|$)/i.test(url);
+  if (signedUrl && !ehPdf) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen(url, label)}
+        className="relative h-[72px] w-[72px] overflow-hidden rounded-[6px] cursor-pointer"
+        style={{ border: "0.5px solid #D8D8DD" }}
+        aria-label="Expand photo"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={signedUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -427,8 +504,40 @@ function ImageButton({
       aria-label="Open image"
     >
       {opening ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImageIcon className="h-3 w-3" />}
-      {opening ? "Opening" : "Image"}
+      {opening ? "Opening" : ehPdf ? "PDF" : "Image"}
     </button>
+  );
+}
+
+/** A foto em tamanho grande. Clique em qualquer lugar, ou Esc, fecha. */
+function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 cursor-zoom-out"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="" className="max-h-full max-w-full rounded-[8px] object-contain" />
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1 text-[13px] font-semibold cursor-pointer"
+        style={{ color: "#020040" }}
+      >
+        Close
+      </button>
+    </div>
   );
 }
 

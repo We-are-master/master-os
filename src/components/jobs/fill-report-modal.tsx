@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { FileText, Loader2, Upload } from "lucide-react";
+import { FileText, Info, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter } from "@/components/ui/fixfy-modal/fixfy-modal-footer";
 import {
   fieldsForTemplate,
   isFieldVisible,
+  HOUSEKEEP_MAX_FOTOS,
   photoSlotsForTemplate,
   pickReportTemplate,
   reportSectionTitles,
@@ -17,6 +18,7 @@ import {
   type ReportTemplate,
 } from "@/lib/public-report-templates";
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
+import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
@@ -45,6 +47,7 @@ interface FillReportModalProps {
 }
 
 const ENVELOPE_KEYS = new Set(["template", "submitted_at", "photos", "source", "duration_ms", "chargeable_hours"]);
+
 
 /** ISO instant → London wall-clock `HH:MM` for a `<input type=time>`. */
 function londonHHMM(iso: string | null | undefined): string {
@@ -105,6 +108,8 @@ export function FillReportModal({
 
   const [data, setData] = useState<Record<string, unknown>>({});
   const [photos, setPhotos] = useState<Record<string, File[]>>({});
+  /** Hora em que o rascunho recuperado foi salvo, ou null se não houve rascunho. */
+  const [rascunhoDe, setRascunhoDe] = useState<string | null>(null);
   const [visitYmd, setVisitYmd] = useState(scheduledDate ?? "");
   const [startTime, setStartTime] = useState("");
   const [finishTime, setFinishTime] = useState("");
@@ -126,14 +131,68 @@ export function FillReportModal({
         seeded[k] = v;
       }
     }
-    setData(seeded);
+    // O rascunho entra por cima do que veio do job: se existe, é porque alguém
+    // digitou depois e não conseguiu salvar. O banner diz que foi recuperado e
+    // o botão devolve o estado do job, então nada acontece em silêncio.
+    const r = lerRascunho(jobId, template);
+    setData(r ? { ...seeded, ...r.data } : seeded);
     setPhotos({});
-    setVisitYmd(scheduledDate ?? "");
-    setStartTime(londonHHMM(timerStartedAt));
-    setFinishTime(londonHHMM(timerEndedAt));
+    setVisitYmd(r?.visitYmd || (scheduledDate ?? ""));
+    setStartTime(r?.startTime || londonHHMM(timerStartedAt));
+    setFinishTime(r?.finishTime || londonHHMM(timerEndedAt));
+    setRascunhoDe(
+      r
+        ? new Date(r.salvoEm).toLocaleString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit",
+            day: "2-digit",
+            month: "short",
+          })
+        : null,
+    );
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseed only when the modal opens
   }, [open]);
+
+  /**
+   * Grava o rascunho a cada mudança, com meio segundo de folga.
+   *
+   * Sem o atraso seria uma escrita por tecla; com ele, uma por pausa. E o
+   * `submitting` corta a gravação porque durante o envio o que vale é o que
+   * está indo para o servidor.
+   */
+  useEffect(() => {
+    if (!open || submitting) return;
+    const id = setTimeout(
+      () => salvarRascunho(jobId, template, { data, visitYmd, startTime, finishTime }),
+      500,
+    );
+    return () => clearTimeout(id);
+  }, [open, submitting, data, visitYmd, startTime, finishTime, jobId, template]);
+
+  /**
+   * URLs de pré-visualização, uma por arquivo, criadas só quando as fotos mudam.
+   *
+   * Estavam sendo criadas dentro do render: cada tecla digitada gerava uma URL
+   * nova para cada foto e nenhuma era liberada, então a memória subia sem parar
+   * e a aba acabava travando no meio do relatório. Era essa a causa da perda de
+   * trabalho em 14/08/2026, e o rascunho acima é a rede, não o conserto.
+   */
+  const previews = useMemo(() => {
+    const m = new Map<File, string>();
+    for (const lista of Object.values(photos)) {
+      for (const f of lista) {
+        if (!isPdfFile(f) && !m.has(f)) m.set(f, URL.createObjectURL(f));
+      }
+    }
+    return m;
+  }, [photos]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url);
+    };
+  }, [previews]);
 
   const setField = (key: string, value: unknown) =>
     setData((prev) => ({ ...prev, [key]: value }));
@@ -284,7 +343,7 @@ export function FillReportModal({
       <div key={`${slot}-${i}`} className="relative">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={URL.createObjectURL(f)}
+          src={previews.get(f)}
           alt=""
           className="h-16 w-full rounded-[6px] border object-cover"
           style={{ borderColor: BORDER }}
@@ -301,14 +360,84 @@ export function FillReportModal({
     );
   };
 
+  /**
+   * Quantas fotos esta metade do relatório já tem, contando as que o parceiro
+   * mandou antes.
+   *
+   * A conta é por metade e não por cômodo porque é assim que chega do outro
+   * lado: o formulário da Housekeep tem dois blocos de arquivo, um de chegada e
+   * um de conclusão, e os sete cômodos daqui são achatados nesses dois.
+   */
+  const contarMetade = (metade: "start" | "final") => {
+    const doSlot = photoSlots[metade].reduce((n, s) => n + (photos[s.key]?.length ?? 0), 0);
+    return doSlot + countPhotos(metade === "start" ? existingStart : existingFinal);
+  };
+
+  /**
+   * A regra da Housekeep, dita na tela e com a contagem do momento.
+   *
+   * Sem foto o envio é recusado, e o motivo só aparecia depois, na aba, quando
+   * quem digitou já tinha ido embora. Acima de 20 a Stefane corta o excesso,
+   * então avisar antes é a diferença entre escolher quais 20 e descobrir depois
+   * que sumiram.
+   */
+  const avisoDeFotos = (metade: "start" | "final") => {
+    // Só faz sentido no formulário de trade, que tem um bloco de arquivo por
+    // metade. No de limpeza cada cômodo tem o seu, e a conta que interessa
+    // aparece em cada rótulo.
+    if (photoSlots[metade].some((s) => s.max)) return null;
+    const n = contarMetade(metade);
+    if (n > 0 && n <= HOUSEKEEP_MAX_FOTOS) return null;
+    return (
+      <p className="flex items-center gap-1.5 text-[10.5px]" style={{ color: ORANGE }}>
+        <Info className="h-3 w-3 shrink-0" />
+        {n === 0
+          ? "The client platform needs at least one photo here, or the report cannot be sent."
+          : `${n} photos · the client platform takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`}
+      </p>
+    );
+  };
+
+  /** "(min 5 · max 20)" no rótulo, e a contagem em laranja enquanto não fecha. */
+  const contadorDoSlot = (slot: ReportPhotoSlot) => {
+    if (!slot.min && !slot.max) return null;
+    const n = (photos[slot.key]?.length ?? 0);
+    const faltando = slot.min ? n < slot.min : false;
+    const excedeu = slot.max ? n > slot.max : false;
+    return (
+      <span
+        className="ml-1.5 text-[10px] font-normal"
+        style={{ color: faltando || excedeu ? ORANGE : MUTED }}
+        title={
+          excedeu
+            ? `The client platform takes ${slot.max} photos per block. The extras will not be sent.`
+            : `We ask for at least ${slot.min}: one photo cannot show everything the client platform wants to see here.`
+        }
+      >
+        {n > 0 ? `${n} · ` : ""}
+        {slot.min ? `min ${slot.min}` : "optional"}
+        {slot.max ? ` max ${slot.max}` : ""}
+      </span>
+    );
+  };
+
   const renderPhotoSlot = (slot: ReportPhotoSlot) => {
     const files = photos[slot.key] ?? [];
     return (
       <div key={slot.key} className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-[12px] font-semibold" style={{ color: NAVY }}>{slot.label}</label>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <label className="text-[12px] font-semibold" style={{ color: NAVY }}>
+              {slot.label}
+              {contadorDoSlot(slot)}
+            </label>
+            {/* O que a Housekeep quer ver nesta foto, com as palavras deles. */}
+            {slot.hint ? (
+              <p className="mt-0.5 text-[10.5px] leading-snug" style={{ color: MUTED }}>{slot.hint}</p>
+            ) : null}
+          </div>
           <label
-            className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold"
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] font-semibold"
             style={{ color: ORANGE }}
           >
             <Upload className="h-3 w-3" />
@@ -389,6 +518,10 @@ export function FillReportModal({
       } else {
         toast.success(isEdit ? "Report updated." : "Report saved on the job.");
       }
+      // O relatório está no servidor: o rascunho perdeu a razão de existir e
+      // ficaria reaparecendo na próxima abertura como se fosse trabalho novo.
+      apagarRascunho(jobId);
+      setRascunhoDe(null);
       onSubmitted();
       onClose();
     } catch (err) {
@@ -445,6 +578,32 @@ export function FillReportModal({
       {/* O `Modal` não injeta padding no corpo: cada modal traz o seu, e a
           falta dele era o conteúdo colado na borda. */}
       <div className="space-y-3 p-4 sm:p-5">
+        {rascunhoDe ? (
+          <div
+            className="flex flex-col gap-2 rounded-[8px] px-3 py-2 text-[11px] sm:flex-row sm:items-center sm:justify-between"
+            style={{ background: "#FFF6F0", border: `0.5px solid ${ORANGE}`, color: NAVY }}
+          >
+            <span>
+              <strong>Recovered what you had typed</strong> from {rascunhoDe}. Photos are not
+              kept, so add those again.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                apagarRascunho(jobId);
+                setRascunhoDe(null);
+                setData({});
+                setVisitYmd(scheduledDate ?? "");
+                setStartTime(londonHHMM(timerStartedAt));
+                setFinishTime(londonHHMM(timerEndedAt));
+              }}
+              className="shrink-0 cursor-pointer underline"
+              style={{ color: ORANGE }}
+            >
+              Start blank
+            </button>
+          </div>
+        ) : null}
         {startAlreadySubmitted ? (
           <div
             className="rounded-[8px] px-3 py-2 text-[11px]"
@@ -513,6 +672,7 @@ export function FillReportModal({
                 <div className="space-y-3">{spec.start.map(renderField)}</div>
                 {photoSlots.start.length > 0 ? (
                   <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
+                    {avisoDeFotos("start")}
                     {photoSlots.start.map(renderPhotoSlot)}
                   </div>
                 ) : null}
@@ -526,6 +686,7 @@ export function FillReportModal({
             <div className="space-y-3">{spec.final.map(renderField)}</div>
             {photoSlots.final.length > 0 ? (
               <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
+                {avisoDeFotos("final")}
                 {photoSlots.final.map(renderPhotoSlot)}
               </div>
             ) : null}

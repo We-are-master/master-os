@@ -16,6 +16,8 @@
  * espelhando este formulário. Stefane transporta, não interpreta.
  */
 
+import { HOUSEKEEP_MAX_FOTOS } from "@/lib/public-report-templates";
+
 /**
  * A Housekeep tem DOIS formulários, e a diferença não é cosmética.
  *
@@ -78,6 +80,20 @@ export const HOUSEKEEP_CAMPOS = {
   faltaFazer: { seletor: 'textarea[name="2kz3prnfmrbr"]', tipo: "texto" as const, rotulo: "What still needs completing" },
   /** "Is any follow up work required?" */
   precisaRetorno: { prefixo: "6jovglk0ylop", tipo: "sim_nao" as const, rotulo: "Follow up required" },
+  /**
+   * "Describe additional work". Nasce escondido e só aparece quando o retorno
+   * é "Yes", e nesse instante vira obrigatório.
+   *
+   * Ficou um ano fora do mapa porque `formaDoFormulario` enumera o que está na
+   * página, e este campo não está até alguém responder Yes. O JOB-9428 foi
+   * recusado duas vezes por causa dele, com a mensagem "This field is
+   * required" colada na pergunta do retorno, que já estava respondida.
+   */
+  trabalhoAdicional: {
+    seletor: 'textarea[name="78zpg340gyzk"]',
+    tipo: "texto" as const,
+    rotulo: "Describe additional work",
+  },
   /** Feedback para a Housekeep: 😞 Bad / 😐 Okay / 🙂 Good */
   feedback: { prefixo: "vxowxmk0npz2", tipo: "escolha" as const, rotulo: "Feedback" },
 } as const;
@@ -99,7 +115,7 @@ export const HOUSEKEEP_FOTOS = {
   antes: 0,
   depois: 1,
   /** "Upload or take photos — between 1-20 images", diz o botão. */
-  maximoPorBloco: 20,
+  maximoPorBloco: HOUSEKEEP_MAX_FOTOS,
 } as const;
 
 /** Índice do radio de conclusão, na ordem do formulário. */
@@ -271,6 +287,8 @@ export type PayloadHousekeep = {
   conclusao: number;
   faltaFazer: string | null;
   precisaRetorno: boolean;
+  /** Obrigatório quando `precisaRetorno` é true. Null quando não é. */
+  trabalhoAdicional: string | null;
   recomendaServicos: boolean;
   feedback: number;
 };
@@ -307,6 +325,13 @@ export function payloadDoReport(input: {
       conclusao: conclusaoDoReport(f),
       faltaFazer: (f.what_needs_completing as string | null)?.trim() || null,
       precisaRetorno: Boolean(f.follow_up_required),
+      // Responder "Yes" no retorno revela "Describe additional work" e o torna
+      // obrigatório. Ou seja: dizer que precisa voltar sem dizer para quê é o
+      // que a Housekeep recusa. Reaproveita o que já foi escrito sobre o que
+      // ficou faltando, que é exatamente o trabalho do retorno.
+      trabalhoAdicional: f.follow_up_required
+        ? (f.what_needs_completing as string | null)?.trim() || descricao
+        : null,
       recomendaServicos: Boolean(input.recomendaServicos),
       // Sempre "bom" a menos que o parceiro tenha sinalizado problema: é
       // feedback nosso sobre a Housekeep, não sobre o job, e reclamar sem

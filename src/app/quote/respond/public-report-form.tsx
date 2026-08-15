@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText, Upload } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   fieldsForTemplate,
   isFieldVisible,
@@ -52,6 +52,31 @@ export default function PublicReportForm({
 
   const [data, setData] = useState<Record<string, unknown>>({});
   const [photos, setPhotos] = useState<Record<string, File[]>>({});
+
+  /**
+   * Uma URL de pré-visualização por arquivo, refeita só quando as fotos mudam.
+   *
+   * Antes a URL nascia dentro do render: cada tecla digitada criava uma nova
+   * para cada foto e nenhuma era liberada. Aqui isso pesa mais que no escritório
+   * porque quem preenche é o parceiro, no celular, com foto de câmera de vários
+   * MB, e a aba trava com o relatório meio escrito. Foi assim que se perdeu um
+   * relatório inteiro em 14/08/2026, do lado do escritório.
+   */
+  const previews = useMemo(() => {
+    const m = new Map<File, string>();
+    for (const lista of Object.values(photos)) {
+      for (const f of lista) {
+        if (!isPdfFile(f) && !m.has(f)) m.set(f, URL.createObjectURL(f));
+      }
+    }
+    return m;
+  }, [photos]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url);
+    };
+  }, [previews]);
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -199,12 +224,11 @@ export default function PublicReportForm({
         </div>
       );
     }
-    const url = URL.createObjectURL(f);
     return (
       <div key={`${slot}-${i}`} className="relative">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={url}
+          src={previews.get(f)}
           alt=""
           className="h-20 w-full rounded-lg border object-cover"
           style={{ borderColor: FIXFY_BORDER }}
@@ -274,9 +298,37 @@ export default function PublicReportForm({
 
     return (
       <div key={slot.key} className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>{slot.label}</label>
-          <label className="cursor-pointer text-[12px] font-semibold underline" style={{ color: FIXFY_ORANGE }}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>
+              {slot.label}
+              {slot.min || slot.max ? (
+                <span
+                  className="ml-1.5 text-[11px] font-normal"
+                  style={{
+                    color:
+                      (slot.min && files.length < slot.min) || (slot.max && files.length > slot.max)
+                        ? FIXFY_ORANGE
+                        : FIXFY_MUTED,
+                  }}
+                >
+                  {files.length > 0 ? `${files.length} · ` : ""}
+                  {slot.min ? `min ${slot.min}` : "optional"}
+                  {slot.max ? ` max ${slot.max}` : ""}
+                </span>
+              ) : null}
+            </label>
+            {/*
+              O que a Housekeep quer ver nesta foto, com as palavras deles.
+              Só o `prominent` mostrava a dica, e nenhum bloco de cômodo é
+              prominent: a orientação existia no tipo e nunca chegava à tela de
+              quem estava com o celular na mão dentro da casa.
+            */}
+            {slot.hint ? (
+              <p className="mt-0.5 text-[11.5px] leading-snug" style={{ color: FIXFY_MUTED }}>{slot.hint}</p>
+            ) : null}
+          </div>
+          <label className="shrink-0 cursor-pointer text-[12px] font-semibold underline" style={{ color: FIXFY_ORANGE }}>
             Add photos
             <input
               type="file"

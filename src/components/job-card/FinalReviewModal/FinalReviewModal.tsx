@@ -12,6 +12,7 @@ import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
 import type { EstadoEnvioExterno } from "./components/ExternalReportStep";
 import type { FinalReviewModalProps } from "./types";
+import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
 
 type EnvioExterno = EstadoEnvioExterno;
 
@@ -110,17 +111,100 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     submitting,
     hourlySlot,
     paymentSchedule,
+    rawFinalReport,
+    rawStartReport,
+    onEditReport,
   } = props;
 
-  // O envio para a plataforma de origem vive no passo 3 (ver ExternalReportStep):
-  // é lá que a pergunta aparece, e aqui só o estado que ele consome.
+  /**
+   * Duas etapas, nesta ordem: o relatório e depois o dinheiro.
+   *
+   * Aprovar sem ter visto o relatório era o buraco: o botão dizia "Review &
+   * approve" e abria direto no financeiro, então "review" queria dizer conferir
+   * margem e datas, nunca o que o parceiro escreveu. Agora a primeira tela é o
+   * relatório inteiro, com as fotos, e dela se sai por "Edit" ou seguindo.
+   *
+   * Só aparece quando há relatório. Job sem relatório abre direto no
+   * financeiro, como antes: não há o que conferir e uma tela vazia no caminho
+   * seria só um clique a mais.
+   */
+  const temRelatorio = !!rawFinalReport && Object.keys(rawFinalReport as object).length > 0;
+  const [etapa, setEtapa] = useState<"relatorio" | "financeiro">(
+    temRelatorio ? "relatorio" : "financeiro",
+  );
+  // O componente continua montado com o modal fechado, então a etapa volta ao
+  // começo no fechamento e não na abertura: é handler, roda uma vez, e não
+  // precisa de efeito nem de ref no render, que este repo proíbe.
+  const fechar = () => {
+    setEtapa(temRelatorio ? "relatorio" : "financeiro");
+    // Forçar é decisão para um job, não um modo. Sem isto, quem liberou uma vez
+    // sairia com o bloqueio desligado no próximo job sem ter escolhido isso.
+    setForcarSemEnvio(false);
+    onClose();
+  };
+
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
+
+  /**
+   * Manda o relatório assim que ele é aprovado, não no fim.
+   *
+   * Aprovar o relatório é o instante em que se disse "está bom": é aí que ele
+   * tem que sair. Deixar para o Finalise atrasava o envio até o fim do
+   * financeiro sem ganhar nada, e a espera de 8 a 35 segundos caía toda em cima
+   * do último clique.
+   *
+   * Agora ela acontece por baixo, enquanto se confere margem e datas, e quando
+   * se chega no Finalise o passo 3 já diz "Submitted · HH:MM" ou "Try again".
+   * Ninguém fecha a tela sem saber, que era o problema.
+   *
+   * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
+   * aba já tinha dito isso antes.
+   */
+  const dispararEnvio = () => {
+    const podeEnviar =
+      jobUuid && envioExterno && !envioExterno.bloqueio &&
+      envioExterno.estado !== "enviado" && envioExterno.estado !== "enviando";
+    if (!podeEnviar) return;
+    void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
+      // Avisa o passo 3 na hora, senão ele fica no texto de espera: o polling
+      // dele só liga depois de ver o estado "enviando" uma vez, e sem isto a
+      // rodinha nunca apareceria.
+      .then(() => recarregar())
+      .catch((err) => console.error("[final-review] envio externo falhou:", err));
+  };
+
+  // Rede de segurança: job sem relatório pula a etapa de conferência, então o
+  // envio nunca foi disparado. Aqui ele ainda sai, se puder.
+  const aprovarEEnviar = () => {
+    dispararEnvio();
+    onApprove();
+  };
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
   const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = attestationsOk && docsReady && !submitting;
+
+  /**
+   * Finalizar com o relatório pendente é o que faz ele sumir.
+   *
+   * O job fecha, sai da fila de quem olha relatório, e o pendente só volta se
+   * alguém for procurar. Foi assim que o JOB-9428 virou awaiting_payment com o
+   * relatório nunca enviado, e é o tipo de perda que ninguém percebe no dia.
+   *
+   * Só trava quando o envio é possível: com bloqueio de verdade (sem foto,
+   * plataforma não automatizada, sem link) não há o que esperar, e travar ali
+   * congelaria fatura, self-bill e pagamento por causa de coisa que este botão
+   * não resolve. A saída explícita existe pelo mesmo motivo, para o dia em que
+   * a Housekeep estiver fora do ar ou alguém já tiver mandado à mão.
+   */
+  const [forcarSemEnvio, setForcarSemEnvio] = useState(false);
+  const envioPendente =
+    !!envioExterno &&
+    !envioExterno.bloqueio &&
+    envioExterno.estado !== "enviado";
+  const canApprove =
+    attestationsOk && docsReady && !submitting && (!envioPendente || forcarSemEnvio);
 
   return (
     <AnimatePresence>
@@ -131,7 +215,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            onClick={submitting ? undefined : onClose}
+            onClick={submitting ? undefined : fechar}
             className="final-review-modal-overlay absolute inset-0 bg-black/30 dark:bg-black/65 glass"
           />
           <motion.div
@@ -146,10 +230,53 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               jobId={jobId}
               jobTitle={jobTitle}
               clientName={clientName}
-              onClose={onClose}
+              onClose={fechar}
               reviewSummary={reviewSummary ?? null}
             />
 
+            {etapa === "relatorio" ? (
+              <>
+                <div className="min-h-0 overflow-y-auto overscroll-contain p-4">
+                  <p className="mb-2 text-[11px]" style={{ color: "#6B6B70" }}>
+                    This is the report as it was filled in. Check it before the money.
+                  </p>
+                  {/* Chegada primeiro, na ordem do dia de trabalho. Conferir só
+                      a conclusão é conferir metade: o que prova o serviço é o
+                      par antes e depois, e é o par que a Housekeep cobra. */}
+                  <div className="space-y-3">
+                    {rawStartReport && Object.keys(rawStartReport as object).length > 0 ? (
+                      <JobReportV2Card jobId={jobUuid} kind="start" rawReport={rawStartReport} approvedAt={null} readOnly />
+                    ) : null}
+                    <JobReportV2Card jobId={jobUuid} kind="final" rawReport={rawFinalReport} approvedAt={null} readOnly />
+                  </div>
+                </div>
+                <div
+                  className="flex items-center justify-between gap-2 px-4 py-3"
+                  style={{ borderTop: "0.5px solid #E4E4E8" }}
+                >
+                  <button
+                    type="button"
+                    onClick={onEditReport}
+                    disabled={!onEditReport}
+                    className="rounded-[6px] px-3 py-[6px] text-[12px] font-medium cursor-pointer disabled:opacity-40"
+                    style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                  >
+                    Edit report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dispararEnvio();
+                      setEtapa("financeiro");
+                    }}
+                    className="rounded-[6px] px-3.5 py-[6px] text-[12px] font-semibold text-white cursor-pointer"
+                    style={{ background: "#020040" }}
+                  >
+                    Looks right, continue →
+                  </button>
+                </div>
+              </>
+            ) : (
             <div className="min-h-0 overflow-y-auto overscroll-contain">
               <MarginHero
                 margin={margin}
@@ -169,6 +296,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 envioExterno={envioExterno}
                 jobUuid={jobUuid}
                 onEnvioDisparado={recarregar}
+                onEditReport={onEditReport}
               />
 
               <FinanceCards
@@ -198,21 +326,30 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 />
               ) : null}
             </div>
+            )}
 
-            <ResponsibilityCheck
-              confirmed={confirmed}
-              onChange={onConfirmedChange}
-              sentToAccounts={sentToAccounts}
-              onSentToAccountsChange={onSentToAccountsChange}
-              currentUserName={currentUserName}
-            />
-
-            <ModalFooter
-              canApprove={canApprove}
-              submitting={submitting}
-              onCancel={onClose}
-              onApprove={onApprove}
-            />
+            {/* Aceite e aprovação só na etapa do dinheiro: assinar
+                responsabilidade enquanto ainda se está lendo o relatório é
+                assinar antes de ter conferido. */}
+            {etapa === "financeiro" ? (
+              <>
+                <ResponsibilityCheck
+                  confirmed={confirmed}
+                  onChange={onConfirmedChange}
+                  sentToAccounts={sentToAccounts}
+                  onSentToAccountsChange={onSentToAccountsChange}
+                  currentUserName={currentUserName}
+                  bloqueadoPeloEnvio={envioPendente && !forcarSemEnvio}
+                  onForcar={() => setForcarSemEnvio(true)}
+                />
+                <ModalFooter
+                  canApprove={canApprove}
+                  submitting={submitting}
+                  onCancel={fechar}
+                  onApprove={aprovarEEnviar}
+                />
+              </>
+            ) : null}
           </motion.div>
         </div>
       )}

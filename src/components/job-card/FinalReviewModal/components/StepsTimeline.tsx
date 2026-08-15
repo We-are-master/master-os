@@ -24,6 +24,8 @@ type Props = {
   jobUuid?: string;
   /** Avisa o modal de que um envio começou, para o polling assumir. */
   onEnvioDisparado: () => void;
+  /** Abre o relatório para edição, oferecido quando o envio é recusado. */
+  onEditReport?: () => void;
 };
 
 function fmtGBP(n: number) {
@@ -96,6 +98,7 @@ export function StepsTimeline({
   envioExterno,
   jobUuid,
   onEnvioDisparado,
+  onEditReport,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -175,7 +178,7 @@ export function StepsTimeline({
               calado justamente quando havia algo a fazer. */}
           {jobUuid && envioExterno ? (
             <div className="w-full">
-              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} />
+              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} />
             </div>
           ) : null}
         </div>

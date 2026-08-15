@@ -4,6 +4,10 @@ type Props = {
   sentToAccounts: boolean;
   onSentToAccountsChange: (v: boolean) => void;
   currentUserName: string;
+  /** True enquanto o relatório pendente estiver travando o Finalise. */
+  bloqueadoPeloEnvio?: boolean;
+  /** Libera a finalização mesmo com o relatório pendente. */
+  onForcar?: () => void;
 };
 
 export function ResponsibilityCheck({
@@ -12,6 +16,8 @@ export function ResponsibilityCheck({
   sentToAccounts,
   onSentToAccountsChange,
   currentUserName,
+  bloqueadoPeloEnvio,
+  onForcar,
 }: Props) {
   return (
     <div
@@ -58,6 +64,40 @@ export function ResponsibilityCheck({
           .
         </span>
       </label>
+
+      {/*
+        Enquanto o relatório não chegou na plataforma do cliente, finalizar é o
+        que faz ele sumir: o job fecha, sai da fila, e o pendente só volta se
+        alguém for procurar. Foi assim que o JOB-9428 virou awaiting_payment com
+        o relatório nunca enviado.
+
+        Mas o bloqueio não pode ser absoluto, e a saída ao lado não é fraqueza:
+        se a Housekeep cair, se a plataforma não for automatizada, ou se alguém
+        já mandou à mão, travar a finalização congelaria fatura, self-bill e
+        pagamento por causa de um site de terceiro.
+      */}
+      {bloqueadoPeloEnvio ? (
+        <div
+          className="rounded-[8px] px-3 py-2.5 text-[12px]"
+          style={{ background: "#FFF6EC", border: "0.5px solid #F0D6B8", color: "#7A3D00" }}
+        >
+          <p className="m-0">
+            <strong>Send the report first.</strong> Finalising is blocked until it reaches the
+            client platform, in step 3 above. Once the job closes, a pending report only comes
+            back if someone goes looking for it.
+          </p>
+          {onForcar ? (
+            <button
+              type="button"
+              onClick={onForcar}
+              className="mt-2 rounded-[6px] bg-white px-[10px] py-[5px] text-[11px] font-semibold cursor-pointer"
+              style={{ color: "#7A3D00", border: "0.5px solid #E8C6A8" }}
+            >
+              Finalise without sending
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

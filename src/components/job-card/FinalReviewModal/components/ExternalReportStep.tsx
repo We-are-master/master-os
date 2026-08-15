@@ -9,10 +9,19 @@ import { useState } from "react";
  * o relatório existe onde precisa existir? Subir no OS e não subir na Housekeep
  * é meio caminho, e é como 198 jobs viraram 16 relatórios.
  *
- * O envio passa por uma conferência de propósito. O preview já pegou um
- * relatório cuja descrição era a letra "K" e um cujo timer terminava antes de
- * começar: nenhum dos dois é erro técnico, os dois são coisa que ninguém quer
- * mandar para o cliente. Nos primeiros envios ver antes vale mais que velocidade.
+ * Desde 15/08/2026 este passo não tem botão de enviar: quem manda é o Approve.
+ * Aprovar já quer dizer "está bom e pode ir", e pedir a mesma confirmação duas
+ * vezes a dois centímetros de distância só criava a chance de esquecer a
+ * segunda, finalizar o job e deixar o relatório para trás.
+ *
+ * A conferência que existia aqui não se perdeu, mudou de lugar e de hora: a
+ * nota na aba Reports mede o relatório contra o que a plataforma exige e
+ * mostra o que falta ANTES de alguém abrir esta tela. Foi o preview que pegou
+ * um relatório cuja descrição era a letra "K" e um cujo timer terminava antes
+ * de começar, e é esse tipo de coisa que a nota agora pega mais cedo.
+ *
+ * O preview continua vivo no caminho da falha, onde ver antes de insistir
+ * ainda vale mais que velocidade.
  */
 
 export type EstadoEnvioExterno = {
@@ -34,11 +43,17 @@ export function ExternalReportStep({
   jobUuid,
   envio,
   onEnviado,
+  onEditReport,
 }: {
   jobUuid: string;
   envio?: EstadoEnvioExterno;
   /** Chamado logo após disparar, para o polling do modal assumir. */
   onEnviado: () => void;
+  /**
+   * Abre o relatório para edição. Existe porque a recusa quase sempre é campo
+   * faltando, e insistir sem mudar nada só repete a recusa.
+   */
+  onEditReport?: () => void;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -61,6 +76,18 @@ export function ExternalReportStep({
     setCarregando(true);
     try {
       await fetch(rota, { method: "POST" });
+      setPreview(null);
+      onEnviado();
+    } finally {
+      setCarregando(false);
+    }
+  };
+
+  /** Zera o contador e tenta de novo. Só existe quando as três acabaram. */
+  const reiniciarEEnviar = async () => {
+    setCarregando(true);
+    try {
+      await fetch(`${rota}?reiniciar=1`, { method: "POST" });
       setPreview(null);
       onEnviado();
     } finally {
@@ -102,10 +129,46 @@ export function ExternalReportStep({
   // Bloqueado: o motivo é a instrução. "no photos on the report" é o mais comum,
   // e diz exatamente o que fazer antes de tentar de novo.
   if (envio.bloqueio) {
+    /**
+     * Ficar sem tentativas é o único bloqueio que ninguém consegue resolver
+     * mexendo no relatório, e por isso é o único com saída aqui.
+     *
+     * O teto de três impede o robô de bater a cabeça a noite inteira, e é bom
+     * que exista. Mas virava beco sem saída: consertada a causa, o job ficava
+     * preso em "out of attempts: needs a person" sem botão nenhum, e só o banco
+     * destravava. Os outros bloqueios continuam sem botão de propósito: sem
+     * foto, insistir dá na mesma até alguém subir a foto.
+     */
+    const semTentativas = /out of attempts/i.test(envio.bloqueio);
     return (
-      <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
-        Client platform: {envio.bloqueio}
-      </span>
+      <div className="flex flex-col gap-2">
+        <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
+          Client platform: {envio.bloqueio}
+        </span>
+        {semTentativas ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {onEditReport ? (
+              <button
+                type="button"
+                onClick={onEditReport}
+                className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold cursor-pointer"
+                style={{ color: "#020040", border: "0.5px solid #D8D8DD", background: "#fff" }}
+              >
+                Edit report
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void reiniciarEEnviar()}
+              disabled={carregando}
+              className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
+              style={{ background: "#020040" }}
+            >
+              {carregando ? "Sending…" : "Reset attempts and try again"}
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   }
 
@@ -172,16 +235,37 @@ export function ExternalReportStep({
             <p className="text-[11px]" style={{ color: "#6B6B70" }}>{preview.motivo}</p>
           )}
         </div>
+      ) : envio.estado === "falhou" ? (
+        // Duas saídas, e a ordem importa: a recusa quase sempre é campo
+        // faltando, então editar vem primeiro. Insistir sem mudar nada só
+        // repete a recusa e gasta uma das três tentativas.
+        <div className="flex flex-wrap items-center gap-2">
+          {onEditReport ? (
+            <button
+              type="button"
+              onClick={onEditReport}
+              className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold cursor-pointer"
+              style={{ color: "#020040", border: "0.5px solid #D8D8DD", background: "#fff" }}
+            >
+              Edit report
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void conferir()}
+            disabled={carregando}
+            className="rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
+            style={{ background: "#020040" }}
+          >
+            {carregando ? "Loading…" : "Try again"}
+          </button>
+        </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => void conferir()}
-          disabled={carregando}
-          className="self-start rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
-          style={{ background: "#020040" }}
-        >
-          {carregando ? "Loading…" : envio.estado === "falhou" ? "Try again" : "Send to the client platform"}
-        </button>
+        // Nem enviado, nem falhado, nem bloqueado: vai sair no Approve. Dizer
+        // isso é melhor do que um botão que pede a mesma confirmação de novo.
+        <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
+          Goes to the client platform when you approve
+        </span>
       )}
     </div>
   );
