@@ -137,6 +137,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   // precisa de efeito nem de ref no render, que este repo proíbe.
   const fechar = () => {
     setEtapa(temRelatorio ? "relatorio" : "financeiro");
+    // Forçar é decisão para um job, não um modo. Sem isto, quem liberou uma vez
+    // sairia com o bloqueio desligado no próximo job sem ter escolhido isso.
+    setForcarSemEnvio(false);
     onClose();
   };
 
@@ -181,7 +184,27 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   // office attests “report submitted to the customer” (partners rarely use the app).
   const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = attestationsOk && docsReady && !submitting;
+
+  /**
+   * Finalizar com o relatório pendente é o que faz ele sumir.
+   *
+   * O job fecha, sai da fila de quem olha relatório, e o pendente só volta se
+   * alguém for procurar. Foi assim que o JOB-9428 virou awaiting_payment com o
+   * relatório nunca enviado, e é o tipo de perda que ninguém percebe no dia.
+   *
+   * Só trava quando o envio é possível: com bloqueio de verdade (sem foto,
+   * plataforma não automatizada, sem link) não há o que esperar, e travar ali
+   * congelaria fatura, self-bill e pagamento por causa de coisa que este botão
+   * não resolve. A saída explícita existe pelo mesmo motivo, para o dia em que
+   * a Housekeep estiver fora do ar ou alguém já tiver mandado à mão.
+   */
+  const [forcarSemEnvio, setForcarSemEnvio] = useState(false);
+  const envioPendente =
+    !!envioExterno &&
+    !envioExterno.bloqueio &&
+    envioExterno.estado !== "enviado";
+  const canApprove =
+    attestationsOk && docsReady && !submitting && (!envioPendente || forcarSemEnvio);
 
   return (
     <AnimatePresence>
@@ -316,6 +339,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   sentToAccounts={sentToAccounts}
                   onSentToAccountsChange={onSentToAccountsChange}
                   currentUserName={currentUserName}
+                  bloqueadoPeloEnvio={envioPendente && !forcarSemEnvio}
+                  onForcar={() => setForcarSemEnvio(true)}
                 />
                 <ModalFooter
                   canApprove={canApprove}
