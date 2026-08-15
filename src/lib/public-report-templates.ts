@@ -66,8 +66,20 @@ export function usesCleaningForm(template: ReportTemplate): boolean {
  * Vale por metade e não por cômodo: o formulário da Housekeep tem dois blocos
  * de arquivo, chegada e conclusão, e os cômodos daqui são achatados nos dois.
  */
-export const HOUSEKEEP_MIN_FOTOS = 1;
 export const HOUSEKEEP_MAX_FOTOS = 20;
+
+/**
+ * Nosso piso por bloco de foto, que **não** é regra da Housekeep.
+ *
+ * O formulário deles não pede quantidade nenhuma, pede que certas coisas
+ * apareçam. Cinco é padrão da Fixfy, escolhido pelo dono: uma foto de cozinha
+ * não mostra forno, placa, geladeira, pia e chão ao mesmo tempo.
+ *
+ * Avisa, não bloqueia. Quem preenche em campo com sinal ruim e trava por
+ * causa de um contador manda relatório nenhum, e é esse o problema que se está
+ * tentando resolver.
+ */
+export const FIXFY_MIN_FOTOS_POR_BLOCO = 5;
 
 // ─── Field declarations ──────────────────────────────────────────────────────
 
@@ -358,6 +370,16 @@ export interface ReportPhotoSlot {
   key: string;
   label: string;
   hint?: string;
+  /**
+   * Piso e teto deste bloco, mostrados no rótulo e contados ao vivo.
+   *
+   * O teto é da Housekeep, que aceita 20 por bloco. O piso é nosso. Só existem
+   * no template de limpeza porque é o único cujo formulário tem um bloco por
+   * cômodo: o de trade tem dois, um de chegada e um de conclusão, e um piso
+   * por metade ali não diz nada sobre cobertura.
+   */
+  min?: number;
+  max?: number;
   /** Shown in UI only — uploads are never blocked server-side. */
   optional?: boolean;
   accept?: string;
@@ -381,17 +403,21 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
      * Copiar a lista deles palavra por palavra é o que faz o parceiro tirar a
      * foto certa da primeira vez, e é de graça.
      */
-    const rooms = [
-      { key: "living_room",   label: "Living room", hint: "Include: windows, skirting boards and floors." },
-      { key: "hallways",      label: "Hallways",    hint: "Include: skirting boards and floors." },
-      { key: "kitchen",       label: "Kitchen",     hint: "Include: oven, hob, fridge/freezer, sink and floors." },
-      { key: "bathrooms",     label: "Bathrooms",   hint: "Include: sink, toilet, showers, mirrors and floors." },
-      { key: "bedrooms",      label: "Bedrooms",    hint: "Include: mirrors, windows, skirting boards and floors." },
-      { key: "steam_cleaning", label: "Steam cleaning", hint: "Only if steam cleaning was booked in.", optional: true },
+    const min = FIXFY_MIN_FOTOS_POR_BLOCO;
+    const max = HOUSEKEEP_MAX_FOTOS;
+    const rooms: ReportPhotoSlot[] = [
+      { key: "living_room",   label: "Living room", hint: "Include: windows, skirting boards and floors.", min, max },
+      { key: "hallways",      label: "Hallways",    hint: "Include: skirting boards and floors.", min, max },
+      { key: "kitchen",       label: "Kitchen",     hint: "Include: oven, hob, fridge/freezer, sink and floors.", min, max },
+      { key: "bathrooms",     label: "Bathrooms",   hint: "Include: sink, toilet, showers, mirrors and floors.", min, max },
+      { key: "bedrooms",      label: "Bedrooms",    hint: "Include: mirrors, windows, skirting boards and floors.", min, max },
+      // Sem piso: só existe quando a limpeza a vapor foi contratada, e exigir
+      // cinco fotos de um serviço que não houve é pedir foto inventada.
+      { key: "steam_cleaning", label: "Steam cleaning", hint: "Only if steam cleaning was booked in.", optional: true, max },
     ];
     return {
       start: [
-        { key: "equipment", label: "Cleaning equipment", hint: "The equipment you are using on the job." },
+        { key: "equipment", label: "Cleaning equipment", hint: "The equipment you are using on the job.", min, max },
         ...rooms,
       ],
       final: rooms,

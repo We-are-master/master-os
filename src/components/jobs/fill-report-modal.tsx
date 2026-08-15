@@ -382,23 +382,42 @@ export function FillReportModal({
    * que sumiram.
    */
   const avisoDeFotos = (metade: "start" | "final") => {
+    // Só faz sentido no formulário de trade, que tem um bloco de arquivo por
+    // metade. No de limpeza cada cômodo tem o seu, e a conta que interessa
+    // aparece em cada rótulo.
+    if (photoSlots[metade].some((s) => s.max)) return null;
     const n = contarMetade(metade);
-    const falta = n === 0;
-    const demais = n > HOUSEKEEP_MAX_FOTOS;
-    const texto = falta
-      ? "Housekeep needs at least one photo here, or the report cannot be sent."
-      : demais
-        ? `${n} photos · Housekeep takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`
-        : `${n} of up to ${HOUSEKEEP_MAX_FOTOS} · Housekeep needs at least one.`;
+    if (n > 0 && n <= HOUSEKEEP_MAX_FOTOS) return null;
     return (
-      <p
-        className="flex items-center gap-1.5 text-[10.5px]"
-        title={`Housekeep accepts between 1 and ${HOUSEKEEP_MAX_FOTOS} photos in this half of the report. Rooms are grouped together when the report is sent.`}
-        style={{ color: falta || demais ? ORANGE : MUTED }}
-      >
+      <p className="flex items-center gap-1.5 text-[10.5px]" style={{ color: ORANGE }}>
         <Info className="h-3 w-3 shrink-0" />
-        {texto}
+        {n === 0
+          ? "Housekeep needs at least one photo here, or the report cannot be sent."
+          : `${n} photos · Housekeep takes ${HOUSEKEEP_MAX_FOTOS}, the rest will not be sent.`}
       </p>
+    );
+  };
+
+  /** "(min 5 · max 20)" no rótulo, e a contagem em laranja enquanto não fecha. */
+  const contadorDoSlot = (slot: ReportPhotoSlot) => {
+    if (!slot.min && !slot.max) return null;
+    const n = (photos[slot.key]?.length ?? 0);
+    const faltando = slot.min ? n < slot.min : false;
+    const excedeu = slot.max ? n > slot.max : false;
+    return (
+      <span
+        className="ml-1.5 text-[10px] font-normal"
+        style={{ color: faltando || excedeu ? ORANGE : MUTED }}
+        title={
+          excedeu
+            ? `Housekeep takes ${slot.max} photos per block. The extras will not be sent.`
+            : `We ask for at least ${slot.min}: one photo cannot show everything Housekeep wants to see here.`
+        }
+      >
+        {n > 0 ? `${n} · ` : ""}
+        {slot.min ? `min ${slot.min}` : "optional"}
+        {slot.max ? ` max ${slot.max}` : ""}
+      </span>
     );
   };
 
@@ -408,7 +427,10 @@ export function FillReportModal({
       <div key={slot.key} className="space-y-1.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <label className="text-[12px] font-semibold" style={{ color: NAVY }}>{slot.label}</label>
+            <label className="text-[12px] font-semibold" style={{ color: NAVY }}>
+              {slot.label}
+              {contadorDoSlot(slot)}
+            </label>
             {/* O que a Housekeep quer ver nesta foto, com as palavras deles. */}
             {slot.hint ? (
               <p className="mt-0.5 text-[10.5px] leading-snug" style={{ color: MUTED }}>{slot.hint}</p>

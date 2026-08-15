@@ -300,7 +300,24 @@ export default function PublicReportForm({
       <div key={slot.key} className="space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>{slot.label}</label>
+            <label className="text-[13px] font-semibold" style={{ color: FIXFY_NAVY }}>
+              {slot.label}
+              {slot.min || slot.max ? (
+                <span
+                  className="ml-1.5 text-[11px] font-normal"
+                  style={{
+                    color:
+                      (slot.min && files.length < slot.min) || (slot.max && files.length > slot.max)
+                        ? FIXFY_ORANGE
+                        : FIXFY_MUTED,
+                  }}
+                >
+                  {files.length > 0 ? `${files.length} · ` : ""}
+                  {slot.min ? `min ${slot.min}` : "optional"}
+                  {slot.max ? ` max ${slot.max}` : ""}
+                </span>
+              ) : null}
+            </label>
             {/*
               O que a Housekeep quer ver nesta foto, com as palavras deles.
               Só o `prominent` mostrava a dica, e nenhum bloco de cômodo é
