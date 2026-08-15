@@ -158,43 +158,38 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
    * aba já disse isso antes de a pessoa chegar aqui.
    */
-  const [enviandoNoApprove, setEnviandoNoApprove] = useState(false);
-
-  const aprovarEEnviar = async () => {
+  /**
+   * Manda o relatório assim que ele é aprovado, não no fim.
+   *
+   * Aprovar o relatório é o instante em que se disse "está bom": é aí que ele
+   * tem que sair. Deixar para o Finalise atrasava o envio até o fim do
+   * financeiro sem ganhar nada, e a espera de 8 a 35 segundos caía toda em cima
+   * do último clique.
+   *
+   * Agora ela acontece por baixo, enquanto se confere margem e datas, e quando
+   * se chega no Finalise o passo 3 já diz "Submitted · HH:MM" ou "Try again".
+   * Ninguém fecha a tela sem saber, que era o problema.
+   *
+   * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
+   * aba já tinha dito isso antes.
+   */
+  const dispararEnvio = () => {
     const podeEnviar =
       jobUuid && envioExterno && !envioExterno.bloqueio &&
       envioExterno.estado !== "enviado" && envioExterno.estado !== "enviando";
-    if (!podeEnviar) {
-      onApprove();
-      return;
-    }
-    setEnviandoNoApprove(true);
-    try {
-      const rota = `/api/jobs/${jobUuid}/submit-external-report`;
-      await fetch(rota, { method: "POST" });
+    if (!podeEnviar) return;
+    void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
       // Avisa o passo 3 na hora, senão ele fica no texto de espera: o polling
       // dele só liga depois de ver o estado "enviando" uma vez, e sem isto a
       // rodinha nunca apareceria.
-      recarregar();
-      // A rota devolve na hora e o envio segue no servidor, então quem quer o
-      // desfecho pergunta. Vale a espera: sair sem saber é o que fazia o
-      // relatório virar surpresa no dia seguinte.
-      const limite = Date.now() + 60_000;
-      while (Date.now() < limite) {
-        await new Promise((r) => setTimeout(r, 2500));
-        const r = await fetch(rota);
-        if (!r.ok) break;
-        const d = (await r.json()) as { estado?: string };
-        if (d.estado === "enviado" || d.estado === "falhou") break;
-      }
-      recarregar();
-    } catch (err) {
-      // Falha de rede aqui não pode impedir a finalização: o passo mostra o
-      // estado e o "Try again" continua ali.
-      console.error("[final-review] envio externo falhou ao aprovar:", err);
-    } finally {
-      setEnviandoNoApprove(false);
-    }
+      .then(() => recarregar())
+      .catch((err) => console.error("[final-review] envio externo falhou:", err));
+  };
+
+  // Rede de segurança: job sem relatório pula a etapa de conferência, então o
+  // envio nunca foi disparado. Aqui ele ainda sai, se puder.
+  const aprovarEEnviar = () => {
+    dispararEnvio();
     onApprove();
   };
 
@@ -263,7 +258,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setEtapa("financeiro")}
+                    onClick={() => {
+                      dispararEnvio();
+                      setEtapa("financeiro");
+                    }}
                     className="rounded-[6px] px-3.5 py-[6px] text-[12px] font-semibold text-white cursor-pointer"
                     style={{ background: "#020040" }}
                   >
@@ -335,10 +333,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   currentUserName={currentUserName}
                 />
                 <ModalFooter
-                  canApprove={canApprove && !enviandoNoApprove}
-                  submitting={submitting || enviandoNoApprove}
+                  canApprove={canApprove}
+                  submitting={submitting}
                   onCancel={fechar}
-                  onApprove={() => void aprovarEEnviar()}
+                  onApprove={aprovarEEnviar}
                 />
               </>
             ) : null}
