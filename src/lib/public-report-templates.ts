@@ -15,7 +15,19 @@ import { isCertificateTypeOfWork } from "@/lib/type-of-work";
 export type ReportTemplate = "general" | "gardener" | "cleaner" | "certificate";
 
 const GARDENER_KEYWORDS = ["garden", "lawn", "hedge", "landscap"];
-const CLEANER_KEYWORDS  = ["clean", "housekeep", "sanitiz", "sanitis"];
+/**
+ * `tenancy` e `domestic` entraram em 14/08/2026 e não são detalhe.
+ *
+ * O job mais comum da Housekeep chama-se "(EOT) End of Tenancy", e nenhuma das
+ * quatro palavras anteriores aparece nele: caía em `general`, o escritório
+ * digitava um relatório chapado, e a Stefane o submetia no formulário de
+ * limpeza da Housekeep, que pergunta cômodo a cômodo. Os campos que faltavam
+ * chegavam vazios do outro lado. Eram 29 dos 182 jobs Housekeep da base.
+ *
+ * A regex da Stefane já dizia `tenancy` desde sempre; era esta lista que
+ * estava atrás. Por isso agora existe uma fonte só, e é esta.
+ */
+const CLEANER_KEYWORDS  = ["clean", "housekeep", "sanitiz", "sanitis", "tenancy", "domestic"];
 
 export function pickReportTemplate(input: {
   serviceType?: string | null;
@@ -28,6 +40,18 @@ export function pickReportTemplate(input: {
     return "certificate";
   }
   return "general";
+}
+
+/**
+ * A Housekeep tem dois formulários, não quatro: o de limpeza (cômodo a cômodo)
+ * e o de trade (uma descrição só). Jardinagem, certificado e manutenção geral
+ * vão todos para o de trade.
+ *
+ * Existe para que ninguém volte a escrever uma segunda lista de palavras em
+ * outro arquivo: quem decide o template decide também o formulário.
+ */
+export function usesCleaningForm(template: ReportTemplate): boolean {
+  return template === "cleaner";
 }
 
 // ─── Field declarations ──────────────────────────────────────────────────────

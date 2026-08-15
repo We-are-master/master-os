@@ -11,7 +11,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
 import { submeterRelatorioHousekeep } from "./submit-housekeep-report";
-import { photoSlotsForTemplate, type ReportTemplate } from "@/lib/public-report-templates";
+import {
+  photoSlotsForTemplate,
+  pickReportTemplate,
+  usesCleaningForm,
+  type ReportTemplate,
+} from "@/lib/public-report-templates";
 import { isReportTemplate } from "@/lib/report-submission";
 
 const AVISAR = "victor@getfixfy.com";
@@ -24,9 +29,24 @@ const JOB_SELECT =
   "partner_timer_started_at, partner_timer_ended_at, partner_name, client_name, property_address, " +
   "external_report_started_at, external_report_submitted_at, external_report_attempts";
 
-/** É trabalho de limpeza? Decide qual dos dois formulários da Housekeep usar. */
-function ehLimpeza(titulo: string | null): boolean {
-  return /clean|tenancy|domestic|housekeep/i.test(String(titulo ?? ""));
+/**
+ * Qual dos dois formulários da Housekeep preencher.
+ *
+ * Manda o **relatório que foi realmente digitado**, não o título do job. Um
+ * relatório escrito no template chapado não tem os campos por cômodo, e
+ * submetê-lo no formulário de limpeza produziria um envio com metade das
+ * respostas em branco. O título só decide quando ainda não há relatório.
+ *
+ * Até 14/08/2026 esta função tinha a sua própria regex, que discordava da
+ * lista de palavras do OS em `tenancy`: o escritório digitava plano e a
+ * Stefane submetia por cômodo. Agora as duas pontas leem a mesma fonte.
+ */
+function ehLimpeza(job: { title?: unknown; final_report?: unknown; start_report?: unknown }): boolean {
+  for (const r of [job.final_report, job.start_report]) {
+    const t = (r as { template?: unknown } | null)?.template;
+    if (typeof t === "string" && isReportTemplate(t)) return usesCleaningForm(t);
+  }
+  return usesCleaningForm(pickReportTemplate({ title: String(job.title ?? "") }));
 }
 
 function ehHousekeep(link: string | null): boolean {
@@ -162,7 +182,7 @@ export async function enviarRelatorioExterno(
   if (bloqueio) return { estado: "nao_elegivel", motivo: bloqueio };
 
   const j = job as unknown as Record<string, unknown>;
-  const limpeza = ehLimpeza(j.title as string | null);
+  const limpeza = ehLimpeza(j);
   const base = {
     inicio: (j.partner_timer_started_at as string | null) ?? null,
     fim: (j.partner_timer_ended_at as string | null) ?? null,
@@ -261,7 +281,7 @@ export async function previewEnvio(
   if (bloqueio) return { ok: false, motivo: bloqueio };
 
   const j = job as unknown as Record<string, unknown>;
-  const limpeza = ehLimpeza(j.title as string | null);
+  const limpeza = ehLimpeza(j);
   const base = {
     inicio: (j.partner_timer_started_at as string | null) ?? null,
     fim: (j.partner_timer_ended_at as string | null) ?? null,
