@@ -17,6 +17,7 @@ import {
   type ReportTemplate,
 } from "@/lib/public-report-templates";
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
+import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
@@ -45,6 +46,7 @@ interface FillReportModalProps {
 }
 
 const ENVELOPE_KEYS = new Set(["template", "submitted_at", "photos", "source", "duration_ms", "chargeable_hours"]);
+
 
 /** ISO instant → London wall-clock `HH:MM` for a `<input type=time>`. */
 function londonHHMM(iso: string | null | undefined): string {
@@ -105,6 +107,8 @@ export function FillReportModal({
 
   const [data, setData] = useState<Record<string, unknown>>({});
   const [photos, setPhotos] = useState<Record<string, File[]>>({});
+  /** Hora em que o rascunho recuperado foi salvo, ou null se não houve rascunho. */
+  const [rascunhoDe, setRascunhoDe] = useState<string | null>(null);
   const [visitYmd, setVisitYmd] = useState(scheduledDate ?? "");
   const [startTime, setStartTime] = useState("");
   const [finishTime, setFinishTime] = useState("");
@@ -126,14 +130,68 @@ export function FillReportModal({
         seeded[k] = v;
       }
     }
-    setData(seeded);
+    // O rascunho entra por cima do que veio do job: se existe, é porque alguém
+    // digitou depois e não conseguiu salvar. O banner diz que foi recuperado e
+    // o botão devolve o estado do job, então nada acontece em silêncio.
+    const r = lerRascunho(jobId, template);
+    setData(r ? { ...seeded, ...r.data } : seeded);
     setPhotos({});
-    setVisitYmd(scheduledDate ?? "");
-    setStartTime(londonHHMM(timerStartedAt));
-    setFinishTime(londonHHMM(timerEndedAt));
+    setVisitYmd(r?.visitYmd || (scheduledDate ?? ""));
+    setStartTime(r?.startTime || londonHHMM(timerStartedAt));
+    setFinishTime(r?.finishTime || londonHHMM(timerEndedAt));
+    setRascunhoDe(
+      r
+        ? new Date(r.salvoEm).toLocaleString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit",
+            day: "2-digit",
+            month: "short",
+          })
+        : null,
+    );
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseed only when the modal opens
   }, [open]);
+
+  /**
+   * Grava o rascunho a cada mudança, com meio segundo de folga.
+   *
+   * Sem o atraso seria uma escrita por tecla; com ele, uma por pausa. E o
+   * `submitting` corta a gravação porque durante o envio o que vale é o que
+   * está indo para o servidor.
+   */
+  useEffect(() => {
+    if (!open || submitting) return;
+    const id = setTimeout(
+      () => salvarRascunho(jobId, template, { data, visitYmd, startTime, finishTime }),
+      500,
+    );
+    return () => clearTimeout(id);
+  }, [open, submitting, data, visitYmd, startTime, finishTime, jobId, template]);
+
+  /**
+   * URLs de pré-visualização, uma por arquivo, criadas só quando as fotos mudam.
+   *
+   * Estavam sendo criadas dentro do render: cada tecla digitada gerava uma URL
+   * nova para cada foto e nenhuma era liberada, então a memória subia sem parar
+   * e a aba acabava travando no meio do relatório. Era essa a causa da perda de
+   * trabalho em 14/08/2026, e o rascunho acima é a rede, não o conserto.
+   */
+  const previews = useMemo(() => {
+    const m = new Map<File, string>();
+    for (const lista of Object.values(photos)) {
+      for (const f of lista) {
+        if (!isPdfFile(f) && !m.has(f)) m.set(f, URL.createObjectURL(f));
+      }
+    }
+    return m;
+  }, [photos]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url);
+    };
+  }, [previews]);
 
   const setField = (key: string, value: unknown) =>
     setData((prev) => ({ ...prev, [key]: value }));
@@ -284,7 +342,7 @@ export function FillReportModal({
       <div key={`${slot}-${i}`} className="relative">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={URL.createObjectURL(f)}
+          src={previews.get(f)}
           alt=""
           className="h-16 w-full rounded-[6px] border object-cover"
           style={{ borderColor: BORDER }}
@@ -389,6 +447,10 @@ export function FillReportModal({
       } else {
         toast.success(isEdit ? "Report updated." : "Report saved on the job.");
       }
+      // O relatório está no servidor: o rascunho perdeu a razão de existir e
+      // ficaria reaparecendo na próxima abertura como se fosse trabalho novo.
+      apagarRascunho(jobId);
+      setRascunhoDe(null);
       onSubmitted();
       onClose();
     } catch (err) {
@@ -445,6 +507,32 @@ export function FillReportModal({
       {/* O `Modal` não injeta padding no corpo: cada modal traz o seu, e a
           falta dele era o conteúdo colado na borda. */}
       <div className="space-y-3 p-4 sm:p-5">
+        {rascunhoDe ? (
+          <div
+            className="flex flex-col gap-2 rounded-[8px] px-3 py-2 text-[11px] sm:flex-row sm:items-center sm:justify-between"
+            style={{ background: "#FFF6F0", border: `0.5px solid ${ORANGE}`, color: NAVY }}
+          >
+            <span>
+              <strong>Recovered what you had typed</strong> from {rascunhoDe}. Photos are not
+              kept, so add those again.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                apagarRascunho(jobId);
+                setRascunhoDe(null);
+                setData({});
+                setVisitYmd(scheduledDate ?? "");
+                setStartTime(londonHHMM(timerStartedAt));
+                setFinishTime(londonHHMM(timerEndedAt));
+              }}
+              className="shrink-0 cursor-pointer underline"
+              style={{ color: ORANGE }}
+            >
+              Start blank
+            </button>
+          </div>
+        ) : null}
         {startAlreadySubmitted ? (
           <div
             className="rounded-[8px] px-3 py-2 text-[11px]"

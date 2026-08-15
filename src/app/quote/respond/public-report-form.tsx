@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText, Upload } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   fieldsForTemplate,
   isFieldVisible,
@@ -52,6 +52,31 @@ export default function PublicReportForm({
 
   const [data, setData] = useState<Record<string, unknown>>({});
   const [photos, setPhotos] = useState<Record<string, File[]>>({});
+
+  /**
+   * Uma URL de pré-visualização por arquivo, refeita só quando as fotos mudam.
+   *
+   * Antes a URL nascia dentro do render: cada tecla digitada criava uma nova
+   * para cada foto e nenhuma era liberada. Aqui isso pesa mais que no escritório
+   * porque quem preenche é o parceiro, no celular, com foto de câmera de vários
+   * MB, e a aba trava com o relatório meio escrito. Foi assim que se perdeu um
+   * relatório inteiro em 14/08/2026, do lado do escritório.
+   */
+  const previews = useMemo(() => {
+    const m = new Map<File, string>();
+    for (const lista of Object.values(photos)) {
+      for (const f of lista) {
+        if (!isPdfFile(f) && !m.has(f)) m.set(f, URL.createObjectURL(f));
+      }
+    }
+    return m;
+  }, [photos]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url);
+    };
+  }, [previews]);
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -199,12 +224,11 @@ export default function PublicReportForm({
         </div>
       );
     }
-    const url = URL.createObjectURL(f);
     return (
       <div key={`${slot}-${i}`} className="relative">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={url}
+          src={previews.get(f)}
           alt=""
           className="h-20 w-full rounded-lg border object-cover"
           style={{ borderColor: FIXFY_BORDER }}

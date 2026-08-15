@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Info, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 export const FIXFY_NAVY = "#020040";
 export const FIXFY_ORANGE = "#ED4B00";
@@ -21,8 +21,36 @@ export function FixfyPublicShell({
   className?: string;
 }) {
   const maxW = size === "lg" ? "max-w-lg" : "max-w-md";
+
+  /**
+   * Estas páginas são claras sempre, mesmo com o celular do parceiro no escuro.
+   *
+   * O `<html>` carrega a classe `dark` do tema do OS, e as páginas públicas
+   * herdavam: o parceiro abria o link e via o formulário inteiro em preto, com
+   * o "No" de cada pergunta pintado de navy sobre navy. É página de marca, com
+   * paleta fixa (`FIXFY_BG`, `FIXFY_NAVY`), e a metade dela que usa classe
+   * Tailwind virava do avesso enquanto a outra metade, que usa `style`, não.
+   *
+   * O estado anterior volta ao desmontar, porque o mesmo componente aparece
+   * dentro do OS logado, onde o tema escuro é escolha de quem está lá.
+   */
+  useEffect(() => {
+    const el = document.documentElement;
+    const eraEscuro = el.classList.contains("dark");
+    el.classList.remove("dark");
+    const colorSchemeAntes = el.style.colorScheme;
+    el.style.colorScheme = "light";
+    return () => {
+      if (eraEscuro) el.classList.add("dark");
+      el.style.colorScheme = colorSchemeAntes;
+    };
+  }, []);
+
   return (
-    <div className={`flex min-h-screen items-center justify-center p-4 sm:p-6 ${className}`} style={{ background: FIXFY_BG }}>
+    <div
+      className={`flex min-h-screen items-center justify-center p-4 sm:p-6 ${className}`}
+      style={{ background: FIXFY_BG, colorScheme: "light" }}
+    >
       <div
         className={`flex w-full ${maxW} max-h-[min(100vh-2rem,920px)] flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_8px_30px_rgba(2,0,64,0.08)]`}
         style={{ borderColor: FIXFY_BORDER }}
