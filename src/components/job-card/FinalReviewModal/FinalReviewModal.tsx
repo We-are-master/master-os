@@ -112,9 +112,35 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     paymentSchedule,
   } = props;
 
-  // O envio para a plataforma de origem vive no passo 3 (ver ExternalReportStep):
-  // é lá que a pergunta aparece, e aqui só o estado que ele consome.
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
+
+  /**
+   * Aprovar manda o relatório para a plataforma do cliente, sem pedir de novo.
+   *
+   * Antes o envio era um botão à parte, dois centímetros acima do Approve: o
+   * job era finalizado, a tela fechava, e o relatório ficava para trás sem
+   * ninguém perceber. Aprovar já significa "está bom e pode ir"; pedir a mesma
+   * confirmação duas vezes só cria a chance de esquecer a segunda.
+   *
+   * Dispara e não espera. O envio preenche um formulário de verdade do outro
+   * lado e leva de 8 a 35 segundos; segurar a finalização por isso trocaria um
+   * relatório esquecido por uma tela travada. O passo 3 acompanha o estado e
+   * mostra "Try again" se falhar, então nada some em silêncio.
+   *
+   * O bloqueio é respeitado: sem foto, ou sem relatório, nem tenta. A nota na
+   * aba já disse isso antes de a pessoa chegar aqui.
+   */
+  const aprovarEEnviar = () => {
+    const podeEnviar =
+      jobUuid && envioExterno && !envioExterno.bloqueio &&
+      envioExterno.estado !== "enviado" && envioExterno.estado !== "enviando";
+    if (podeEnviar) {
+      void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
+        .then(() => recarregar())
+        .catch((err) => console.error("[final-review] envio externo falhou ao aprovar:", err));
+    }
+    onApprove();
+  };
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
@@ -211,7 +237,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               canApprove={canApprove}
               submitting={submitting}
               onCancel={onClose}
-              onApprove={onApprove}
+              onApprove={aprovarEEnviar}
             />
           </motion.div>
         </div>

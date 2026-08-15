@@ -9,10 +9,19 @@ import { useState } from "react";
  * o relatório existe onde precisa existir? Subir no OS e não subir na Housekeep
  * é meio caminho, e é como 198 jobs viraram 16 relatórios.
  *
- * O envio passa por uma conferência de propósito. O preview já pegou um
- * relatório cuja descrição era a letra "K" e um cujo timer terminava antes de
- * começar: nenhum dos dois é erro técnico, os dois são coisa que ninguém quer
- * mandar para o cliente. Nos primeiros envios ver antes vale mais que velocidade.
+ * Desde 15/08/2026 este passo não tem botão de enviar: quem manda é o Approve.
+ * Aprovar já quer dizer "está bom e pode ir", e pedir a mesma confirmação duas
+ * vezes a dois centímetros de distância só criava a chance de esquecer a
+ * segunda, finalizar o job e deixar o relatório para trás.
+ *
+ * A conferência que existia aqui não se perdeu, mudou de lugar e de hora: a
+ * nota na aba Reports mede o relatório contra o que a plataforma exige e
+ * mostra o que falta ANTES de alguém abrir esta tela. Foi o preview que pegou
+ * um relatório cuja descrição era a letra "K" e um cujo timer terminava antes
+ * de começar, e é esse tipo de coisa que a nota agora pega mais cedo.
+ *
+ * O preview continua vivo no caminho da falha, onde ver antes de insistir
+ * ainda vale mais que velocidade.
  */
 
 export type EstadoEnvioExterno = {
@@ -172,7 +181,10 @@ export function ExternalReportStep({
             <p className="text-[11px]" style={{ color: "#6B6B70" }}>{preview.motivo}</p>
           )}
         </div>
-      ) : (
+      ) : envio.estado === "falhou" ? (
+        // A única ação que sobrou neste passo, e só quando falhou. Aprovar já
+        // manda; se o envio voltou com erro, alguém precisa poder insistir sem
+        // reabrir o job inteiro.
         <button
           type="button"
           onClick={() => void conferir()}
@@ -180,8 +192,14 @@ export function ExternalReportStep({
           className="self-start rounded-[5px] px-2.5 py-[4px] text-[11px] font-semibold text-white cursor-pointer disabled:opacity-50"
           style={{ background: "#020040" }}
         >
-          {carregando ? "Loading…" : envio.estado === "falhou" ? "Try again" : "Send to the client platform"}
+          {carregando ? "Loading…" : "Try again"}
         </button>
+      ) : (
+        // Nem enviado, nem falhado, nem bloqueado: vai sair no Approve. Dizer
+        // isso é melhor do que um botão que pede a mesma confirmação de novo.
+        <span className={chip} style={{ background: "#F4F4F6", color: "#6B6B70" }}>
+          Goes to the client platform when you approve
+        </span>
       )}
     </div>
   );
