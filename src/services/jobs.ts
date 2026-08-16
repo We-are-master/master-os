@@ -11,7 +11,11 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
-import { applyOfficeRescheduleStatus, JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
+import {
+  applyOfficeRescheduleStatus,
+  jobPatchApprovesReport,
+  JOB_ONSITE_PROGRESS_STATUSES,
+} from "@/lib/job-phases";
 import {
   applyJobDbCompat,
   isLegacyJobSchema,
@@ -1174,6 +1178,30 @@ export async function updateJob(
   if (partnerId) {
     void syncPartnerFeedbackFromJob(getSupabase(), row).catch((e) => {
       console.error("syncPartnerFeedbackFromJob:", e);
+    });
+  }
+  /**
+   * Approving the report hands it to the client's platform, on the spot.
+   *
+   * The instant is the point. Until now this was a second button someone had to
+   * remember, on a card they had already finished with, which is why 4 of the
+   * year's 182 Housekeep jobs were filed by Stefane and the rest went by hand.
+   * Hanging it off the approval removes the remembering, and removes the wait: no
+   * cron, no sweep window, nothing sitting in a queue until the next tick.
+   *
+   * Fire-and-forget on purpose. Filling the form takes 8 to 35 seconds (the photo
+   * upload sets the pace) and the office should not hold a click for that. The
+   * route refuses politely with 409 when the job is not for a platform it drives,
+   * so calling it for every approval costs nothing and needs no check here.
+   *
+   * Checkatrade needs no call at all: its queue at
+   * `/api/express/pending-completions` is derived from job state, so the job shows
+   * up there the moment the report is in. Concluding it needs the auth0 session,
+   * which only the RPA holds.
+   */
+  if (jobPatchApprovesReport(input) && row.report_link?.trim()) {
+    void fetch(`/api/jobs/${row.id}/submit-external-report`, { method: "POST" }).catch(() => {
+      /* non-blocking: the route logs, emails on failure, and the card polls */
     });
   }
   return row;

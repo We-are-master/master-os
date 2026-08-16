@@ -126,9 +126,16 @@ export function typeOfWorkLabel(job: PulseCancelledJobRow): string {
 
 export function cancelReasonLabel(
   job: Pick<PulseCancelledJobRow, "cancellation_reason" | "cancellation_reason_preset_id">,
+  /**
+   * Os presets da empresa. Sem eles o id cai no rótulo padrão, e aqui os dois
+   * discordam: `scheduling_access` é "No Partners Available" nesta conta, não
+   * "Scheduling / property access issue", e `partner_capacity` é "Customer Found
+   * Alternative Contractor". O id é um slot; quem dá o nome é a configuração.
+   */
+  presets?: readonly { id: string; label: string }[],
 ): string {
   if (job.cancellation_reason_preset_id?.trim()) {
-    return officeCancellationReasonLabel(job.cancellation_reason_preset_id);
+    return officeCancellationReasonLabel(job.cancellation_reason_preset_id, presets);
   }
   const text = job.cancellation_reason?.trim();
   if (!text) return "Cancelled";

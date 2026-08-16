@@ -6793,7 +6793,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setValidateCompleteOpen(true);
                       return;
                     }
-                    void handleStatusChange(job, action.status as Job["status"]);
+                    void handleStatusChange(job, action.status as Job["status"]).then((updated) => {
+                      if (updated && action.status === "final_check") setDetailTab(3);
+                    });
                   }}
                 >
                   {action.label}

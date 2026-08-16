@@ -61,3 +61,32 @@ export function hasLocalTimeReachedSchedule(
   const cur = wall.hour * 60 + wall.minute;
   return cur >= target;
 }
+
+/** O fuso da operação. Cliente, parceiro e job estão todos em Londres. */
+export const OPERATING_TIMEZONE = "Europe/London";
+
+/**
+ * Estamos dentro do turno, em horário de Londres?
+ *
+ * Existe para tirar a hora do agendador. Hoje quem decide quando um robô fala é
+ * o `StartCalendarInterval` do launchd, e as horas ali são do Mac, que está em
+ * São Paulo: durante o BST a diferença é de quatro horas, então um turno escrito
+ * como 7h–22h roda das 11h às 2h da manhã em Londres. E quebra de novo no fim de
+ * outubro, quando a diferença cai para três, o que hoje depende de alguém lembrar
+ * de somar uma hora em cada plist.
+ *
+ * Perguntando aqui, o agendador pode disparar de hora em hora sem saber que
+ * horas são. Sobrevive ao horário de verão, e sobrevive à mudança para a nuvem
+ * sem reescrever nada.
+ *
+ * Fim exclusivo: `endHour: 22` deixa passar 21:59 e barra 22:00.
+ */
+export function isWithinOperatingShift(
+  now: Date = new Date(),
+  opts?: { startHour?: number; endHour?: number; timeZone?: string },
+): boolean {
+  const startHour = opts?.startHour ?? 7;
+  const endHour = opts?.endHour ?? 22;
+  const wall = getZonedWallClock(now, opts?.timeZone ?? OPERATING_TIMEZONE);
+  return wall.hour >= startHour && wall.hour < endHour;
+}
