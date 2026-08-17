@@ -141,7 +141,7 @@ async function main() {
 
   // ─── Jobs ─────────────────────────────────────────────────────────────────
   const jobs = await (await fetch(
-    `${SB}/rest/v1/jobs?select=id,reference,client_name,client_price,payment_status,status,report_link&deleted_at=is.null&limit=3000`,
+    `${SB}/rest/v1/jobs?select=id,reference,client_name,client_price,payment_status,status,report_link,invoice_id&deleted_at=is.null&limit=3000`,
     { headers: SH },
   )).json();
   const porExterno = new Map();
@@ -230,16 +230,33 @@ async function main() {
     (g.job.payment_status === "paid" ? jaOk : g.fecha ? aDar : divergem).push(g);
   }
 
+  // Fechar o job SEM fechar a invoice é o pior resultado possível: o dinheiro
+  // some do "a receber" no job e continua no "Ready to receive" do Financeiro,
+  // e alguém vai cobrar um cliente que já pagou. Por isso os dois andam juntos,
+  // e a invoice só fecha quando o valor dela bate com o recebido — invoice
+  // maior que o pagamento significa que ainda falta receber alguma coisa
+  // (aconteceu no JOB-9278: invoice de £124,70 para £91 recebidos).
+  const invoiceAberta = [];
   if (APLICAR) {
     for (const g of aDar) {
       const ult = g.cred[g.cred.length - 1];
+      const quando = ult.pagoEm ? new Date(ult.pagoEm + " 12:00:00 UTC").toISOString() : ult.criado;
       await fetch(`${SB}/rest/v1/jobs?id=eq.${g.job.id}`, {
         method: "PATCH", headers: SHW,
-        body: JSON.stringify({
-          payment_status: "paid", finance_status: "paid", payment_amount: g.soma,
-          paid_at: ult.pagoEm ? new Date(ult.pagoEm + " 12:00:00 UTC").toISOString() : ult.criado,
-        }),
+        body: JSON.stringify({ payment_status: "paid", finance_status: "paid", payment_amount: g.soma, paid_at: quando }),
       });
+
+      if (!g.job.invoice_id) continue;
+      const inv = (await (await fetch(`${SB}/rest/v1/invoices?select=id,reference,status,amount&id=eq.${g.job.invoice_id}`, { headers: SH })).json())[0];
+      if (!inv || inv.status === "paid") continue;
+      if (Math.abs(Number(inv.amount) - g.soma) < 0.01) {
+        await fetch(`${SB}/rest/v1/invoices?id=eq.${inv.id}`, {
+          method: "PATCH", headers: SHW,
+          body: JSON.stringify({ status: "paid", amount_paid: g.soma, paid_date: quando.slice(0, 10) }),
+        });
+      } else {
+        invoiceAberta.push({ job: g.job.reference, inv: inv.reference, valor: Number(inv.amount), recebido: g.soma });
+      }
     }
   }
 
@@ -275,6 +292,32 @@ async function main() {
     }
   }
 
+  // ─── Conferência de coerência ─────────────────────────────────────────────
+  // Corrigir na escrita não basta: o desencontro também nasce da mão humana na
+  // tela, marcando um lado e esquecendo o outro. Isto varre TODAS as invoices
+  // vivas contra o estado do job, seja qual for a origem, e é o que garante que
+  // o "Ready to receive" nunca cobre alguém que já pagou.
+  const incoerentes = { pagoMasAberta: [], mortoMasViva: [], abertaSemJob: [] };
+  {
+    const abertas = await (await fetch(
+      `${SB}/rest/v1/invoices?select=reference,job_reference,amount,due_date&status=neq.paid&status=neq.cancelled&status=neq.void&deleted_at=is.null&limit=500`,
+      { headers: SH },
+    )).json();
+    const refs = [...new Set(abertas.map((i) => i.job_reference).filter(Boolean))];
+    const mapa = new Map();
+    for (let k = 0; k < refs.length; k += 60) {
+      const p = refs.slice(k, k + 60).map((r) => `"${r}"`).join(",");
+      const lote = await (await fetch(`${SB}/rest/v1/jobs?select=reference,status,payment_status,deleted_at&reference=in.(${encodeURIComponent(p)})`, { headers: SH })).json();
+      for (const j of lote ?? []) mapa.set(j.reference, j);
+    }
+    for (const i of abertas) {
+      const j = i.job_reference ? mapa.get(i.job_reference) : null;
+      if (!j) { if (i.job_reference) incoerentes.abertaSemJob.push(i); continue; }
+      if (j.deleted_at || j.status === "cancelled") incoerentes.mortoMasViva.push(i);
+      else if (j.payment_status === "paid") incoerentes.pagoMasAberta.push(i);
+    }
+  }
+
   // ─── Saída ────────────────────────────────────────────────────────────────
   const somaNet = unicos.reduce((a, c) => a + (c.net ?? 0), 0);
   const somaGross = unicos.reduce((a, c) => a + (c.gross ?? 0), 0);
@@ -299,6 +342,16 @@ async function main() {
     L.push("", "PAGAMENTOS SEM JOB (precisam de voce):");
     for (const o of orfaos) L.push(`  ${o.criado.slice(0, 10)} ticket ${o.ticket}  ${o.cliente}  ${fmt(o.net)}  [${o.via ?? "sem id no email"}]` + (o.sugestao ? `\n      sugestao do modelo (nao aplicada): ${o.sugestao}` : ""));
   }
+  if (invoiceAberta.length) {
+    L.push("", "JOB PAGO MAS INVOICE MAIOR QUE O RECEBIDO (fica em aberto, precisa de voce):");
+    for (const i of invoiceAberta) L.push(`  ${i.job}  ${i.inv}  invoice ${fmt(i.valor)} contra ${fmt(i.recebido)} recebidos  (falta ${fmt(i.valor - i.recebido)})`);
+  }
+  const inc = incoerentes.pagoMasAberta.length + incoerentes.mortoMasViva.length + incoerentes.abertaSemJob.length;
+  L.push("", `COERENCIA A RECEBER: ${inc === 0 ? "ok, nenhuma invoice discorda do job" : inc + " invoice(s) discordam do job"}`);
+  for (const i of incoerentes.pagoMasAberta) L.push(`  COBRANCA FALSA: ${i.reference} (${i.job_reference}) ${fmt(i.amount)} — o job ja esta pago`);
+  for (const i of incoerentes.mortoMasViva) L.push(`  JOB CANCELADO: ${i.reference} (${i.job_reference}) ${fmt(i.amount)} — invoice viva num job morto`);
+  for (const i of incoerentes.abertaSemJob) L.push(`  SEM JOB: ${i.reference} (${i.job_reference}) ${fmt(i.amount)}`);
+
   if (aviso.length) { L.push("", "AVISOS:"); for (const a of aviso) L.push("  " + a); }
   if (!APLICAR) L.push("", "(modo seco: nada foi gravado)");
 
@@ -306,7 +359,7 @@ async function main() {
   console.log("\n" + texto + "\n");
 
   // ─── Email ────────────────────────────────────────────────────────────────
-  const temExcecao = divergem.length || orfaos.length || aviso.length;
+  const temExcecao = divergem.length || orfaos.length || aviso.length || invoiceAberta.length || inc > 0;
   if (APLICAR && env.RESEND_API_KEY && (temExcecao || aDar.length)) {
     const cfg = await (await fetch(`${SB}/rest/v1/company_settings?select=daily_brief_emails&limit=1`, { headers: SH })).json();
     const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
