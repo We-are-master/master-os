@@ -6,7 +6,7 @@
 -- senão o típico UK +20%, posicionado no TÍPICO do mercado (serviço
 -- gerenciado não cobra o piso do freelancer), arredondado a preço limpo
 -- (£5 até £100, £10 até £500, £25 acima; certificado termina em 9, convenção
--- da categoria). Nenhum serviço abaixo do call-out de £90.
+-- da categoria). Nenhum serviço abaixo de uma visita mínima (~£90).
 --
 -- Regras fixadas pelo dono (17/08/2026):
 --   · handyman_time é a ÚNICA precificação por tempo do sistema, e é fixa;
@@ -17,7 +17,9 @@
 --   · elétrica só existe como certificado (certificates), nada de instalação.
 --
 -- REVISADO E APROVADO pelo dono em 17/08/2026 (chat), com dois ajustes:
---   meia diária £190 e diária £290; certificados espelham o CATÁLOGO do OS
+--   handyman fica na régua que o OS JÁ TEM (£72/h, mínimo 1h — sem lógica
+--   nova de preço), com meia diária £190 e diária £290 substituindo os
+--   presets inativos de £149/£220; certificados espelham o CATÁLOGO do OS
 --   faixa a faixa (preços já validados com margem sobre o parceiro) — o
 --   catálogo segue sendo a fonte da verdade deles, o espelho é conveniência
 --   do orçamentista. Só o Emergency Lighting continua draft: fixed=0 no
@@ -52,20 +54,19 @@ create table if not exists service_pricebook (
 create index if not exists service_pricebook_trade_idx on service_pricebook (trade);
 
 insert into service_pricebook (trade, service, unit, price_gbp, min_charge_gbp, basis, status, approved_by, approved_at) values
-  ('handyman_time', 'Call-out (first hour)', 'per_job', 90, null, 'ja validado: mercado Londres cobra £72 (Silver Saints 30min) a £119 (TaskRabbit fatura media) na primeira visita', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman_time', 'Additional hour', 'per_hour', 65, null, 'Londres media £38-£51/h; operador premium £80-£100/h; £65 = premium-medio', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman_time', 'Half day (up to 4h)', 'per_half_day', 190, null, 'preco fixado pelo dono (17/08): £190; custo parceiro £100', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman_time', 'Full day (up to 8h)', 'per_day', 290, null, 'preco fixado pelo dono (17/08): £290; custo parceiro £200', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman_time', 'Hourly rate (min 1 hour)', 'per_hour', 72, null, 'como ja esta no OS (General Maintenance £72/h, parceiro £40/h); decisao do dono 17/08: nada de logica nova de preco no OS', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman_time', 'Half day (up to 4h)', 'per_half_day', 190, null, 'preco fixado pelo dono (17/08): £190; substitui o preset inativo de £149; custo parceiro £100', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman_time', 'Full day (up to 8h)', 'per_day', 290, null, 'preco fixado pelo dono (17/08): £290; substitui o preset inativo de £220; custo parceiro £200', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'TV wall mounting up to 43"', 'per_job', 120, null, 'TaskRabbit 32-43" £80-£150 +Londres; hoje cotamos £90 no respond.io: REVISAR', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'TV wall mounting 44-55"', 'per_job', 150, null, 'TaskRabbit 43-55" £100-£180, meio +Londres', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'TV wall mounting 56-65"', 'per_job', 190, null, 'TaskRabbit 55-65" £130-£220', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'TV wall mounting over 65"', 'per_job', 240, null, 'TaskRabbit 65"+ £180-£300', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman', 'Flat-pack assembly, single item (up to 1h)', 'per_item', 90, null, 'mercado £40-£80; piso = call-out £90', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman', 'Flat-pack assembly, single item (up to 1h)', 'per_item', 90, null, 'mercado £40-£80; piso de visita minima', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Flat-pack wardrobe PAX/sliding doors', 'per_item', 160, null, 'mercado £70-£130 (2-4h) +Londres', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman', 'Hanging pictures/mirrors/shelves (up to 3 items)', 'per_job', 90, null, 'mercado £40-£70; piso = call-out', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman', 'Hanging pictures/mirrors/shelves (up to 3 items)', 'per_job', 90, null, 'mercado £40-£70; piso de visita minima', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Blind or curtain pole fitting (first window)', 'per_window', 95, null, 'mercado £50-£90 Londres', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Blind/pole additional window (same visit)', 'per_window', 45, null, 'metade: deslocamento ja pago', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman', 'Easing/adjusting a sticking door', 'per_job', 90, null, 'mercado £50-£90; piso = call-out', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman', 'Easing/adjusting a sticking door', 'per_job', 90, null, 'mercado £50-£90; piso de visita minima', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Door handle or lock replacement (labour)', 'per_job', 95, null, 'mercado £50-£100; material via supplier_prices', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Euro cylinder/barrel change (labour)', 'per_job', 95, null, 'mercado £100 supply+fit tipico; cilindro a parte', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Bath/shower silicone reseal', 'per_job', 130, null, 'Silver Saints £132 fixo; mercado £80-£150', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
@@ -74,7 +75,7 @@ insert into service_pricebook (trade, service, unit, price_gbp, min_charge_gbp, 
   ('handyman', 'Gutter clean - detached', 'per_job', 180, null, 'UK £150 +20%', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Draught proofing external door', 'per_job', 100, null, 'mercado ~£100 c/ material basico', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('handyman', 'Small plaster patch repair', 'per_job', 110, null, 'mercado £60-£120', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
-  ('handyman', 'Radiator bleed / minor check visit', 'per_job', 90, null, 'mercado £60-£90; piso = call-out', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
+  ('handyman', 'Radiator bleed / minor check visit', 'per_job', 90, null, 'mercado £60-£90; piso de visita minima', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('painter', 'Paint small bedroom (walls+ceiling, 2 coats)', 'per_room', 300, null, 'Checkatrade sala 8m2 £350 c/ material; labour Londres', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('painter', 'Paint medium bedroom/living (walls+ceiling)', 'per_room', 400, null, 'Checkatrade £450 c/ material; MyBuilder £300-£500', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('painter', 'Paint large room (walls+ceiling)', 'per_room', 600, null, 'Checkatrade sala 30m2 £1000 c/ material; labour', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
