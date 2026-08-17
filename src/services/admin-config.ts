@@ -332,6 +332,10 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Billing", href: "/finance/billing", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      // Atalho pro motor de preço (Settings → Services): cotar é rotina de
+      // Finance (dono, 17/08/2026). O normalizeNavigation mescla este item em
+      // navs já salvos porque ele entra no canônico daqui.
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
   {

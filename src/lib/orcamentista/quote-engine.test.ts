@@ -157,3 +157,19 @@ test("o texto apresentável carrega serviço, material, opcional e gaps", () => 
   assert.match(t, /if needed: Torneira/);
   assert.match(t, /Total: £146\.99/);
 });
+
+test("o cliente NUNCA vê fornecedor, custo original ou link — só o nosso preço", () => {
+  // Regra do dono (17/08): Screwfix e afins são segredo comercial; pro
+  // cliente é "our internal supplier". Se este teste quebrar, o agente está
+  // vazando de onde compramos e por quanto.
+  const q = montarQuote(
+    [{ trade: "plumber", service: "Replace kitchen/basin tap (fit only)", qty: 1 }],
+    PRICEBOOK, KITS, FORNECEDORES,
+  );
+  const t = textoApresentavel(q);
+  assert.doesNotMatch(t, /screwfix|toolstation|wickes|b&q|bandq|travis\s*perkins/i);
+  assert.doesNotMatch(t, /https?:\/\//);
+  // O custo de compra das flexis (£4.15) não pode aparecer — só a venda £6.99.
+  assert.doesNotMatch(t, /4\.15/);
+  assert.match(t, /from our internal supplier/);
+});

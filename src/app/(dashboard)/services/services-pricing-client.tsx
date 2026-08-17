@@ -613,8 +613,11 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
   );
 
   if (area !== "catalog") {
+    // max-w + centro: em monitor largo a tabela esticada de borda a borda
+    // espreme as colunas numéricas na direita e corta a margem ("tudo
+    // grudado", dono, 17/08). O catálogo mantém o layout que sempre teve.
     return wrap(
-      <div className="svc-pricing space-y-6">
+      <div className="svc-pricing mx-auto w-full max-w-6xl space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-text-secondary">
             {area === "labour"

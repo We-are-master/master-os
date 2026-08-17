@@ -57,6 +57,10 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Billing", href: "/finance/billing", icon: "receipt", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      // O motor de preço (Catalog/Labour/Materials/Quote) mora em Settings →
+      // Services; este atalho existe porque cotar é rotina de Finance (dono,
+      // 17/08/2026), e /services redireciona pra lá.
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       // Payouts (/payout) hidden for now — billing + expenses cover partner payments.
     ],
   },
