@@ -103,7 +103,7 @@ export function EnvioHero({
         <p className="m-0 min-w-0 text-[13px] font-semibold" style={{ color: "#12704F" }}>
           Report delivered to the client platform
           {envio.submittedAt
-            ? ` · ${new Date(envio.submittedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+            ? ` · ${new Date(envio.submittedAt).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" })}`
             : ""}
           {envio.link ? (
             <>
@@ -124,7 +124,7 @@ export function EnvioHero({
         <span aria-hidden className="text-[16px]" style={{ color: "#0F6E56" }}>✓</span>
         <p className="m-0 text-[13px] font-semibold" style={{ color: "#0F6E56" }}>
           Marked as sent manually
-          {` · ${new Date(envio.manualAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`}
+          {` · ${new Date(envio.manualAt).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" })}`}
         </p>
       </div>
     ));

@@ -115,6 +115,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     paymentSchedule,
     rawFinalReport,
     rawStartReport,
+    timerStartedAt,
+    timerEndedAt,
     onEditReport,
   } = props;
 
@@ -265,7 +267,15 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                     {rawStartReport && Object.keys(rawStartReport as object).length > 0 ? (
                       <JobReportV2Card jobId={jobUuid} kind="start" rawReport={rawStartReport} approvedAt={null} readOnly />
                     ) : null}
-                    <JobReportV2Card jobId={jobUuid} kind="final" rawReport={rawFinalReport} approvedAt={null} readOnly />
+                    <JobReportV2Card
+                      jobId={jobUuid}
+                      kind="final"
+                      rawReport={rawFinalReport}
+                      approvedAt={null}
+                      readOnly
+                      timerStartedAt={timerStartedAt}
+                      timerEndedAt={timerEndedAt}
+                    />
                   </div>
                 </div>
                 <div

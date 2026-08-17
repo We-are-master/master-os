@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarClock, CheckCircle2, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   normalizeReport,
   renderableFields,
-  type NormalizedReport,
   type ReportKind,
 } from "@/lib/job-report-v2";
 import {
@@ -31,6 +30,13 @@ interface JobReportV2CardProps {
   readOnly?:   boolean;
   /** Called after a successful approval toggle so the parent can refetch. */
   onApprovalChange?: () => void;
+  /**
+   * Janela em campo (`jobs.partner_timer_*`): é o que vira Start/Finish time
+   * na plataforma do cliente, então o card mostra — revisar o relatório sem
+   * ver as horas era revisar metade.
+   */
+  timerStartedAt?: string | null;
+  timerEndedAt?:   string | null;
 }
 
 export function JobReportV2Card({
@@ -41,6 +47,8 @@ export function JobReportV2Card({
   approvedBy,
   readOnly,
   onApprovalChange,
+  timerStartedAt,
+  timerEndedAt,
 }: JobReportV2CardProps) {
   const report = useMemo(() => normalizeReport(rawReport), [rawReport]);
   const fields = useMemo(() => (report ? renderableFields(report) : []), [report]);
@@ -60,6 +68,40 @@ export function JobReportV2Card({
   const [openingImageKey, setOpeningImageKey] = useState<string | null>(null);
   const [savingApproval, setSavingApproval] = useState(false);
   const [readingCertificate, setReadingCertificate] = useState(false);
+
+  /**
+   * As horas em campo, como a plataforma do cliente vai recebê-las.
+   *
+   * Vêm do timer do parceiro (ou do que o escritório digitou no Edit report),
+   * sempre em hora de Londres — que é o relógio do formulário do outro lado.
+   * Sem timer, cai na duração digitada no relatório. Só no card final: a
+   * janela é da visita inteira, e é aqui que ela é revisada.
+   */
+  const emCampo = useMemo(() => {
+    if (kind !== "final") return null;
+    const fmt = (iso: string) => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+    };
+    const ini = timerStartedAt ? fmt(timerStartedAt) : null;
+    const fim = timerEndedAt ? fmt(timerEndedAt) : null;
+    const durMsCru =
+      timerStartedAt && timerEndedAt
+        ? new Date(timerEndedAt).getTime() - new Date(timerStartedAt).getTime()
+        : typeof (rawReport as { duration_ms?: unknown } | null)?.duration_ms === "number"
+          ? (rawReport as { duration_ms: number }).duration_ms
+          : null;
+    let dur: string | null = null;
+    if (durMsCru !== null && Number.isFinite(durMsCru) && durMsCru > 0) {
+      const h = Math.floor(durMsCru / 3_600_000);
+      const m = Math.round((durMsCru % 3_600_000) / 60_000);
+      dur = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+    }
+    const invertido = durMsCru !== null && durMsCru <= 0;
+    if (!ini && !fim && !dur && !invertido) return null;
+    return { ini, fim, dur, invertido };
+  }, [kind, timerStartedAt, timerEndedAt, rawReport]);
 
   /**
    * "Validated", nao "Approved".
@@ -267,6 +309,35 @@ export function JobReportV2Card({
           </span>
         ) : null}
       </div>
+
+      {emCampo ? (
+        <div
+          className="rounded-[8px] px-3 py-[10px] flex items-start gap-2"
+          style={
+            emCampo.invertido
+              ? { background: "#FDF3F3", border: "0.5px solid #EFC9C9" }
+              : { background: "#F4F5FB", border: "0.5px solid #D8DBEE" }
+          }
+        >
+          <Clock3 className="h-4 w-4 shrink-0 mt-[1px]" style={{ color: emCampo.invertido ? "#A32D2D" : "#020040" }} />
+          <div className="min-w-0">
+            <p className="text-[12px] font-semibold" style={{ color: emCampo.invertido ? "#A32D2D" : "#020040" }}>
+              On site{" "}
+              {emCampo.ini && emCampo.fim
+                ? `${emCampo.ini} → ${emCampo.fim}`
+                : emCampo.ini
+                  ? `from ${emCampo.ini}`
+                  : ""}
+              {emCampo.dur ? ` · ${emCampo.dur}` : ""}
+            </p>
+            <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+              {emCampo.invertido
+                ? "Finish is before start — the partner timer was left running. Fix it in Edit report before sending."
+                : "London time · goes to the client platform as the start and finish times."}
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {validity ? <ValidityStrip validity={validity} /> : null}
 

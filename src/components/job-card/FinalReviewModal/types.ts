@@ -82,6 +82,9 @@ export type FinalReviewModalProps = {
    * pede antes E depois, e o que prova o trabalho é o par.
    */
   rawStartReport?: unknown;
+  /** Janela em campo (`partner_timer_*`) — vira Start/Finish na plataforma. */
+  timerStartedAt?: string | null;
+  timerEndedAt?: string | null;
   /** Abre o modal de edição do relatório. Sem isso, "Edit" não tem para onde ir. */
   onEditReport?: () => void;
 

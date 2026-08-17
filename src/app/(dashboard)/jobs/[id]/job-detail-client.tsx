@@ -8168,6 +8168,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 rawReport={job.final_report}
                 approvedAt={job.final_report_approved_at ?? null}
                 onApprovalChange={() => router.refresh()}
+                timerStartedAt={job.partner_timer_started_at ?? null}
+                timerEndedAt={job.partner_timer_ended_at ?? null}
               />
               {/* Stefane: o estado do envio na plataforma de origem. Só estado —
                   a ação de enviar vive no passo 3 da revisão final, para não
@@ -9685,6 +9687,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         selfBillReference={jobSelfBill?.reference ?? null}
         rawFinalReport={job.final_report}
         rawStartReport={job.start_report}
+        timerStartedAt={job.partner_timer_started_at ?? null}
+        timerEndedAt={job.partner_timer_ended_at ?? null}
         onEditReport={() => {
           setValidateCompleteOpen(false);
           setFillReportOpen(true);

@@ -86,7 +86,7 @@ export function StefaneReportButton({
         <span>
           Report submitted to the client platform
           {estado.submitted_at
-            ? ` · ${new Date(estado.submitted_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+            ? ` · ${new Date(estado.submitted_at).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" })}`
             : ""}
         </span>
         {estado.report_link ? (
