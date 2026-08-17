@@ -335,3 +335,32 @@ export function evaluateJob(
       );
   }
 }
+
+
+/**
+ * O tipo de trabalho REAL, lido do título do card — nunca inventado.
+ *
+ * Decisão do dono (17/08/2026, depois do JOB-9406 nascer "General
+ * Maintenance" sendo um EICR): certificado é certificado, com o nome
+ * CANÔNICO do catálogo do OS — é ele que decide template de relatório,
+ * preço de tabela e briefing do parceiro. O que não casar com nenhum SKU
+ * continua caindo no fallback, que é honesto para trabalho geral.
+ */
+const TIPOS_CANONICOS: Array<[RegExp, string]> = [
+  [/eicr|electrical installation condition/i, "(EICR) Electrical Installation Condition Report"],
+  [/epc|energy performance/i, "(EPC) Energy Performance Certificate"],
+  [/pat testing|portable appliance/i, "(PAT) Portable Appliance Testing"],
+  [/gas safety|cp12/i, "Gas Safety Check (CP12)"],
+  [/fire risk/i, "(FRA) Fire Risk Assessment"],
+  [/fire alarm/i, "(FAC) Fire Alarm Certificate"],
+  [/emergency lighting/i, "Emergency Lighting Certificate"],
+  [/fire extinguisher/i, "(FES) Fire Extinguisher Service"],
+];
+
+export function tipoDeTrabalho(titulo: string | undefined | null): string | null {
+  const t = String(titulo ?? "");
+  for (const [re, nome] of TIPOS_CANONICOS) {
+    if (re.test(t)) return nome;
+  }
+  return null;
+}

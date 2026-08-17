@@ -34,11 +34,18 @@ export function pickReportTemplate(input: {
   title?:       string | null;
 }): ReportTemplate {
   const haystack = `${input.serviceType ?? ""} ${input.title ?? ""}`.toLowerCase();
-  if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
-  if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
+  /**
+   * CERTIFICADO PRIMEIRO — aprendido no JOB-9406 (17/08/2026): "2 Bed
+   * Domestic EICR Safety Check" contém "domestic", casava com a lista de
+   * limpeza antes de chegar na checagem de certificado, e um EICR ganhava
+   * formulário de cômodos. Se o título diz certificado, o relatório É o
+   * certificado — a palavra de trade que estiver do lado não muda isso.
+   */
   if (isCertificateTypeOfWork(input.serviceType) || isCertificateTypeOfWork(input.title)) {
     return "certificate";
   }
+  if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
+  if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
   return "general";
 }
 

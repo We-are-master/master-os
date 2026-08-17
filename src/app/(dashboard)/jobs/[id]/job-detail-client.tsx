@@ -4300,6 +4300,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setValidateCompleteOpen(true);
   }, []);
 
+  /**
+   * Recarrega o job LOCAL além da árvore do servidor: o `job` desta tela vive
+   * em useState, então `router.refresh()` sozinho não mostra o relatório que
+   * acabou de ser salvo — a pessoa via a aba velha e apertava F5 na mão, que
+   * era exatamente o que o modal existia pra evitar.
+   */
+  const recarregarJob = useCallback(() => {
+    if (id) {
+      void getJob(id).then((j) => {
+        if (j) setJob(j);
+      });
+    }
+    router.refresh();
+  }, [id, router]);
+
   const openCompleteFromResumeModal = useCallback(() => {
     setResumeJobOpen(false);
     openFinalReview();
@@ -8150,7 +8165,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 existingFinal={v2FinalSubmitted ? ((job.final_report as Record<string, unknown> | null) ?? null) : null}
                 timerStartedAt={job.partner_timer_started_at ?? null}
                 timerEndedAt={job.partner_timer_ended_at ?? null}
-                onSubmitted={() => router.refresh()}
+                onSubmitted={recarregarJob}
               />
               {/* A nota vem antes dos cards porque a conta é das duas metades
                   juntas, e antes do Approve porque é lá que ela serve. */}
@@ -8168,14 +8183,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 rawReport={job.final_report}
                 rawStartReport={job.start_report}
                 approvedAt={job.final_report_approved_at ?? null}
-                onApprovalChange={() => router.refresh()}
+                onApprovalChange={recarregarJob}
                 timerStartedAt={job.partner_timer_started_at ?? null}
                 timerEndedAt={job.partner_timer_ended_at ?? null}
               />
               {/* Stefane: o estado do envio na plataforma de origem. Só estado —
                   a ação de enviar vive no passo 3 da revisão final, para não
                   haver dois botões "approve" a dois centímetros um do outro. */}
-              <StefaneReportButton jobId={job.id} onEnviado={() => router.refresh()} />
+              <StefaneReportButton jobId={job.id} onEnviado={recarregarJob} />
               <JobPartnerMediaCard jobId={job.id} />
               <JobOnHoldSubmissionCard jobId={job.id} />
 

@@ -87,7 +87,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref",
+      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -156,6 +156,52 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         filename: `${safe}-report-${r.phase}.pdf`,
         content: buf,
         contentType: "application/pdf",
+      });
+    }
+  }
+
+  /**
+   * Anexos do PRÓPRIO relatório (V2), a pedido do dono em 17/08/2026: o email
+   * de conclusão ia só com o PDF legado do app do parceiro — que a maioria
+   * dos jobs não tem — e o certificado do EICR, que é o produto que o
+   * cliente comprou, ficava para trás. Agora o que está no relatório vai no
+   * email: PDFs (certificado) primeiro, depois as fotos, com teto de 12
+   * arquivos e ~15MB para não estourar o limite do Resend.
+   */
+  if (includeReport) {
+    const urls: string[] = [];
+    for (const metade of [j.final_report, j.start_report]) {
+      const fotos = (metade as { photos?: unknown } | null)?.photos;
+      if (Array.isArray(fotos)) {
+        urls.push(...fotos.filter((s): s is string => typeof s === "string" && s.trim().length > 0));
+      } else if (fotos && typeof fotos === "object") {
+        for (const lista of Object.values(fotos as Record<string, unknown>)) {
+          if (Array.isArray(lista)) {
+            urls.push(...lista.filter((s): s is string => typeof s === "string" && s.trim().length > 0));
+          }
+        }
+      }
+    }
+    urls.sort((a, b) => Number(/\.pdf(\?|$)/i.test(b)) - Number(/\.pdf(\?|$)/i.test(a)));
+    let totalBytes = attachments.reduce((n, a) => n + a.content.length, 0);
+    let nFoto = 0;
+    let nPdf = 0;
+    const safe = String(j.reference ?? "job").replace(/[^\w.-]+/g, "_");
+    for (const u of [...new Set(urls)].slice(0, 12)) {
+      const path = jobReportPdfPathFromStoredUrl(u);
+      if (!path) continue;
+      const { data: blob, error: dlErr } = await admin.storage.from("job-reports").download(path);
+      if (dlErr || !blob) continue;
+      const buf = Buffer.from(await blob.arrayBuffer());
+      if (totalBytes + buf.length > 15 * 1024 * 1024) break;
+      totalBytes += buf.length;
+      const ehPdf = /\.pdf(\?|$)/i.test(u);
+      attachments.push({
+        filename: ehPdf
+          ? `${safe}-certificate${++nPdf > 1 ? `-${nPdf}` : ""}.pdf`
+          : `${safe}-photo-${++nFoto}.jpg`,
+        content: buf,
+        contentType: ehPdf ? "application/pdf" : "image/jpeg",
       });
     }
   }

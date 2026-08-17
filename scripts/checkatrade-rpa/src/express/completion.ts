@@ -51,19 +51,23 @@ type Controle = {
  * seletor, que não diz nada a quem for consertar amanhã.
  */
 async function lerControles(page: Page): Promise<Controle[]> {
-  return page.evaluate(() => {
-    const visivel = (el: Element) => !!(el as HTMLElement).offsetParent;
+  // Código como STRING de propósito: o tsx (esbuild) instrumenta arrow
+  // functions com um helper `__name` que não existe no contexto da página, e
+  // o evaluate explodia com "ReferenceError: __name is not defined" antes de
+  // ler o primeiro controle. String não é instrumentada.
+  return page.evaluate(`(() => {
+    const visivel = (el) => !!el.offsetParent;
     const alvos = Array.from(
       document.querySelectorAll("button, a[role=button], input, select, textarea, [role=dialog] *[role=button]"),
     );
     return alvos.filter(visivel).map((el) => ({
       tag: el.tagName.toLowerCase(),
-      tipo: (el as HTMLInputElement).type ?? "",
+      tipo: el.type ?? "",
       texto: (el.textContent ?? "").trim().slice(0, 80),
       testid: el.getAttribute("data-testid") ?? "",
       aria: el.getAttribute("aria-label") ?? "",
     }));
-  });
+  })()`) as Promise<Controle[]>;
 }
 
 /** Abre o job e conta o que viu. Não clica. */
@@ -89,6 +93,29 @@ async function mapear(page: Page, item: ItemDaFila): Promise<void> {
     console.log(`  ${c.tag}${c.tipo ? `[${c.tipo}]` : ""}  "${c.texto}"  testid=${c.testid}  aria=${c.aria}`);
   }
   console.log("");
+
+  /**
+   * Segundo nível do mapa (17/08/2026): CLICA em "Mark job as complete" e lê
+   * o que abrir — sem tocar em nada lá dentro. O primeiro nível provou que o
+   * botão existe; escrever o `concluir` exige saber o formulário atrás dele.
+   * O print vai para .logs/ porque descrição de controle não substitui olho.
+   */
+  if (conclusao.length > 0) {
+    await page.getByText(ACAO_CONCLUIR).first().click({ timeout: 8_000 }).catch(() => {});
+    await page.waitForTimeout(2_500);
+    const depois = await lerControles(page);
+    console.log(`─── depois do clique em "Mark job as complete" (${item.reference}) ───`);
+    for (const c of depois) {
+      console.log(`  ${c.tag}${c.tipo ? `[${c.tipo}]` : ""}  "${c.texto}"  testid=${c.testid}  aria=${c.aria}`);
+    }
+    console.log("");
+    await page
+      .screenshot({ path: `/Users/victorsouza/checkatrade-rpa/.logs/completion-map-${item.reference}.png`, fullPage: true })
+      .catch(() => {});
+    // Sai da tela sem confirmar nada: Escape fecha modal; se navegou, volta.
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+  }
 }
 
 /**
@@ -113,11 +140,104 @@ async function concluir(page: Page, item: ItemDaFila): Promise<{ ok: boolean; mo
     return { ok: false, motivo: "completion action not on the page" };
   }
 
-  return {
-    ok: false,
-    motivo:
-      "completion form not mapped yet — run COMPLETION_MODE=map once and fill in the steps",
-  };
+  /**
+   * O fluxo real, mapeado ao vivo no JOB-9406 (17/08/2026, print em .logs/):
+   * "Mark job as complete" abre uma bottom sheet com "Add photos" (imagem),
+   * "Add documents" (PDF — certificado entra aqui) e um "Complete job" que
+   * NASCE DESABILITADO e só acende depois de pelo menos um upload. Concluir
+   * libera o pagamento do lado deles, então a confirmação final exige prova:
+   * a sheet fechada E a ação sumida da página recarregada.
+   */
+  await botao.click({ timeout: 8_000 });
+  const SUBMIT = '[data-testid="BusinessJobCompleteBottomSheet-submit-button"]';
+  if (!(await page.locator(SUBMIT).isVisible({ timeout: 8_000 }).catch(() => false))) {
+    return { ok: false, motivo: "completion sheet did not open" };
+  }
+
+  // Baixa as fotos assinadas para arquivos temporários — o file chooser da
+  // página só aceita caminho local.
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const pasta = mkdtempSync(join(tmpdir(), "conclusao-"));
+  const imagens: string[] = [];
+  const documentos: string[] = [];
+  try {
+    for (let i = 0; i < Math.min(item.fotos.length, 10); i++) {
+      const r = await fetch(item.fotos[i]);
+      if (!r.ok) continue;
+      const tipo = r.headers.get("content-type") ?? "";
+      const ehPdf = /pdf/i.test(tipo) || /\.pdf(\?|$)/i.test(item.fotos[i]);
+      const caminho = join(pasta, `anexo-${i}.${ehPdf ? "pdf" : "jpg"}`);
+      writeFileSync(caminho, Buffer.from(await r.arrayBuffer()));
+      (ehPdf ? documentos : imagens).push(caminho);
+    }
+    if (imagens.length === 0 && documentos.length === 0) {
+      return { ok: false, motivo: "could not download any report photo to attach" };
+    }
+
+    // Cada botão abre um file chooser do sistema; o anexo entra por ele.
+    const anexar = async (rotuloTestid: string, arquivos: string[]) => {
+      if (arquivos.length === 0) return;
+      const escolha = page.waitForEvent("filechooser", { timeout: 10_000 });
+      await page.locator(`[data-testid="${rotuloTestid}"]`).click({ timeout: 8_000 });
+      await (await escolha).setFiles(arquivos);
+      await page.waitForTimeout(2_500);
+    };
+    await anexar("add-photos-button", imagens);
+    await anexar("AddFilesButton-button", documentos);
+    logger.info(
+      `[completion] ${item.reference}: anexado ${imagens.length} foto(s) + ${documentos.length} documento(s) do relatório`,
+      { fontes: item.fotos.slice(0, 10).map((u) => u.split("?")[0].split("/").slice(-2).join("/")) },
+    );
+
+    // "Complete job" acende quando o upload assentou. Espera ATIVA, não fixa:
+    // upload de certificado às vezes leva mais que a folga de um sleep.
+    let habilitado = false;
+    for (let i = 0; i < 20; i++) {
+      if (await page.locator(SUBMIT).isEnabled().catch(() => false)) { habilitado = true; break; }
+      await page.waitForTimeout(1_500);
+    }
+    if (!habilitado) {
+      return { ok: false, motivo: "Complete job stayed disabled after upload — attachment did not register" };
+    }
+
+    /**
+     * Prova do anexo ANTES do submit, a pedido do dono: "não podemos errar".
+     * O botão aceso já é o formulário dizendo que recebeu upload, e o print
+     * fica em .logs/ como evidência do QUE estava na sheet no instante do
+     * clique — auditável depois, job a job.
+     */
+    await page
+      .screenshot({ path: `/Users/victorsouza/checkatrade-rpa/.logs/completion-${item.reference}-antes-do-submit.png`, fullPage: false })
+      .catch(() => {});
+
+    await page.locator(SUBMIT).click({ timeout: 8_000 });
+
+    // Prova positiva, lição da Housekeep: sheet fechada + página recarregada
+    // SEM a ação de concluir. Qualquer coisa aquém disso é "não sei", e "não
+    // sei" aqui vira falso verde com pagamento no meio.
+    let sheetFechou = false;
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(1_500);
+      if (!(await page.locator(SUBMIT).isVisible().catch(() => false))) { sheetFechou = true; break; }
+    }
+    if (!sheetFechou) {
+      const controles = await lerControles(page);
+      return {
+        ok: false,
+        motivo: `sheet still open after Complete job — ${controles.map((c) => c.texto).filter(Boolean).slice(0, 6).join(" · ")}`,
+      };
+    }
+    await page.goto(item.url, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    if (await page.getByText(ACAO_CONCLUIR).first().isVisible({ timeout: 5_000 }).catch(() => false)) {
+      return { ok: false, motivo: "job page still offers Mark job as complete after submitting" };
+    }
+    return { ok: true };
+  } finally {
+    rmSync(pasta, { recursive: true, force: true });
+  }
 }
 
 /**

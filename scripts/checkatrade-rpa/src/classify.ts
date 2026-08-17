@@ -6,6 +6,7 @@ import { respondToLead } from "./checkatrade/leadResponse.js";
 import { type MasterOsClient } from "./masterOs/client.js";
 import { countJobsAcceptedToday, hasSeen, markSeen } from "./dedupe/seenStore.js";
 import { logger } from "./logger.js";
+import { tipoDeTrabalho } from "./jobRules.js";
 
 // service_type is ALWAYS cfg.fallbackCategory ("General Maintenance") — it's
 // the single trade we operate on Checkatrade, and it's a canonical catalog
@@ -250,9 +251,12 @@ async function handleJob(
     property_address: propertyAddress,
     postcode,
     // Specific Checkatrade title for display (jobs.title) — separate from
-    // service_type, which must be a broad trade for partner matching.
+    // service_type. Certificado vai com o SKU canônico do catálogo (decisão
+    // do dono, 17/08/2026 — o JOB-9406 nasceu "General Maintenance" sendo um
+    // EICR e o relatório saiu com template errado); o resto segue no
+    // fallback, que é o certo para trabalho geral.
     title,
-    service_type: cfg.fallbackCategory,
+    service_type: tipoDeTrabalho(title) ?? cfg.fallbackCategory,
     // Three sources for the brief, best first: the customer's own notes on the
     // accepted page, then the pre-accept "Message" block, then the card's
     // truncated boilerplate.
