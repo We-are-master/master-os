@@ -301,33 +301,73 @@ export async function submeterRelatorioHousekeep(args: {
     }
 
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
-    await page.waitForTimeout(4000);
 
-    const depois = await page.locator("body").innerText();
-    if (/thank you|submitted|received/i.test(depois)) {
-      return { ok: true, forma, segundos: seg() };
-    }
     /**
-     * A frase inteira da recusa, não a palavra que casou.
+     * A confirmação é ESPERADA, não amostrada.
      *
-     * O regex antigo devolvia `erro[0]`, que era literalmente "required": o
-     * card dizia `Housekeep rejected it: "required"` e ninguém ficava sabendo
-     * qual campo faltou. A frase que a Housekeep escreve na tela costuma nomear
-     * o campo, e é ela que diz o que consertar antes de tentar de novo.
-     *
-     * Junta as linhas que reclamam, sem repetir, porque o formulário marca cada
-     * campo que faltou e o motivo real pode ser o terceiro da lista.
+     * Os 4 segundos fixos de antes liam a página no meio do upload das fotos:
+     * a submissão ainda estava acontecendo, o corpo ainda era o formulário, e
+     * o filtro por "required" pescava RÓTULO de pergunta ("Is any follow up
+     * work required?") como se fosse recusa. Foi exatamente o veredito falso
+     * do JOB-9437. Agora espera até 30s, sondando a cada 2, e só desiste
+     * quando a página parou de mexer.
      */
-    const linhas = depois
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && l.length < 160 && /required|invalid|must be|cannot be|please /i.test(l));
-    const unicas = [...new Set(linhas)].slice(0, 3);
+    let depois = "";
+    for (let i = 0; i < 15; i++) {
+      await page.waitForTimeout(2000);
+      depois = await page.locator("body").innerText();
+      if (/thank you|submitted|received/i.test(depois)) {
+        return { ok: true, forma, segundos: seg() };
+      }
+      // Sumiu o botão de submit sem mensagem de erro? A página virou outra
+      // coisa (confirmação com outro texto): conta como entregue.
+      const aindaTemForm = await page.locator('button[type="submit"]').count();
+      if (!aindaTemForm) return { ok: true, forma, segundos: seg() };
+    }
+
+    /**
+     * A recusa de verdade, lida de onde o Angular a escreve.
+     *
+     * O filtro antigo varria o texto inteiro atrás de "required" e devolvia
+     * rótulos de pergunta. O que diz o que faltou são os CONTROLES marcados
+     * ng-invalid (com o rótulo do bloco em que vivem) e os elementos de erro
+     * que o formulário renderiza. É isso que se coleta.
+     */
+    const diagnostico = await page.evaluate(() => {
+      const rotuloDe = (el: Element): string => {
+        let p: Element | null = el.closest("div,fieldset");
+        for (let k = 0; k < 4 && p; k++) {
+          const l = p.querySelector("label, legend, h4, h5");
+          const t = l?.textContent?.trim();
+          if (t) return t.slice(0, 60);
+          p = p.parentElement?.closest("div,fieldset") ?? null;
+        }
+        return (el as HTMLInputElement).name || el.tagName.toLowerCase();
+      };
+      const invalidos = [
+        ...new Set(
+          Array.from(document.querySelectorAll("input.ng-invalid, textarea.ng-invalid, select.ng-invalid"))
+            .map(rotuloDe),
+        ),
+      ].slice(0, 4);
+      const erros = [
+        ...new Set(
+          Array.from(document.querySelectorAll('[class*="error"], [role="alert"], .invalid-feedback'))
+            .map((e) => e.textContent?.trim() ?? "")
+            .filter((t) => t.length > 3 && t.length < 160),
+        ),
+      ].slice(0, 3);
+      return { invalidos, erros };
+    });
+    const partes = [
+      diagnostico.erros.length ? diagnostico.erros.join(" · ") : "",
+      diagnostico.invalidos.length ? `fields not accepted: ${diagnostico.invalidos.join(", ")}` : "",
+    ].filter(Boolean);
     return {
       ok: false,
-      motivo: unicas.length
-        ? `Housekeep rejected it: ${unicas.join(" · ")}`
-        : "submitted but the page showed no confirmation",
+      motivo: partes.length
+        ? `Housekeep did not confirm: ${partes.join(" — ")}`
+        : "no confirmation after 30s: the form is still on screen",
       segundos: seg(),
     };
   } catch (err) {

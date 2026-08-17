@@ -61,6 +61,9 @@ export async function GET(req: NextRequest) {
     )
     .ilike("report_link", "%checkatrade%")
     .is("external_report_submitted_at", null)
+    // Enviado à mão sai da fila: completar por cima do trabalho já feito era
+    // exatamente o buraco das colunas manuais nunca escritas.
+    .is("external_report_manual_at", null)
     .eq("final_report_submitted", true)
     .in("status", ["final_check", "completed", "awaiting_payment"])
     .order("scheduled_date", { ascending: true })

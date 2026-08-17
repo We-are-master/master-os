@@ -93,7 +93,10 @@ export function ResponsibilityCheck({
               className="mt-2 rounded-[6px] bg-white px-[10px] py-[5px] text-[11px] font-semibold cursor-pointer"
               style={{ color: "#7A3D00", border: "0.5px solid #E8C6A8" }}
             >
-              Finalise without sending
+              {/* O nome que a decisão merece: isto é forçar. Se o relatório já
+                  foi mandado à mão, o certo é o "Sent manually? Mark it" da
+                  faixa lá em cima, que deixa rastro. */}
+              Force approve without sending
             </button>
           ) : null}
         </div>

@@ -31,6 +31,8 @@ export type EstadoEnvioExterno = {
   bloqueio?: string | null;
   attempts?: number;
   submittedAt?: string | null;
+  /** Marcado como enviado à mão (migração 249): quem marcou assume o envio. */
+  manualAt?: string | null;
 };
 
 type Preview =

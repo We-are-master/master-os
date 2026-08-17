@@ -53,6 +53,11 @@ function ehHousekeep(link: string | null): boolean {
   return /housekeep\.com\/job-reports/i.test(String(link ?? ""));
 }
 
+/** Checkatrade/Express: quem completa lá é o robô do RPA, não este processo. */
+function ehCheckatrade(link: string | null): boolean {
+  return /checkatrade/i.test(String(link ?? ""));
+}
+
 /**
  * Achata as fotos de um report para uma lista de URLs.
  *
@@ -121,14 +126,18 @@ export function motivoNaoElegivel(job: {
   report_link?: string | null;
   final_report_submitted?: boolean | null;
   external_report_submitted_at?: string | null;
+  external_report_manual_at?: string | null;
   external_report_attempts?: number | null;
   start_report?: unknown;
   final_report?: unknown;
 }): string | null {
   if (job.external_report_submitted_at) return "the report has already been sent";
+  // Marcado como enviado à mão: as colunas da migração 249 existem para isto.
+  // Sem esta linha o job continuava "pendente" para sempre depois de alguém
+  // ter feito o trabalho no site — e o robô ainda tentava por cima.
+  if (job.external_report_manual_at) return "marked as sent manually";
   if (!job.final_report_submitted) return "the partner has not sent the final report yet";
   if (!job.report_link) return "this job has no platform link: nowhere to upload";
-  if (!ehHousekeep(job.report_link)) return "platform not automated yet (Housekeep only for now)";
   // A Housekeep pede foto de antes E de depois em todo relatório, e mandar sem
   // uma das metades é como o relatório volta recusado. O guarda antigo somava as
   // duas e só exigia que o total passasse de zero, então três fotos do antes e
@@ -138,15 +147,26 @@ export function motivoNaoElegivel(job: {
   // A exigência do "antes" só vale para template que TEM seção de chegada. O de
   // certificado não tem: o anexo dele mora na conclusão, e exigir antes ali
   // recusaria todo certificado por um motivo que não existe.
+  //
+  // As checagens de foto e de tentativas vêm ANTES da bifurcação de
+  // plataforma: valem igual para a Housekeep (Stefane) e para o Express (fila
+  // do robô, que pula job sem foto em silêncio — melhor dizer aqui).
   const antes = urlsDeFoto(job.start_report).length;
   const depois = urlsDeFoto(job.final_report).length;
   const temSecaoDeChegada = photoSlotsForTemplate(templateDoReport(job)).start.length > 0;
   if (antes === 0 && depois === 0) {
-    return "no photos on the report: Housekeep requires before and after";
+    return "no photos on the report: the client platform requires before and after";
   }
-  if (temSecaoDeChegada && antes === 0) return "no before photos: Housekeep requires both";
-  if (depois === 0) return "no after photos: Housekeep requires both";
+  if (temSecaoDeChegada && antes === 0) return "no before photos: the client platform requires both";
+  if (depois === 0) return "no after photos: the client platform requires both";
   if ((job.external_report_attempts ?? 0) >= MAX_TENTATIVAS) return "out of attempts: needs a person";
+  // Express NÃO é "not automated": o robô do RPA completa na plataforma na
+  // próxima passada dele. Dizer "not automated" fazia parecer trabalho manual
+  // pendente, e alguém ia fazer à mão o que o robô já ia fazer sozinho.
+  if (ehCheckatrade(job.report_link)) {
+    return "queued for the Express robot: it completes it on the platform on its next pass";
+  }
+  if (!ehHousekeep(job.report_link)) return "platform not automated yet (Housekeep only for now)";
   return null;
 }
 
@@ -362,6 +382,7 @@ export async function filaDeHoje(supabase: SupabaseClient): Promise<Array<{ id: 
     .eq("status", "final_check")
     .eq("final_report_submitted", true)
     .is("external_report_submitted_at", null)
+    .is("external_report_manual_at", null)
     .not("report_link", "is", null)
     .gte("updated_at", inicioDoDia);
   return (data ?? []).map((j) => ({ id: String(j.id), reference: String(j.reference) }));
