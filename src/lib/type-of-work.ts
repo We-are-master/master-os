@@ -51,6 +51,11 @@ const CERTIFICATE_MATCH_KEYWORDS = [
   "emergency lighting",
   "fire extinguisher",
   "boiler service",
+  // EPC entrou em 17/08/2026: o JOB-9412 "(EPC) Energy Performance
+  // Certificate" não casava com nada e caía em general — mesmo buraco que
+  // mandou o EICR do 9406 pro template de limpeza.
+  "epc",
+  "energy performance",
 ];
 
 /** True when the label/title is a compliance certificate SKU (not general maintenance). */

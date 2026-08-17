@@ -197,3 +197,83 @@ export function faixaDaNota(s: SaudeDoRelatorio): "bloqueado" | "incompleto" | "
   if (s.nota >= 80) return "bom";
   return "incompleto";
 }
+
+// ─── portão da submissão ─────────────────────────────────────────────────────
+
+export type VereditoDaSubmissao = {
+  ok: boolean;
+  nota: number;
+  faixa: ReturnType<typeof faixaDaNota>;
+  /** O que impede a submissão, dito para quem está com o formulário aberto. */
+  motivos: string[];
+};
+
+const contagem = (fotos: unknown): Record<string, number> => {
+  if (Array.isArray(fotos)) return { _flat: fotos.length };
+  if (fotos && typeof fotos === "object") {
+    return Object.fromEntries(
+      Object.entries(fotos as Record<string, unknown>).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]),
+    );
+  }
+  return {};
+};
+
+/**
+ * O portão que roda NO ATO da submissão: o que a plataforma do cliente exige
+ * é obrigatório aqui também, e a resposta já traz a nota.
+ *
+ * Antes o parceiro submetia qualquer coisa e a falta só aparecia na revisão
+ * do escritório — horas depois, com o parceiro já longe do imóvel. Agora a
+ * mesma régua do reportHealth decide na hora: item bloqueante faltando, a
+ * submissão volta com a lista do que falta enquanto ainda dá para tirar a
+ * foto. Os tetos (5 por cômodo na limpeza, 20 por metade no resto) também
+ * bloqueiam aqui: estourar teto é escolha, não acidente, e o excedente seria
+ * cortado em silêncio no envio.
+ */
+export function validarSubmissaoDeReport(input: {
+  template: ReportTemplate;
+  finalData: Record<string, unknown>;
+  /** Fotos que o relatório TERÁ depois de salvo (existentes + novas). */
+  startPhotos: string[] | Record<string, string[]> | null;
+  finalPhotos: string[] | Record<string, string[]> | null;
+  timerStartedAt?: string | null;
+  timerEndedAt?: string | null;
+}): VereditoDaSubmissao {
+  const saude = reportHealth({
+    template: input.template,
+    startReport: { photos: input.startPhotos ?? [] },
+    finalReport: { photos: input.finalPhotos ?? [], ...input.finalData },
+    finalReportSubmitted: true,
+    timerStartedAt: input.timerStartedAt ?? null,
+    timerEndedAt: input.timerEndedAt ?? null,
+  });
+
+  const motivos = saude.pendencias
+    .filter((i) => i.bloqueia)
+    .map((i) => (i.detalhe ? `${i.rotulo} (${i.detalhe})` : i.rotulo));
+
+  // Tetos por bloco: os da limpeza vêm dos slots (5), o resto usa o teto real
+  // da plataforma por metade (20).
+  const slots = photoSlotsForTemplate(input.template);
+  for (const [rotuloMetade, fotos, lista] of [
+    ["Before", input.startPhotos, slots.start],
+    ["After", input.finalPhotos, slots.final],
+  ] as const) {
+    const mapa = contagem(fotos);
+    if (lista.length > 0 && !Array.isArray(fotos)) {
+      for (const s of lista) {
+        const n = mapa[s.key] ?? 0;
+        if (s.max && n > s.max) {
+          motivos.push(`${rotuloMetade} · ${s.label}: ${n} photos — maximum ${s.max}`);
+        }
+      }
+    } else {
+      const n = total(mapa);
+      if (n > HOUSEKEEP_MAX_FOTOS) {
+        motivos.push(`${rotuloMetade} photos: ${n} — the client platform takes ${HOUSEKEEP_MAX_FOTOS}`);
+      }
+    }
+  }
+
+  return { ok: motivos.length === 0, nota: saude.nota, faixa: faixaDaNota(saude), motivos };
+}

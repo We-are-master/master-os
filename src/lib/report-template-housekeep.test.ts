@@ -68,3 +68,13 @@ test("o template de limpeza é o único que pede foto por cômodo", () => {
   // O chapado tem um bloco só, e é essa diferença que o bug apagava.
   assert.equal(photoSlotsForTemplate("general").final.length < chaves.length, true);
 });
+
+test("EICR com 'domestic' no título é certificado, nunca limpeza", () => {
+  // JOB-9406, 17/08/2026: "2 Bed Domestic EICR Safety Check" caía no
+  // formulário de cômodos porque "domestic" casava antes do certificado.
+  assert.equal(pickReportTemplate({ title: "2 Bed Domestic EICR Safety Check (<=8 Ckts)" }), "certificate");
+});
+
+test("EPC é certificado", () => {
+  assert.equal(pickReportTemplate({ title: "(EPC) Energy Performance Certificate" }), "certificate");
+});

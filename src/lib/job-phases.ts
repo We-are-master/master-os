@@ -1,6 +1,9 @@
 import type { Job } from "@/types/database";
 import { canMarkJobCompletedFinancially, type JobCompletionPaymentRow } from "@/lib/job-financials";
 import { isJobOperationalSchemaEnabled } from "@/lib/job-schema-compat";
+import { reportHealth } from "@/lib/report-health";
+import { pickReportTemplate, type ReportTemplate } from "@/lib/public-report-templates";
+import { isReportTemplate } from "@/lib/report-submission";
 import type { LucideIcon } from "lucide-react";
 import {
   Play,
@@ -69,6 +72,73 @@ export function allConfiguredReportsApproved(job: Job): boolean {
   return Boolean(job.report_1_approved);
 }
 
+/**
+ * Which report template a job's envelopes were written in.
+ *
+ * Reads what was actually typed before falling back to the title, for the same
+ * reason Stefane does: a report written in the flat template has no per-room
+ * fields, and judging it by the title would demand answers the form never asked
+ * for. Mirrors `templateDoReport` in `src/lib/stefane/run-external-report.ts`.
+ */
+function reportTemplateForJob(job: Job): ReportTemplate {
+  for (const r of [job.final_report, job.start_report]) {
+    const t = (r as { template?: unknown } | null)?.template;
+    if (typeof t === "string" && isReportTemplate(t)) return t;
+  }
+  return pickReportTemplate({ title: String(job.title ?? "") });
+}
+
+/**
+ * No finalising without a report that is actually filled in.
+ *
+ * The rule was always the operation's, and was never in the code: until now,
+ * being in Final check was enough to advance, even with no report at all. What
+ * measures "filled in" is `reportHealth`, against what the client's platform
+ * really demands, and only the items it marks as blocking count here. Cleaning
+ * jobs are not asked for prose, certificate jobs are not asked for before
+ * photos, because the health check already knows that.
+ *
+ * The way out, when a partner does not use the app, is the office typing it in
+ * `POST /api/jobs/[id]/office-report`. The report has to exist; whose keyboard
+ * it came from does not matter.
+ */
+export function reportCompletionGate(job: Job): { ok: boolean; message?: string } {
+  const health = reportHealth({
+    template: reportTemplateForJob(job),
+    startReport: job.start_report,
+    finalReport: job.final_report,
+    finalReportSubmitted: job.final_report_submitted,
+    timerStartedAt: job.partner_timer_started_at,
+    timerEndedAt: job.partner_timer_ended_at,
+  });
+  if (!health.bloqueado) return { ok: true };
+  // Name what is missing, not just that something is: this message is read by
+  // the person who can still fix it, with the job open in front of them.
+  const missing = health.pendencias
+    .filter((p) => p.bloqueia)
+    .map((p) => p.rotulo.toLowerCase())
+    .join(", ");
+  return {
+    ok: false,
+    message: `Report is not complete yet: ${missing}. Ask the partner, or type it in from Office report.`,
+  };
+}
+
+/**
+ * Did this patch just approve the report?
+ *
+ * The signal for handing the report to the client's platform. Both approval
+ * paths on the job page end in `buildJobReviewApprovalPatch`, so watching its
+ * output catches them all, and any path added later, without the caller having
+ * to remember to fire anything.
+ *
+ * Deliberately reads the patch and not the merged row: a row that was already
+ * approved yesterday would fire again on every unrelated save.
+ */
+export function jobPatchApprovesReport(patch: Partial<Job>): boolean {
+  return patch.report_1_approved === true || patch.internal_report_approved === true;
+}
+
 /** Header actions that need custom handling on the job detail page (e.g. send + invoice flow). */
 export type JobStatusActionSpecial = "send_report_invoice" | "put_on_hold" | "resume_job";
 
@@ -125,8 +195,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: CheckCircle2,
           primary: true,
           tone: "success",
-          /** Opens Final review modal (report + finalise) — office completes when partners skip the app. */
-          special: "send_report_invoice",
         },
         onHoldAction,
         cancelAction,
@@ -135,7 +203,19 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "final_check": {
       return [
         {
-          label: "Review & Approve",
+          /**
+           * O unico botao que termina o trabalho.
+           *
+           * Ele se chamava "Review & Approve" e tinha um gemeo dentro do card do
+           * relatorio, chamando o mesmo handler. Duas portas iguais na mesma tela
+           * nao dao escolha, dao duvida. O gemeo saiu; este ficou, porque o
+           * cabecalho e onde moram as acoes de status.
+           *
+           * O nome mudou junto: "aprovar" descreve o relatorio, e o que este
+           * botao faz e FECHAR o job — valida o relatorio, mostra o resumo do
+           * que vai sair e so entao manda.
+           */
+          label: "Finish work",
           status: "awaiting_payment",
           icon: Send,
           primary: true,
@@ -274,6 +354,8 @@ export function canAdvanceJob(
     return { ok: true };
   }
   if (nextStatus === "awaiting_payment") {
+    const filled = reportCompletionGate(job);
+    if (!filled.ok) return filled;
     if (allConfiguredReportsApproved(job)) return { ok: true };
     if (job.status === "final_check") return { ok: true };
     return { ok: false, message: "Ops must approve the report before Awaiting Payment." };
@@ -389,6 +471,11 @@ export function canApproveReport(job: Job, reportSlotIndex: number): { ok: boole
  * (avoids skipping on-site work while still on Scheduled).
  */
 export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; message?: string } {
+  // Same gate as advancing, and it matters more here: this is the step that puts
+  // a report and an invoice in the client's hands. Being in Final check used to
+  // be enough on its own, which meant an empty report could be emailed out.
+  const filled = reportCompletionGate(job);
+  if (!filled.ok) return filled;
   if (allConfiguredReportsApproved(job)) {
     if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
       return {

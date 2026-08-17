@@ -6,7 +6,9 @@ import {
   isReportTemplate,
   parseReportPhotoEntries,
   persistReportSubmission,
+  plannedPhotoShape,
 } from "@/lib/report-submission";
+import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 
 export const dynamic = "force-dynamic";
@@ -124,6 +126,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  /**
+   * O portão da plataforma, na porta do parceiro: o que a Housekeep exige é
+   * obrigatório aqui, e a recusa chega enquanto ele ainda está no imóvel —
+   * não horas depois na revisão do escritório. A resposta de sucesso traz a
+   * nota pelo mesmo motivo: submeteu, já sabe como ficou.
+   */
+  const fotos = parseReportPhotoEntries(form);
+  const veredito = validarSubmissaoDeReport({
+    template,
+    finalData,
+    startPhotos: plannedPhotoShape(template, "start", fotos, null),
+    finalPhotos: plannedPhotoShape(template, "final", fotos, null),
+    timerStartedAt: job.partner_timer_started_at ?? null,
+    timerEndedAt: job.partner_timer_ended_at ?? null,
+  });
+  if (!veredito.ok) {
+    return NextResponse.json(
+      {
+        error: "The report is missing what the client platform requires.",
+        pendencias: veredito.motivos,
+        nota: veredito.nota,
+      },
+      { status: 422 },
+    );
+  }
+
   const result = await persistReportSubmission(
     supabase,
     {
@@ -138,7 +166,7 @@ export async function POST(req: NextRequest) {
       source: "partner_link",
       startData,
       finalData,
-      photos: parseReportPhotoEntries(form),
+      photos: fotos,
       writeStart: true,
     },
   );
@@ -153,5 +181,5 @@ export async function POST(req: NextRequest) {
     after(() => fillCertificateExpiry(supabase, job.id));
   }
 
-  return NextResponse.json({ ok: true, jobReference: job.reference });
+  return NextResponse.json({ ok: true, jobReference: job.reference, nota: veredito.nota, faixa: veredito.faixa });
 }

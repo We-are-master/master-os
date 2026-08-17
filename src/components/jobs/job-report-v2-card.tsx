@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarClock, CheckCircle2, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   normalizeReport,
   renderableFields,
-  type NormalizedReport,
   type ReportKind,
 } from "@/lib/job-report-v2";
 import {
@@ -31,6 +30,21 @@ interface JobReportV2CardProps {
   readOnly?:   boolean;
   /** Called after a successful approval toggle so the parent can refetch. */
   onApprovalChange?: () => void;
+  /**
+   * Relatório de chegada, para o card FINAL mostrar as fotos como o par que
+   * elas são: Before e After lado a lado. Sem isto a aba só via o "depois" —
+   * o "antes" vive no start_report, que a aba não renderiza. Não passar onde
+   * o card de chegada já aparece por conta própria (revisão final), senão a
+   * mesma foto entra duas vezes na tela.
+   */
+  rawStartReport?: unknown;
+  /**
+   * Janela em campo (`jobs.partner_timer_*`): é o que vira Start/Finish time
+   * na plataforma do cliente, então o card mostra — revisar o relatório sem
+   * ver as horas era revisar metade.
+   */
+  timerStartedAt?: string | null;
+  timerEndedAt?:   string | null;
 }
 
 export function JobReportV2Card({
@@ -41,9 +55,24 @@ export function JobReportV2Card({
   approvedBy,
   readOnly,
   onApprovalChange,
+  timerStartedAt,
+  timerEndedAt,
+  rawStartReport,
 }: JobReportV2CardProps) {
   const report = useMemo(() => normalizeReport(rawReport), [rawReport]);
-  const fields = useMemo(() => (report ? renderableFields(report) : []), [report]);
+  const startReport = useMemo(
+    () => (kind === "final" && rawStartReport ? normalizeReport(rawStartReport) : null),
+    [kind, rawStartReport],
+  );
+  // Campos das DUAS metades num bloco só (chegada por último, sem repetir
+  // chave): o card é um relatório único, e "o que foi visto na chegada"
+  // também é relatório.
+  const fields = useMemo(() => {
+    const doFinal = report ? renderableFields(report) : [];
+    if (!startReport) return doFinal;
+    const chaves = new Set(doFinal.map((f) => f.key));
+    return [...doFinal, ...renderableFields(startReport).filter((f) => !chaves.has(f.key))];
+  }, [report, startReport]);
 
   // Certificate jobs answer one question before any other: until when is this
   // valid? It comes from the typed field or from what the model read off the
@@ -61,8 +90,54 @@ export function JobReportV2Card({
   const [savingApproval, setSavingApproval] = useState(false);
   const [readingCertificate, setReadingCertificate] = useState(false);
 
+  /**
+   * As horas em campo, como a plataforma do cliente vai recebê-las.
+   *
+   * Vêm do timer do parceiro (ou do que o escritório digitou no Edit report),
+   * sempre em hora de Londres — que é o relógio do formulário do outro lado.
+   * Sem timer, cai na duração digitada no relatório. Só no card final: a
+   * janela é da visita inteira, e é aqui que ela é revisada.
+   */
+  const emCampo = useMemo(() => {
+    if (kind !== "final") return null;
+    const fmt = (iso: string) => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+    };
+    const ini = timerStartedAt ? fmt(timerStartedAt) : null;
+    const fim = timerEndedAt ? fmt(timerEndedAt) : null;
+    const durMsCru =
+      timerStartedAt && timerEndedAt
+        ? new Date(timerEndedAt).getTime() - new Date(timerStartedAt).getTime()
+        : typeof (rawReport as { duration_ms?: unknown } | null)?.duration_ms === "number"
+          ? (rawReport as { duration_ms: number }).duration_ms
+          : null;
+    let dur: string | null = null;
+    if (durMsCru !== null && Number.isFinite(durMsCru) && durMsCru > 0) {
+      const h = Math.floor(durMsCru / 3_600_000);
+      const m = Math.round((durMsCru % 3_600_000) / 60_000);
+      dur = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+    }
+    const invertido = durMsCru !== null && durMsCru <= 0;
+    if (!ini && !fim && !dur && !invertido) return null;
+    return { ini, fim, dur, invertido };
+  }, [kind, timerStartedAt, timerEndedAt, rawReport]);
+
+  /**
+   * "Validated", nao "Approved".
+   *
+   * `final_report_approved_at` e gravado no instante em que o parceiro SUBMETE,
+   * pelo persistReportSubmission — nao quando alguem revisa. Chamar isso de
+   * Approved fazia a tela dizer que o job estava aprovado com o mesmo horario da
+   * submissao, e quem lesse concluiria que nao havia mais nada a fazer. Havia:
+   * o Finish work do cabecalho, que e onde a decisao acontece de verdade.
+   */
   const isApproved = !!approvedAt;
-  const titleLabel = kind === "start" ? "Start report" : "Final report";
+  // Um relatório só, a pedido: a visita é uma e o relatório é um. "Start"
+  // continua existindo como DADO (fotos de antes, campos de chegada), mas
+  // entra DENTRO deste card — não como um segundo card na tela.
+  const titleLabel = kind === "start" ? "Start report" : "Report";
 
   /**
    * URLs assinadas de todas as fotos, buscadas na montagem.
@@ -77,16 +152,18 @@ export function JobReportV2Card({
   const [ampliada, setAmpliada] = useState<string | null>(null);
 
   const todasAsFotos = useMemo(() => {
-    if (!report) return [] as string[];
-    const doMapa = report.photosByRoom
-      ? Object.values(report.photosByRoom).flatMap((v) => (Array.isArray(v) ? v : []))
-      : [];
-    // `photosByRoom` guarda string; `photosFlat` guarda `{ url }`. Achatar as
-    // duas formas aqui é o que faz a assinatura valer para os dois templates.
-    return [...doMapa, ...report.photosFlat.map((p) => p.url)].filter(
-      (u): u is string => typeof u === "string" && u.trim().length > 0,
-    );
-  }, [report]);
+    const out: string[] = [];
+    for (const rep of [startReport, report]) {
+      if (!rep) continue;
+      const doMapa = rep.photosByRoom
+        ? Object.values(rep.photosByRoom).flatMap((v) => (Array.isArray(v) ? v : []))
+        : [];
+      // `photosByRoom` guarda string; `photosFlat` guarda `{ url }`. Achatar as
+      // duas formas aqui é o que faz a assinatura valer para os dois templates.
+      out.push(...doMapa, ...rep.photosFlat.map((p) => p.url));
+    }
+    return out.filter((u): u is string => typeof u === "string" && u.trim().length > 0);
+  }, [report, startReport]);
 
   useEffect(() => {
     let vivo = true;
@@ -223,7 +300,7 @@ export function JobReportV2Card({
               : { background: "#FFF1EB", color: "#ED4B00" }
           }
         >
-          {isApproved ? "Approved" : "Pending review"}
+          {isApproved ? "Validated" : "Pending review"}
         </span>
       </div>
 
@@ -244,7 +321,7 @@ export function JobReportV2Card({
         ) : null}
         {approvedAt ? (
           <span style={{ color: "#0F6E56" }}>
-            Approved{" "}
+            Validated{" "}
             {new Date(approvedAt).toLocaleString("en-GB", {
               day: "2-digit",
               month: "short",
@@ -258,6 +335,35 @@ export function JobReportV2Card({
           </span>
         ) : null}
       </div>
+
+      {emCampo ? (
+        <div
+          className="rounded-[8px] px-3 py-[10px] flex items-start gap-2"
+          style={
+            emCampo.invertido
+              ? { background: "#FDF3F3", border: "0.5px solid #EFC9C9" }
+              : { background: "#F4F5FB", border: "0.5px solid #D8DBEE" }
+          }
+        >
+          <Clock3 className="h-4 w-4 shrink-0 mt-[1px]" style={{ color: emCampo.invertido ? "#A32D2D" : "#020040" }} />
+          <div className="min-w-0">
+            <p className="text-[12px] font-semibold" style={{ color: emCampo.invertido ? "#A32D2D" : "#020040" }}>
+              On site{" "}
+              {emCampo.ini && emCampo.fim
+                ? `${emCampo.ini} → ${emCampo.fim}`
+                : emCampo.ini
+                  ? `from ${emCampo.ini}`
+                  : ""}
+              {emCampo.dur ? ` · ${emCampo.dur}` : ""}
+            </p>
+            <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+              {emCampo.invertido
+                ? "Finish is before start — the partner timer was left running. Fix it in Edit report before sending."
+                : "London time · goes to the client platform as the start and finish times."}
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {validity ? <ValidityStrip validity={validity} /> : null}
 
@@ -286,56 +392,68 @@ export function JobReportV2Card({
         </div>
       ) : null}
 
-      {report.photosByRoom ? (
-        <div className="space-y-2">
-          {Object.entries(report.photosByRoom).map(([room, urls]) =>
-            urls.length === 0 ? null : (
-              <div key={room} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
-                <p
-                  className="text-[10px] font-bold uppercase tracking-wide mb-2"
-                  style={{ color: "#6B6B70" }}
-                >
-                  {room.replace(/_/g, " ")}{" "}
-                  <span style={{ color: "#A8A29E" }}>· {urls.length} photo{urls.length === 1 ? "" : "s"}</span>
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {urls.map((u, i) => (
-                    <ImageButton
-                      key={`${room}-${i}`}
-                      url={u}
-                      label={`${room}-${i}`}
-                      onOpen={openImage}
-                      opening={openingImageKey === `${room}-${i}`}
-                      signedUrl={assinadas[u]}
-                    />
-                  ))}
+      {/* As fotos como o PAR que provam o serviço: Before (do relatório de
+          chegada, quando ele veio junto) e After, cada metade rotulada. Sem o
+          par, mantém o rótulo "Photos" de sempre. */}
+      {(
+        [
+          startReport ? ([startReport, "Before"] as const) : null,
+          report ? ([report, startReport ? "After" : "Photos"] as const) : null,
+        ].filter(Boolean) as Array<readonly [NonNullable<typeof report>, string]>
+      ).map(([rep, rotulo]) =>
+        rep.photosByRoom ? (
+          <div key={rotulo} className="space-y-2">
+            {Object.entries(rep.photosByRoom).map(([room, urls]) =>
+              urls.length === 0 ? null : (
+                <div key={`${rotulo}-${room}`} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wide mb-2"
+                    style={{ color: "#6B6B70" }}
+                  >
+                    {rotulo === "Photos" ? "" : `${rotulo} · `}
+                    {room.replace(/_/g, " ")}{" "}
+                    <span style={{ color: "#A8A29E" }}>· {urls.length} photo{urls.length === 1 ? "" : "s"}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {urls.map((u, i) => (
+                      <ImageButton
+                        key={`${rotulo}-${room}-${i}`}
+                        url={u}
+                        label={`${rotulo}-${room}-${i}`}
+                        onOpen={openImage}
+                        opening={openingImageKey === `${rotulo}-${room}-${i}`}
+                        signedUrl={assinadas[u]}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ),
-          )}
-        </div>
-      ) : report.photosFlat.length > 0 ? (
-        <div className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
-          <p
-            className="text-[10px] font-bold uppercase tracking-wide mb-2"
-            style={{ color: "#6B6B70" }}
-          >
-            Photos <span style={{ color: "#A8A29E" }}>· {report.photosFlat.length}</span>
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {report.photosFlat.map((p, i) => (
-              <ImageButton
-                key={`flat-${i}`}
-                url={p.url}
-                label={`flat-${i}`}
-                onOpen={openImage}
-                opening={openingImageKey === `flat-${i}`}
-                signedUrl={assinadas[p.url]}
-              />
-            ))}
+              ),
+            )}
           </div>
-        </div>
-      ) : null}
+        ) : rep.photosFlat.length > 0 ? (
+          <div key={rotulo} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
+            <p
+              className="text-[10px] font-bold uppercase tracking-wide mb-2"
+              style={{ color: "#6B6B70" }}
+            >
+              {rotulo === "Photos" ? "Photos" : `${rotulo} photos`}{" "}
+              <span style={{ color: "#A8A29E" }}>· {rep.photosFlat.length}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {rep.photosFlat.map((p, i) => (
+                <ImageButton
+                  key={`${rotulo}-flat-${i}`}
+                  url={p.url}
+                  label={`${rotulo}-flat-${i}`}
+                  onOpen={openImage}
+                  opening={openingImageKey === `${rotulo}-flat-${i}`}
+                  signedUrl={assinadas[p.url]}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null,
+      )}
 
       {!readOnly ? (
         <div className="flex items-center gap-2 pt-1">

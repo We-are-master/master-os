@@ -2048,6 +2048,9 @@ function JobsPageContent() {
           ...patchOfficeCancelZeroJobEconomics(),
           status: "cancelled",
           cancellation_reason: reason,
+          // Mesmo motivo do cancelamento individual: o id é o que faz o
+          // cancelamento virar número em vez de frase.
+          cancellation_reason_preset_id: bulkCancelPresetId,
           cancelled_at: now,
           cancelled_by: profile?.id ?? null,
           ...statusChangePartnerTimerPatch(j, "cancelled"),

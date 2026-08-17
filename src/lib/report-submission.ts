@@ -116,6 +116,35 @@ export function parseReportPhotoEntries(form: FormData): Record<string, File[]> 
   return out;
 }
 
+/**
+ * A forma que as fotos TERÃO depois de salvas, sem salvar nada: os uploads
+ * novos viram placeholders e passam pelo MESMO funil do persist (slots
+ * permitidos + merge com o que já existe). É o que o portão da submissão
+ * conta antes de deixar o relatório entrar — validar a contagem de outro
+ * jeito descolava da gravação de verdade.
+ */
+export function plannedPhotoShape(
+  template: ReportTemplate,
+  kind: "start" | "final",
+  photoEntries: Record<string, File[]>,
+  existing: unknown,
+): string[] | Record<string, string[]> {
+  const allowed = slotsForKind(template, kind);
+  let fresh: string[] | Record<string, string[]>;
+  if (allowed === null) {
+    const flatSlot = kind === "start" ? "before" : "after";
+    fresh = (photoEntries[flatSlot] ?? []).map(() => "pending");
+  } else {
+    const mapa: Record<string, string[]> = {};
+    for (const [slot, files] of Object.entries(photoEntries)) {
+      if (!allowed.has(slot)) continue;
+      mapa[slot] = files.map(() => "pending");
+    }
+    fresh = mapa;
+  }
+  return mergeReportPhotos(existing, fresh);
+}
+
 // ─── Payload shape ───────────────────────────────────────────────────────────
 
 export interface BuiltReportPayload {

@@ -12,13 +12,22 @@ export type CreateJobPayload = {
   client_phone?: string;
   description?: string;
   client_price?: number;
-  auto_assign: true;
+  /**
+   * false → the job lands as `unassigned` and waits for the office to take
+   * action. true would dispatch push + Zendesk invites to matched partners at
+   * insert time, which we deliberately don't want for Checkatrade jobs.
+   */
+  auto_assign: boolean;
   report_link?: string;
   /** Master OS opens + links a fresh Zendesk ticket itself at insert time — the RPA never touches Zendesk. */
   create_zendesk_ticket?: true;
+  /** Parking, booked duration and exact earnings: no dedicated column yet. */
+  internal_notes?: string;
 };
 
 export type CreateLeadPayload = {
+  /** Checkatrade's own id, stamped into the contact's notes so coverage is provable. */
+  external_id?: string;
   name: string;
   address: string;
   email?: string;

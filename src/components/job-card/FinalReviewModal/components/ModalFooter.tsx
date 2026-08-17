@@ -3,6 +3,12 @@ type Props = {
   submitting?: boolean;
   onCancel: () => void;
   onApprove: () => void;
+  /**
+   * True quando o job vai fechar SEM o relatório ter chegado à plataforma:
+   * sem report, bloqueado, ou liberado à força. O botão muda de nome e de cor
+   * porque a decisão é outra — e forçar sem perceber era o buraco.
+   */
+  forcado?: boolean;
 };
 
 export function ModalFooter({
@@ -10,6 +16,7 @@ export function ModalFooter({
   submitting,
   onCancel,
   onApprove,
+  forcado,
 }: Props) {
   return (
     <div
@@ -29,13 +36,13 @@ export function ModalFooter({
         type="button"
         onClick={onApprove}
         disabled={!canApprove || submitting}
-        className="w-full sm:w-auto sm:min-w-[200px] px-[18px] py-[9px] text-[13px] font-medium rounded-lg text-white border-none transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-35 disabled:cursor-not-allowed hover:enabled:bg-[#0a0860]"
+        className="w-full sm:w-auto sm:min-w-[200px] px-[18px] py-[9px] text-[13px] font-medium rounded-lg text-white border-none transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-35 disabled:cursor-not-allowed"
         style={{
-          background: "#020040",
+          background: forcado ? "#B45309" : "#020040",
           cursor: !canApprove || submitting ? "not-allowed" : "pointer",
         }}
       >
-        <span>Finalise &amp; approve</span>
+        <span>{forcado ? "Force approve" : "Finalise & approve"}</span>
         <span aria-hidden className="text-[14px]">→</span>
       </button>
     </div>

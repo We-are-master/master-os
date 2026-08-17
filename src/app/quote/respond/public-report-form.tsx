@@ -13,6 +13,8 @@ import {
   type ReportTemplate,
 } from "@/lib/public-report-templates";
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
+import { validarSubmissaoDeReport } from "@/lib/report-health";
+import { plannedPhotoShape } from "@/lib/report-submission";
 import {
   FIXFY_BORDER,
   FIXFY_MUTED,
@@ -86,9 +88,29 @@ export default function PublicReportForm({
   const setField = (key: string, value: unknown) =>
     setData((prev) => ({ ...prev, [key]: value }));
 
+  /** Teto por slot (o da limpeza é 5): mesma chave nas duas metades, mesmo teto. */
+  const tetoDoSlot = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of [...photoSlots.start, ...photoSlots.final]) {
+      if (s.max) m.set(s.key, s.max);
+    }
+    return m;
+  }, [photoSlots]);
+
   const onPhotosChange = (slot: string, files: FileList | null) => {
     if (!files) return;
-    setPhotos((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), ...Array.from(files)] }));
+    const novos = Array.from(files);
+    const teto = tetoDoSlot.get(slot);
+    setPhotos((prev) => {
+      const atuais = prev[slot] ?? [];
+      // O teto bloqueia NA ENTRADA: aceitar tudo e cortar no envio é como o
+      // excedente sumia em silêncio. Aqui o parceiro escolhe quais ficam.
+      const vaga = teto ? Math.max(0, teto - atuais.length) : novos.length;
+      if (novos.length > vaga) {
+        setError(`Maximum ${teto} photos in this block — pick the ones that show the work best.`);
+      }
+      return { ...prev, [slot]: [...atuais, ...novos.slice(0, vaga)] };
+    });
   };
 
   const removePhoto = (slot: string, idx: number) => {
@@ -354,6 +376,24 @@ export default function PublicReportForm({
     );
   };
 
+  /**
+   * A mesma régua que o servidor aplica na submissão, rodando ao vivo: o botão
+   * só libera quando o envio vai passar, e a lista diz o que falta enquanto o
+   * parceiro ainda está no imóvel com a câmera na mão.
+   */
+  const veredito = useMemo(() => {
+    const { finalFields } = splitReportFields(spec, data);
+    return validarSubmissaoDeReport({
+      template,
+      finalData: finalFields,
+      startPhotos: plannedPhotoShape(template, "start", photos, null),
+      finalPhotos: plannedPhotoShape(template, "final", photos, null),
+      // Presença basta: o item de horários não bloqueia a submissão.
+      timerStartedAt: Number(hours) || Number(minutes) ? "typed" : null,
+      timerEndedAt: Number(hours) || Number(minutes) ? "typed" : null,
+    });
+  }, [spec, data, template, photos, hours, minutes]);
+
   const submit = async () => {
     setError(null);
 
@@ -386,9 +426,16 @@ export default function PublicReportForm({
       }
       setProgress("Uploading report…");
       const res = await fetch("/api/quotes/submit-report", { method: "POST", body: form });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const body = (await res.json().catch(() => null)) as
+        | { error?: string; pendencias?: string[] }
+        | null;
       if (!res.ok) {
-        setError(body?.error ?? "Could not submit the report.");
+        // 422 = o portão da plataforma: a lista diz o que falta, não só "não deu".
+        setError(
+          body?.pendencias?.length
+            ? `${body.error ?? "The report is missing what the client platform requires."}\n— ${body.pendencias.join("\n— ")}`
+            : body?.error ?? "Could not submit the report.",
+        );
         return;
       }
       onSubmitted();
@@ -503,9 +550,23 @@ export default function PublicReportForm({
           </>,
         )}
 
-        {error ? (
+        {!veredito.ok ? (
           <div
             className="rounded-lg border p-3 text-[13px]"
+            style={{ background: "#FFF8F3", borderColor: "#F5CFB8", color: "#7A3D00" }}
+          >
+            <p className="font-semibold">Before you can submit, the client platform requires:</p>
+            <ul className="mt-1 space-y-0.5">
+              {veredito.motivos.map((m) => (
+                <li key={m}>— {m}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div
+            className="whitespace-pre-wrap rounded-lg border p-3 text-[13px]"
             style={{ background: "#FFF1EB", borderColor: "#F5CFB8", color: "#7A3D00" }}
           >
             {error}
@@ -515,7 +576,7 @@ export default function PublicReportForm({
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={submitting}
+          disabled={submitting || !veredito.ok}
           className="w-full rounded-xl px-4 py-3.5 text-[15px] font-bold text-white shadow-sm transition-opacity disabled:opacity-50"
           style={{ background: "linear-gradient(135deg,#ED4B00 0%,#FF7A29 100%)" }}
         >

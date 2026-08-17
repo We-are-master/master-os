@@ -34,11 +34,18 @@ export function pickReportTemplate(input: {
   title?:       string | null;
 }): ReportTemplate {
   const haystack = `${input.serviceType ?? ""} ${input.title ?? ""}`.toLowerCase();
-  if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
-  if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
+  /**
+   * CERTIFICADO PRIMEIRO — aprendido no JOB-9406 (17/08/2026): "2 Bed
+   * Domestic EICR Safety Check" contém "domestic", casava com a lista de
+   * limpeza antes de chegar na checagem de certificado, e um EICR ganhava
+   * formulário de cômodos. Se o título diz certificado, o relatório É o
+   * certificado — a palavra de trade que estiver do lado não muda isso.
+   */
   if (isCertificateTypeOfWork(input.serviceType) || isCertificateTypeOfWork(input.title)) {
     return "certificate";
   }
+  if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
+  if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
   return "general";
 }
 
@@ -80,6 +87,17 @@ export const HOUSEKEEP_MAX_FOTOS = 20;
  * tentando resolver.
  */
 export const FIXFY_MIN_FOTOS_POR_BLOCO = 5;
+
+/**
+ * Nosso TETO por cômodo na limpeza, decidido pelo dono em 17/08/2026.
+ *
+ * A Housekeep aceita 20 por metade, mas 20 fotos de cozinha não são um
+ * relatório, são um rolo de câmera: quem revisa não olha nenhuma. Cinco por
+ * cômodo obriga a escolher as fotos que provam o serviço. Este teto bloqueia
+ * na submissão — diferente do piso, estourar o teto é decisão de quem está
+ * com as fotos na mão, não acidente de campo.
+ */
+export const FIXFY_MAX_FOTOS_LIMPEZA = 5;
 
 // ─── Field declarations ──────────────────────────────────────────────────────
 
@@ -404,7 +422,8 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
      * foto certa da primeira vez, e é de graça.
      */
     const min = FIXFY_MIN_FOTOS_POR_BLOCO;
-    const max = HOUSEKEEP_MAX_FOTOS;
+    // Teto NOSSO (5), não o da Housekeep (20): ver FIXFY_MAX_FOTOS_LIMPEZA.
+    const max = FIXFY_MAX_FOTOS_LIMPEZA;
     const rooms: ReportPhotoSlot[] = [
       { key: "living_room",   label: "Living room", hint: "Include: windows, skirting boards and floors.", min, max },
       { key: "hallways",      label: "Hallways",    hint: "Include: skirting boards and floors.", min, max },
