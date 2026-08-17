@@ -260,23 +260,19 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   <p className="mb-2 text-[11px]" style={{ color: "#6B6B70" }}>
                     This is the report as it was filled in. Check it before the money.
                   </p>
-                  {/* Chegada primeiro, na ordem do dia de trabalho. Conferir só
-                      a conclusão é conferir metade: o que prova o serviço é o
-                      par antes e depois, e é o par que a Housekeep cobra. */}
-                  <div className="space-y-3">
-                    {rawStartReport && Object.keys(rawStartReport as object).length > 0 ? (
-                      <JobReportV2Card jobId={jobUuid} kind="start" rawReport={rawStartReport} approvedAt={null} readOnly />
-                    ) : null}
-                    <JobReportV2Card
-                      jobId={jobUuid}
-                      kind="final"
-                      rawReport={rawFinalReport}
-                      approvedAt={null}
-                      readOnly
-                      timerStartedAt={timerStartedAt}
-                      timerEndedAt={timerEndedAt}
-                    />
-                  </div>
+                  {/* UM card só, a pedido: a visita é uma e o relatório é um.
+                      A chegada entra DENTRO dele — fotos Before/After lado a
+                      lado, campos das duas metades juntos. */}
+                  <JobReportV2Card
+                    jobId={jobUuid}
+                    kind="final"
+                    rawReport={rawFinalReport}
+                    rawStartReport={rawStartReport}
+                    approvedAt={null}
+                    readOnly
+                    timerStartedAt={timerStartedAt}
+                    timerEndedAt={timerEndedAt}
+                  />
                 </div>
                 <div
                   className="flex items-center justify-between gap-2 px-4 py-3"

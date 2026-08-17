@@ -31,6 +31,14 @@ interface JobReportV2CardProps {
   /** Called after a successful approval toggle so the parent can refetch. */
   onApprovalChange?: () => void;
   /**
+   * Relatório de chegada, para o card FINAL mostrar as fotos como o par que
+   * elas são: Before e After lado a lado. Sem isto a aba só via o "depois" —
+   * o "antes" vive no start_report, que a aba não renderiza. Não passar onde
+   * o card de chegada já aparece por conta própria (revisão final), senão a
+   * mesma foto entra duas vezes na tela.
+   */
+  rawStartReport?: unknown;
+  /**
    * Janela em campo (`jobs.partner_timer_*`): é o que vira Start/Finish time
    * na plataforma do cliente, então o card mostra — revisar o relatório sem
    * ver as horas era revisar metade.
@@ -49,9 +57,22 @@ export function JobReportV2Card({
   onApprovalChange,
   timerStartedAt,
   timerEndedAt,
+  rawStartReport,
 }: JobReportV2CardProps) {
   const report = useMemo(() => normalizeReport(rawReport), [rawReport]);
-  const fields = useMemo(() => (report ? renderableFields(report) : []), [report]);
+  const startReport = useMemo(
+    () => (kind === "final" && rawStartReport ? normalizeReport(rawStartReport) : null),
+    [kind, rawStartReport],
+  );
+  // Campos das DUAS metades num bloco só (chegada por último, sem repetir
+  // chave): o card é um relatório único, e "o que foi visto na chegada"
+  // também é relatório.
+  const fields = useMemo(() => {
+    const doFinal = report ? renderableFields(report) : [];
+    if (!startReport) return doFinal;
+    const chaves = new Set(doFinal.map((f) => f.key));
+    return [...doFinal, ...renderableFields(startReport).filter((f) => !chaves.has(f.key))];
+  }, [report, startReport]);
 
   // Certificate jobs answer one question before any other: until when is this
   // valid? It comes from the typed field or from what the model read off the
@@ -113,7 +134,10 @@ export function JobReportV2Card({
    * o Finish work do cabecalho, que e onde a decisao acontece de verdade.
    */
   const isApproved = !!approvedAt;
-  const titleLabel = kind === "start" ? "Start report" : "Final report";
+  // Um relatório só, a pedido: a visita é uma e o relatório é um. "Start"
+  // continua existindo como DADO (fotos de antes, campos de chegada), mas
+  // entra DENTRO deste card — não como um segundo card na tela.
+  const titleLabel = kind === "start" ? "Start report" : "Report";
 
   /**
    * URLs assinadas de todas as fotos, buscadas na montagem.
@@ -128,16 +152,18 @@ export function JobReportV2Card({
   const [ampliada, setAmpliada] = useState<string | null>(null);
 
   const todasAsFotos = useMemo(() => {
-    if (!report) return [] as string[];
-    const doMapa = report.photosByRoom
-      ? Object.values(report.photosByRoom).flatMap((v) => (Array.isArray(v) ? v : []))
-      : [];
-    // `photosByRoom` guarda string; `photosFlat` guarda `{ url }`. Achatar as
-    // duas formas aqui é o que faz a assinatura valer para os dois templates.
-    return [...doMapa, ...report.photosFlat.map((p) => p.url)].filter(
-      (u): u is string => typeof u === "string" && u.trim().length > 0,
-    );
-  }, [report]);
+    const out: string[] = [];
+    for (const rep of [startReport, report]) {
+      if (!rep) continue;
+      const doMapa = rep.photosByRoom
+        ? Object.values(rep.photosByRoom).flatMap((v) => (Array.isArray(v) ? v : []))
+        : [];
+      // `photosByRoom` guarda string; `photosFlat` guarda `{ url }`. Achatar as
+      // duas formas aqui é o que faz a assinatura valer para os dois templates.
+      out.push(...doMapa, ...rep.photosFlat.map((p) => p.url));
+    }
+    return out.filter((u): u is string => typeof u === "string" && u.trim().length > 0);
+  }, [report, startReport]);
 
   useEffect(() => {
     let vivo = true;
@@ -366,56 +392,68 @@ export function JobReportV2Card({
         </div>
       ) : null}
 
-      {report.photosByRoom ? (
-        <div className="space-y-2">
-          {Object.entries(report.photosByRoom).map(([room, urls]) =>
-            urls.length === 0 ? null : (
-              <div key={room} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
-                <p
-                  className="text-[10px] font-bold uppercase tracking-wide mb-2"
-                  style={{ color: "#6B6B70" }}
-                >
-                  {room.replace(/_/g, " ")}{" "}
-                  <span style={{ color: "#A8A29E" }}>· {urls.length} photo{urls.length === 1 ? "" : "s"}</span>
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {urls.map((u, i) => (
-                    <ImageButton
-                      key={`${room}-${i}`}
-                      url={u}
-                      label={`${room}-${i}`}
-                      onOpen={openImage}
-                      opening={openingImageKey === `${room}-${i}`}
-                      signedUrl={assinadas[u]}
-                    />
-                  ))}
+      {/* As fotos como o PAR que provam o serviço: Before (do relatório de
+          chegada, quando ele veio junto) e After, cada metade rotulada. Sem o
+          par, mantém o rótulo "Photos" de sempre. */}
+      {(
+        [
+          startReport ? ([startReport, "Before"] as const) : null,
+          report ? ([report, startReport ? "After" : "Photos"] as const) : null,
+        ].filter(Boolean) as Array<readonly [NonNullable<typeof report>, string]>
+      ).map(([rep, rotulo]) =>
+        rep.photosByRoom ? (
+          <div key={rotulo} className="space-y-2">
+            {Object.entries(rep.photosByRoom).map(([room, urls]) =>
+              urls.length === 0 ? null : (
+                <div key={`${rotulo}-${room}`} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wide mb-2"
+                    style={{ color: "#6B6B70" }}
+                  >
+                    {rotulo === "Photos" ? "" : `${rotulo} · `}
+                    {room.replace(/_/g, " ")}{" "}
+                    <span style={{ color: "#A8A29E" }}>· {urls.length} photo{urls.length === 1 ? "" : "s"}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {urls.map((u, i) => (
+                      <ImageButton
+                        key={`${rotulo}-${room}-${i}`}
+                        url={u}
+                        label={`${rotulo}-${room}-${i}`}
+                        onOpen={openImage}
+                        opening={openingImageKey === `${rotulo}-${room}-${i}`}
+                        signedUrl={assinadas[u]}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ),
-          )}
-        </div>
-      ) : report.photosFlat.length > 0 ? (
-        <div className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
-          <p
-            className="text-[10px] font-bold uppercase tracking-wide mb-2"
-            style={{ color: "#6B6B70" }}
-          >
-            Photos <span style={{ color: "#A8A29E" }}>· {report.photosFlat.length}</span>
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {report.photosFlat.map((p, i) => (
-              <ImageButton
-                key={`flat-${i}`}
-                url={p.url}
-                label={`flat-${i}`}
-                onOpen={openImage}
-                opening={openingImageKey === `flat-${i}`}
-                signedUrl={assinadas[p.url]}
-              />
-            ))}
+              ),
+            )}
           </div>
-        </div>
-      ) : null}
+        ) : rep.photosFlat.length > 0 ? (
+          <div key={rotulo} className="rounded-[8px] p-3 bg-white" style={{ border: "0.5px solid #E4E4E8" }}>
+            <p
+              className="text-[10px] font-bold uppercase tracking-wide mb-2"
+              style={{ color: "#6B6B70" }}
+            >
+              {rotulo === "Photos" ? "Photos" : `${rotulo} photos`}{" "}
+              <span style={{ color: "#A8A29E" }}>· {rep.photosFlat.length}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {rep.photosFlat.map((p, i) => (
+                <ImageButton
+                  key={`${rotulo}-flat-${i}`}
+                  url={p.url}
+                  label={`${rotulo}-flat-${i}`}
+                  onOpen={openImage}
+                  opening={openingImageKey === `${rotulo}-flat-${i}`}
+                  signedUrl={assinadas[p.url]}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null,
+      )}
 
       {!readOnly ? (
         <div className="flex items-center gap-2 pt-1">

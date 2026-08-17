@@ -8166,6 +8166,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 jobId={job.id}
                 kind="final"
                 rawReport={job.final_report}
+                rawStartReport={job.start_report}
                 approvedAt={job.final_report_approved_at ?? null}
                 onApprovalChange={() => router.refresh()}
                 timerStartedAt={job.partner_timer_started_at ?? null}
