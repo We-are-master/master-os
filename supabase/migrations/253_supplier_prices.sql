@@ -10,6 +10,15 @@
 -- suporte comum não é heavy duty). Balcão trade mostra preço ex-VAT: o
 -- unit_cost aqui é SEMPRE inc VAT, com o ex_vat no spec quando veio.
 --
+-- A REGRA DE PREÇO (dono, 17/08, segunda iteração): vender competindo com o
+-- mercado e comprar do mais barato. O preço de venda de uma variante é a
+-- MÉDIA entre os fornecedores (nunca abaixo de custo × 1.30, o piso de 30%
+-- continua), o custo é o MENOR preço, e a margem — agora exposta em % — é a
+-- consequência: média de ~140% contra os 30% fixos de antes. A conta vive na
+-- view material_quotes, então os fatos ficam fatos e a política fica num
+-- lugar só. O list_price por linha (custo × 1.30) permanece como referência
+-- do piso por fornecedor, não como preço de venda.
+--
 -- Nenhum fornecedor domina (vitórias por menor preço: Screwfix 24, B&Q 15,
 -- Wickes 14, Toolstation 10, TP 6) — é exatamente por isso que o orçamentista
 -- compara em vez de casar com um. `unit_cost` é FATO; `list_price` é POLÍTICA
@@ -77,7 +86,7 @@ insert into supplier_prices (family, variant, query, supplier, unit_cost, markup
   ('blind', 'Veneziana 120cm', 'venetian blind 120cm', 'screwfix', 16.99, 1.30, 22.99, '{"width_cm": 120}'::jsonb, 'Renaissance Venetian Blind White 120cm x 150cm Drop', 'https://www.screwfix.com/p/renaissance-venetian-blind-white-120cm-x-150cm-drop/408ck'),
   ('curtain_pole', 'Extensível 120–210cm', 'extendable curtain pole 210cm', 'screwfix', 26.99, 1.30, 35.99, '{"max_cm": 210}'::jsonb, 'Renaissance Antique Brass Curtain Pole 28/25mm x 120-210cm', 'https://www.screwfix.com/p/renaissance-antique-brass-curtain-pole-28-25mm-x-120-210cm/372ck'),
   ('curtain_pole', 'Extensível 170–300cm', 'extendable curtain pole 300cm', 'screwfix', 40.99, 1.30, 53.99, '{"max_cm": 300}'::jsonb, 'Rothley Brushed Stainless Steel Extendable Curtain Pole w/ Stud Finials 28mm x 165-300cm', 'https://www.screwfix.com/p/rothley-brushed-stainless-steel-extendable-curtain-pole-w-stud-finials-28mm-x-165-300cm/472yu'),
-  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'screwfix', 0.30, 1.30, 0.99, '{"size_mm": 150, "pack_math": "5.99/20=0.30"}'::jsonb, 'Essentials London Shelf Brackets Grey 200mm x 150mm 20 Pack', 'https://www.screwfix.com/p/essentials-london-shelf-brackets-grey-200mm-x-150mm-20-pack/416vj'),
+  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'screwfix', 0.60, 1.30, 0.99, '{"size_mm": 150, "pack_math": "£5.99/20 × 2 (par)"}'::jsonb, 'Essentials London Shelf Brackets Grey 200mm x 150mm 20 Pack', 'https://www.screwfix.com/p/essentials-london-shelf-brackets-grey-200mm-x-150mm-20-pack/416vj'),
   ('shelf_bracket', 'Heavy duty 200mm+', 'heavy duty shelf bracket 250mm', 'screwfix', 7.00, 1.30, 9.99, '{"size_mm": 250, "duty": "heavy", "pack_math": "13.99/2=7.00"}'::jsonb, 'Heavy Duty Brackets Black 300mm x 300mm 2 Pack', 'https://www.screwfix.com/p/heavy-duty-brackets-black-300mm-x-300mm-2-pack/78941'),
   ('screws', 'Sortidos (caixa trade)', 'wood screws trade pack assorted', 'screwfix', 26.99, 1.30, 35.99, '{"pack": "assorted"}'::jsonb, 'TurboGold PZ Double-Countersunk Woodscrews Trade Pack 1400 Pcs', 'https://www.screwfix.com/p/turbogold-pz-double-countersunk-woodscrews-trade-pack-1400-pcs/40237'),
   ('paint', 'Emulsão de teto 5L', 'ceiling paint white 5l', 'screwfix', 24.99, 1.30, 32.99, '{"finish": "ceiling", "litres": 5}'::jsonb, 'Dulux Walls & Ceilings 5Ltr Pure Brilliant White Matt Emulsion Paint', 'https://www.screwfix.com/p/dulux-walls-ceilings-5ltr-pure-brilliant-white-matt-emulsion-paint/22939'),
@@ -145,7 +154,6 @@ insert into supplier_prices (family, variant, query, supplier, unit_cost, markup
   ('blind', 'Veneziana 120cm', 'venetian blind 120cm', 'bandq', 21.95, 1.30, 28.99, '{"width_cm": 120}'::jsonb, 'ALUMINIUM WHITE VENETIAN WINDOW BLINDS 120CM X 213CM', 'https://www.diy.com/departments/aluminium-white-venetian-window-blinds-120cm-x-213cm/0123456783959_BQ.prd'),
   ('curtain_pole', 'Extensível 120–210cm', 'extendable curtain pole 210cm', 'bandq', 20.99, 1.30, 27.99, '{"max_cm": 210}'::jsonb, 'Black Curtain Pole for Patio 120 to 210cm Extendable Curtain Pole Includes Finials, Rings, & Brackets', 'https://www.diy.com/departments/black-curtain-pole-for-patio-120-to-210cm-extendable-curtain-pole-includes-finials-rings-brackets/5056570637844_BQ.prd'),
   ('curtain_pole', 'Extensível 170–300cm', 'extendable curtain pole 300cm', 'bandq', 16.49, 1.30, 21.99, '{"max_cm": 300}'::jsonb, 'Metal Sliced 19mm Extendable Curtain Pole, Brushed Silver - 160 to 300cm with End Finials', 'https://www.diy.com/departments/metal-sliced-19mm-extendable-curtain-pole-brushed-silver-160-to-300cm-with-end-finials/5050238079809_BQ.prd'),
-  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'bandq', 24.95, 1.30, 32.99, '{"size_mm": 150}'::jsonb, 'Oakcrafts - Pair of Art Deco Cast Iron Shelf Bracket - 150mm x 150mm', 'https://www.diy.com/departments/oakcrafts-pair-of-art-deco-cast-iron-shelf-bracket-150mm-x-150mm/5061037550239_BQ.prd'),
   ('shelf_bracket', 'Heavy duty 200mm+', 'heavy duty shelf bracket 250mm', 'bandq', 24.99, 1.30, 32.99, '{"size_mm": 250, "duty": "heavy"}'::jsonb, 'Heavy Duty Metal Flat Shelf Brackets, 250mm Top Notch Home & Living Steel Brackets for Wood Wall Shelves, Inc ', 'https://www.diy.com/departments/heavy-duty-metal-flat-shelf-brackets-250mm-top-notch-home-living-steel-brackets-for-wood-wall-shelves-inc-fixtures-fittings/5060898760771_BQ.prd'),
   ('mdf', '12mm 2440×1220', 'mdf board 12mm 2440', 'bandq', 26.00, 1.30, 33.99, '{"thickness_mm": 12}'::jsonb, 'Medium-density fibreboard (MDF) Fibreboard (L)2440mm (W)1220mm (T)12mm', 'https://www.diy.com/departments/medium-density-fibreboard-mdf-fibreboard-l-2440mm-w-1220mm-t-12mm/1696260_BQ.prd'),
   ('mdf', '18mm 2440×1220', 'mdf board 18mm 2440', 'bandq', 30.00, 1.30, 38.99, '{"thickness_mm": 18}'::jsonb, 'Medium-density fibreboard (MDF) Fibreboard (L)2440mm (W)1220mm (T)18mm', 'https://www.diy.com/departments/medium-density-fibreboard-mdf-fibreboard-l-2440mm-w-1220mm-t-18mm/1696262_BQ.prd'),
@@ -201,8 +209,7 @@ insert into supplier_prices (family, variant, query, supplier, unit_cost, markup
   ('filler', 'Wood filler 2 partes', 'two part wood filler high performance', 'travisperkins', 32.95, 1.30, 42.99, '{"type": "2-part-wood", "ex_vat": 27.46}'::jsonb, 'Ronseal High Performance Wood Filler White 1Kg', 'https://www.travisperkins.co.uk/fillers/ronseal-high-performance-wood-filler-white-1kg/p/454561'),
   ('paint', 'Emulsão branca matt 5L (trade)', 'trade white matt emulsion 5l', 'travisperkins', 57.36, 1.30, 74.99, '{"finish": "matt", "litres": 5, "ex_vat": 47.8}'::jsonb, 'Dulux Trade Vinyl Matt Emulsion Paint 5L White', 'https://www.travisperkins.co.uk/emulsion-paints/dulux-trade-vinyl-matt-emulsion-paint-5l-white/p/820184'),
   ('paint', 'Gloss branco 2.5L (madeira)', 'white gloss paint 2.5l wood', 'travisperkins', 51.46, 1.30, 66.99, '{"finish": "gloss", "litres": 2.5, "ex_vat": 42.88}'::jsonb, 'Dulux Trade High Gloss Paint 2.5L White', 'https://www.travisperkins.co.uk/gloss-paints/dulux-trade-high-gloss-paint-2-5l-white/p/820200'),
-  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'travisperkins', 0.90, 1.30, 1.99, '{"size_mm": 150, "ex_vat": 0.75}'::jsonb, 'Rothley London Bracket (6in x 8in) White 150 x 200mm', 'https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-6in-x-8in-white-150-x-200mm/p/240953'),
-  ('shelf_bracket', 'Heavy duty 200mm+', 'heavy duty shelf bracket 250mm', 'travisperkins', 1.04, 1.30, 1.99, '{"size_mm": 250, "duty": "heavy", "ex_vat": 0.87}'::jsonb, 'Rothley London Bracket (8in x 10in) White 200 x 250mm', 'https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-8in-x-10in-white-200-x-250mm/p/240946'),
+  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'travisperkins', 1.80, 1.30, 2.99, '{"size_mm": 150, "ex_vat": 0.75, "pack_math": "£0.90 EACH × 2 (par)"}'::jsonb, 'Rothley London Bracket (6in x 8in) White 150 x 200mm', 'https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-6in-x-8in-white-150-x-200mm/p/240953'),
   ('mdf', '12mm 2440×1220', 'mdf board 12mm 2440', 'travisperkins', 34.84, 1.30, 45.99, '{"thickness_mm": 12, "ex_vat": 29.03}'::jsonb, '12mm x 2440mm x 1220mm Kronobuild MDF', 'https://www.travisperkins.co.uk/mdf-hardboard-and-pinboard/12mm-x-2440mm-x-1220mm-kronobuild-mdf/p/874668'),
   ('mdf', '18mm 2440×1220', 'mdf board 18mm 2440', 'travisperkins', 38.59, 1.30, 50.99, '{"thickness_mm": 18, "ex_vat": 32.16}'::jsonb, '18mm x 2440mm x 1220mm Kronobuild MDF', 'https://www.travisperkins.co.uk/mdf-hardboard-and-pinboard/18mm-x-2440mm-x-1220mm-kronobuild-mdf/p/874667'),
   ('screws', 'Sortidos (caixa trade)', 'wood screws trade pack assorted', 'travisperkins', 26.77, 1.30, 34.99, '{"pack": "assorted", "ex_vat": 22.31}'::jsonb, 'Ulti-Mate® Stick-Fit® Wood Screws Trade Assortment Qty 1000', 'https://www.travisperkins.co.uk/wood-screws/ulti-mate-stick-fit-wood-screws-trade-assortment-qty-1000/p/460983'),
@@ -260,7 +267,6 @@ insert into supplier_prices (family, variant, query, supplier, unit_cost, markup
   ('paint', 'Gloss branco 2.5L (madeira)', 'white gloss paint 2.5l wood', 'wickes', 23.00, 1.30, 29.99, '{"finish": "gloss", "litres": 2.5}'::jsonb, 'Wickes One Coat Gloss Wood & Metal Paint - Pure Brilliant White - 2.5L', 'https://www.wickes.co.uk/Wickes-One-Coat-Gloss-Wood+Metal-Paint---Pure-Brilliant-White---2-5L/p/122156'),
   ('curtain_pole', 'Extensível 120–210cm', 'extendable curtain pole 210cm', 'wickes', 22.00, 1.30, 28.99, '{"max_cm": 210}'::jsonb, 'Wickes 16/19mm Extendable Metal Curtain Pole Stainless Steel (1.2 - 2.1m)', 'https://www.wickes.co.uk/Wickes-16-19mm-Extendable-Metal-Curtain-Pole-Stainless-Steel-1-2---2-1m/p/241032'),
   ('curtain_pole', 'Extensível 170–300cm', 'extendable curtain pole 300cm', 'wickes', 28.00, 1.30, 36.99, '{"max_cm": 300}'::jsonb, 'Wickes 16/19mm Extendable Metal Curtain Pole Stainless Steel (2.1 - 3.6m)', 'https://www.wickes.co.uk/Wickes-16-19mm-Extendable-Metal-Curtain-Pole-Stainless-Steel-2-1---3-6m/p/241035'),
-  ('shelf_bracket', '150mm (par)', 'shelf bracket 150mm', 'wickes', 4.00, 1.30, 5.99, '{"size_mm": 150}'::jsonb, 'Wickes Floating Shelf Brackets - 150mm', 'https://www.wickes.co.uk/Wickes-Floating-Shelf-Brackets---150mm/p/346185'),
   ('shelf_bracket', 'Heavy duty 200mm+', 'heavy duty shelf bracket 250mm', 'wickes', 6.00, 1.30, 7.99, '{"size_mm": 250, "duty": "heavy"}'::jsonb, 'Wickes Heavy Duty Matt Black Shelf Bracket', 'https://www.wickes.co.uk/Wickes-Heavy-Duty-Matt-Black-Shelf-Bracket/p/9000280502'),
   ('mdf', '12mm 2440×1220', 'mdf board 12mm 2440', 'wickes', 26.00, 1.30, 33.99, '{"thickness_mm": 12}'::jsonb, 'General Purpose MDF Sheet - 12 x 1220 x 2440mm', 'https://www.wickes.co.uk/General-Purpose-MDF-Sheet---12-x-1220-x-2440mm/p/110034'),
   ('mdf', '18mm 2440×1220', 'mdf board 18mm 2440', 'wickes', 30.00, 1.30, 38.99, '{"thickness_mm": 18}'::jsonb, 'General Purpose MDF Sheet - 18 x 1220 x 2440mm', 'https://www.wickes.co.uk/General-Purpose-MDF-Sheet---18-x-1220-x-2440mm/p/110113'),
@@ -357,3 +363,32 @@ insert into supplier_prices (family, variant, query, supplier, unit_cost, markup
   ('mdf', '12mm 2440×1220', 'mdf board 12mm 2440', 'screwfix', 54.99, 1.30, 71.99, '{"thickness_mm": 12, "nota": "valor do cache de 17/08 (busca fresca não achou o produto); renovar no supplier-RPA"}'::jsonb, 'Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack (724RE)', 'https://www.screwfix.com/search?search=mdf%20board%2012mm%202440'),
   ('mdf', '18mm 2440×1220', 'mdf board 18mm 2440', 'screwfix', 54.99, 1.30, 71.99, '{"thickness_mm": 18, "nota": "valor do cache de 17/08 (busca fresca não achou o produto); renovar no supplier-RPA"}'::jsonb, 'Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack (724RE)', 'https://www.screwfix.com/search?search=mdf%20board%2018mm%202440')
 on conflict (supplier, query) do nothing;
+
+-- A política de preço em um lugar só: o orçamentista cota DAQUI.
+-- custo = menor preço entre fornecedores (é de quem compramos, com link);
+-- nosso_preco = média do mercado, nunca abaixo de custo × 1.30, terminado em .99;
+-- margem_pct = sobre o custo, porque é assim que o negócio fala de margem.
+create or replace view material_quotes as
+with agg as (
+  select family, variant,
+         min(unit_cost) as custo,
+         avg(unit_cost) as media,
+         max(unit_cost) as mais_caro,
+         count(*)       as fontes
+  from supplier_prices
+  group by family, variant
+),
+melhor as (
+  select distinct on (family, variant)
+         family, variant, supplier as compra_de, sample_product, source_url
+  from supplier_prices
+  order by family, variant, unit_cost asc
+)
+select a.family, a.variant, m.compra_de, a.custo,
+       round(a.media, 2)     as media,
+       a.mais_caro,
+       (floor(greatest(a.media, a.custo * 1.30)) + 0.99)::numeric(10,2) as nosso_preco,
+       round(((floor(greatest(a.media, a.custo * 1.30)) + 0.99) - a.custo) / a.custo * 100) as margem_pct,
+       a.fontes, m.sample_product, m.source_url
+from agg a
+join melhor m using (family, variant);

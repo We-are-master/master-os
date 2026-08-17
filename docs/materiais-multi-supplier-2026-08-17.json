@@ -385,11 +385,11 @@
   "variant": "150mm (par)",
   "query": "shelf bracket 150mm",
   "supplier": "screwfix",
-  "unit_cost": 0.3,
+  "unit_cost": 0.6,
   "list_price": 0.99,
   "spec": {
    "size_mm": 150,
-   "pack_math": "5.99/20=0.30"
+   "pack_math": "\u00a35.99/20 \u00d7 2 (par)"
   },
   "sample": "Essentials London Shelf Brackets Grey 200mm x 150mm 20 Pack",
   "url": "https://www.screwfix.com/p/essentials-london-shelf-brackets-grey-200mm-x-150mm-20-pack/416vj"
@@ -1301,19 +1301,6 @@
  },
  {
   "family": "shelf_bracket",
-  "variant": "150mm (par)",
-  "query": "shelf bracket 150mm",
-  "supplier": "bandq",
-  "unit_cost": 24.95,
-  "list_price": 32.99,
-  "spec": {
-   "size_mm": 150
-  },
-  "sample": "Oakcrafts - Pair of Art Deco Cast Iron Shelf Bracket - 150mm x 150mm",
-  "url": "https://www.diy.com/departments/oakcrafts-pair-of-art-deco-cast-iron-shelf-bracket-150mm-x-150mm/5061037550239_BQ.prd"
- },
- {
-  "family": "shelf_bracket",
   "variant": "Heavy duty 200mm+",
   "query": "heavy duty shelf bracket 250mm",
   "supplier": "bandq",
@@ -2079,29 +2066,15 @@
   "variant": "150mm (par)",
   "query": "shelf bracket 150mm",
   "supplier": "travisperkins",
-  "unit_cost": 0.9,
-  "list_price": 1.99,
+  "unit_cost": 1.8,
+  "list_price": 2.99,
   "spec": {
    "size_mm": 150,
-   "ex_vat": 0.75
+   "ex_vat": 0.75,
+   "pack_math": "\u00a30.90 EACH \u00d7 2 (par)"
   },
   "sample": "Rothley London Bracket (6in x 8in) White 150 x 200mm",
   "url": "https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-6in-x-8in-white-150-x-200mm/p/240953"
- },
- {
-  "family": "shelf_bracket",
-  "variant": "Heavy duty 200mm+",
-  "query": "heavy duty shelf bracket 250mm",
-  "supplier": "travisperkins",
-  "unit_cost": 1.04,
-  "list_price": 1.99,
-  "spec": {
-   "size_mm": 250,
-   "duty": "heavy",
-   "ex_vat": 0.87
-  },
-  "sample": "Rothley London Bracket (8in x 10in) White 200 x 250mm",
-  "url": "https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-8in-x-10in-white-200-x-250mm/p/240946"
  },
  {
   "family": "mdf",
@@ -2901,19 +2874,6 @@
   },
   "sample": "Wickes 16/19mm Extendable Metal Curtain Pole Stainless Steel (2.1 - 3.6m)",
   "url": "https://www.wickes.co.uk/Wickes-16-19mm-Extendable-Metal-Curtain-Pole-Stainless-Steel-2-1---3-6m/p/241035"
- },
- {
-  "family": "shelf_bracket",
-  "variant": "150mm (par)",
-  "query": "shelf bracket 150mm",
-  "supplier": "wickes",
-  "unit_cost": 4,
-  "list_price": 5.99,
-  "spec": {
-   "size_mm": 150
-  },
-  "sample": "Wickes Floating Shelf Brackets - 150mm",
-  "url": "https://www.wickes.co.uk/Wickes-Floating-Shelf-Brackets---150mm/p/346185"
  },
  {
   "family": "shelf_bracket",
