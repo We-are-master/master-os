@@ -73,16 +73,28 @@ const ctTodos = await (await fetch(
   `${SB}/rest/v1/jobs?select=reference,client_price,payment_status,status,completed_date,scheduled_date&payment_status=eq.unpaid&deleted_at=is.null&limit=1000`,
   { headers: SH },
 )).json();
-const limite72 = new Date(hoje.getTime() - 3 * 86400e3);
-const ctMaduro = [], ctVerde = [];
+// Duas regras que a primeira versão não tinha, e sem elas o número mentia para
+// mais em milhares:
+//
+// 1. As 72h contam da CONCLUSAO, não da data agendada. Job agendado mas não
+//    concluído (late, on_hold) não gera pagamento nenhum.
+// 2. Job velho e não pago não é dinheiro a caminho. O Checkatrade paga em 72h,
+//    então um job de junho ainda "unpaid" em agosto não está vindo: ou o
+//    dinheiro entrou e não foi escriturado, ou tem problema. Somar isso ao
+//    caixa da semana é contar duas vezes o que já está na conta.
+const ATRASADO = new Date(hoje.getTime() - 21 * 86400e3);
+const ctMaduro = [], ctVerde = [], ctVelho = [];
 for (const j of ctTodos) {
   if (!ehCT.has(j.reference) || j.status === "cancelled") continue;
-  const concl = j.completed_date ?? j.scheduled_date;
-  if (!concl) continue;
-  if (new Date(concl) <= limite72) ctMaduro.push(j); else ctVerde.push(j);
+  const concl = j.completed_date;
+  if (!concl) { ctVerde.push(j); continue; }          // não concluído: não paga
+  if (new Date(concl) < ATRASADO) { ctVelho.push(j); continue; }
+  if (new Date(new Date(concl).getTime() + 3 * 86400e3) <= sexta) ctMaduro.push(j);
+  else ctVerde.push(j);
 }
 const somaCTm = ctMaduro.reduce((a, j) => a + (Number(j.client_price) || 0), 0);
 const somaCTv = ctVerde.reduce((a, j) => a + (Number(j.client_price) || 0), 0);
+const somaCTvelho = ctVelho.reduce((a, j) => a + (Number(j.client_price) || 0), 0);
 
 // ─── SAI: parceiros da mesma quinzena ──────────────────────────────────────
 const bills = await (await fetch(
@@ -129,6 +141,7 @@ if (suspeitos.length) {
 }
 
 console.log(`\nFORA DA SEXTA (Checkatrade cai 72h apos a conclusao)`);
-console.log(`  ja passou das 72h, a caminho     ${String(ctMaduro.length).padStart(3)} job(s)  ${fmt(somaCTm).padStart(11)}`);
-console.log(`  concluido ha menos de 72h        ${String(ctVerde.length).padStart(3)} job(s)  ${fmt(somaCTv).padStart(11)}`);
-console.log(`\n  >>> CAIXA DA QUINZENA, tudo somado: ${fmt(somaHK + somaCTm + somaCTv - somaSai)}${suspeitos.length ? "   (sem os self-bills segurados)" : ""}\n`);
+console.log(`  concluido, cai ate a sexta       ${String(ctMaduro.length).padStart(3)} job(s)  ${fmt(somaCTm).padStart(11)}`);
+console.log(`  ainda nao concluido ou fora da janela ${String(ctVerde.length).padStart(3)} job(s)  ${fmt(somaCTv).padStart(11)}`);
+if (ctVelho.length) console.log(`  ATRASADO ha mais de 3 semanas    ${String(ctVelho.length).padStart(3)} job(s)  ${fmt(somaCTvelho).padStart(11)}   <<< o Checkatrade paga em 72h: isto provavelmente ja entrou e nao foi escriturado`);
+console.log(`\n  >>> CAIXA ATE A SEXTA: ${fmt(somaHK + somaCTm - somaSai)}${suspeitos.length ? "   (sem os self-bills segurados)" : ""}\n`);
