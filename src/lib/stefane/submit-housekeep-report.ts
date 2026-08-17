@@ -261,15 +261,72 @@ export async function submeterRelatorioHousekeep(args: {
      * rascunho do lado deles, e simulação que escreve não é simulação.
      */
     if (!args.simular) {
-      const saves = page.locator('button:visible', { hasText: /^Save$/ });
-      const n = await saves.count();
-      for (let i = 0; i < n; i++) {
-        await saves.nth(i).click({ timeout: 5000 }).catch(() => {});
-        await page.waitForTimeout(1500);
-      }
-      // Salvar pode recolher a seção; reabrir garante que o estado do
-      // checkbox e do Submit continue alcançável.
+      /**
+       * Save de cada seção, RE-CONSULTANDO a cada clique — aprendido à mão no
+       * JOB-9437: salvar recolhe a seção e a lista de botões muda. O loop
+       * antigo contava os três Saves antes e clicava por índice na lista
+       * velha: só o primeiro acertava, os outros dois eram cliques no vazio
+       * engolidos pelo catch — e a descrição nunca persistia.
+       */
+      const salvarSecoes = async (): Promise<string | null> => {
+        const total = await page.locator("button", { hasText: /^Save$/ }).count();
+        for (let i = 0; i < total; i++) {
+          await abrirTodasAsSecoes(page);
+          const visiveis = page.locator("button:visible", { hasText: /^Save$/ });
+          if (i >= (await visiveis.count())) break;
+          await visiveis.nth(i).click({ timeout: 5000 }).catch(() => {});
+          await page.waitForTimeout(2500);
+          const erro = await page
+            .locator('[class*="error"], [role="alert"]')
+            .filter({ hasText: /error|invalid|failed/i })
+            .first()
+            .textContent({ timeout: 500 })
+            .catch(() => null);
+          if (erro?.trim()) return `section save ${i + 1} of ${total} was refused: ${erro.trim().slice(0, 140)}`;
+        }
+        return null;
+      };
+      const erroSave = await salvarSecoes();
+      if (erroSave) return { ok: false, motivo: erroSave, segundos: seg() };
+
+      /**
+       * Submit em página FRESCA — é a resposta literal ao "Validation error
+       * has occurred. Please refresh the page and try again": submeter na
+       * sessão que acabou de salvar três seções era recusado como stale. O
+       * reload prova de quebra o que persistiu; o que os saves não seguraram
+       * (rádio resetado por tentativa anterior) é re-preenchido aqui, e o
+       * Submit valida o formulário inteiro como está na tela.
+       */
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(2500);
       await abrirTodasAsSecoes(page);
+      if (forma === "trade") {
+        const desc = page.locator(HOUSEKEEP_CAMPOS.descricao.seletor);
+        const persistiu = ((await desc.inputValue().catch(() => "")) ?? "").trim().length > 0;
+        if (!persistiu) {
+          // Os saves não seguraram nada: repete a dose inteira uma vez, com
+          // fotos, e recarrega de novo. Persistir de novo em branco é falha.
+          await preencherTrade(page, args.payload as PayloadHousekeep);
+          if (args.fotos) {
+            const [antes2, depois2] = await Promise.all([
+              baixarFotos(args.fotos.antes, "before"),
+              baixarFotos(args.fotos.depois, "after"),
+            ]);
+            await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes2);
+            await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois2);
+            await page.waitForTimeout(3000);
+          }
+          const erroSave2 = await salvarSecoes();
+          if (erroSave2) return { ok: false, motivo: erroSave2, segundos: seg() };
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(2500);
+          await abrirTodasAsSecoes(page);
+        }
+      }
+      // Rádio e horário que alguma tentativa anterior tenha derrubado voltam
+      // aqui — re-preencher com os mesmos valores é idempotente.
+      if (forma === "trade") await preencherTrade(page, args.payload as PayloadHousekeep);
+      else await preencherLimpeza(page, args.payload as PayloadLimpeza);
     }
 
     /**
