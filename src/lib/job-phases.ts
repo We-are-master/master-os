@@ -203,7 +203,19 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "final_check": {
       return [
         {
-          label: "Review & Approve",
+          /**
+           * O unico botao que termina o trabalho.
+           *
+           * Ele se chamava "Review & Approve" e tinha um gemeo dentro do card do
+           * relatorio, chamando o mesmo handler. Duas portas iguais na mesma tela
+           * nao dao escolha, dao duvida. O gemeo saiu; este ficou, porque o
+           * cabecalho e onde moram as acoes de status.
+           *
+           * O nome mudou junto: "aprovar" descreve o relatorio, e o que este
+           * botao faz e FECHAR o job — valida o relatorio, mostra o resumo do
+           * que vai sair e so entao manda.
+           */
+          label: "Finish work",
           status: "awaiting_payment",
           icon: Send,
           primary: true,

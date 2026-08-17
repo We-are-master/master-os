@@ -61,6 +61,15 @@ export function JobReportV2Card({
   const [savingApproval, setSavingApproval] = useState(false);
   const [readingCertificate, setReadingCertificate] = useState(false);
 
+  /**
+   * "Validated", nao "Approved".
+   *
+   * `final_report_approved_at` e gravado no instante em que o parceiro SUBMETE,
+   * pelo persistReportSubmission — nao quando alguem revisa. Chamar isso de
+   * Approved fazia a tela dizer que o job estava aprovado com o mesmo horario da
+   * submissao, e quem lesse concluiria que nao havia mais nada a fazer. Havia:
+   * o Finish work do cabecalho, que e onde a decisao acontece de verdade.
+   */
   const isApproved = !!approvedAt;
   const titleLabel = kind === "start" ? "Start report" : "Final report";
 
@@ -223,7 +232,7 @@ export function JobReportV2Card({
               : { background: "#FFF1EB", color: "#ED4B00" }
           }
         >
-          {isApproved ? "Approved" : "Pending review"}
+          {isApproved ? "Validated" : "Pending review"}
         </span>
       </div>
 
@@ -244,7 +253,7 @@ export function JobReportV2Card({
         ) : null}
         {approvedAt ? (
           <span style={{ color: "#0F6E56" }}>
-            Approved{" "}
+            Validated{" "}
             {new Date(approvedAt).toLocaleString("en-GB", {
               day: "2-digit",
               month: "short",

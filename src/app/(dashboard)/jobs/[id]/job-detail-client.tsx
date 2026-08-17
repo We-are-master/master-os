@@ -8202,15 +8202,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         Edit report
                       </button>
                       <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
-                      <button
-                        type="button"
-                        onClick={openFinalReview}
-                        className="inline-flex items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer"
-                        style={{ background: "#020040" }}
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        Review &amp; approve
-                      </button>
+                      {/*
+                        O botao de finalizar saiu daqui (17/08). Ele chamava
+                        `openFinalReview`, exatamente o mesmo handler do botao do
+                        cabecalho, entao eram duas portas para a mesma sala. Duas
+                        portas iguais na mesma tela nao dao escolha, dao duvida:
+                        a pessoa para para descobrir se sao a mesma coisa.
+
+                        Fica um lugar so para terminar o trabalho, e ele e o do
+                        cabecalho, que e onde moram as acoes de status do job.
+                        Este card volta a ser o que ele e: o relatorio.
+                      */}
                     </>
                   ) : (
                     <button
