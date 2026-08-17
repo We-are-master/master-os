@@ -98,28 +98,40 @@ const somaCTvelho = ctVelho.reduce((a, j) => a + (Number(j.client_price) || 0), 
 
 // ─── SAI: parceiros da mesma quinzena ──────────────────────────────────────
 const bills = await (await fetch(
-  `${SB}/rest/v1/self_bills?select=reference,partner_name,net_payout,status,week_start,week_end,jobs_count&week_end=lte.${ymd(fimPeriodo)}&status=in.(%22accumulating%22,%22ready_to_pay%22,%22awaiting_payment%22)&limit=500`,
+  `${SB}/rest/v1/self_bills?select=id,reference,partner_name,net_payout,status,week_start,week_end,jobs_count&week_end=lte.${ymd(fimPeriodo)}&status=in.(%22accumulating%22,%22ready_to_pay%22,%22awaiting_payment%22)&limit=500`,
   { headers: SH },
 )).json();
-// Um self-bill absurdo estraga a leitura do dia inteiro sem parecer errado: em
-// 17/08 o SB-2026-W22-JOB-9199 dizia £14.093 para 7 jobs, quando o job âncora
-// era um End of Tenancy de £130 de custo de parceiro, e sozinho respondia por
-// 80% da saída da sexta. Media por job é o cheiro mais barato de detectar isso.
-const TETO_POR_JOB = 1500;
-const suspeitos = (bills ?? []).filter((b) => {
-  const n = Math.max(1, Number(b.jobs_count) || 1);
-  return (Number(b.net_payout) || 0) / n > TETO_POR_JOB;
-});
-const suspeitoRef = new Set(suspeitos.map((b) => b.reference));
+// Self-bill confere contra os jobs que ele cobre, não contra uma média.
+//
+// A primeira versão marcava como suspeito todo bill com média por job acima de
+// um teto. Isso apontou o SB-2026-W22-JOB-9199 (£14.093) como erro, e ele era
+// legítimo: dos 8 jobs ligados, um era o JOB-9162, de £13.480 de custo. Um job
+// grande no meio de pequenos estoura qualquer média sem nada estar errado.
+//
+// O teste que vale é somar o custo dos jobs que o bill realmente cobre. Bill
+// maior que a soma é cobrança a mais; menor é parceiro recebendo a menos, que
+// ninguém reclama e por isso passa despercebido.
+const conferidos = [];
+for (const b of bills ?? []) {
+  const js = await (await fetch(
+    `${SB}/rest/v1/jobs?select=reference,partner_cost,partner_extras_amount,materials_cost,completed_date&self_bill_id=eq.${b.id}&deleted_at=is.null`,
+    { headers: SH },
+  )).json();
+  const soma = (js ?? []).reduce((a, j) => a + (Number(j.partner_cost) || 0) + (Number(j.partner_extras_amount) || 0) + (Number(j.materials_cost) || 0), 0);
+  const naoFeitos = (js ?? []).filter((j) => !j.completed_date).length;
+  if (Math.abs(soma - (Number(b.net_payout) || 0)) > 0.01 || naoFeitos) {
+    conferidos.push({ ...b, soma, jobsLigados: (js ?? []).length, naoFeitos });
+  }
+}
+const suspeitos = [];
+const suspeitoRef = new Set();
 
 const porParceiro = new Map();
 for (const b of bills ?? []) {
-  if (suspeitoRef.has(b.reference)) continue;
   const k = b.partner_name ?? "(sem nome)";
   porParceiro.set(k, (porParceiro.get(k) ?? 0) + (Number(b.net_payout) || 0));
 }
 const somaSai = [...porParceiro.values()].reduce((a, v) => a + v, 0);
-const somaSuspeita = suspeitos.reduce((a, b) => a + (Number(b.net_payout) || 0), 0);
 
 console.log(`ENTRA NA SEXTA`);
 console.log(`  Housekeep, ${entraHK.length} job(s) da quinzena          ${fmt(somaHK).padStart(11)}`);
@@ -132,12 +144,12 @@ console.log(`  ${String(bills?.length ?? 0).padStart(3)} self-bill(s)${"".padEnd
 
 console.log(`\n  >>> SALDO DO DIA: ${fmt(somaHK - somaSai)}${somaHK - somaSai < 0 ? "   (sai mais do que entra)" : ""}`);
 
-if (suspeitos.length) {
-  console.log(`\nFORA DA CONTA ACIMA — self-bill com media por job acima de ${fmt(TETO_POR_JOB)}:`);
-  for (const b of suspeitos) {
-    console.log(`  ${b.reference.padEnd(27)} ${fmt(b.net_payout).padStart(11)}  ${b.jobs_count} job(s) = ${fmt((Number(b.net_payout) || 0) / Math.max(1, Number(b.jobs_count) || 1))}/job  ${b.partner_name}  [${b.status} desde ${b.week_start}]`);
+if (conferidos.length) {
+  console.log(`\nSELF-BILL QUE NAO FECHA COM OS JOBS QUE COBRE:`);
+  for (const b of conferidos) {
+    const d = (Number(b.net_payout) || 0) - b.soma;
+    console.log(`  ${b.reference.padEnd(27)} bill ${fmt(b.net_payout).padStart(10)}  jobs ${fmt(b.soma).padStart(10)}  ${d > 0 ? "cobra " + fmt(d) + " A MAIS" : "parceiro recebe " + fmt(-d) + " A MENOS"}  ${b.naoFeitos ? "| " + b.naoFeitos + " job(s) nao concluido(s)" : ""}  ${b.partner_name}`);
   }
-  console.log(`  total segurado ${fmt(somaSuspeita)}. Confira antes de pagar: se estiver certo, o saldo do dia e ${fmt(somaHK - somaSai - somaSuspeita)}.`);
 }
 
 console.log(`\nFORA DA SEXTA (Checkatrade cai 72h apos a conclusao)`);
