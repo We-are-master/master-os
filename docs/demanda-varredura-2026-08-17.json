@@ -1,0 +1,486 @@
+{
+ "tarefas": [
+  [
+   "general maintenance",
+   132
+  ],
+  [
+   "fix internal door",
+   89
+  ],
+  [
+   "garden maintenance",
+   86
+  ],
+  [
+   "assemble flat-pack furniture",
+   74
+  ],
+  [
+   "end of tenancy clean",
+   48
+  ],
+  [
+   "mount tv",
+   38
+  ],
+  [
+   "eicr",
+   20
+  ],
+  [
+   "fix appliance",
+   15
+  ],
+  [
+   "cleaning",
+   15
+  ],
+  [
+   "repair internal door",
+   12
+  ],
+  [
+   "install shelves",
+   11
+  ],
+  [
+   "mount picture",
+   8
+  ],
+  [
+   "fix furniture",
+   8
+  ],
+  [
+   "deep clean",
+   8
+  ],
+  [
+   "install blinds",
+   7
+  ],
+  [
+   "repair internal structure",
+   7
+  ],
+  [
+   "unknown task",
+   7
+  ],
+  [
+   "install fittings",
+   6
+  ],
+  [
+   "replace internal door",
+   6
+  ],
+  [
+   "handyman services",
+   6
+  ],
+  [
+   "install door",
+   6
+  ],
+  [
+   "disassemble furniture",
+   5
+  ],
+  [
+   "fit internal door",
+   5
+  ],
+  [
+   "paint ceiling",
+   5
+  ],
+  [
+   "assemble furniture",
+   5
+  ],
+  [
+   "boiler service",
+   5
+  ],
+  [
+   "carpenter",
+   5
+  ],
+  [
+   "paint wall",
+   4
+  ],
+  [
+   "mount mirror",
+   4
+  ],
+  [
+   "install curtain rail",
+   4
+  ],
+  [
+   "install lighting",
+   4
+  ],
+  [
+   "repair ceiling",
+   4
+  ],
+  [
+   "epc",
+   4
+  ],
+  [
+   "gas safety check",
+   4
+  ],
+  [
+   "fix wall",
+   3
+  ],
+  [
+   "install furniture",
+   3
+  ],
+  [
+   "install lock",
+   3
+  ],
+  [
+   "install internal door",
+   3
+  ],
+  [
+   "fix bathroom",
+   3
+  ],
+  [
+   "install bathroom",
+   3
+  ],
+  [
+   "hang pictures",
+   3
+  ],
+  [
+   "install flooring",
+   3
+  ],
+  [
+   "fix internal structure",
+   3
+  ],
+  [
+   "carpet fitting",
+   3
+  ],
+  [
+   "repair staircase",
+   3
+  ],
+  [
+   "install cupboards",
+   3
+  ],
+  [
+   "repair wardrobe",
+   3
+  ],
+  [
+   "leaking tap repair",
+   3
+  ],
+  [
+   "gas boiler service",
+   3
+  ],
+  [
+   "plumbing",
+   3
+  ],
+  [
+   "rehang cupboard doors",
+   2
+  ],
+  [
+   "install curtain rails",
+   2
+  ],
+  [
+   "repair wall",
+   2
+  ],
+  [
+   "fix blinds",
+   2
+  ],
+  [
+   "replace alarm",
+   2
+  ],
+  [
+   "clean windows",
+   2
+  ],
+  [
+   "remove and replace",
+   2
+  ],
+  [
+   "install doorbell",
+   2
+  ],
+  [
+   "replace door",
+   2
+  ],
+  [
+   "install loft ladder",
+   2
+  ]
+ ],
+ "materiais": [
+  [
+   "paint",
+   12
+  ],
+  [
+   "trash bag",
+   6
+  ],
+  [
+   "tv wall bracket",
+   5
+  ],
+  [
+   "hinges",
+   4
+  ],
+  [
+   "filler",
+   3
+  ],
+  [
+   "silicone",
+   3
+  ],
+  [
+   "sealant",
+   3
+  ],
+  [
+   "door",
+   3
+  ],
+  [
+   "brackets",
+   2
+  ],
+  [
+   "door hinges",
+   2
+  ],
+  [
+   "primer",
+   2
+  ],
+  [
+   "tiles",
+   2
+  ],
+  [
+   "door handle",
+   2
+  ],
+  [
+   "latch",
+   2
+  ],
+  [
+   "timber",
+   2
+  ],
+  [
+   "coffee table",
+   2
+  ],
+  [
+   "screws",
+   2
+  ],
+  [
+   "blinds",
+   2
+  ],
+  [
+   "mdf",
+   2
+  ],
+  [
+   "wood filler",
+   2
+  ],
+  [
+   "handle",
+   2
+  ],
+  [
+   "mirror",
+   1
+  ],
+  [
+   "door rails",
+   1
+  ],
+  [
+   "curtain pole",
+   1
+  ],
+  [
+   "metal edge",
+   1
+  ],
+  [
+   "path materials",
+   1
+  ],
+  [
+   "raised bed materials",
+   1
+  ],
+  [
+   "ikea lack shelves",
+   1
+  ],
+  [
+   "limewash paint",
+   1
+  ],
+  [
+   "laminate flooring",
+   1
+  ],
+  [
+   "bespoke cabinet materials",
+   1
+  ],
+  [
+   "kallax unit",
+   1
+  ],
+  [
+   "worktop",
+   1
+  ],
+  [
+   "marble contact paper",
+   1
+  ],
+  [
+   "dulux heritage olive tree paint",
+   1
+  ],
+  [
+   "concealed hinge",
+   1
+  ],
+  [
+   "patio paint",
+   1
+  ],
+  [
+   "render/plaster",
+   1
+  ],
+  [
+   "gu10 led bulbs",
+   1
+  ],
+  [
+   "9v batteries",
+   1
+  ],
+  [
+   "wood hardener",
+   1
+  ],
+  [
+   "new timber",
+   1
+  ],
+  [
+   "lock",
+   1
+  ],
+  [
+   "loft access panel",
+   1
+  ],
+  [
+   "door slab",
+   1
+  ],
+  [
+   "handles",
+   1
+  ],
+  [
+   "gutter downpipe",
+   1
+  ],
+  [
+   "diverter",
+   1
+  ],
+  [
+   "window handles",
+   1
+  ],
+  [
+   "plywood",
+   1
+  ],
+  [
+   "net kit",
+   1
+  ],
+  [
+   "brass hooks",
+   1
+  ],
+  [
+   "fire door",
+   1
+  ],
+  [
+   "arrone ar195 keypad digital lock",
+   1
+  ],
+  [
+   "wooden beam",
+   1
+  ],
+  [
+   "smith & locke corfe fire rated lever on rose door handles pair polished chrome",
+   1
+  ],
+  [
+   "wooden gate",
+   1
+  ],
+  [
+   "steel-capped posts",
+   1
+  ],
+  [
+   "mortice lock",
+   1
+  ],
+  [
+   "mastic",
+   1
+  ]
+ ]
+}
