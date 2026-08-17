@@ -60,6 +60,14 @@ async function main(): Promise<void> {
    */
   let lastLeadsAt = 0;
   let lastDeepAt = 0;
+  /**
+   * Batimento: o fast pass vazio não loga (senão o log vira metralhadora),
+   * mas log mudo por 10 minutos é como a TV do escritório declara o robô
+   * morto — "RUBEN · ALERT" com ele caçando normalmente. Uma linha a cada 5
+   * minutos resume o silêncio e mantém o atestado de vida honesto.
+   */
+  let passesCalados = 0;
+  let ultimoBatimento = Date.now();
   // Bloqueios Cloudflare consecutivos — cada um aumenta o cool-off (5, 10,
   // 15, 20 min). Insistir na cadência normal só mantém o flag quente.
   let cfBlocks = 0;
@@ -149,6 +157,14 @@ async function main(): Promise<void> {
         // checks, and Express jobs get taken by other trades within minutes.
         // Log the real cost so the true cadence is measurable, not guessed.
         const scrapeMs = Date.now() - cycleStartedAt;
+        if (!deepDue && opportunities.length === 0) passesCalados += 1;
+        if (Date.now() - ultimoBatimento >= 5 * 60_000) {
+          if (passesCalados > 0) {
+            logger.info(`Alive: ${passesCalados} quiet fast pass(es) in the last 5m — nothing New on the board`);
+          }
+          passesCalados = 0;
+          ultimoBatimento = Date.now();
+        }
         if (deepDue || opportunities.length > 0) {
           logger.info(
             `${deepDue ? "Deep scan" : "Fast pass"}: ${opportunities.length} opportunities — ${jobs.length} job(s), ${leadsThisCycle.length} lead(s) this pass` +
