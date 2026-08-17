@@ -76,12 +76,17 @@ async function main(): Promise<void> {
       const deepDue = cycleStartedAt - lastDeepAt >= cfg.schedule.deepScanMinutes * 60_000;
       const leadsDue = cycleStartedAt - lastLeadsAt >= cfg.schedule.leadsIntervalSeconds * 1_000;
       try {
+        /**
+         * Conclusões em TODO ciclo, não só no deep: "aprovou, sobe" é o
+         * modelo (igual Housekeep), e prender a fila ao deep scan fazia o
+         * job aprovado esperar até 30 minutos. A fila é um GET barato no OS
+         * e quase sempre volta vazia; quando tem item, concluir é o
+         * trabalho mais valioso do ciclo. Nunca lança.
+         */
+        await rodarConclusoes(page, cfg, masterOs);
+
         let opportunities;
         if (deepDue) {
-          // Concluir vem antes de raspar o board, e é de propósito: a fila é
-          // curta e quase sempre vazia, enquanto o board é o trabalho longo.
-          // Nunca lança, então não tem como atrapalhar a colheita.
-          await rodarConclusoes(page, cfg, masterOs);
           opportunities = await scrapeOpportunities(page);
           lastDeepAt = cycleStartedAt;
           lastLeadsAt = cycleStartedAt;
