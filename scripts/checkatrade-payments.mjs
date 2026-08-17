@@ -222,12 +222,30 @@ async function main() {
     if (!grupos.has(c.job.reference)) grupos.set(c.job.reference, { job: c.job, cred: [] });
     grupos.get(c.job.reference).cred.push(c);
   }
-  const aDar = [], divergem = [], jaOk = [];
+  // ─── Só é pago quando saiu do saldo e foi para o banco ───────────────────
+  // "You got paid by <nome>" credita o SALDO do Checkatrade, e saldo não é
+  // conta bancária. O dinheiro só existe para nós quando vem o repasse ("Your
+  // money is on the way to your bank account"), que varre o saldo acumulado.
+  // Marcar pago no crédito antecipa dinheiro que ainda está na plataforma.
+  //
+  // Como o repasse leva TODO o saldo do período, qualquer crédito anterior ao
+  // último repasse já foi para o banco. Crédito posterior fica esperando o
+  // próximo, e aparece no email como recebido-mas-ainda-na-plataforma.
+  const ultimoRepasse = repasses.map((r) => r.criado.slice(0, 10)).sort().pop() ?? null;
+  const noBanco = (g) => {
+    if (!ultimoRepasse) return false;
+    const ult = g.cred.map((c) => (c.pagoEm ? new Date(c.pagoEm + " 12:00:00 UTC").toISOString().slice(0, 10) : c.criado.slice(0, 10))).sort().pop();
+    return ult <= ultimoRepasse;
+  };
+
+  const aDar = [], divergem = [], jaOk = [], naPlataforma = [];
   for (const g of grupos.values()) {
     g.soma = g.cred.reduce((a, c) => a + (c.net ?? 0), 0);
     g.alvo = Number(g.job.client_price) || 0;
     g.fecha = Math.abs(g.alvo - g.soma) < 0.01;
-    (g.job.payment_status === "paid" ? jaOk : g.fecha ? aDar : divergem).push(g);
+    if (g.job.payment_status === "paid") { jaOk.push(g); continue; }
+    if (!g.fecha) { divergem.push(g); continue; }
+    (noBanco(g) ? aDar : naPlataforma).push(g);
   }
 
   // Fechar o job SEM fechar a invoice é o pior resultado possível: o dinheiro
@@ -333,7 +351,12 @@ async function main() {
   L.push(`Creditado a nos : ${fmt(somaNet)}  (taxa da plataforma ${fmt(somaGross - somaNet)}${somaGross ? " = " + ((1 - somaNet / somaGross) * 100).toFixed(1) + "%" : ""})`);
   L.push(`Repassado ao banco: ${fmt(somaRep)}  (diferenca contra o creditado: ${fmt(somaRep - somaNet)})`);
 
-  if (aDar.length) { L.push("", "BAIXA:"); for (const g of aDar) L.push(`  ${g.job.reference}  ${g.job.client_name}  ${fmt(g.soma)}`); }
+  L.push("", `Ultimo repasse ao banco: ${ultimoRepasse ?? "(nenhum no periodo lido)"}`);
+  if (aDar.length) { L.push("", "BAIXA (credito ja varrido para o banco):"); for (const g of aDar) L.push(`  ${g.job.reference}  ${g.job.client_name}  ${fmt(g.soma)}`); }
+  if (naPlataforma.length) {
+    L.push("", "RECEBIDO MAS AINDA NA PLATAFORMA (nao dei baixa, espera o proximo repasse):");
+    for (const g of naPlataforma) L.push(`  ${g.job.reference}  ${g.job.client_name}  ${fmt(g.soma)}`);
+  }
   if (divergem.length) {
     L.push("", "DIVERGENCIAS (precisam de voce):");
     for (const g of divergem) L.push(`  ${g.job.reference}  ${g.job.client_name}  recebido ${fmt(g.soma)} contra ${fmt(g.alvo)} no OS  (diferenca ${fmt(g.alvo - g.soma)})`);
@@ -359,7 +382,7 @@ async function main() {
   console.log("\n" + texto + "\n");
 
   // ─── Email ────────────────────────────────────────────────────────────────
-  const temExcecao = divergem.length || orfaos.length || aviso.length || invoiceAberta.length || inc > 0;
+  const temExcecao = divergem.length || orfaos.length || aviso.length || invoiceAberta.length || naPlataforma.length || inc > 0;
   if (APLICAR && env.RESEND_API_KEY && (temExcecao || aDar.length)) {
     const cfg = await (await fetch(`${SB}/rest/v1/company_settings?select=daily_brief_emails&limit=1`, { headers: SH })).json();
     const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
