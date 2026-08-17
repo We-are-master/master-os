@@ -1,7 +1,7 @@
 -- O cache de preço de material do orçamentista — com VARIAÇÕES de verdade.
 --
--- v2 de 17/08/2026, refeita a pedido do dono: "trinco de porta" solto não
--- cota nada — o que existe é trinco 64mm, 76mm e FIRE-RATED (porta de
+-- v3 de 17/08/2026 (v2 refeita a pedido do dono: "trinco de porta" solto não
+-- cota nada) — o que existe é trinco 64mm, 76mm e FIRE-RATED (porta de
 -- HMO/comunal exige FD30 por lei, e cotar ferragem comum ali é erro de
 -- compliance, não só de preço). Cada família carrega suas variantes com
 -- `spec` estruturada (tamanho, fire_rated, polegadas da TV, litragem), e o
@@ -77,5 +77,39 @@ Kitchen & Bathroom Anti-Mould Sealant White 280ml (219CW)'),
   ('shelf_bracket', 'Heavy duty 200mm+', 'heavy duty shelf bracket 250mm', 16.79, 1.40, 23.99, '{"size_mm": 250, "duty": "heavy"}'::jsonb, 'Heavy Duty Brackets Black 300mm x 300mm 2 Pack (78941)'),
   ('mdf', '12mm 2440×1220', 'mdf board 12mm 2440', 54.99, 1.40, 76.99, '{"thickness_mm": 12}'::jsonb, 'Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack (724RE)'),
   ('mdf', '18mm 2440×1220', 'mdf board 18mm 2440', 54.99, 1.40, 76.99, '{"thickness_mm": 18}'::jsonb, 'Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack (724RE)'),
-  ('screws', 'Sortidos (caixa trade)', 'wood screws trade pack assorted', 22.99, 1.40, 32.99, '{"pack": "assorted"}'::jsonb, 'TurboGold  PZ Double-Countersunk Woodscrews Trade Pack 1400 Pcs (40237)')
+  ('screws', 'Sortidos (caixa trade)', 'wood screws trade pack assorted', 22.99, 1.40, 32.99, '{"pack": "assorted"}'::jsonb, 'TurboGold  PZ Double-Countersunk Woodscrews Trade Pack 1400 Pcs (40237)'),
+  ('paint', 'Emulsão de teto 5L', 'ceiling paint white 5l', 25.99, 1.40, 36.99, '{"finish": "ceiling", "litres": 5}'::jsonb, 'Dulux Walls & Ceilings 5Ltr Pure Brilliant White Matt Emulsion  Paint (22939)'),
+  ('paint', 'Primer/undercoat madeira 2.5L', 'wood primer undercoat 2.5l', 23.99, 1.40, 33.99, '{"finish": "primer-wood", "litres": 2.5}'::jsonb, 'Leyland Trade Acrylic 2.5Ltr White Matt  Interior & Exterior Wood Primer Undercoat (64719)'),
+  ('paint', 'Verniz madeira interior 750ml', 'interior wood varnish 750ml', 17.99, 1.40, 25.99, '{"finish": "varnish", "litres": 0.75}'::jsonb, 'Ronseal 750ml Clear Satin Water-Based Interior Wood Varnish (551HT)'),
+  ('paint', 'Masonry externa 5L', 'masonry paint 5l white', 49.99, 1.40, 69.99, '{"finish": "masonry", "litres": 5}'::jsonb, 'Drybase White Liquid Applied DPM 5Ltr (593CN)'),
+  ('paint', 'Tinta de radiador 750ml', 'radiator paint white 750ml', 13.99, 1.40, 19.99, '{"finish": "radiator", "litres": 0.75}'::jsonb, 'Fortress 750ml White Satin Heat Resistant Radiator Paint (376JM)'),
+  ('paint_sundries', 'Kit rolo + bandeja', 'paint roller set tray', 6.19, 1.40, 8.99, '{"kind": "roller-set"}'::jsonb, '9" Roller Set 7 Pieces (843FM)'),
+  ('paint_sundries', 'Jogo de trinchas', 'paint brush set', 11.99, 1.40, 16.99, '{"kind": "brush-set"}'::jsonb, 'LickTools Paint Brush Set 3 Pieces (724VX)'),
+  ('paint_sundries', 'Fita de pintor 48mm', 'masking tape 48mm painters', 7.08, 1.40, 9.99, '{"kind": "masking-tape"}'::jsonb, 'Frogtape  Painters Multi-Surface 21-Day Masking Tape 55m x 48mm (428AY)'),
+  ('paint_sundries', 'Lona/dust sheet', 'dust sheet cotton', 10.99, 1.40, 15.99, '{"kind": "dust-sheet"}'::jsonb, 'Cotton Dust Sheet 12'' x 12'' (217FM)'),
+  ('plumbing', 'Válvula de enchimento (fill valve)', 'toilet fill valve', 20.58, 1.40, 28.99, '{"part": "fill-valve"}'::jsonb, 'Thomas Dudley Ltd  Bottom-Entry Delay Fill Professional Brass Tail Inlet Valve 1/2" (4777R'),
+  ('plumbing', 'Válvula de descarga (flush valve)', 'toilet flush valve', 10.89, 1.40, 15.99, '{"part": "flush-valve"}'::jsonb, 'Fluidmaster   Push Button Cable Dual-Flush Valve (51173)'),
+  ('plumbing', 'Assento sanitário (soft close)', 'soft close toilet seat', 27.99, 1.40, 39.99, '{"part": "toilet-seat"}'::jsonb, 'Soft-Close with Quick-Release Toilet Seat Duraplast White (2401K)'),
+  ('plumbing', 'Torneira misturadora cozinha', 'kitchen mixer tap', 32.99, 1.40, 46.99, '{"part": "kitchen-tap"}'::jsonb, 'Trebbia Dual-Lever Mono Mixer Kitchen Tap Chrome (9385T)'),
+  ('plumbing', 'Torneira de lavatório (par)', 'basin taps pair', 24.99, 1.40, 34.99, '{"part": "basin-taps"}'::jsonb, 'Swirl Traditional Chrome 82mm Cloakroom Cross Head 2 Tap Holes Basin Pillar Tap (88965)'),
+  ('plumbing', 'Flexíveis (par)', 'flexible tap connectors 15mm', 4.15, 1.40, 5.99, '{"part": "flexi"}'::jsonb, 'Tesla  Brass Compression Adapting Flexible Tap Connectors 15mm x 3/8" 2 Pack (6089R)'),
+  ('plumbing', 'Sifão de pia', 'basin waste trap', 8.49, 1.40, 11.99, '{"part": "trap"}'::jsonb, 'McAlpine Adjustable Inlet Tubular ''P'' Trap White 32mm (89677)'),
+  ('plumbing', 'Válvula de isolamento 15mm', 'isolation valve 15mm', 3.55, 1.40, 4.99, '{"part": "iso-valve"}'::jsonb, 'Flomasta Isolating Valves 15mm 10 Pack (32802)'),
+  ('plumbing', 'Ducha + mangueira', 'shower head hose set', 39.20, 1.40, 54.99, '{"part": "shower-set"}'::jsonb, 'Hansgrohe Vernis Blend Ecosmart Shower Set Chrome (268VG)'),
+  ('electrical', 'Tomada dupla branca', 'double socket white 13a', 10.99, 1.40, 15.99, '{"part": "double-socket"}'::jsonb, 'LAP  13A 2-Gang DP Switched Plug Sockets White   5 Pack (49620)'),
+  ('electrical', 'Interruptor simples', 'light switch 1 gang white', 5.39, 1.40, 7.99, '{"part": "switch-1g"}'::jsonb, 'MK Logic Plus 10AX 1-Gang 2-Way Light Switch  White (11822)'),
+  ('electrical', 'Pendente/luminária teto', 'ceiling pendant light fitting', 14.99, 1.40, 20.99, '{"part": "pendant"}'::jsonb, 'Knightsbridge  Contemporary Pendant Matt Black (497TY)'),
+  ('electrical', 'Lâmpada LED E27 (pack)', 'led bulb e27 pack', 6.98, 1.40, 9.99, '{"part": "led-e27"}'::jsonb, 'Sylvania ToLEDo E27 GLS LED Light Bulb  1521lm 15W 4 Pack (523PP)'),
+  ('electrical', 'Alarme de CO', 'carbon monoxide alarm', 25.99, 1.40, 36.99, '{"part": "co-alarm", "compliance": true}'::jsonb, 'FireAngel  FA6813 Battery Standalone Carbon Monoxide Alarm (707KC)'),
+  ('fixings', 'Buchas heavy-duty p/ drywall', 'heavy duty plasterboard fixings', 16.99, 1.40, 23.99, '{"part": "plasterboard-heavy"}'::jsonb, 'Bullfix STR-UNI-10 Universal Plasterboard Fixings 24mm x 44mm 10 Pack (172JA)'),
+  ('fixings', 'Buchas sortidas parede', 'wall plugs assorted', 9.99, 1.40, 13.99, '{"part": "wall-plugs"}'::jsonb, 'Rawlplug Uno Mixed Wall Plugs 250 Pcs (7574G)'),
+  ('fixings', 'Cola grab (No More Nails)', 'grab adhesive no more nails', 8.49, 1.40, 11.99, '{"part": "grab-adhesive"}'::jsonb, 'Evo-Stik Sticks Like Sh*t Solvent-Free Grab Adhesive Clear 290ml (57252)'),
+  ('tiling', 'Cola de azulejo rapid-set 20kg', 'tile adhesive ready mixed 10l', 18.29, 1.40, 25.99, '{"part": "tile-adhesive"}'::jsonb, 'No Nonsense  Wall & Floor Rapid Set Tile Adhesive Grey 20kg (799HU)'),
+  ('tiling', 'Rejunte impermeável 1.5kg', 'tile grout white 2.5kg', 15.29, 1.40, 21.99, '{"part": "grout"}'::jsonb, 'Mapei  Wall Waterproof Fix & Grout White 1.5kg (64982)'),
+  ('garden', 'Painel de cerca closeboard 6×6 (unidade)', 'closeboard fence panel 6ft', 83.33, 1.40, 116.99, '{"part": "fence-panel", "pack_math": "\u00a3249.99/3"}'::jsonb, 'Forest Closeboard 6''x6'' — pack de 3 £249.99 (÷3)'),
+  ('garden', 'Poste de cerca 75mm 2.4m (unidade)', 'timber fence post 75mm 2.4m', 11.18, 1.40, 15.99, '{"part": "fence-post", "pack_math": "\u00a3122.98/11"}'::jsonb, 'Forest Timber Posts 75mm 2.4m — pack de 11 £122.98 (÷11)'),
+  ('garden', 'Postcrete/PostFix 20kg', 'blue circle postcrete', 7.49, 1.40, 10.99, '{"part": "postcrete"}'::jsonb, 'No Nonsense CP48 PostFix Concrete Grey 20kg (156GL)'),
+  ('garden', 'Semente de grama 120m²', 'lawn seed multipurpose', 32.99, 1.40, 46.99, '{"part": "lawn-seed", "coverage_m2": 120}'::jsonb, 'Westland Gro-Sure Multipurpose Lawn Seed 120m2 3.6kg (132KH)'),
+  ('electrical', 'Alarme de fumaça (10 anos)', 'smoke alarm', 18.99, 1.40, 26.99, '{"part": "smoke-alarm", "compliance": true}'::jsonb, 'FireAngel FA6620-R Battery Standalone Optical Smoke Alarm (758PV)'),
+  ('paint_sundries', 'Lixa sortida (pack 10)', 'sanding sheets assorted pack', 6.99, 1.40, 9.99, '{"kind": "sandpaper"}'::jsonb, 'Essentials 120 Grit Sanding Sheets 10 Pack (820JG)')
 on conflict (query) do nothing;
