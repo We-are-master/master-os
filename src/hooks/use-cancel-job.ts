@@ -105,6 +105,11 @@ export function useCancelJob() {
           ...feePatch,
           status: "cancelled",
           cancellation_reason: reasonText,
+          // O id junto com o texto. O texto é para ler, o id é para contar: sem
+          // ele, "Client requested cancellation" e "Client Requested Cancellation"
+          // são dois motivos diferentes, e os 148 cancelamentos de 2026 viram
+          // uma lista de frases em vez de uma distribuição.
+          cancellation_reason_preset_id: input.presetId,
           cancellation_fault: input.cancellationFault ?? null,
           cancelled_at: now,
           cancelled_by: profile?.id ?? null,

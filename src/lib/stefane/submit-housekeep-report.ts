@@ -248,6 +248,88 @@ export async function submeterRelatorioHousekeep(args: {
     }
 
     /**
+     * SALVAR cada seção antes de submeter — descoberto no JOB-9437, 17/08.
+     *
+     * O formulário tem um botão "Save" por seção (Start job, Finish job,
+     * Feedback), e é ele que persiste a seção no servidor: rádio e horário
+     * autosalvam, mas descrição e foto só entram no relatório pelo Save. A
+     * Stefane preenchia tudo e ia direto ao Submit, o servidor finalizava o
+     * rascunho SEM as seções não salvas, e a página voltava com o formulário
+     * — que o detector antigo ainda por cima lia como enviado.
+     *
+     * No dry run os Saves NÃO são clicados de propósito: salvar já grava no
+     * rascunho do lado deles, e simulação que escreve não é simulação.
+     */
+    if (!args.simular) {
+      /**
+       * Save de cada seção, RE-CONSULTANDO a cada clique — aprendido à mão no
+       * JOB-9437: salvar recolhe a seção e a lista de botões muda. O loop
+       * antigo contava os três Saves antes e clicava por índice na lista
+       * velha: só o primeiro acertava, os outros dois eram cliques no vazio
+       * engolidos pelo catch — e a descrição nunca persistia.
+       */
+      const salvarSecoes = async (): Promise<string | null> => {
+        const total = await page.locator("button", { hasText: /^Save$/ }).count();
+        for (let i = 0; i < total; i++) {
+          await abrirTodasAsSecoes(page);
+          const visiveis = page.locator("button:visible", { hasText: /^Save$/ });
+          if (i >= (await visiveis.count())) break;
+          await visiveis.nth(i).click({ timeout: 5000 }).catch(() => {});
+          await page.waitForTimeout(2500);
+          const erro = await page
+            .locator('[class*="error"], [role="alert"]')
+            .filter({ hasText: /error|invalid|failed/i })
+            .first()
+            .textContent({ timeout: 500 })
+            .catch(() => null);
+          if (erro?.trim()) return `section save ${i + 1} of ${total} was refused: ${erro.trim().slice(0, 140)}`;
+        }
+        return null;
+      };
+      const erroSave = await salvarSecoes();
+      if (erroSave) return { ok: false, motivo: erroSave, segundos: seg() };
+
+      /**
+       * Submit em página FRESCA — é a resposta literal ao "Validation error
+       * has occurred. Please refresh the page and try again": submeter na
+       * sessão que acabou de salvar três seções era recusado como stale. O
+       * reload prova de quebra o que persistiu; o que os saves não seguraram
+       * (rádio resetado por tentativa anterior) é re-preenchido aqui, e o
+       * Submit valida o formulário inteiro como está na tela.
+       */
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(2500);
+      await abrirTodasAsSecoes(page);
+      if (forma === "trade") {
+        const desc = page.locator(HOUSEKEEP_CAMPOS.descricao.seletor);
+        const persistiu = ((await desc.inputValue().catch(() => "")) ?? "").trim().length > 0;
+        if (!persistiu) {
+          // Os saves não seguraram nada: repete a dose inteira uma vez, com
+          // fotos, e recarrega de novo. Persistir de novo em branco é falha.
+          await preencherTrade(page, args.payload as PayloadHousekeep);
+          if (args.fotos) {
+            const [antes2, depois2] = await Promise.all([
+              baixarFotos(args.fotos.antes, "before"),
+              baixarFotos(args.fotos.depois, "after"),
+            ]);
+            await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes2);
+            await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois2);
+            await page.waitForTimeout(3000);
+          }
+          const erroSave2 = await salvarSecoes();
+          if (erroSave2) return { ok: false, motivo: erroSave2, segundos: seg() };
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(2500);
+          await abrirTodasAsSecoes(page);
+        }
+      }
+      // Rádio e horário que alguma tentativa anterior tenha derrubado voltam
+      // aqui — re-preencher com os mesmos valores é idempotente.
+      if (forma === "trade") await preencherTrade(page, args.payload as PayloadHousekeep);
+      else await preencherLimpeza(page, args.payload as PayloadLimpeza);
+    }
+
+    /**
      * "I confirm that the information provided in this report is true and
      * accurate", o único checkbox da página, e sem ele o formulário não passa.
      *
@@ -301,33 +383,74 @@ export async function submeterRelatorioHousekeep(args: {
     }
 
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
-    await page.waitForTimeout(4000);
 
-    const depois = await page.locator("body").innerText();
-    if (/thank you|submitted|received/i.test(depois)) {
-      return { ok: true, forma, segundos: seg() };
-    }
     /**
-     * A frase inteira da recusa, não a palavra que casou.
+     * A confirmação é ESPERADA, não amostrada.
      *
-     * O regex antigo devolvia `erro[0]`, que era literalmente "required": o
-     * card dizia `Housekeep rejected it: "required"` e ninguém ficava sabendo
-     * qual campo faltou. A frase que a Housekeep escreve na tela costuma nomear
-     * o campo, e é ela que diz o que consertar antes de tentar de novo.
-     *
-     * Junta as linhas que reclamam, sem repetir, porque o formulário marca cada
-     * campo que faltou e o motivo real pode ser o terceiro da lista.
+     * Os 4 segundos fixos de antes liam a página no meio do upload das fotos:
+     * a submissão ainda estava acontecendo, o corpo ainda era o formulário, e
+     * o filtro por "required" pescava RÓTULO de pergunta ("Is any follow up
+     * work required?") como se fosse recusa. Foi exatamente o veredito falso
+     * do JOB-9437. Agora espera até 30s, sondando a cada 2, e só desiste
+     * quando a página parou de mexer.
      */
-    const linhas = depois
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && l.length < 160 && /required|invalid|must be|cannot be|please /i.test(l));
-    const unicas = [...new Set(linhas)].slice(0, 3);
+    let depois = "";
+    for (let i = 0; i < 15; i++) {
+      await page.waitForTimeout(2000);
+      depois = await page.locator("body").innerText();
+      // Só CONFIRMAÇÃO EXPLÍCITA vale. A heurística "o botão de submit sumiu"
+      // deu enviado falso no JOB-9437: o botão some um instante durante o
+      // processamento e o relatório não tinha ido. Melhor um falso "falhou"
+      // (que vira retry, e retry aqui é atualização) do que um falso
+      // "enviado" (que fecha o job com o relatório para trás).
+      if (/thank you|report submitted|already submitted|received your report|submitted successfully/i.test(depois)) {
+        return { ok: true, forma, segundos: seg() };
+      }
+    }
+
+    /**
+     * A recusa de verdade, lida de onde o Angular a escreve.
+     *
+     * O filtro antigo varria o texto inteiro atrás de "required" e devolvia
+     * rótulos de pergunta. O que diz o que faltou são os CONTROLES marcados
+     * ng-invalid (com o rótulo do bloco em que vivem) e os elementos de erro
+     * que o formulário renderiza. É isso que se coleta.
+     */
+    const diagnostico = await page.evaluate(() => {
+      const rotuloDe = (el: Element): string => {
+        let p: Element | null = el.closest("div,fieldset");
+        for (let k = 0; k < 4 && p; k++) {
+          const l = p.querySelector("label, legend, h4, h5");
+          const t = l?.textContent?.trim();
+          if (t) return t.slice(0, 60);
+          p = p.parentElement?.closest("div,fieldset") ?? null;
+        }
+        return (el as HTMLInputElement).name || el.tagName.toLowerCase();
+      };
+      const invalidos = [
+        ...new Set(
+          Array.from(document.querySelectorAll("input.ng-invalid, textarea.ng-invalid, select.ng-invalid"))
+            .map(rotuloDe),
+        ),
+      ].slice(0, 4);
+      const erros = [
+        ...new Set(
+          Array.from(document.querySelectorAll('[class*="error"], [role="alert"], .invalid-feedback'))
+            .map((e) => e.textContent?.trim() ?? "")
+            .filter((t) => t.length > 3 && t.length < 160),
+        ),
+      ].slice(0, 3);
+      return { invalidos, erros };
+    });
+    const partes = [
+      diagnostico.erros.length ? diagnostico.erros.join(" · ") : "",
+      diagnostico.invalidos.length ? `fields not accepted: ${diagnostico.invalidos.join(", ")}` : "",
+    ].filter(Boolean);
     return {
       ok: false,
-      motivo: unicas.length
-        ? `Housekeep rejected it: ${unicas.join(" · ")}`
-        : "submitted but the page showed no confirmation",
+      motivo: partes.length
+        ? `Housekeep did not confirm: ${partes.join(" — ")}`
+        : "no confirmation after 30s: the form is still on screen",
       segundos: seg(),
     };
   } catch (err) {

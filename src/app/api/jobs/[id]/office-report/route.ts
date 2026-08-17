@@ -6,9 +6,11 @@ import {
   isReportTemplate,
   londonWallClockToUtcIso,
   parseReportPhotoEntries,
+  plannedPhotoShape,
   persistReportSubmission,
 } from "@/lib/report-submission";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
+import { validarSubmissaoDeReport } from "@/lib/report-health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -132,6 +134,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const SETTLED = new Set(["completed", "cancelled", "paid", "closed"]);
   const moveToFinalCheck = !SETTLED.has(String(job.status ?? ""));
 
+  /**
+   * O mesmo portão da porta do parceiro: o que a plataforma exige é
+   * obrigatório também para o escritório. As contagens consideram o que o
+   * relatório TERÁ: metade intocada mantém as fotos dela, edição soma as
+   * novas às existentes, primeira gravação conta só o que está entrando.
+   */
+  const fotos = parseReportPhotoEntries(form);
+  const veredito = validarSubmissaoDeReport({
+    template,
+    finalData,
+    startPhotos: plannedPhotoShape(
+      template,
+      "start",
+      writeStart ? fotos : {},
+      writeStart ? (overwrite ? startEnvelope?.photos : null) : startEnvelope?.photos,
+    ),
+    finalPhotos: plannedPhotoShape(template, "final", fotos, overwrite ? finalEnvelope?.photos : null),
+    timerStartedAt: timerStartedAt ?? job.partner_timer_started_at ?? null,
+    timerEndedAt: timerEndedAt ?? job.partner_timer_ended_at ?? null,
+  });
+  if (!veredito.ok) {
+    return NextResponse.json(
+      {
+        error: "The report is missing what the client platform requires.",
+        pendencias: veredito.motivos,
+        nota: veredito.nota,
+      },
+      { status: 422 },
+    );
+  }
+
   const result = await persistReportSubmission(
     admin,
     {
@@ -146,7 +179,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       source: "office_manual",
       startData,
       finalData,
-      photos: parseReportPhotoEntries(form),
+      photos: fotos,
       writeStart,
       timerStartedAt,
       timerEndedAt,
@@ -168,7 +201,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // An edit that attaches a new certificate re-reads; an edit that only fixes
   // text keeps the reading already on the report.
   if (template === "certificate") {
-    const freshCertificate = (parseReportPhotoEntries(form).certificate ?? []).length > 0;
+    const freshCertificate = (fotos.certificate ?? []).length > 0;
     after(() => fillCertificateExpiry(admin, job.id, { force: overwrite && freshCertificate }));
   }
 
@@ -177,5 +210,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     jobReference: job.reference,
     startWritten: writeStart,
     photoFailures: result.photoFailures,
+    nota: veredito.nota,
+    faixa: veredito.faixa,
   });
 }

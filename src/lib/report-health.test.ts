@@ -11,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reportHealth, faixaDaNota } from "./report-health";
+import { reportHealth, faixaDaNota, validarSubmissaoDeReport } from "./report-health";
 
 const comodos = ["living_room", "hallways", "kitchen", "bathrooms", "bedrooms"];
 const cheio = (n: number) => Object.fromEntries(comodos.map((c) => [c, Array(n).fill("u")]));
@@ -106,4 +106,78 @@ test("nota alta nunca convive com item bloqueante", () => {
   // por mais alta que a nota esteja.
   const s = reportHealth({ ...limpezaOk, finalReport: { photos: {} } });
   assert.equal(faixaDaNota(s), "bloqueado");
+});
+
+// ─── o portão da submissão ───────────────────────────────────────────────────
+
+test("submissão sem o que a plataforma exige volta com a lista", () => {
+  const v = validarSubmissaoDeReport({
+    template: "general",
+    finalData: {},          // sem descrição
+    startPhotos: [],        // sem antes
+    finalPhotos: [],        // sem depois
+  });
+  assert.equal(v.ok, false);
+  assert.ok(v.motivos.some((m) => /description/i.test(m)));
+  assert.ok(v.motivos.some((m) => /before/i.test(m)));
+  assert.ok(v.motivos.some((m) => /after/i.test(m)));
+});
+
+test("submissão completa passa e já traz a nota", () => {
+  const v = validarSubmissaoDeReport({
+    template: "general",
+    finalData: { description: "Replaced the flush valve and resealed the cistern." },
+    startPhotos: ["a.jpg"],
+    finalPhotos: ["b.jpg"],
+    timerStartedAt: "x",
+    timerEndedAt: "y",
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.nota, 100);
+  assert.equal(v.faixa, "pronto");
+});
+
+test("limpeza acima do teto de 5 por cômodo é recusada na porta", () => {
+  const seis = ["1", "2", "3", "4", "5", "6"];
+  const cinco = seis.slice(0, 5);
+  const quartos = {
+    living_room: cinco, hallways: cinco, kitchen: seis,
+    bathrooms: cinco, bedrooms: cinco,
+  };
+  const v = validarSubmissaoDeReport({
+    template: "cleaner",
+    finalData: {},
+    startPhotos: { equipment: cinco, ...quartos },
+    finalPhotos: quartos,
+  });
+  assert.equal(v.ok, false);
+  assert.ok(v.motivos.some((m) => /Kitchen: 6 photos — maximum 5/.test(m)));
+});
+
+test("piso da limpeza não bloqueia a porta: 3 fotos num cômodo passam", () => {
+  // O piso de 5 é padrão nosso e continua só avisando (nota < 100); o teto e
+  // o zero é que barram. Campo com sinal ruim manda 3 fotos, não nenhuma.
+  const tres = ["1", "2", "3"];
+  const quartos = {
+    living_room: tres, hallways: tres, kitchen: tres, bathrooms: tres, bedrooms: tres,
+  };
+  const v = validarSubmissaoDeReport({
+    template: "cleaner",
+    finalData: {},
+    startPhotos: { equipment: tres, ...quartos },
+    finalPhotos: quartos,
+  });
+  assert.equal(v.ok, true);
+  assert.ok(v.nota < 100);
+});
+
+test("trade acima de 20 na metade é recusado: o excedente seria cortado em silêncio", () => {
+  const v = validarSubmissaoDeReport({
+    template: "general",
+    finalData: { description: "Full repaint of the hallway and ceiling." },
+    startPhotos: ["a.jpg"],
+    finalPhotos: Array.from({ length: 21 }, (_, i) => `f${i}.jpg`),
+  });
+  assert.equal(v.ok, false);
+  assert.ok(v.motivos.some((m) => /After photos: 21/.test(m)));
 });

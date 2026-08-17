@@ -5,6 +5,11 @@ import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { resolvePropertyPostcode } from "@/lib/uk-postcode";
+import {
+  getZonedWallClock,
+  isWithinOperatingShift,
+  OPERATING_TIMEZONE,
+} from "@/lib/wall-clock-tz";
 
 /**
  * Job atribuído pela rota fixa e não confirmado vira leilão.
@@ -61,7 +66,28 @@ export async function GET(req: NextRequest) {
   // `?dry-run=1` lista quem seria escalado e para quem iria o convite, sem
   // escrever nem mandar email. Depois do JOB-9415 nenhuma rodada vai ao vivo
   // sem alguém ter olhado a lista antes.
-  const dryRun = new URL(req.url).searchParams.get("dry-run") === "1";
+  const url = new URL(req.url);
+  const dryRun = url.searchParams.get("dry-run") === "1";
+
+  /**
+   * Leilão manda convite para todo parceiro que casa com o trade, e convite é
+   * mensagem para uma pessoa. Fora do turno ele espera.
+   *
+   * O horário é lido em Londres e não no relógio de quem chamou, porque quem
+   * chama hoje é o launchd de um Mac em São Paulo: quatro horas de diferença no
+   * BST, três no inverno. A conta feita aqui não precisa ser refeita à mão em
+   * outubro, e continua certa quando isto virar cron da Vercel, que roda em UTC.
+   *
+   * `?forcar=1` ignora o turno, para quando alguém está olhando e quer agora.
+   */
+  if (!dryRun && url.searchParams.get("forcar") !== "1" && !isWithinOperatingShift()) {
+    const agora = getZonedWallClock(new Date(), OPERATING_TIMEZONE);
+    return NextResponse.json({
+      ok: true,
+      pulou: "fora do turno",
+      londres: `${String(agora.hour).padStart(2, "0")}:${String(agora.minute).padStart(2, "0")}`,
+    });
+  }
 
   // Só job que a rota atribuiu e o parceiro não confirmou. `partner_id` cheio
   // com `partner_confirmed_at` vazio é exatamente essa situação: nós demos, ele

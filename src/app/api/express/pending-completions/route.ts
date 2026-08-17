@@ -61,7 +61,19 @@ export async function GET(req: NextRequest) {
     )
     .ilike("report_link", "%checkatrade%")
     .is("external_report_submitted_at", null)
+    // Enviado à mão sai da fila: completar por cima do trabalho já feito era
+    // exatamente o buraco das colunas manuais nunca escritas.
+    .is("external_report_manual_at", null)
     .eq("final_report_submitted", true)
+    /**
+     * Só depois do Finish work — mesmo modelo da Housekeep, a pedido do dono
+     * (17/08/2026). `report_1_approved` é o que buildJobReviewApprovalPatch
+     * grava quando alguém revisa e aprova; sem este filtro o job entrava na
+     * fila no instante da SUBMISSÃO do relatório, e o robô concluía (e
+     * liberava pagamento) antes de qualquer olho humano — foi o que
+     * aconteceu com o JOB-9406.
+     */
+    .eq("report_1_approved", true)
     .in("status", ["final_check", "completed", "awaiting_payment"])
     .order("scheduled_date", { ascending: true })
     .limit(20);

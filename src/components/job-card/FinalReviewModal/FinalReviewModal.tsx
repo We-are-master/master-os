@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
 import { MarginHero } from "./components/MarginHero";
+import { EnvioHero } from "./components/EnvioHero";
 import { ModalFooter } from "./components/ModalFooter";
 import { ModalHeader } from "./components/ModalHeader";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
@@ -58,6 +59,7 @@ function useEnvioExterno(
           bloqueio: d.bloqueio ?? null,
           attempts: d.attempts ?? 0,
           submittedAt: d.submitted_at ?? null,
+          manualAt: (d as { manual_at?: string | null }).manual_at ?? null,
         });
       } catch {
         // Falha de rede não pode derrubar o modal: sem estado, o passo 3 só não
@@ -113,6 +115,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     paymentSchedule,
     rawFinalReport,
     rawStartReport,
+    timerStartedAt,
+    timerEndedAt,
     onEditReport,
   } = props;
 
@@ -206,6 +210,22 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const canApprove =
     attestationsOk && docsReady && !submitting && (!envioPendente || forcarSemEnvio);
 
+  /**
+   * O botão diz o que está acontecendo: "Finalise & approve" quando o
+   * relatório chegou (ou vai chegar sozinho — fila do Express, marcado como
+   * manual), "Force approve" quando se está fechando o job SEM o relatório
+   * ter saído — sem report, bloqueado, ou liberado à força. Chamar os dois
+   * pelo mesmo nome era como o forçado passava despercebido.
+   */
+  const envioResolvido =
+    envioExterno?.estado === "enviado" ||
+    !!envioExterno?.manualAt ||
+    /queued for the Express robot|already been sent|marked as sent manually/i.test(
+      envioExterno?.bloqueio ?? "",
+    );
+  const aprovandoForcado =
+    forcarSemEnvio || !temRelatorio || (!!envioExterno?.bloqueio && !envioResolvido);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -240,15 +260,19 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   <p className="mb-2 text-[11px]" style={{ color: "#6B6B70" }}>
                     This is the report as it was filled in. Check it before the money.
                   </p>
-                  {/* Chegada primeiro, na ordem do dia de trabalho. Conferir só
-                      a conclusão é conferir metade: o que prova o serviço é o
-                      par antes e depois, e é o par que a Housekeep cobra. */}
-                  <div className="space-y-3">
-                    {rawStartReport && Object.keys(rawStartReport as object).length > 0 ? (
-                      <JobReportV2Card jobId={jobUuid} kind="start" rawReport={rawStartReport} approvedAt={null} readOnly />
-                    ) : null}
-                    <JobReportV2Card jobId={jobUuid} kind="final" rawReport={rawFinalReport} approvedAt={null} readOnly />
-                  </div>
+                  {/* UM card só, a pedido: a visita é uma e o relatório é um.
+                      A chegada entra DENTRO dele — fotos Before/After lado a
+                      lado, campos das duas metades juntos. */}
+                  <JobReportV2Card
+                    jobId={jobUuid}
+                    kind="final"
+                    rawReport={rawFinalReport}
+                    rawStartReport={rawStartReport}
+                    approvedAt={null}
+                    readOnly
+                    timerStartedAt={timerStartedAt}
+                    timerEndedAt={timerEndedAt}
+                  />
                 </div>
                 <div
                   className="flex items-center justify-between gap-2 px-4 py-3"
@@ -272,12 +296,23 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                     className="rounded-[6px] px-3.5 py-[6px] text-[12px] font-semibold text-white cursor-pointer"
                     style={{ background: "#020040" }}
                   >
-                    Looks right, continue →
+                    {/* Aprovar o relatório JÁ dispara o envio: o rótulo diz o
+                        que o clique faz, e o resumo seguinte mostra o envio
+                        acontecendo. */}
+                    Approve report →
                   </button>
                 </div>
               </>
             ) : (
             <div className="min-h-0 overflow-y-auto overscroll-contain">
+              {/* O destino do relatório em primeiro: é a pergunta que decide
+                  se este job pode fechar, e ela agora abre o resumo. */}
+              <EnvioHero
+                jobUuid={jobUuid}
+                envio={envioExterno}
+                onRecarregar={recarregar}
+                onEditReport={onEditReport}
+              />
               <MarginHero
                 margin={margin}
                 marginPct={marginPct}
@@ -347,6 +382,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   submitting={submitting}
                   onCancel={fechar}
                   onApprove={aprovarEEnviar}
+                  forcado={aprovandoForcado}
                 />
               </>
             ) : null}

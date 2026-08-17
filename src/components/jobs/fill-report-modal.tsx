@@ -19,6 +19,8 @@ import {
 } from "@/lib/public-report-templates";
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
 import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft";
+import { validarSubmissaoDeReport } from "@/lib/report-health";
+import { plannedPhotoShape } from "@/lib/report-submission";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
@@ -197,9 +199,44 @@ export function FillReportModal({
   const setField = (key: string, value: unknown) =>
     setData((prev) => ({ ...prev, [key]: value }));
 
+  /** Teto por slot, das duas metades: mesma chave, mesmo teto. */
+  const tetoDoSlot = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of [...photoSlots.start, ...photoSlots.final]) {
+      if (s.max) m.set(s.key, s.max);
+    }
+    return m;
+  }, [photoSlots]);
+
+  /** Fotos já salvas no relatório, por slot — em edição elas ficam e contam. */
+  const existentesPorSlot = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const payload of [existingStart, existingFinal]) {
+      const p = payload?.photos;
+      if (Array.isArray(p)) continue; // trade plano: conta na metade, não por slot
+      if (p && typeof p === "object") {
+        for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+          if (Array.isArray(v)) m.set(k, Math.max(m.get(k) ?? 0, v.length));
+        }
+      }
+    }
+    return m;
+  }, [existingStart, existingFinal]);
+
   const onPhotosChange = (slot: string, files: FileList | null) => {
     if (!files) return;
-    setPhotos((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), ...Array.from(files)] }));
+    const novos = Array.from(files);
+    const teto = tetoDoSlot.get(slot);
+    setPhotos((prev) => {
+      const atuais = prev[slot] ?? [];
+      // O teto bloqueia NA ENTRADA: aceitar 9 e cortar 4 no envio é como o
+      // excedente sumia em silêncio. Aqui a pessoa escolhe quais ficam.
+      const vaga = teto ? Math.max(0, teto - (existentesPorSlot.get(slot) ?? 0) - atuais.length) : novos.length;
+      if (novos.length > vaga) {
+        toast.warning(`Maximum ${teto} photos in this block — ${novos.length - vaga} file(s) not added.`);
+      }
+      return { ...prev, [slot]: [...atuais, ...novos.slice(0, vaga)] };
+    });
   };
 
   const removePhoto = (slot: string, idx: number) =>
@@ -374,6 +411,29 @@ export function FillReportModal({
   };
 
   /**
+   * O portão da plataforma, rodando AO VIVO enquanto se digita.
+   *
+   * É a mesma régua que o servidor aplica na submissão (validarSubmissaoDeReport),
+   * com as mesmas contagens planejadas: o botão só libera quando o servidor vai
+   * aceitar, e a lista embaixo diz o que falta enquanto ainda dá pra resolver.
+   */
+  const veredito = useMemo(() => {
+    const { finalFields } = splitReportFields(spec, data);
+    const metadeIntocada = startAlreadySubmitted && !isEdit;
+    return validarSubmissaoDeReport({
+      template,
+      finalData: finalFields,
+      startPhotos: metadeIntocada
+        ? ["kept"] // a metade do app fica como está; o servidor confere a real
+        : plannedPhotoShape(template, "start", photos, isEdit ? existingStart?.photos : null),
+      finalPhotos: plannedPhotoShape(template, "final", photos, isEdit ? existingFinal?.photos : null),
+      // Só a presença importa aqui: o item de horários não bloqueia.
+      timerStartedAt: startTime ? "typed" : timerStartedAt,
+      timerEndedAt: finishTime ? "typed" : timerEndedAt,
+    });
+  }, [spec, data, template, photos, isEdit, startAlreadySubmitted, existingStart, existingFinal, startTime, finishTime, timerStartedAt, timerEndedAt]);
+
+  /**
    * A regra da Housekeep, dita na tela e com a contagem do momento.
    *
    * Sem foto o envio é recusado, e o motivo só aparecia depois, na aba, quando
@@ -507,16 +567,22 @@ export function FillReportModal({
       setProgress("Saving report…");
       const res = await fetch(`/api/jobs/${jobId}/office-report`, { method: "POST", body: form });
       const body = (await res.json().catch(() => null)) as
-        | { error?: string; photoFailures?: number }
+        | { error?: string; photoFailures?: number; pendencias?: string[]; nota?: number }
         | null;
       if (!res.ok) {
-        setError(body?.error ?? "Could not save the report.");
+        // 422 = o portão da plataforma: a lista diz o que falta, não só "não deu".
+        setError(
+          body?.pendencias?.length
+            ? `${body.error ?? "The report is missing what the client platform requires."}\n— ${body.pendencias.join("\n— ")}`
+            : body?.error ?? "Could not save the report.",
+        );
         return;
       }
+      const daNota = typeof body?.nota === "number" ? ` · score ${body.nota}` : "";
       if (body?.photoFailures) {
         toast.warning(`Report saved, but ${body.photoFailures} file(s) failed to upload.`);
       } else {
-        toast.success(isEdit ? "Report updated." : "Report saved on the job.");
+        toast.success(isEdit ? `Report updated${daNota}.` : `Report saved on the job${daNota}.`);
       }
       // O relatório está no servidor: o rascunho perdeu a razão de existir e
       // ficaria reaparecendo na próxima abertura como se fosse trabalho novo.
@@ -565,7 +631,8 @@ export function FillReportModal({
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={submitting}
+            disabled={submitting || !veredito.ok}
+            title={veredito.ok ? undefined : veredito.motivos.join(" · ")}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer disabled:opacity-40"
             style={{ background: NAVY }}
           >
@@ -693,9 +760,22 @@ export function FillReportModal({
           </>,
         )}
 
-        {error ? (
+        {!veredito.ok ? (
           <div
             className="rounded-[8px] p-2.5 text-[12px]"
+            style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#7A3D00" }}
+          >
+            <p className="font-semibold">The client platform requires, before this can be saved:</p>
+            <ul className="mt-1 space-y-0.5">
+              {veredito.motivos.map((m) => (
+                <li key={m}>— {m}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {error ? (
+          <div
+            className="rounded-[8px] p-2.5 text-[12px] whitespace-pre-wrap"
             style={{ background: "#FFF1EB", border: "0.5px solid #F5CFB8", color: "#7A3D00" }}
           >
             {error}

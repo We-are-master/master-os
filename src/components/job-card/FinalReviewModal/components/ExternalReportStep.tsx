@@ -31,6 +31,8 @@ export type EstadoEnvioExterno = {
   bloqueio?: string | null;
   attempts?: number;
   submittedAt?: string | null;
+  /** Marcado como enviado à mão (migração 249): quem marcou assume o envio. */
+  manualAt?: string | null;
 };
 
 type Preview =
@@ -115,7 +117,7 @@ export function ExternalReportStep({
         <span aria-hidden>✓</span>
         Submitted to the client platform
         {envio.submittedAt
-          ? ` · ${new Date(envio.submittedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+          ? ` · ${new Date(envio.submittedAt).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" })}`
           : ""}
         {envio.link ? (
           <a href={envio.link} target="_blank" rel="noreferrer" className="underline" onClick={(e) => e.stopPropagation()}>

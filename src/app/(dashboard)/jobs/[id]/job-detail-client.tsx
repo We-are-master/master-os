@@ -4300,6 +4300,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setValidateCompleteOpen(true);
   }, []);
 
+  /**
+   * Recarrega o job LOCAL além da árvore do servidor: o `job` desta tela vive
+   * em useState, então `router.refresh()` sozinho não mostra o relatório que
+   * acabou de ser salvo — a pessoa via a aba velha e apertava F5 na mão, que
+   * era exatamente o que o modal existia pra evitar.
+   */
+  const recarregarJob = useCallback(() => {
+    if (id) {
+      void getJob(id).then((j) => {
+        if (j) setJob(j);
+      });
+    }
+    router.refresh();
+  }, [id, router]);
+
   const openCompleteFromResumeModal = useCallback(() => {
     setResumeJobOpen(false);
     openFinalReview();
@@ -6793,7 +6808,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setValidateCompleteOpen(true);
                       return;
                     }
-                    void handleStatusChange(job, action.status as Job["status"]);
+                    void handleStatusChange(job, action.status as Job["status"]).then((updated) => {
+                      if (updated && action.status === "final_check") setDetailTab(3);
+                    });
                   }}
                 >
                   {action.label}
@@ -8148,7 +8165,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 existingFinal={v2FinalSubmitted ? ((job.final_report as Record<string, unknown> | null) ?? null) : null}
                 timerStartedAt={job.partner_timer_started_at ?? null}
                 timerEndedAt={job.partner_timer_ended_at ?? null}
-                onSubmitted={() => router.refresh()}
+                onSubmitted={recarregarJob}
               />
               {/* A nota vem antes dos cards porque a conta é das duas metades
                   juntas, e antes do Approve porque é lá que ela serve. */}
@@ -8164,13 +8181,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 jobId={job.id}
                 kind="final"
                 rawReport={job.final_report}
+                rawStartReport={job.start_report}
                 approvedAt={job.final_report_approved_at ?? null}
-                onApprovalChange={() => router.refresh()}
+                onApprovalChange={recarregarJob}
+                timerStartedAt={job.partner_timer_started_at ?? null}
+                timerEndedAt={job.partner_timer_ended_at ?? null}
               />
               {/* Stefane: o estado do envio na plataforma de origem. Só estado —
                   a ação de enviar vive no passo 3 da revisão final, para não
                   haver dois botões "approve" a dois centímetros um do outro. */}
-              <StefaneReportButton jobId={job.id} onEnviado={() => router.refresh()} />
+              <StefaneReportButton jobId={job.id} onEnviado={recarregarJob} />
               <JobPartnerMediaCard jobId={job.id} />
               <JobOnHoldSubmissionCard jobId={job.id} />
 
@@ -8200,15 +8220,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         Edit report
                       </button>
                       <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
-                      <button
-                        type="button"
-                        onClick={openFinalReview}
-                        className="inline-flex items-center gap-1.5 rounded-[6px] px-[14px] py-[7px] text-[12px] font-semibold text-white cursor-pointer"
-                        style={{ background: "#020040" }}
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        Review &amp; approve
-                      </button>
+                      {/*
+                        O botao de finalizar saiu daqui (17/08). Ele chamava
+                        `openFinalReview`, exatamente o mesmo handler do botao do
+                        cabecalho, entao eram duas portas para a mesma sala. Duas
+                        portas iguais na mesma tela nao dao escolha, dao duvida:
+                        a pessoa para para descobrir se sao a mesma coisa.
+
+                        Fica um lugar so para terminar o trabalho, e ele e o do
+                        cabecalho, que e onde moram as acoes de status do job.
+                        Este card volta a ser o que ele e: o relatorio.
+                      */}
                     </>
                   ) : (
                     <button
@@ -9681,6 +9703,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         selfBillReference={jobSelfBill?.reference ?? null}
         rawFinalReport={job.final_report}
         rawStartReport={job.start_report}
+        timerStartedAt={job.partner_timer_started_at ?? null}
+        timerEndedAt={job.partner_timer_ended_at ?? null}
         onEditReport={() => {
           setValidateCompleteOpen(false);
           setFillReportOpen(true);

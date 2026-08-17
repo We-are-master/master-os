@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireAuth } from "@/lib/auth-api";
 import { enviarRelatorioExterno, motivoNaoElegivel, previewEnvio } from "@/lib/stefane/run-external-report";
 
 /**
@@ -21,7 +22,8 @@ export const runtime = "nodejs";
 const SELECT =
   "id, reference, status, report_link, final_report_submitted, external_report_started_at, " +
   "external_report_submitted_at, external_report_error, external_report_attempts, " +
-  "start_report, final_report";
+  "external_report_manual_at, external_report_manual_by, " +
+  "partner_timer_started_at, partner_timer_ended_at, start_report, final_report";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -51,6 +53,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     error: j.external_report_error ?? null,
     attempts: j.external_report_attempts ?? 0,
     report_link: j.report_link ?? null,
+    // Enviado à mão: quem marcou assume o envio, e a tela diz isso.
+    manual_at: j.external_report_manual_at ?? null,
     // Por que o botão está apagado, quando estiver.
     bloqueio: motivoNaoElegivel(job as never),
   });
@@ -64,6 +68,30 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const params = new URL(req.url).searchParams;
+
+  /**
+   * `?manual=1` marca o envio como feito à mão.
+   *
+   * As colunas `external_report_manual_by/at` nasceram na migração 249
+   * exatamente para isto e nada as escrevia: quem mandava pelo site liberava a
+   * finalização com "Finalise without sending" e não deixava rastro nenhum —
+   * o job continuava aparecendo como pendente, e a fila do Express ainda
+   * tentava completá-lo por cima do trabalho já feito.
+   */
+  if (params.get("manual") === "1") {
+    const auth = await requireAuth();
+    const por = auth instanceof NextResponse ? null : auth.user.id;
+    const { error } = await supabase
+      .from("jobs")
+      .update({
+        external_report_manual_at: new Date().toISOString(),
+        external_report_manual_by: por,
+        external_report_error: null,
+      })
+      .eq("id", id);
+    if (error) return NextResponse.json({ error: "Could not mark as sent manually." }, { status: 500 });
+    return NextResponse.json({ estado: "manual" });
+  }
 
   /**
    * `?reiniciar=1` zera o contador de tentativas antes de tentar de novo.
