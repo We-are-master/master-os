@@ -34,6 +34,7 @@ import { entryForSlug } from "@/lib/service-display-icons";
 import { useServiceCatalogEditor } from "@/app/(dashboard)/settings/service-catalog-editor";
 import { LabourPricebookView } from "./labour-pricebook-view";
 import { MaterialsQuotesView } from "./materials-quotes-view";
+import { QuotePlaygroundView } from "./quote-playground-view";
 import type { CatalogService } from "@/types/database";
 import "./services-pricing.css";
 
@@ -45,13 +46,14 @@ type ViewMode = "list" | "cards";
  * (vender pela média do mercado comprando do mais barato, com link). Um
  * toggle porque quem cota precisa das três na mesma tela.
  */
-type PricingArea = "catalog" | "labour" | "materials";
+type PricingArea = "catalog" | "labour" | "materials" | "quote";
 
 function AreaSegment({ area, onChange }: { area: PricingArea; onChange: (a: PricingArea) => void }) {
   const tabs: { id: PricingArea; label: string }[] = [
     { id: "catalog", label: "Catalog" },
     { id: "labour", label: "Labour" },
     { id: "materials", label: "Materials" },
+    { id: "quote", label: "Quote" },
   ];
   return (
     <div className="fx-seg">
@@ -617,11 +619,13 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
           <p className="text-sm text-text-secondary">
             {area === "labour"
               ? "The exact labour price of every service — approved lines are what gets quoted."
-              : "Sell at the market average, buy from the cheapest — every price links to the product it came from."}
+              : area === "materials"
+                ? "Sell at the market average, buy from the cheapest — every price links to the product it came from."
+                : "Type the customer's request; the pricing brain assembles the quote from approved labour and material kits."}
           </p>
           <AreaSegment area={area} onChange={setArea} />
         </div>
-        {area === "labour" ? <LabourPricebookView /> : <MaterialsQuotesView />}
+        {area === "labour" ? <LabourPricebookView /> : area === "materials" ? <MaterialsQuotesView /> : <QuotePlaygroundView />}
       </div>,
     );
   }
