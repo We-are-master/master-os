@@ -27,7 +27,7 @@ export type EstadoEnvio = "enviando" | "enviado" | "falhou" | "nao_elegivel";
 const JOB_SELECT =
   "id, reference, title, status, report_link, start_report, final_report, final_report_submitted, " +
   "partner_timer_started_at, partner_timer_ended_at, partner_name, client_name, property_address, " +
-  "external_report_started_at, external_report_submitted_at, external_report_attempts";
+  "external_report_started_at, external_report_submitted_at, external_report_manual_at, external_report_attempts";
 
 /**
  * Qual dos dois formulários da Housekeep preencher.
@@ -128,6 +128,8 @@ export function motivoNaoElegivel(job: {
   external_report_submitted_at?: string | null;
   external_report_manual_at?: string | null;
   external_report_attempts?: number | null;
+  partner_timer_started_at?: string | null;
+  partner_timer_ended_at?: string | null;
   start_report?: unknown;
   final_report?: unknown;
 }): string | null {
@@ -159,6 +161,26 @@ export function motivoNaoElegivel(job: {
   }
   if (temSecaoDeChegada && antes === 0) return "no before photos: the client platform requires both";
   if (depois === 0) return "no after photos: the client platform requires both";
+  /**
+   * Horário impossível bloqueia AQUI, com instrução — descoberto no JOB-9437.
+   *
+   * O timer do parceiro tinha virado a noite (start 23:48, finish 11:31) e a
+   * Housekeep valida a SEÇÃO no servidor: o Save falha com "Validation error
+   * has occurred", nada da seção persiste, e o Submit finaliza sem descrição
+   * nem foto. Três recusas seguidas, todas por causa disto, nenhuma dizendo
+   * isto. Comparar como HH:MM em Londres, igual ao formulário: é assim que o
+   * outro lado enxerga.
+   */
+  if (job.partner_timer_started_at && job.partner_timer_ended_at) {
+    const hhmm = (iso: string) =>
+      new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        .format(new Date(iso));
+    const ini = hhmm(job.partner_timer_started_at);
+    const fim = hhmm(job.partner_timer_ended_at);
+    if (fim <= ini) {
+      return `impossible on-site times (start ${ini}, finish ${fim}): fix them in Edit report first`;
+    }
+  }
   if ((job.external_report_attempts ?? 0) >= MAX_TENTATIVAS) return "out of attempts: needs a person";
   // Express NÃO é "not automated": o robô do RPA completa na plataforma na
   // próxima passada dele. Dizer "not automated" fazia parecer trabalho manual

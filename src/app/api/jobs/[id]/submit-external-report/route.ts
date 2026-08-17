@@ -22,7 +22,8 @@ export const runtime = "nodejs";
 const SELECT =
   "id, reference, status, report_link, final_report_submitted, external_report_started_at, " +
   "external_report_submitted_at, external_report_error, external_report_attempts, " +
-  "external_report_manual_at, external_report_manual_by, start_report, final_report";
+  "external_report_manual_at, external_report_manual_by, " +
+  "partner_timer_started_at, partner_timer_ended_at, start_report, final_report";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

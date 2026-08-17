@@ -248,6 +248,31 @@ export async function submeterRelatorioHousekeep(args: {
     }
 
     /**
+     * SALVAR cada seção antes de submeter — descoberto no JOB-9437, 17/08.
+     *
+     * O formulário tem um botão "Save" por seção (Start job, Finish job,
+     * Feedback), e é ele que persiste a seção no servidor: rádio e horário
+     * autosalvam, mas descrição e foto só entram no relatório pelo Save. A
+     * Stefane preenchia tudo e ia direto ao Submit, o servidor finalizava o
+     * rascunho SEM as seções não salvas, e a página voltava com o formulário
+     * — que o detector antigo ainda por cima lia como enviado.
+     *
+     * No dry run os Saves NÃO são clicados de propósito: salvar já grava no
+     * rascunho do lado deles, e simulação que escreve não é simulação.
+     */
+    if (!args.simular) {
+      const saves = page.locator('button:visible', { hasText: /^Save$/ });
+      const n = await saves.count();
+      for (let i = 0; i < n; i++) {
+        await saves.nth(i).click({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(1500);
+      }
+      // Salvar pode recolher a seção; reabrir garante que o estado do
+      // checkbox e do Submit continue alcançável.
+      await abrirTodasAsSecoes(page);
+    }
+
+    /**
      * "I confirm that the information provided in this report is true and
      * accurate", o único checkbox da página, e sem ele o formulário não passa.
      *
@@ -316,13 +341,14 @@ export async function submeterRelatorioHousekeep(args: {
     for (let i = 0; i < 15; i++) {
       await page.waitForTimeout(2000);
       depois = await page.locator("body").innerText();
-      if (/thank you|submitted|received/i.test(depois)) {
+      // Só CONFIRMAÇÃO EXPLÍCITA vale. A heurística "o botão de submit sumiu"
+      // deu enviado falso no JOB-9437: o botão some um instante durante o
+      // processamento e o relatório não tinha ido. Melhor um falso "falhou"
+      // (que vira retry, e retry aqui é atualização) do que um falso
+      // "enviado" (que fecha o job com o relatório para trás).
+      if (/thank you|report submitted|already submitted|received your report|submitted successfully/i.test(depois)) {
         return { ok: true, forma, segundos: seg() };
       }
-      // Sumiu o botão de submit sem mensagem de erro? A página virou outra
-      // coisa (confirmação com outro texto): conta como entregue.
-      const aindaTemForm = await page.locator('button[type="submit"]').count();
-      if (!aindaTemForm) return { ok: true, forma, segundos: seg() };
     }
 
     /**
