@@ -20,7 +20,7 @@ create table if not exists supplier_prices (
   -- é o par que o orçamentista navega. A busca é a chave de renovação.
   family         text not null,
   variant        text not null,
-  query          text not null unique,
+  query          text not null,
   supplier       text not null default 'screwfix',
   unit_cost      numeric(10,2) not null,
   markup         numeric(4,2) not null default 1.30,
@@ -32,7 +32,8 @@ create table if not exists supplier_prices (
   source_url     text,
   fetched_at     timestamptz not null default now(),
   created_at     timestamptz not null default now(),
-  unique (family, variant)
+  unique (supplier, family, variant),
+  unique (supplier, query)
 );
 
 comment on table supplier_prices is
@@ -112,4 +113,4 @@ Kitchen & Bathroom Anti-Mould Sealant White 280ml (219CW)'),
   ('garden', 'Semente de grama 120m²', 'lawn seed multipurpose', 32.99, 1.30, 42.99, '{"part": "lawn-seed", "coverage_m2": 120}'::jsonb, 'Westland Gro-Sure Multipurpose Lawn Seed 120m2 3.6kg (132KH)'),
   ('electrical', 'Alarme de fumaça (10 anos)', 'smoke alarm', 18.99, 1.30, 24.99, '{"part": "smoke-alarm", "compliance": true}'::jsonb, 'FireAngel FA6620-R Battery Standalone Optical Smoke Alarm (758PV)'),
   ('paint_sundries', 'Lixa sortida (pack 10)', 'sanding sheets assorted pack', 6.99, 1.30, 9.99, '{"kind": "sandpaper"}'::jsonb, 'Essentials 120 Grit Sanding Sheets 10 Pack (820JG)')
-on conflict (query) do nothing;
+on conflict (supplier, query) do nothing;
