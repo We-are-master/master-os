@@ -78,6 +78,10 @@ export type RpaConfig = {
   jobFilters: {
     keywords: string[];       // JOB_KEYWORDS — job title/description must contain at least one (empty = no keyword filter)
     minValue: number;         // MIN_JOB_VALUE — £, 0 = any
+    // BLOCKED_REGIONS — postcode prefixes we never take (default RM: too far
+    // east, travel eats the margin — decisão do dono, 17/08/2026). Always on,
+    // unlike the optional allowlist below.
+    blockedRegions: string[];
     minDateDaysAhead: number; // MIN_DATE_DAYS_AHEAD — accepted slot must be >= this many days from today
     slotDays: number[];       // JOB_SLOT_DAYS — accepted slot's weekday must be one of these (Sun=0..Sat=6)
   };
@@ -163,6 +167,9 @@ export function loadConfig(): RpaConfig {
     jobFilters: {
       keywords: envCsvStrings("JOB_KEYWORDS"),
       minValue: Math.max(0, envNum("MIN_JOB_VALUE", 0)),
+      blockedRegions: process.env.BLOCKED_REGIONS?.trim()
+        ? envCsvStrings("BLOCKED_REGIONS")
+        : ["rm"],
       minDateDaysAhead: Math.max(0, envNum("MIN_DATE_DAYS_AHEAD", 0)),
       slotDays: envCsvInts("JOB_SLOT_DAYS", [0, 1, 2, 3, 4, 5, 6]),
     },

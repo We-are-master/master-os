@@ -36,6 +36,16 @@ function jobPassesPreFilters(
     return { ok: false, reason: `value £${o.priceHint ?? 0} < min £${cfg.jobFilters.minValue}` };
   }
 
+  // Postcode blocklist — always on, independent of the optional allowlist
+  // below. RM (Romford) came off the map on 17/08/2026 by owner decision.
+  if (o.postcode) {
+    const pc = o.postcode.trim().toLowerCase();
+    const bloqueada = cfg.jobFilters.blockedRegions.find((r) => pc.startsWith(r));
+    if (bloqueada) {
+      return { ok: false, reason: `postcode ${o.postcode} is in blocked region ${bloqueada.toUpperCase()}` };
+    }
+  }
+
   // Optional extra allowlists from config.json (off by default).
   if (cfg.filters.enabled) {
     const { categories, regions } = cfg.filters;
