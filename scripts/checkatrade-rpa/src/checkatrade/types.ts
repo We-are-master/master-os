@@ -32,6 +32,18 @@ export type AcceptedSlot = {
    * accept, dashboard/booking.ts's post-accept scrape needs a selector
    * update — check the accepted job's page structure directly.
    */
+  /**
+   * "Your Earnings" from the accepted job's page: what Checkatrade actually
+   * pays us, with their fee already deducted. Preferred over the card's
+   * `priceHint`, which is a teaser and is sometimes absent entirely.
+   */
+  earnings?: number;
+  /** The customer's own notes on the accepted page. The real brief. */
+  customerNotes?: string;
+  /** "Up to half a day (3.5 hours)" — the band, in Checkatrade's words. */
+  duration?: string;
+  /** Whether parking is available. The partner needs it before leaving. */
+  parking?: boolean;
   fullAddress?: string;
   /**
    * Customer's real name, revealed in the sidebar once the job is
@@ -49,4 +61,23 @@ export type AcceptedSlot = {
    * stripped out; this is just the actual job-specific content.
    */
   richDescription?: string;
+  /**
+   * Customer contact, revealed in the sidebar once the job is accepted.
+   * VERIFIED 2026-07-28 on a real accepted job: the sidebar renders them as
+   * their own leaf nodes — initials, name, postcode, phone, email — so they
+   * are fed straight into POST /api/jobs as client_email / client_phone and
+   * the job's client row is created as a proper contact rather than a
+   * name-only stub.
+   */
+  customerPhone?: string;
+  customerEmail?: string;
+  /** Postcode as shown on the accepted job's sidebar (may be absent on the card). */
+  customerPostcode?: string;
+  /**
+   * The job's real title from the detail page, e.g. "Handyperson: Full Day
+   * (7 Hrs) General Repairs". Far more specific than the list card's
+   * category ("General Maintenance"), and it's where the full-day /
+   * half-day distinction actually shows up.
+   */
+  richTitle?: string;
 };

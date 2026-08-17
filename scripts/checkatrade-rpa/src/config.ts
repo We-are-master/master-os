@@ -59,8 +59,10 @@ export type RpaConfig = {
 
   /** When the bot polls/acts, and how often. All time checks use `timezone`. */
   schedule: {
-    pollIntervalSeconds: number; // POLL_INTERVAL
+    pollIntervalSeconds: number; // POLL_INTERVAL — ciclo RÁPIDO (só os New do topo)
     pollJitter: number;          // POLL_JITTER — random fraction added per cycle (0.6 = up to +60%)
+    leadsIntervalSeconds: number; // LEADS_INTERVAL — de quanto em quanto o ciclo rápido também olha os leads
+    deepScanMinutes: number;      // DEEP_SCAN_MINUTES — varredura completa (placar, dedupe, conclusões)
     runDays: number[];           // RUN_DAYS — getDay() values (Sun=0..Sat=6) the bot runs on
     runStartHour: number;        // RUN_START_HOUR (default 8) — inclusive
     runEndHour: number;          // RUN_END_HOUR (default 20) — exclusive
@@ -72,18 +74,39 @@ export type RpaConfig = {
     autoAccept: boolean;
     /** MAX_JOBS_PER_DAY — 0 = unlimited. Counted from seen.json entries accepted "today" in `timezone`. */
     maxJobsPerDay: number;
+    /**
+     * MAX_LEADS_PER_CYCLE — how many leads one poll cycle may work through
+     * before going back to the board. Each lead costs ~28s, so an unbounded
+     * backlog leaves the bot blind to contested Express jobs for minutes.
+     * Deferred leads are not marked seen; the next cycle picks them up.
+     */
+    maxLeadsPerCycle: number;
   };
 
   /** Filters that decide whether a JOB (Checkatrade Express) is worth accepting. Leads are never filtered. */
   jobFilters: {
-    keywords: string[];       // JOB_KEYWORDS — job title/description must contain at least one (empty = no keyword filter)
-    minValue: number;         // MIN_JOB_VALUE — £, 0 = any
-    // BLOCKED_REGIONS — postcode prefixes we never take (default RM: too far
-    // east, travel eats the margin — decisão do dono, 17/08/2026). Always on,
-    // unlike the optional allowlist below.
-    blockedRegions: string[];
-    minDateDaysAhead: number; // MIN_DATE_DAYS_AHEAD — accepted slot must be >= this many days from today
-    slotDays: number[];       // JOB_SLOT_DAYS — accepted slot's weekday must be one of these (Sun=0..Sat=6)
+    keywords: string[];        // JOB_KEYWORDS — job title/description must contain at least one (empty = no keyword filter)
+    excludeKeywords: string[]; // JOB_EXCLUDE_KEYWORDS — any match REJECTS the job, even if it passes everything else
+    minValue: number;          // MIN_JOB_VALUE — £, 0 = any. Coarse emergency brake; per-service rules live in jobRules.
+    /**
+     * NON_CERT_MIN_VALUE — floor for every priced bucket EXCEPT certificates:
+     * named trades (plumbing, gas, electrical…) and half/full-day handyperson
+     * bookings both have to clear it. Certificates are unfloored — the
+     * business has people for them and they pay off at the low end
+     * (EPC £63.55 → 28% margin, CP12 £73 → 26%).
+     */
+    nonCertMinValue: number;
+    /** CERT_MIN_VALUE — £, floor for certificates. EPC is excluded whatever it pays. */
+    certMinValue: number;
+    /**
+     * HIGH_VALUE_MIN — at or above this, a job is chased as PRIORITY: taken
+     * first in the cycle and freed from the weekday/notice slot rules. EICR is
+     * always priority regardless of price. £150 is the board's top decile
+     * (median £81.55, top quartile £110), measured 2026-08-04.
+     */
+    highValueMin: number;
+    minDateDaysAhead: number;  // MIN_DATE_DAYS_AHEAD — accepted slot must be >= this many days from today
+    slotDays: number[];        // JOB_SLOT_DAYS — accepted slot's weekday must be one of these (Sun=0..Sat=6)
   };
 
   /** Optional extra filters from config.json (rarely used; keyword filter above is the main gate). */
@@ -105,6 +128,20 @@ export type RpaConfig = {
   booking: {
     slotSelectionStrategy: SlotSelectionStrategy;
   };
+
+  /**
+   * Concluir o job no Checkatrade depois que o relatório foi validado no OS.
+   *
+   * Nasce em `off` de propósito: concluir é um ato que o cliente vê e que não se
+   * desfaz, e o formulário depois de "Mark job as complete" ainda não foi lido
+   * por ninguém. `map` abre e imprime sem clicar; é o que se roda primeiro.
+   */
+  completion: {
+    mode: "off" | "map" | "live"; // COMPLETION_MODE
+    /** Teto por ciclo, para a conclusão não roubar a vez da colheita de lead. */
+    maxPerCycle: number;          // COMPLETION_MAX_PER_CYCLE
+  };
+
   masterOs: {
     baseUrl: string;
     accountId: string;
@@ -153,6 +190,8 @@ export function loadConfig(): RpaConfig {
     schedule: {
       pollIntervalSeconds: pollIntervalSeconds > 0 ? pollIntervalSeconds : 60,
       pollJitter: Math.max(0, envNum("POLL_JITTER", 0)),
+      leadsIntervalSeconds: Math.max(30, envNum("LEADS_INTERVAL", 120)),
+      deepScanMinutes: Math.max(5, envNum("DEEP_SCAN_MINUTES", 30)),
       runDays: envCsvInts("RUN_DAYS", [0, 1, 2, 3, 4, 5, 6]),
       runStartHour: Math.min(23, Math.max(0, envNum("RUN_START_HOUR", 8))),
       runEndHour: Math.min(24, Math.max(1, envNum("RUN_END_HOUR", 20))),
@@ -162,14 +201,16 @@ export function loadConfig(): RpaConfig {
     acceptance: {
       autoAccept: envBool("AUTO_ACCEPT", true),
       maxJobsPerDay: Math.max(0, envNum("MAX_JOBS_PER_DAY", 0)),
+      maxLeadsPerCycle: Math.max(1, envNum("MAX_LEADS_PER_CYCLE", 4)),
     },
 
     jobFilters: {
       keywords: envCsvStrings("JOB_KEYWORDS"),
+      excludeKeywords: envCsvStrings("JOB_EXCLUDE_KEYWORDS"),
       minValue: Math.max(0, envNum("MIN_JOB_VALUE", 0)),
-      blockedRegions: process.env.BLOCKED_REGIONS?.trim()
-        ? envCsvStrings("BLOCKED_REGIONS")
-        : ["rm"],
+      nonCertMinValue: Math.max(0, envNum("NON_CERT_MIN_VALUE", 70)),
+      certMinValue: Math.max(0, envNum("CERT_MIN_VALUE", 70)),
+      highValueMin: Math.max(0, envNum("HIGH_VALUE_MIN", 150)),
       minDateDaysAhead: Math.max(0, envNum("MIN_DATE_DAYS_AHEAD", 0)),
       slotDays: envCsvInts("JOB_SLOT_DAYS", [0, 1, 2, 3, 4, 5, 6]),
     },
@@ -185,6 +226,13 @@ export function loadConfig(): RpaConfig {
     fallbackCategory: String(raw.fallbackCategory ?? "General Maintenance").trim() || "General Maintenance",
     booking: {
       slotSelectionStrategy: (booking.slotSelectionStrategy as SlotSelectionStrategy) === "latest" ? "latest" : "earliest",
+    },
+    completion: {
+      mode: ((): "off" | "map" | "live" => {
+        const m = envStr("COMPLETION_MODE")?.toLowerCase();
+        return m === "map" || m === "live" ? m : "off";
+      })(),
+      maxPerCycle: Math.max(1, envNum("COMPLETION_MAX_PER_CYCLE", 3)),
     },
     masterOs: {
       // MASTER_OS_BASE_URL overrides config.json — Docker points it at

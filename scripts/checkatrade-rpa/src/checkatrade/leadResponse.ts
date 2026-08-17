@@ -24,6 +24,64 @@ import type { CheckatradeOpportunity } from "./types.js";
 // there's no richer address to fetch here — the list card's postcode is
 // already the full picture for a lead.
 const INTERESTED_BUTTON_SELECTOR = 'button[aria-label="I\'m interested"]';
+const LEAF_TEXT_SELECTOR = '[data-testid="toolshed-native-typography"]';
+const POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/;
+
+/**
+ * Read the page as the app's own ordered leaf text nodes.
+ *
+ * VERIFIED 2026-07-28: `body.innerText` on a lead detail page returns the
+ * SIDEBAR ONLY (886 chars) while `textContent` has the full 5322 — the detail
+ * panel never lands in innerText, so every innerText-based regex here silently
+ * matched nothing. textContent isn't usable either: it concatenates with no
+ * separator ("…Friday 29 MayTTTeisi TammingLondon, SE12LP…"). The app tags
+ * each leaf with the same testid the board scraper already uses, which gives
+ * both the text and its boundaries.
+ */
+export async function readLeafFields(page: Page): Promise<string[]> {
+  const leaves = await page.locator(LEAF_TEXT_SELECTOR).allTextContents();
+  return leaves.map((t) => t.trim()).filter(Boolean);
+}
+
+/**
+ * The lead's own fields sit at the END of the leaf list (the app shell's nav
+ * occupies the start), laid out as:
+ *   … "TT" (initials), "Teisi Tamming", "London, SE12LP", "On Checkatrade
+ *   since", "January 2026", "Not for me", "I'm interested"
+ * so anchor on the postcode and read the name immediately before it.
+ */
+export function parseLeadIdentity(fields: string[]): {
+  name?: string;
+  location?: string;
+  postcode?: string;
+} {
+  const idx = fields.findIndex((f) => POSTCODE_RE.test(f));
+  if (idx < 0) return {};
+  const location = fields[idx];
+  return {
+    name: idx > 0 ? fields[idx - 1] : undefined,
+    location,
+    postcode: location.match(POSTCODE_RE)?.[0],
+  };
+}
+
+/** Message body is the leaf right after the "Message" label + its timestamp. */
+export function parseLeadMessage(fields: string[]): string | undefined {
+  const i = fields.indexOf("Message");
+  if (i < 0) return undefined;
+  // fields[i+1] is the timestamp ("24 May 26 15:48"); the body follows it.
+  const candidate = fields[i + 2] ?? fields[i + 1];
+  return candidate && candidate !== "Appointments" ? candidate : undefined;
+}
+
+/** Contact details only exist AFTER "I'm interested" — absent on a New lead. */
+export function parseLeadContact(fields: string[]): { phone?: string; email?: string } {
+  const joined = fields.join("\n");
+  return {
+    phone: joined.match(/\+44\s?\d[\d\s]{8,}\d|\b0\d{9,10}\b/)?.[0]?.trim(),
+    email: joined.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,24}/)?.[0],
+  };
+}
 
 export type LeadDetails = {
   /** The real enquiry message from the detail page — richer than the list card's preview. */
@@ -50,15 +108,20 @@ export async function respondToLead(page: Page, opportunity: CheckatradeOpportun
   await page.goto(detailUrl(opportunity.externalId), { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-  // innerText() (not textContent()) — it mirrors what's actually rendered,
-  // inserting line breaks between block-level elements the same way a
-  // human reading the page would see them. textContent() concatenates
-  // every text node with NO separator at all, which silently corrupted
-  // every regex here (e.g. an email glued directly to the following "Show
-  // more" link's text with zero characters between them).
-  const beforeText = await page.locator("body").innerText();
-  const message = beforeText.match(/^Message\n.*\n([\s\S]+?)\n\nAppointments/m)?.[1]?.trim();
-  const appointmentNote = beforeText.match(/^Appointments\n(?:Create\n)?([\s\S]+?)\n\n/m)?.[1]?.trim();
+  // Leaf nodes, not innerText — see readLeafFields for why innerText is blind
+  // to this panel entirely.
+  const before = await readLeafFields(page);
+  const message = parseLeadMessage(before);
+  const apptIdx = before.indexOf("Appointments");
+  const appointmentNote =
+    apptIdx >= 0
+      ? before
+          .slice(apptIdx + 1)
+          .filter((f) => !POSTCODE_RE.test(f))
+          .slice(0, 8)
+          .join(" ")
+          .trim() || undefined
+      : undefined;
 
   // Idempotent: a previous run may have already clicked "I'm interested" on
   // this lead (e.g. it then failed to reach Master OS and got retried).
@@ -71,12 +134,9 @@ export async function respondToLead(page: Page, opportunity: CheckatradeOpportun
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
   }
 
-  const afterText = await page.locator("body").innerText();
-  const phone = afterText.match(/\+44\s?\d[\d\s]{8,}\d/)?.[0]?.trim();
-  // Bounded TLD (2-24 letters) so a following line ("Show more") never
-  // bleeds into the match — the innerText() switch above already fixes the
-  // root cause (real line breaks), this bound is defense in depth.
-  const email = afterText.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,24}/)?.[0];
+  // Contact details are revealed by the click above, so re-read the leaves.
+  const after = await readLeafFields(page);
+  const { phone, email } = parseLeadContact(after);
 
   return { message, appointmentNote, phone, email };
 }

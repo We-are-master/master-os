@@ -2,11 +2,19 @@ import type { Page } from "playwright";
 import type { AcceptedSlot, CheckatradeOpportunity } from "./types.js";
 import type { SlotSelectionStrategy } from "../config.js";
 import { daysBetweenYmd, tzNow, ymdWeekday } from "../time.js";
+import { parseLeadContact, parseLeadIdentity, readLeafFields } from "./leadResponse.js";
+import { evaluateJob } from "../jobRules.js";
 
 export type AcceptOptions = {
   strategy: SlotSelectionStrategy;
   /** When false, a valid slot is identified but "Accept Job" is NOT clicked (dry run / notify-only). */
   autoAccept: boolean;
+  /** Floor that applies to day bookings only — see jobRules.evaluateJob. */
+  nonCertMinValue: number;
+  /** At or above this a job is chased as PRIORITY: taken first, slot rules relaxed. */
+  highValueMin: number;
+  /** The card's "Earnings £X", used by the worth-taking rules. */
+  priceHint?: number;
   /** Accepted slot must be at least this many calendar days from today (UK tz). */
   minDateDaysAhead: number;
   /** Accepted slot's weekday (Sun=0..Sat=6, UK tz) must be one of these. */
@@ -18,7 +26,11 @@ export type AcceptOptions = {
 export type AcceptOutcome =
   | { status: "accepted"; slot: AcceptedSlot }
   | { status: "would_accept"; date: string; timeWindow?: string }
-  | { status: "no_valid_slot"; reason: string };
+  | { status: "no_valid_slot"; reason: string }
+  /** Failed the worth-taking rules once the detail page revealed what it really is. */
+  | { status: "not_worth_taking"; bucket: string; reason: string }
+  /** Clicamos aceitar, mas outro trade chegou primeiro. Nada a criar no OS. */
+  | { status: "lost_race"; reason: string };
 
 // ─── Checkatrade selectors — verified live on 2026-07-06 ────────────────
 // A "job" (Checkatrade Express) opportunity's detail page is
@@ -47,6 +59,8 @@ export type AcceptOutcome =
 const SLOT_OPTION_SELECTOR = '[data-testid^="toolshed-native-dropdown-menu-item-"]';
 const ACCEPT_BUTTON_SELECTOR = 'button[aria-label="Accept Job (at set price)"]';
 const ADDITIONAL_OPTIONS_SELECTOR = 'button[aria-label="Additional options"]';
+/** O selo de status do job. Fora do fluxo de texto, com testid próprio (igual ao do board). */
+const STATUS_PILL_SELECTOR = '[data-testid="toolshed-native-status-pill-label"]';
 
 /** Exported so classify.ts can put this in Master OS's report_link field. */
 export function detailUrl(externalId: string): string {
@@ -83,6 +97,22 @@ export async function acceptJobAndPickSlot(
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
   const richDescription = await scrapeRichDescription(page);
 
+  // ── Worth taking? Decide HERE, before the binding click ─────────────────
+  // The list card is too thin to tell a day booking ("Handyperson: Full Day
+  // (7 Hrs)") from a one-off task ("Curtain Rod Installation") — both are
+  // General Maintenance and neither says "handyman". The detail page's title
+  // and brief do say it, and this runs before "Accept Job" is ever clicked.
+  const detailTitle = await scrapeDetailTitle(page);
+  const verdict = evaluateJob(
+    [detailTitle, opportunity.category, richDescription, opportunity.description].filter(Boolean).join(" \n "),
+    opts.priceHint,
+    opts.nonCertMinValue,
+    opts.highValueMin,
+  );
+  if (!verdict.ok) {
+    return { status: "not_worth_taking", bucket: verdict.bucket, reason: verdict.reason };
+  }
+
   await page.getByText("Select a date and time", { exact: true }).click();
 
   const slotOptions = page.locator(SLOT_OPTION_SELECTOR);
@@ -102,18 +132,30 @@ export async function acceptJobAndPickSlot(
   }
 
   // Keep only slots that satisfy the date rules (min days ahead + allowed weekday).
+  //
+  // PRIORITY jobs (EICR, and anything at or above the high-value mark) get the
+  // restrictions lifted: any weekday, one day's notice. The Tue-Fri /
+  // two-days-ahead rule exists to protect a full-day handyperson booking's
+  // schedule; a certificate is a short visit and is easy to slot in. Holding
+  // EICRs to the day-booking rule dropped them SILENTLY — the job simply never
+  // appeared as accepted — on the single most contested thing we want.
+  const minDays = verdict.priority ? 1 : opts.minDateDaysAhead;
+  const allowedDays = verdict.priority ? [0, 1, 2, 3, 4, 5, 6] : opts.slotDays;
+
   const todayYmd = tzNow(opts.timezone).ymd;
   const validSlots = allSlots.filter((s) => {
     const daysAhead = daysBetweenYmd(todayYmd, s.date);
-    if (!Number.isFinite(daysAhead) || daysAhead < opts.minDateDaysAhead) return false;
-    return opts.slotDays.includes(ymdWeekday(s.date));
+    if (!Number.isFinite(daysAhead) || daysAhead < minDays) return false;
+    return allowedDays.includes(ymdWeekday(s.date));
   });
 
   if (validSlots.length === 0) {
     const offered = allSlots.map((s) => s.date).join(", ");
     return {
       status: "no_valid_slot",
-      reason: `no slot >= ${opts.minDateDaysAhead}d ahead on allowed weekdays [${opts.slotDays.join(",")}]; offered: ${offered}`,
+      reason:
+        `no slot >= ${minDays}d ahead on allowed weekdays [${allowedDays.join(",")}]` +
+        `${verdict.priority ? " (PRIORITY, rules already relaxed)" : ""}; offered: ${offered}`,
     };
   }
 
@@ -129,16 +171,61 @@ export async function acceptJobAndPickSlot(
   await page.locator(ACCEPT_BUTTON_SELECTOR).click();
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
+  // ── Ganhamos mesmo? ─────────────────────────────────────────────────────
+  // Clicar "Accept Job" não é ganhar: o Express é disputado e outro trade pode
+  // ter fechado antes. Quando isso acontece o Checkatrade não recusa nada de
+  // forma visível — ele só deixa de revelar o cliente, e o selo do job vira
+  // "Taken". O RPA não conferia, então criava no OS um job que nunca foi nosso,
+  // sem nome e sem rua (JOB-9440, 15/08/2026, e JOB-9343 antes dele).
+  //
+  // VERIFICADO 2026-08-17 na mesma sessão, lado a lado:
+  //   perdido: selo "Taken - Express Booking" · sidebar ["CE","Checkatrade Express","W10 4BQ"]
+  //   ganho:   selo "In progress - Express Booking" · sidebar ["HS","Hind Sebti","SW15 2DX","+44 78735 82089"]
+  const selo = (await page.locator(STATUS_PILL_SELECTOR).first().textContent().catch(() => null))?.trim() ?? "";
+  if (/^taken\b/i.test(selo)) {
+    return { status: "lost_race", reason: `selo do job: "${selo}" — outro trade fechou antes` };
+  }
+
   const fullAddress = await scrapeRevealedAddress(page);
-  // VERIFIED (2026-07-06, real accepted job "E McLean"): before acceptance
-  // a job card/page never shows a customer name at all (unlike leads) — it
-  // only appears in the sidebar once accepted, same postcode-anchored
-  // pattern as the lead detail page.
-  const customerName = await scrapeRevealedCustomerName(page, opportunity.postcode);
+  // Contact is revealed in the sidebar only once the job is accepted. Read it
+  // from the app's own leaf nodes (VERIFIED 2026-07-28 on a real accepted job:
+  // "TR", "tommy  redhead", "NW3 3QX", "+44 79736 54911", "tommy…@gmail.com"),
+  // the same anchor the lead pages use.
+  const revealed = await scrapeRevealedContact(page);
+
+  // Segunda trava, para quando o selo não renderiza a tempo: num job nosso o
+  // Checkatrade entrega o cliente. Sem nome de gente E sem telefone, não
+  // ganhamos — o "Checkatrade Express" da sidebar é o rótulo da plataforma
+  // ocupando o lugar do nome, não um cliente chamado assim.
+  const nomeEhRotulo = !revealed.name || /^checkatrade\b/i.test(revealed.name.trim());
+  if (nomeEhRotulo && !revealed.phone) {
+    return {
+      status: "lost_race",
+      reason: `cliente nao revelado apos aceitar (nome: ${JSON.stringify(revealed.name ?? null)}, sem telefone)`,
+    };
+  }
+
+  const details = await scrapeAcceptedJobDetails(page, opportunity.externalId);
 
   return {
     status: "accepted",
-    slot: { acceptedDate: chosen.date, acceptedTimeWindow: chosen.timeWindow, fullAddress, customerName, richDescription },
+    slot: {
+      acceptedDate: chosen.date,
+      acceptedTimeWindow: chosen.timeWindow,
+      // `/information` é a fonte melhor: traz apartamento e prédio, que o
+      // link do Google Maps costuma perder.
+      fullAddress: details.fullAddress || fullAddress,
+      customerName: revealed.name,
+      customerPhone: revealed.phone,
+      customerEmail: revealed.email,
+      customerPostcode: revealed.postcode,
+      richTitle: revealed.title,
+      richDescription,
+      earnings: details.earnings,
+      customerNotes: details.customerNotes,
+      duration: details.duration,
+      parking: details.parking,
+    },
   };
 }
 
@@ -166,15 +253,117 @@ async function scrapeRichDescription(page: Page): Promise<string | undefined> {
   }
 }
 
-async function scrapeRevealedCustomerName(page: Page, postcode: string | undefined): Promise<string | undefined> {
-  if (!postcode) return undefined;
+/**
+ * Customer name / postcode / phone / email + the detail page's real title,
+ * read from the app's own leaf text nodes.
+ *
+ * The previous version split `body.innerText` on newlines and required the
+ * caller to already know the postcode. Leaf nodes are both more reliable
+ * (innerText is outright blind to the equivalent panel on LEAD pages) and
+ * self-sufficient — the postcode is discovered rather than passed in.
+ *
+ * Best-effort throughout: a missing field must never block job creation.
+ */
+/**
+ * The job's real title, e.g. "Handyperson: Full Day (7 Hrs) General Repairs".
+ * It sits immediately before the "Message" label. Available BEFORE accepting,
+ * unlike the customer contact — which is why the worth-taking rules can run
+ * ahead of the binding click.
+ */
+async function scrapeDetailTitle(page: Page): Promise<string | undefined> {
   try {
-    const text = await page.locator("body").innerText();
-    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-    const postcodeIdx = lines.findIndex((l) => l.includes(postcode));
-    return postcodeIdx > 0 ? lines[postcodeIdx - 1] : undefined;
+    const fields = await readLeafFields(page);
+    const i = fields.indexOf("Message");
+    return i > 0 ? fields[i - 1] : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Reads the ACCEPTED job's own page, which is a different, richer document
+ * from the one the worth-taking rules ran against.
+ *
+ * Before accepting, Checkatrade shows a teaser: postcode only, boilerplate
+ * message, a price hint on the card. Once accepted the page becomes
+ * "In progress - Express Booking" and finally states the things the job
+ * actually needs (verified against a real accepted job on 2026-08-12,
+ * "Half Day Handyperson Time (3.5 Hrs)", 25 Kent Gardens W13 8BU):
+ *
+ *   Your Earnings          £149.50   exact, Checkatrade's fee already removed
+ *   Customer notes         the real brief, not the boilerplate
+ *   How much help...       "Up to half a day (3.5 hours)" — the band, stated
+ *   Is parking available?  Yes/No — the partner needs to know before leaving
+ *
+ * Everything here is best-effort. A missing field must never block job
+ * creation: the accept already happened and is financially binding, so a
+ * failed scrape can only be allowed to cost us data, never the job.
+ */
+async function scrapeAcceptedJobDetails(page: Page, externalId: string): Promise<{
+  earnings?: number;
+  customerNotes?: string;
+  duration?: string;
+  parking?: boolean;
+  fullAddress?: string;
+}> {
+  try {
+    // `/information` é a página por trás do link "View all job information", e
+    // é o ÚNICO lugar onde o endereço completo aparece. A barra lateral do job
+    // aceito mostra só o postcode ("N5 1PZ"); aqui vem "Flat 5, Manning House,
+    // Fieldway Crescent, London, N5 1PZ". Navegar direto em vez de clicar
+    // porque o link não tem testid e o texto do botão é só "View".
+    await page.goto(`https://membersapp.checkatrade.com/business-jobs/${externalId}/information`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+
+    const campos = await readLeafFields(page);
+    // O endereço é a linha que tem vírgula E postcode. O postcode sozinho
+    // aparece em outros lugares da página, a vírgula é o que separa.
+    const fullAddress = campos.find(
+      (f) => /,/.test(f) && /[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}/i.test(f),
+    );
+
+    const text = await page.locator("body").innerText();
+
+    // Ancorado na etiqueta "Your Earnings" porque a página carrega outros
+    // valores em libras, e pegar o número errado despreçaria o job em silêncio.
+    const earningsRaw = text.match(/Your Earnings\s*\n?\s*£\s*([\d,]+(?:\.\d{2})?)/i)?.[1];
+    const earnings = earningsRaw ? Number(earningsRaw.replace(/,/g, "")) : undefined;
+
+    const customerNotes = text
+      .match(/Customer notes(?:\s*\n.*?)?\n([\s\S]+?)\n(?:How much help|Is parking|Your Earnings)/i)?.[1]
+      ?.trim();
+
+    const duration = text.match(/How much help do you need\?\s*\n(.+)/i)?.[1]?.trim();
+
+    const parkingRaw = text.match(/Is parking available\?\s*\n(\w+)/i)?.[1];
+    const parking = parkingRaw ? /^yes$/i.test(parkingRaw) : undefined;
+
+    return { earnings, customerNotes, duration, parking, fullAddress };
+  } catch {
+    return {};
+  }
+}
+
+async function scrapeRevealedContact(page: Page): Promise<{
+  name?: string;
+  postcode?: string;
+  phone?: string;
+  email?: string;
+  title?: string;
+}> {
+  try {
+    const fields = await readLeafFields(page);
+    const { name, postcode } = parseLeadIdentity(fields);
+    const { phone, email } = parseLeadContact(fields);
+    // The title sits immediately before the "Message" label, after the page
+    // heading and (on an accepted job) the "Mark job as complete" action.
+    const msgIdx = fields.indexOf("Message");
+    const title = msgIdx > 0 ? fields[msgIdx - 1] : undefined;
+    return { name, postcode, phone, email, title };
+  } catch {
+    return {};
   }
 }
 

@@ -41,20 +41,72 @@ export async function getOrCreateContext(
   return { browser, context, page };
 }
 
+/** True when the URL is the app proper (not the login screen, which also lives on membersapp). */
+function urlLooksLoggedIn(url: string): boolean {
+  return url.startsWith("https://membersapp.checkatrade.com") && !url.includes("/login");
+}
+
 async function isLoggedIn(page: Page): Promise<boolean> {
-  try {
-    await page.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    // Auth0 redirects an expired session away to login.trade.checkatrade.com.
-    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-    return page.url().startsWith("https://membersapp.checkatrade.com");
-  } catch {
-    return false;
+  // A slow load must not read as "logged out". The old version returned false
+  // from a bare catch, so a 15s timeout on a heavy page sent a perfectly good
+  // session into login() — which then crashed, because /login redirects
+  // straight back into the app when you're already authenticated and the
+  // "Trade log in" button it waits for never appears. Retry before concluding.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await page.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+      return urlLooksLoggedIn(page.url());
+    } catch (err) {
+      logger.warn(`isLoggedIn attempt ${attempt} failed to load ${DASHBOARD_URL}: ${String(err)}`);
+      await page.waitForTimeout(3_000);
+    }
+  }
+  // Couldn't tell. Say "logged in" — login() is now self-healing, so a wrong
+  // guess here costs one wasted navigation instead of a crash loop.
+  return true;
+}
+
+/** Thrown by the scraper when Checkatrade redirected the cycle to /login. */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Checkatrade session expired (redirected to login)");
   }
 }
 
+/** Mid-run recovery: log in again on the SAME page/context and persist the fresh session. */
+export async function reLogin(page: Page, context: BrowserContext, cfg: RpaConfig): Promise<void> {
+  await login(page, cfg);
+  await context.storageState({ path: STORAGE_STATE_PATH });
+  logger.info("Refreshed Checkatrade session after mid-run expiry");
+}
+
 async function login(page: Page, cfg: RpaConfig): Promise<void> {
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-  await page.getByText("Trade log in", { exact: true }).click();
+  // domcontentloaded + folga: o "load" completo da tela de login passa fácil
+  // dos 30s padrão no container e derrubava o processo na largada.
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+
+  // Already authenticated? /login bounces into the app and there is no "Trade
+  // log in" button to click — waiting for one threw and killed the process
+  // (fatal, since getOrCreateContext failure exits the container). Treat it as
+  // success: we're logged in, which is all the caller wanted.
+  if (urlLooksLoggedIn(page.url())) {
+    logger.info("Already authenticated — /login redirected into the app; skipping login flow");
+    return;
+  }
+
+  const tradeLogIn = page.getByText("Trade log in", { exact: true });
+  if (!(await tradeLogIn.isVisible({ timeout: 15_000 }).catch(() => false))) {
+    // No button and no app URL either — an interstitial (Cloudflare, an
+    // outage page). Say which, rather than a bare selector timeout.
+    const body = await page.locator("body").innerText().catch(() => "");
+    if (/Sorry, you have been blocked|Cloudflare Ray ID|Just a moment/i.test(body)) {
+      throw new Error("Cloudflare is blocking the login page — wait for the rate limit to clear.");
+    }
+    throw new Error(`Login page has no "Trade log in" button. URL=${page.url()}`);
+  }
+  await tradeLogIn.click();
 
   await page.locator(EMAIL_SELECTOR).waitFor({ timeout: 15_000 });
   await page.locator(EMAIL_SELECTOR).fill(cfg.env.checkatradeEmail);
