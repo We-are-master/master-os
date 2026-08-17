@@ -27,7 +27,7 @@ const CASES: [string, number | undefined, boolean, string][] = [
 
   // ── Tudo o mais: piso £100 ────────────────────────────────────────────
   ["Emergency Plumbing Repair", 180, true, "hidráulica acima do piso"],
-  ["Full Rewire - 2 Bed Flat", 450, true, "elétrica acima do piso"],
+  ["Full Rewire - 2 Bed Flat", 450, false, "elétrica sem certificado: fora, pague o que pagar (17/08)"],
   ["Toilet Leak Repair", 109, true, "acima de 100"],
   ["Leaking Tap Repair", 88.4, false, "abaixo de 100"],
   ["Side Bath Panel Installation", 95.5, false, "abaixo de 100"],
@@ -40,7 +40,7 @@ const CASES: [string, number | undefined, boolean, string][] = [
 
   // ── Avulsas: preço decide agora, não o formato do job ─────────────────
   ["Rehang 2 Misaligned External Doors", 191, true, "avulsa cara agora entra"],
-  ["New Extractor Fan Install w/ Ducting", 190, true, "avulsa cara agora entra"],
+  ["New Extractor Fan Install w/ Ducting", 190, false, "extractor fan é elétrica: fora (17/08)"],
   ["Mortice Lock Fitting (Deadlock)", 200, true, "avulsa cara agora entra"],
   ["Curtain Rod Installation (Up to 3m)", 73, false, "avulsa barata segue fora"],
   ["Office Desk Assembly (Up to 1.5m)", 53.65, false, "avulsa barata, 2% de margem"],
@@ -258,6 +258,37 @@ test("EPC: a tabela inteira do Checkatrade fica abaixo do parceiro", () => {
     const v = evaluateJob("(EPC) Energy Performance Certificate", p, 100);
     assert.equal(v.ok, false, `EPC a £${p} devia sair — ${v.reason}`);
   }
+});
+
+test("elétrica sem certificado fica fora; certificado elétrico continua entrando", () => {
+  // Ordem do dono (17/08/2026): "elétrica é o único que não vamos arriscar for
+  // now — não pegamos nada, só certificados". Preço não compra a entrada.
+  for (const [titulo, preco] of [
+    ["Socket Replacement", 120],
+    ["Light Fitting Installation", 150],
+    ["Electrician Required - Various Jobs", 300],
+    ["Consumer Unit Replacement", 485],
+    ["Electric Shower Installation", 400],
+  ] as const) {
+    const v = evaluateJob(titulo, preco, 100);
+    assert.equal(v.ok, false, `${titulo} a £${preco} devia sair — ${v.reason}`);
+    assert.match(v.reason, /electrical work without certificate/);
+  }
+  // O certificado tem precedência: EICR e Emergency Lighting contêm "electrical"
+  // e "lighting" e continuam entrando pela conta de sempre.
+  assert.equal(evaluateJob("2-Bed EICR Electrical Safety Check", 127, 100).ok, true);
+  assert.equal(evaluateJob("Emergency Lighting Certificate", 91, 100).ok, true);
+});
+
+test("o gate de elétrica lê o título, nunca o brief", () => {
+  // Um TV mount perfeitamente bom diz "hide cables in the socket behind the
+  // TV" no brief. Com o título separado, o job entra; sem ele, o texto todo
+  // decide e o mesmo job sairia — que é o comportamento antigo dos testes.
+  const texto = 'TV Mounting - Large TV (Up To 100") \n Please hide the cables in the socket behind the TV';
+  const comTitulo = evaluateJob(texto, 120, 100, 150, undefined, undefined, 'TV Mounting - Large TV (Up To 100")');
+  assert.equal(comTitulo.ok, true, comTitulo.reason);
+  const semTitulo = evaluateJob(texto, 120, 100);
+  assert.equal(semTitulo.ok, false);
 });
 
 test("General Maintenance pequeno volta a entrar com o piso de £70", () => {

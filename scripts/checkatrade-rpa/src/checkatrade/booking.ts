@@ -108,6 +108,11 @@ export async function acceptJobAndPickSlot(
     opts.priceHint,
     opts.nonCertMinValue,
     opts.highValueMin,
+    undefined,
+    undefined,
+    // Só os títulos, sem o brief: o gate de elétrica lê isto. Um brief que
+    // menciona "socket behind the TV" não pode derrubar um TV mount bom.
+    [detailTitle, opportunity.category].filter(Boolean).join(" \n "),
   );
   if (!verdict.ok) {
     return { status: "not_worth_taking", bucket: verdict.bucket, reason: verdict.reason };
