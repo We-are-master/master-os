@@ -153,6 +153,21 @@ async function main() {
       const job = cand[0];
       if (job.payment_status === "paid") continue;
 
+      // Se a invoice pede mais do que a Housekeep pagou, o job NÃO está pago —
+      // está parcialmente pago, e o campo não tem esse estado (só unpaid/paid).
+      // Marcar "paid" aqui apagaria a diferença do a receber e criaria a
+      // cobrança falsa ao contrário: o job diz quitado, a invoice diz que falta.
+      // Melhor deixar os dois abertos e mandar o caso, que é dinheiro de verdade
+      // faltando, não ruído.
+      if (job.invoice_id) {
+        const pre = (await (await fetch(`${SB}/rest/v1/invoices?select=reference,status,amount&id=eq.${job.invoice_id}`, { headers: SH })).json())[0];
+        if (pre && pre.status !== "paid" && Number(pre.amount) - it.valor > 0.01) {
+          invoiceAberta.push({ job: job.reference, inv: pre.reference, valor: Number(pre.amount), recebido: it.valor });
+          L.push(`  ${it.dia.padEnd(11)} ${it.pc.padEnd(9)} ${fmt(it.valor).padStart(9)}  ${job.reference}  PARCIAL: invoice pede ${fmt(pre.amount)}`);
+          continue;
+        }
+      }
+
       if (APLICAR) {
         await fetch(`${SB}/rest/v1/jobs?id=eq.${job.id}`, {
           method: "PATCH", headers: SHW,
