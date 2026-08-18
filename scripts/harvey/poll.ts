@@ -40,6 +40,8 @@ const MAX_CLASSIFICADOS_POR_CICLO = 15;
 const MAX_QUOTES_POR_CICLO = 3;
 const JANELA_DIAS = 3;
 const TAG = "ai_quote_draft";
+const TAG_JOB = "ai_job_created";
+const MAX_JOBS_POR_CICLO = 2;
 const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
 
 function baseUrl(): string {
@@ -66,7 +68,7 @@ type TicketDaBusca = { id: number; subject: string; description: string; tags: s
 
 async function buscarCandidatos(): Promise<TicketDaBusca[]> {
   const desde = new Date(Date.now() - JANELA_DIAS * 864e5).toISOString().slice(0, 10);
-  const query = `type:ticket status<solved updated>${desde} -tags:${TAG}`;
+  const query = `type:ticket status<solved updated>${desde} -tags:${TAG} -tags:${TAG_JOB}`;
   const res = await fetch(
     `${baseUrl()}/search.json?query=${encodeURIComponent(query)}&sort_by=updated_at&sort_order=desc&per_page=50`,
     { headers: { Authorization: authHeader() } },
@@ -81,7 +83,7 @@ async function buscarCandidatos(): Promise<TicketDaBusca[]> {
  * bastante para rodar em todo candidato, estrito o bastante para não cotar
  * fatura, confirmação de agendamento ou reclamação.
  */
-async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<boolean> {
+async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<{ quote: boolean; booking: boolean }> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -93,7 +95,7 @@ async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<boolean> {
         {
           role: "system",
           content:
-            'You classify a helpdesk ticket. Answer strict JSON {"is_quote_request":boolean}. true ONLY when the ticket asks for a price, quote, quotation or estimate for property maintenance/trade work that has not been priced yet. Booking confirmations, invoices, complaints, job updates and payment threads are false.',
+            'You classify a helpdesk ticket. Answer strict JSON {"is_quote_request":boolean,"is_confirmed_booking":boolean}. is_quote_request: true ONLY when the ticket asks for a price/quote/estimate for maintenance work not yet priced. is_confirmed_booking: true ONLY when the ticket confirms work agreed to go ahead (partner booking confirmation with a date, or explicit acceptance of a quote). Invoices, complaints, job updates and payment threads are both false.',
         },
         { role: "user", content: `Subject: ${t.subject}\n\nDescription: ${t.description?.slice(0, 1500) ?? ""}` },
       ],
@@ -102,26 +104,29 @@ async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<boolean> {
   if (!res.ok) throw new Error(`OpenAI classify: HTTP ${res.status}`);
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   try {
-    return (JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as { is_quote_request?: boolean })
-      .is_quote_request === true;
+    const j = JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as {
+      is_quote_request?: boolean; is_confirmed_booking?: boolean;
+    };
+    return { quote: j.is_quote_request === true, booking: j.is_confirmed_booking === true };
   } catch {
-    return false;
+    return { quote: false, booking: false };
   }
 }
 
-async function adicionarTag(ticketId: number): Promise<void> {
+async function adicionarTagNomeada(ticketId: number, tag: string): Promise<void> {
   const res = await fetch(`${baseUrl()}/tickets/${ticketId}/tags.json`, {
     method: "POST",
     headers: { Authorization: authHeader(), "content-type": "application/json" },
-    body: JSON.stringify({ tags: [TAG] }),
+    body: JSON.stringify({ tags: [tag] }),
   });
   if (!res.ok) throw new Error(`tag failed: HTTP ${res.status}`);
 }
+const adicionarTag = (ticketId: number) => adicionarTagNomeada(ticketId, TAG);
 
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-  const { cotarTicket } = await import("../../src/lib/zendesk-quoter/quoter");
+  const { cotarTicket, subirJobBooked } = await import("../../src/lib/zendesk-quoter/quoter");
 
   const vistos = lerVistos();
   const candidatos = (await buscarCandidatos()).filter(
@@ -129,17 +134,43 @@ async function ciclo(): Promise<void> {
   );
   console.log(`[harvey] ${new Date().toISOString()} candidatos apos filtros: ${candidatos.length}`);
 
-  let cotados = 0;
+  let cotados = 0, criados = 0;
   for (const t of candidatos.slice(0, MAX_CLASSIFICADOS_POR_CICLO)) {
-    if (cotados >= MAX_QUOTES_POR_CICLO) break;
-    let quer = false;
+    if (cotados >= MAX_QUOTES_POR_CICLO && criados >= MAX_JOBS_POR_CICLO) break;
+    let quer = { quote: false, booking: false };
     try {
       quer = await pedePreco(t, apiKey);
     } catch (err) {
       console.error(`[harvey] classificacao falhou no ${t.id}: ${err}`);
       continue;
     }
-    if (!quer) {
+    // Booking confirmado tem prioridade sobre quote: job agendado esperando
+    // no OS vale mais que um rascunho de preço.
+    if (quer.booking && criados < MAX_JOBS_POR_CICLO) {
+      console.log(`[harvey] #${t.id} "${t.subject.slice(0, 70)}" parece BOOKING — subindo pro OS...`);
+      try {
+        const r = await subirJobBooked(t.id, true);
+        if (r.status === "criado") {
+          vistos.add(t.id); gravarVistos(vistos);
+          try { await adicionarTagNomeada(t.id, TAG_JOB); } catch (err) { console.error(`[harvey] tag job falhou no ${t.id}: ${err}`); }
+          criados++;
+          console.log(`[harvey] ✔ job ${r.reference} criado no OS a partir do #${t.id}`);
+          continue;
+        }
+        if (r.status === "faltando") {
+          vistos.add(t.id); gravarVistos(vistos);
+          try { await adicionarTagNomeada(t.id, TAG_JOB); } catch (err) { console.error(`[harvey] tag falhou no ${t.id}: ${err}`); }
+          criados++;
+          console.log(`[harvey] ◐ booking no #${t.id} com dado faltando — nota interna pedindo`);
+          continue;
+        }
+        // nao_e_booking: o extrator discordou do classificador; cai pro fluxo de quote.
+      } catch (err) {
+        console.error(`[harvey] booking falhou no ${t.id}: ${err}`);
+        continue;
+      }
+    }
+    if (!quer.quote || cotados >= MAX_QUOTES_POR_CICLO) {
       // Não marca visto: um ticket pode virar pedido de quote num comentário
       // futuro, e a janela de busca é curta o bastante para reavaliar barato.
       continue;
@@ -164,7 +195,7 @@ async function ciclo(): Promise<void> {
       console.error(`[harvey] cotacao falhou no ${t.id}: ${err}`);
     }
   }
-  console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s) interno(s)`);
+  console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s)`);
 }
 
 ciclo().catch((err) => {

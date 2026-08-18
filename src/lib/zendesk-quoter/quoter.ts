@@ -17,6 +17,7 @@
  */
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { updateTicket } from "@/lib/zendesk";
+import { createServiceClient } from "@/lib/supabase/service";
 
 const MAX_IMAGENS = 6;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
@@ -233,4 +234,164 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
   const nota = montarNotaInterna(ticket, pedido, resultado);
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado };
+}
+
+
+/* ==================== o braço de BOOKING do Harvey ==================== */
+/**
+ * Ordem do dono (18/08): "o Harvey também tem que pegar os jobs já booked e
+ * os de quote que ele ganhou e subir no OS". A regra de ouro da casa vale
+ * dobrado aqui ([[never-create-job-without-full-client]]): sem nome, endereço
+ * E data explícitos no ticket, o job NÃO nasce — nasce uma nota interna
+ * dizendo exatamente o que falta. Extração é evidência, nunca invenção.
+ *
+ * A criação usa o /api/jobs com `ticket_id`, que é IDEMPOTENTE: repostar o
+ * mesmo ticket devolve o job existente — dedupe de graça, além da tag.
+ */
+export type ExtracaoBooking = {
+  isConfirmedBooking: boolean;
+  clientName: string | null;
+  propertyAddress: string | null;
+  postcode: string | null;
+  date: string | null;
+  arrivalWindow: string | null;
+  priceGbp: number | null;
+  serviceSummary: string | null;
+  company: string | null;
+  missing: string[];
+};
+
+export async function extrairBooking(ticket: TicketLido, apiKey: string): Promise<ExtracaoBooking> {
+  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You read a B2B maintenance ticket thread and decide if it is a CONFIRMED booking (a job that is agreed/booked to be carried out — a booking confirmation from a partner, or an explicit acceptance of a quote we sent). Reply strict JSON only.
+
+Rules:
+- ONLY values written explicitly in the thread. Never guess, never infer an address from a postcode, never invent a date. A value you cannot quote from the thread is null and goes in "missing".
+- is_confirmed_booking is true ONLY when the work is agreed to go ahead (booked date, "please proceed", "quote approved", partner booking confirmation). A request for a quote or availability is false.
+- date is YYYY-MM-DD. arrival_window like "09:00 - 12:00" or null. price_gbp is the agreed job value or null.
+- company: which partner/company sent this (e.g. Housekeep) if stated.
+
+JSON: {"is_confirmed_booking":bool,"client_name":str|null,"property_address":str|null,"postcode":str|null,"date":str|null,"arrival_window":str|null,"price_gbp":num|null,"service_summary":str|null,"company":str|null,"missing":["..."]}`,
+        },
+        { role: "user", content: `Ticket #${ticket.id} — "${ticket.subject}"\n\n${ticket.thread}` },
+      ],
+    }),
+  });
+  if (!resposta.ok) throw new Error(`OpenAI booking ${resposta.status}`);
+  const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const j = JSON.parse(corpo.choices?.[0]?.message?.content ?? "{}") as Record<string, unknown>;
+  return {
+    isConfirmedBooking: j.is_confirmed_booking === true,
+    clientName: (j.client_name as string) || null,
+    propertyAddress: (j.property_address as string) || null,
+    postcode: (j.postcode as string) || null,
+    date: (j.date as string) || null,
+    arrivalWindow: (j.arrival_window as string) || null,
+    priceGbp: typeof j.price_gbp === "number" ? j.price_gbp : null,
+    serviceSummary: (j.service_summary as string) || null,
+    company: (j.company as string) || null,
+    missing: Array.isArray(j.missing) ? (j.missing as string[]) : [],
+  };
+}
+
+/** Conta B2B pelo nome citado no ticket (ou pelo assunto "[Housekeep]"). */
+async function acharConta(pistas: Array<string | null>): Promise<{ id: string; nome: string } | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase.from("accounts").select("id, company_name").is("deleted_at", null);
+  const contas = (data ?? []) as Array<{ id: string; company_name: string }>;
+  for (const pista of pistas) {
+    if (!pista) continue;
+    const p = pista.toLowerCase();
+    const hit = contas.find(
+      (c) => p.includes(c.company_name.toLowerCase()) || c.company_name.toLowerCase().includes(p),
+    );
+    if (hit) return { id: hit.id, nome: hit.company_name };
+  }
+  return null;
+}
+
+export type ResultadoBooking =
+  | { status: "criado"; reference: string; nota: string }
+  | { status: "faltando"; nota: string }
+  | { status: "nao_e_booking" };
+
+export async function subirJobBooked(ticketId: number, postar: boolean): Promise<ResultadoBooking> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const ticket = await lerTicketCompleto(ticketId);
+  const ex = await extrairBooking(ticket, apiKey);
+  if (!ex.isConfirmedBooking) return { status: "nao_e_booking" };
+
+  const conta = await acharConta([ex.company, ticket.subject]);
+  const faltas = [...ex.missing];
+  if (!ex.clientName) faltas.push("client name");
+  if (!ex.propertyAddress) faltas.push("property address");
+  if (!ex.date) faltas.push("booked date");
+  if (!conta) faltas.push("which B2B account this belongs to");
+
+  if (faltas.length > 0) {
+    const nota = [
+      "🤖 HARVEY — booking detected, but NOT created in the OS.",
+      "",
+      `What I read: ${ex.serviceSummary ?? ticket.subject}`,
+      "",
+      "Missing before the job can exist (owner rule: no full client, no job):",
+      ...[...new Set(faltas.map((f) => f.toLowerCase().replace(/_/g, " ")))].map((f) => `- ${f}`),
+      "",
+      "When the info lands in this ticket, REMOVE the ai_job_created tag and I will retry on my next pass — or create the job manually in the OS.",
+    ].join("\n");
+    if (postar) await postarNotaInterna(ticketId, nota);
+    return { status: "faltando", nota };
+  }
+
+  const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
+  const res = await fetch(`${base}/api/jobs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.MASTER_OS_JOB_WEBHOOK_API_KEY ?? "",
+    },
+    body: JSON.stringify({
+      account_id: conta!.id,
+      date: ex.date,
+      arrival_time: ex.arrivalWindow?.split("-")[0]?.trim() || "09:00",
+      client_name: ex.clientName,
+      property_address: ex.propertyAddress,
+      postcode: ex.postcode ?? undefined,
+      title: ex.serviceSummary?.slice(0, 120) ?? ticket.subject,
+      service_type: "General Maintenance",
+      description: ex.serviceSummary ?? undefined,
+      client_price: ex.priceGbp ?? undefined,
+      internal_notes: `Created by Harvey from Zendesk booking #${ticketId} (${conta!.nome}).`,
+      auto_assign: false,
+      // O ticket JÁ existe: linka por external_source/external_ref e ganha
+      // idempotência — repostar o mesmo ticket devolve o job existente.
+      ticket_id: String(ticketId),
+    }),
+  });
+  const corpo = (await res.json().catch(() => ({}))) as { reference?: string; error?: string };
+  if (!res.ok) throw new Error(`OS /api/jobs ${res.status}: ${corpo.error ?? "?"}`);
+
+  const nota = [
+    `✅ HARVEY — job ${corpo.reference ?? "?"} created in the OS from this booking.`,
+    "",
+    `Account: ${conta!.nome}`,
+    `Client: ${ex.clientName} · ${ex.propertyAddress}${ex.postcode ? ` · ${ex.postcode}` : ""}`,
+    `Date: ${ex.date}${ex.arrivalWindow ? ` · ${ex.arrivalWindow}` : ""}`,
+    ex.priceGbp != null ? `Value: £${ex.priceGbp.toFixed(2)}` : "Value: not stated in ticket",
+    "",
+    "Unassigned — office picks the partner in the OS.",
+  ].join("\n");
+  if (postar) await postarNotaInterna(ticketId, nota);
+  return { status: "criado", reference: corpo.reference ?? "?", nota };
 }
