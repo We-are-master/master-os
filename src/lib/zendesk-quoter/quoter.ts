@@ -74,8 +74,13 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
   let totalAnexos = 0;
 
   for (const c of cJson.comments) {
+    // O Harvey não se lê: as PRÓPRIAS notas (🤖/✅/⚠️, AI QUOTE DRAFT) fora do
+    // thread — senão a segunda passada consolida em cima da primeira e o
+    // matcher deriva (visto ao vivo: £282.98 → £0 na reposta do #48833).
+    const corpo = c.body.trim();
+    if (!c.public && /^(🤖|✅|⚠️)|AI QUOTE DRAFT|HARVEY —/.test(corpo)) continue;
     const autor = quem.get(c.author_id) ?? `user ${c.author_id}`;
-    partes.push(`[${autor}${c.public ? "" : " — internal note"}]\n${c.body.trim()}`);
+    partes.push(`[${autor}${c.public ? "" : " — internal note"}]\n${corpo}`);
     for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]*housekeep\.com[^"]*)"/g)) {
       const url = m[1]!.replace(/&amp;/g, "&");
       if (!linksHousekeep.includes(url)) linksHousekeep.push(url);
@@ -116,6 +121,8 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
 
 export type PedidoConsolidado = {
   quoteRequest: string;
+  /** O mesmo trabalho na voz de quem executa — é ISSO que vira o Scope. */
+  scopeOfWork: string;
   facts: string[];
   missingInfo: string[];
 };
@@ -156,10 +163,11 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
 Rules:
 - Only state what the thread or the photos actually show. Every fact you extract from a photo must say so ("photo shows...").
 - quote_request: one plain-English paragraph describing exactly what needs pricing (trades, items, quantities, sizes when known).
+- scope_of_work: the SAME work written as OUR statement of what we will carry out — the voice of the company executing, not the customer asking (e.g. "Fill and caulk approximately 1m of cracks around the bedroom window ledge and wardrobe, plaster and make good the affected areas. No painting included."). Never start with "Please provide a quote" or echo the request.
 - facts: bullet facts that support the quote (from text or photos).
 - missing_info: what a surveyor would still need to ask before committing a price. Be strict — B2B quotes cannot be wrong.
 
-JSON shape: {"quote_request":"...","facts":["..."],"missing_info":["..."]}`,
+JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missing_info":["..."]}`,
         },
         { role: "user", content: conteudoUsuario },
       ],
@@ -171,10 +179,11 @@ JSON shape: {"quote_request":"...","facts":["..."],"missing_info":["..."]}`,
   const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const bruto = corpo.choices?.[0]?.message?.content;
   if (!bruto) throw new Error("OpenAI returned an empty consolidation");
-  const json = JSON.parse(bruto) as { quote_request?: string; facts?: string[]; missing_info?: string[] };
+  const json = JSON.parse(bruto) as { quote_request?: string; scope_of_work?: string; facts?: string[]; missing_info?: string[] };
   if (!json.quote_request?.trim()) throw new Error("consolidation produced no quote_request");
   return {
     quoteRequest: json.quote_request.trim(),
+    scopeOfWork: (json.scope_of_work ?? json.quote_request).trim(),
     facts: json.facts ?? [],
     missingInfo: json.missing_info ?? [],
   };
@@ -240,7 +249,7 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
 
   const ticket = await lerTicketCompleto(ticketId);
   const pedido = await consolidarPedido(ticket, apiKey);
-  const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.quoteRequest);
+  const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.scopeOfWork);
   const nota = montarNotaInterna(ticket, pedido, resultado);
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado };
