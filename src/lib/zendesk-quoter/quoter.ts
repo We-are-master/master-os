@@ -442,6 +442,22 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
+  // Ticket que JÁ tem job no OS (subido por humano ou por outro agente) não
+  // precisa de nota nenhuma — visto ao vivo em 19/08: imports manuais do dono
+  // com ticket_id linkado ganhavam nota de "missing info" à toa.
+  {
+    const { data: existente } = await createServiceClient()
+      .from("jobs")
+      .select("reference")
+      .eq("external_source", "zendesk")
+      .eq("external_ref", String(ticketId))
+      .is("deleted_at", null)
+      .limit(1);
+    if (existente && existente.length > 0) {
+      return { status: "criado", reference: existente[0]!.reference as string, nota: "(job já existia — nada a fazer)" };
+    }
+  }
+
   const ticket = await lerTicketCompleto(ticketId);
   const ex = await extrairBooking(ticket, apiKey);
   if (!ex.isConfirmedBooking) return { status: "nao_e_booking" };

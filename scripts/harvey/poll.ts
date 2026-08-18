@@ -43,6 +43,7 @@ const TAG = "ai_quote_draft";
 const TAG_JOB = "ai_job_created";
 const MAX_JOBS_POR_CICLO = 2;
 const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
+const CANCEL_SEEN_PATH = join(process.cwd(), "scripts/harvey/.cancel-seen.json");
 const RECON_PATH = join(process.cwd(), "scripts/harvey/.reconciliado.json");
 /** A view "Customer Support::🛠️ Jobs" — a fila oficial de jobs no Zendesk. */
 const VIEW_JOBS = "5687884937759";
@@ -329,6 +330,23 @@ async function ciclo(): Promise<void> {
     }
   }
   console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s)`);
+
+  // Vigia de cancelamentos em TODO ciclo (dono, 19/08): o aviso chega, cai em
+  // auto-solved e ninguém vê — o Harvey vê, cancela no OS com match
+  // inequívoco (e-mail ao parceiro pela engine oficial) ou reabre o ticket
+  // pro Action Required. Estado em arquivo porque ticket closed não aceita tag.
+  try {
+    const { vigiarCancelamentos } = await import("../../src/lib/zendesk-quoter/cancelamentos");
+    let cancelVistos = new Set<number>();
+    try { cancelVistos = new Set(JSON.parse(readFileSync(CANCEL_SEEN_PATH, "utf8")) as number[]); } catch { /* primeiro uso */ }
+    const rc = await vigiarCancelamentos(cancelVistos);
+    writeFileSync(CANCEL_SEEN_PATH, JSON.stringify([...cancelVistos]));
+    if (rc.analisados > 0) {
+      console.log(`[harvey] cancelamentos: ${rc.analisados} analisado(s), ${rc.cancelados} cancelado(s), ${rc.reabertos} reaberto(s) pro humano`);
+    }
+  } catch (err) {
+    console.error(`[harvey] vigia de cancelamentos morreu: ${err}`);
+  }
 
   // De hora em hora (primeiro ciclo de cada hora): a view Jobs tem que bater
   // com o OS, job por job.
