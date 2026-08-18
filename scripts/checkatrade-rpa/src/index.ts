@@ -95,12 +95,15 @@ async function main(): Promise<void> {
          */
         await rodarConclusoes(page, cfg, masterOs);
 
-        // Dono (18/08): expediente até 22h, mas depois das 21h NENHUMA
-        // mensagem a lead — expressar interesse manda mensagem, então lead
-        // congela; job Express não fala com ninguém, só aceita e sobe pro OS,
-        // então segue a noite toda. Lead que apareceu tarde continua New no
-        // board e a primeira passada da manhã pega.
-        const leadsAbertos = tzNow(cfg.schedule.timezone).hour < cfg.schedule.leadsEndHour;
+        // Dono (18/08, de noite, depois de perder um EICR que entrou e foi
+        // embora): os agentes trabalham 24 HORAS — Ruben ligado a cada ciclo,
+        // job Express aceito na hora, madrugada inclusive. A ÚNICA exceção é
+        // mensagem a lead do Checkatrade, permitida só entre LEADS_START_HOUR
+        // e LEADS_END_HOUR (07–21 London): expressar interesse manda mensagem
+        // e ninguém quer WhatsApp de madrugada; job não fala com ninguém.
+        // Lead fora da janela continua New no board e a manhã pega.
+        const horaLondres = tzNow(cfg.schedule.timezone).hour;
+        const leadsAbertos = horaLondres >= cfg.schedule.leadsStartHour && horaLondres < cfg.schedule.leadsEndHour;
         let opportunities;
         if (deepDue) {
           opportunities = await scrapeOpportunities(page);
@@ -117,7 +120,7 @@ async function main(): Promise<void> {
           const antes = opportunities.length;
           opportunities = opportunities.filter((o) => o.kind !== "lead");
           if (antes !== opportunities.length) {
-            logger.info(`Night mode (>= ${cfg.schedule.leadsEndHour}h London): ${antes - opportunities.length} lead(s) left for the morning pass`);
+            logger.info(`Leads frozen (window ${cfg.schedule.leadsStartHour}-${cfg.schedule.leadsEndHour}h London): ${antes - opportunities.length} lead(s) left for the day pass`);
           }
         }
 

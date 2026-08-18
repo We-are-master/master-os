@@ -62,6 +62,7 @@ export type RpaConfig = {
     pollIntervalSeconds: number; // POLL_INTERVAL — ciclo RÁPIDO (só os New do topo)
     pollJitter: number;          // POLL_JITTER — random fraction added per cycle (0.6 = up to +60%)
     leadsIntervalSeconds: number; // LEADS_INTERVAL — de quanto em quanto o ciclo rápido também olha os leads
+    leadsStartHour: number;      // LEADS_START_HOUR — antes desta hora (London) lead congela: sem mensagem de madrugada; jobs seguem
     leadsEndHour: number;        // LEADS_END_HOUR — a partir desta hora (London) lead congela: sem mensagem à noite; jobs seguem
     deepScanMinutes: number;      // DEEP_SCAN_MINUTES — varredura completa (placar, dedupe, conclusões)
     runDays: number[];           // RUN_DAYS — getDay() values (Sun=0..Sat=6) the bot runs on
@@ -192,6 +193,7 @@ export function loadConfig(): RpaConfig {
       pollIntervalSeconds: pollIntervalSeconds > 0 ? pollIntervalSeconds : 60,
       pollJitter: Math.max(0, envNum("POLL_JITTER", 0)),
       leadsIntervalSeconds: Math.max(30, envNum("LEADS_INTERVAL", 120)),
+      leadsStartHour: Math.min(23, Math.max(0, envNum("LEADS_START_HOUR", 7))),
       leadsEndHour: Math.min(24, Math.max(0, envNum("LEADS_END_HOUR", 21))),
       deepScanMinutes: Math.max(5, envNum("DEEP_SCAN_MINUTES", 30)),
       runDays: envCsvInts("RUN_DAYS", [0, 1, 2, 3, 4, 5, 6]),
