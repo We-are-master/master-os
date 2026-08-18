@@ -184,6 +184,55 @@ async function reconciliarJobs(postarNota: (id: number, corpo: string) => Promis
   console.log(`[harvey] reconciliacao: ${tickets.length} tickets, ${pendencias} pendencia(s), ${novas} alerta(s) novo(s)`);
 }
 
+const TAG_AWAITING = "awaiting_payment";
+
+/**
+ * A view "Awaiting Payment" do Zendesk vive da tag homônima, e a fonte da
+ * verdade é `jobs.status = awaiting_payment` no OS (dono, 18/08/2026). O app
+ * põe/tira a tag na mudança de status; esta guarda horária cura deriva nos
+ * dois sentidos: tagueia ticket de job que entrou no status, destagueia o de
+ * job que saiu. Lotes via update_many — ticket closed é imutável e o Zendesk
+ * só pula ele dentro do lote, sem derrubar o resto.
+ */
+async function sincronizarAwaitingPayment(): Promise<void> {
+  const sbBase = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const sbKey = process.env.SERVICE_ROLE_KEY!;
+  const rj = await fetch(
+    `${sbBase}/rest/v1/jobs?select=external_source,external_ref,deleted_at&status=eq.awaiting_payment&limit=1000`,
+    { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } },
+  );
+  if (!rj.ok) { console.error(`[harvey] awaiting: jobs HTTP ${rj.status}`); return; }
+  const jobs = (await rj.json()) as Array<{ external_source: string | null; external_ref: string | null; deleted_at: string | null }>;
+  const devem = new Set(
+    jobs.filter((j) => !j.deleted_at && j.external_source === "zendesk" && j.external_ref).map((j) => String(j.external_ref)),
+  );
+
+  const marcados = new Set<string>();
+  let url = `${baseUrl()}/search.json?query=${encodeURIComponent(`type:ticket tags:${TAG_AWAITING}`)}&per_page=100`;
+  while (url) {
+    const r = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!r.ok) { console.error(`[harvey] awaiting: search HTTP ${r.status}`); return; }
+    const j = (await r.json()) as { results?: Array<{ id: number }>; next_page?: string };
+    for (const t of j.results ?? []) marcados.add(String(t.id));
+    url = j.next_page ?? "";
+  }
+
+  const faltam = [...devem].filter((id) => !marcados.has(id));
+  const sobram = [...marcados].filter((id) => !devem.has(id));
+  const emLotes = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100));
+  const atualizar = async (ids: string[], corpo: object) => {
+    const r = await fetch(`${baseUrl()}/tickets/update_many.json?ids=${ids.join(",")}`, {
+      method: "PUT",
+      headers: { Authorization: authHeader(), "content-type": "application/json" },
+      body: JSON.stringify({ ticket: corpo }),
+    });
+    if (!r.ok) console.error(`[harvey] awaiting: update_many HTTP ${r.status}`);
+  };
+  for (const lote of emLotes(faltam)) await atualizar(lote, { additional_tags: [TAG_AWAITING] });
+  for (const lote of emLotes(sobram)) await atualizar(lote, { remove_tags: [TAG_AWAITING] });
+  console.log(`[harvey] awaiting payment: ${devem.size} job(s) no OS, ${marcados.size} ticket(s) com tag, +${faltam.length} −${sobram.length}`);
+}
+
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
@@ -271,6 +320,7 @@ async function ciclo(): Promise<void> {
   if (new Date().getMinutes() < 5 || process.env.HARVEY_RECONCILIAR === "1") {
     const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
     await reconciliarJobs(postarNotaInterna).catch((err) => console.error(`[harvey] reconciliacao morreu: ${err}`));
+    await sincronizarAwaitingPayment().catch((err) => console.error(`[harvey] awaiting payment morreu: ${err}`));
   }
 }
 
