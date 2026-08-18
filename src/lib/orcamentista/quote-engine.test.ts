@@ -151,11 +151,16 @@ test("o texto apresentável carrega serviço, material, opcional e gaps", () => 
     [{ trade: "plumber", service: "Replace kitchen/basin tap (fit only)", qty: 1 }],
     PRICEBOOK, KITS, FORNECEDORES,
   );
-  const t = textoApresentavel(q);
-  assert.match(t, /Replace kitchen\/basin tap/);
+  const t = textoApresentavel(q, "Replace the kitchen mixer tap.");
+  // O formato da casa: Hi Team / Scope / Labour / Materials / Notes / Thank you.
+  assert.match(t, /^Hi Team,/);
+  assert.match(t, /Scope:\nReplace the kitchen mixer tap\./);
+  assert.match(t, /Labour:\n- Replace kitchen\/basin tap/);
+  assert.match(t, /Materials \(supplied by us\):/);
   assert.match(t, /Flexíveis/);
-  assert.match(t, /if needed: Torneira/);
+  assert.match(t, /If needed: Torneira/);
   assert.match(t, /Total: £146\.99/);
+  assert.match(t, /Thank you$/);
 });
 
 test("o cliente NUNCA vê fornecedor, custo original ou link — só o nosso preço", () => {
@@ -171,5 +176,5 @@ test("o cliente NUNCA vê fornecedor, custo original ou link — só o nosso pre
   assert.doesNotMatch(t, /https?:\/\//);
   // O custo de compra das flexis (£4.15) não pode aparecer — só a venda £6.99.
   assert.doesNotMatch(t, /4\.15/);
-  assert.match(t, /from our internal supplier/);
+  assert.match(t, /supplied by us/);
 });

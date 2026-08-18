@@ -229,7 +229,7 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
 
   const ticket = await lerTicketCompleto(ticketId);
   const pedido = await consolidarPedido(ticket, apiKey);
-  const resultado = await executarPriceCheck(pedido.quoteRequest);
+  const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.quoteRequest);
   const nota = montarNotaInterna(ticket, pedido, resultado);
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado };

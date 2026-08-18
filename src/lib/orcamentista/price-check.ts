@@ -21,7 +21,7 @@ export type ResultadoPriceCheck = {
   electricalWorkRequested: boolean;
 };
 
-export async function executarPriceCheck(pedido: string): Promise<ResultadoPriceCheck> {
+export async function executarPriceCheck(pedido: string, escopo?: string): Promise<ResultadoPriceCheck> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set — the matcher cannot run");
 
@@ -60,7 +60,7 @@ export async function executarPriceCheck(pedido: string): Promise<ResultadoPrice
 
   return {
     quote,
-    presentable: textoApresentavel(quote),
+    presentable: textoApresentavel(quote, escopo ?? pedido),
     electricalWorkRequested: match.electricalWorkRequested,
   };
 }
