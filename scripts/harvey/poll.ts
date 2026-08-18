@@ -43,6 +43,9 @@ const TAG = "ai_quote_draft";
 const TAG_JOB = "ai_job_created";
 const MAX_JOBS_POR_CICLO = 2;
 const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
+const RECON_PATH = join(process.cwd(), "scripts/harvey/.reconciliado.json");
+/** A view "Customer Support::🛠️ Jobs" — a fila oficial de jobs no Zendesk. */
+const VIEW_JOBS = "5687884937759";
 
 function baseUrl(): string {
   return `https://${process.env.ZENDESK_SUBDOMAIN}.zendesk.com/api/v2`;
@@ -123,6 +126,64 @@ async function adicionarTagNomeada(ticketId: number, tag: string): Promise<void>
 }
 const adicionarTag = (ticketId: number) => adicionarTagNomeada(ticketId, TAG);
 
+/**
+ * Reconciliação (dono, 18/08: "todo job no Zendesk tem que estar no OS e não
+ * cancelado — tem que bater todos"). Roda de hora em hora: varre a view Jobs
+ * inteira, casa por external_ref e por JOB-#### no assunto, e posta nota ⚠️
+ * SÓ em pendência nova (estado em .reconciliado.json — sem spam).
+ */
+async function reconciliarJobs(postarNota: (id: number, corpo: string) => Promise<void>): Promise<void> {
+  const sbBase = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const sbKey = process.env.SERVICE_ROLE_KEY!;
+
+  const tickets: Array<{ id: number; subject: string; status: string }> = [];
+  let url = `${baseUrl()}/views/${VIEW_JOBS}/tickets.json?per_page=100`;
+  while (url) {
+    const r = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!r.ok) { console.error(`[harvey] reconciliacao: view HTTP ${r.status}`); return; }
+    const j = (await r.json()) as { tickets?: Array<{ id: number; subject?: string; status: string }>; next_page?: string };
+    for (const t of j.tickets ?? []) tickets.push({ id: t.id, subject: t.subject ?? "", status: t.status });
+    url = j.next_page ?? "";
+  }
+
+  const rj = await fetch(
+    `${sbBase}/rest/v1/jobs?select=reference,status,external_source,external_ref,deleted_at&limit=3000&order=created_at.desc`,
+    { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } },
+  );
+  if (!rj.ok) { console.error(`[harvey] reconciliacao: jobs HTTP ${rj.status}`); return; }
+  const jobs = (await rj.json()) as Array<{ reference: string; status: string; external_source: string | null; external_ref: string | null; deleted_at: string | null }>;
+  const porRef = new Map(jobs.map((j) => [String(j.reference).toUpperCase(), j]));
+  const porTicket = new Map(jobs.filter((j) => j.external_source === "zendesk" && j.external_ref).map((j) => [String(j.external_ref), j]));
+
+  let alertados: number[] = [];
+  try { alertados = JSON.parse(readFileSync(RECON_PATH, "utf8")) as number[]; } catch { /* primeiro uso */ }
+  const jaAlertado = new Set(alertados);
+
+  const CANCELADO = new Set(["cancelled", "canceled"]);
+  let pendencias = 0, novas = 0;
+  for (const t of tickets) {
+    const mRef = t.subject.match(/JOB-(\d+)/i);
+    const job = porTicket.get(String(t.id)) ?? (mRef ? porRef.get(`JOB-${mRef[1]}`) : undefined);
+    let problema: string | null = null;
+    if (!job) problema = "this job ticket has NO matching job in the OS.";
+    else if (job.deleted_at) problema = `${job.reference} was DELETED in the OS but this ticket is still ${t.status}.`;
+    else if (CANCELADO.has(String(job.status).toLowerCase()) && t.status !== "closed" && t.status !== "solved")
+      problema = `${job.reference} is CANCELLED in the OS but this ticket is still ${t.status}.`;
+    if (!problema) continue;
+    pendencias++;
+    if (jaAlertado.has(t.id)) continue;
+    novas++;
+    try {
+      await postarNota(t.id, `⚠️ HARVEY — reconciliation: ${problema}\n\nEvery Zendesk job must exist and be alive in the OS (owner rule). Create/relink the job or close this ticket; I re-check hourly.`);
+      jaAlertado.add(t.id);
+    } catch (err) {
+      console.error(`[harvey] reconciliacao: nota falhou no ${t.id}: ${err}`);
+    }
+  }
+  writeFileSync(RECON_PATH, JSON.stringify([...jaAlertado]));
+  console.log(`[harvey] reconciliacao: ${tickets.length} tickets, ${pendencias} pendencia(s), ${novas} alerta(s) novo(s)`);
+}
+
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
@@ -196,6 +257,13 @@ async function ciclo(): Promise<void> {
     }
   }
   console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s)`);
+
+  // De hora em hora (primeiro ciclo de cada hora): a view Jobs tem que bater
+  // com o OS, job por job.
+  if (new Date().getMinutes() < 5 || process.env.HARVEY_RECONCILIAR === "1") {
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    await reconciliarJobs(postarNotaInterna).catch((err) => console.error(`[harvey] reconciliacao morreu: ${err}`));
+  }
 }
 
 ciclo().catch((err) => {
