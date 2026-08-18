@@ -241,6 +241,9 @@ async function handleJob(
   const jobPayload = {
     account_id: cfg.masterOs.accountId,
     date: accepted.acceptedDate,
+    // Janela COMPLETA da plataforma, sempre (dono, 18/08: "todo job sobe com
+    // arrival time certinho"). O fallback existe porque a API exige o campo,
+    // mas ele é uma mentira educada — quando disparar, a nota interna grita.
     arrival_time: accepted.acceptedTimeWindow ?? "09:00",
     client_name: clientName,
     // Passing the revealed contact makes /api/jobs create (or match) a REAL
@@ -268,6 +271,7 @@ async function handleJob(
     // neither exists anywhere else. `internal_notes` because /api/jobs has no
     // field for them yet; they are worth more written down than lost.
     internal_notes: [
+      accepted.acceptedTimeWindow ? null : "ATTENTION: arrival window NOT captured from the platform — 09:00 is a placeholder, confirm the real slot before dispatch.",
       accepted.duration ? `Booked duration: ${accepted.duration}` : null,
       accepted.parking === undefined ? null : `Parking available: ${accepted.parking ? "yes" : "no"}`,
       accepted.earnings ? `Value: £${accepted.earnings}` : null,
