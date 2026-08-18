@@ -191,7 +191,15 @@ async function ciclo(): Promise<void> {
 
   const vistos = lerVistos();
   const candidatos = (await buscarCandidatos()).filter(
-    (t) => !vistos.has(t.id) && !t.tags.includes(TAG) && !/^\s*JOB-/i.test(t.subject),
+    (t) =>
+      !vistos.has(t.id) &&
+      !t.tags.includes(TAG) &&
+      !/^\s*JOB-/i.test(t.subject) &&
+      // "You have N job(s) on Tue 18 Aug" da Housekeep é LEMBRETE diário dos
+      // jobs do dia seguinte (dono, 18/08) — não é booking nem pedido de
+      // quote. Fica no Action Required pro humano; o Harvey nem gasta
+      // classificador nele.
+      !/you have \d+ jobs? on /i.test(t.subject),
   );
   console.log(`[harvey] ${new Date().toISOString()} candidatos apos filtros: ${candidatos.length}`);
 
