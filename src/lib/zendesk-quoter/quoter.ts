@@ -423,6 +423,21 @@ export type ResultadoBooking =
   | { status: "faltando"; nota: string }
   | { status: "nao_e_booking" };
 
+/**
+ * Título de job NUNCA inventado (dono, 19/08/2026: "só os que já tem de type
+ * of work"): o chip no OS é o título e só pode vir da lista canônica. O nome
+ * específico do serviço (ex. "End-of-tenancy clean") vive no scope.
+ */
+function tituloCanonico(nomeServico: string | null): string {
+  const nome = (nomeServico ?? "").toLowerCase();
+  if (/eicr|electrical installation/.test(nome)) return "Electrical Installation Condition Report (EICR)";
+  if (/gas safety|cp12/.test(nome)) return "Gas Safety Certificate (GSC)";
+  if (/epc|energy performance/.test(nome)) return "General Maintenance";
+  if (/clean/.test(nome)) return "Cleaning";
+  if (/paint/.test(nome)) return "Painter";
+  return "General Maintenance";
+}
+
 export async function subirJobBooked(ticketId: number, postar: boolean): Promise<ResultadoBooking> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -512,8 +527,8 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       client_name: ex.clientName,
       property_address: ex.propertyAddress,
       postcode: ex.postcode ?? undefined,
-      title: (ex.jobNome ?? ex.serviceSummary)?.slice(0, 120) ?? ticket.subject,
-      service_type: ex.jobNome ?? "General Maintenance",
+      title: tituloCanonico(ex.jobNome ?? ex.serviceSummary ?? ticket.subject),
+      service_type: tituloCanonico(ex.jobNome ?? ex.serviceSummary ?? ticket.subject),
       // → jobs.scope: o bloco Job details INTEIRO do card (dono, 18/08).
       description: [ex.serviceSummary, ex.detalhesJob].filter(Boolean).join("\n\n") || undefined,
       client_price: ex.priceGbp ?? undefined,
