@@ -185,14 +185,19 @@ async function reconciliarJobs(postarNota: (id: number, corpo: string) => Promis
 }
 
 const TAG_AWAITING = "awaiting_payment";
+/** 💷 Awaiting Payment — categoria pending; o ticket fica vivo na view até pagar. */
+const STATUS_AWAITING = 6165486711711;
 
 /**
- * A view "Awaiting Payment" do Zendesk vive da tag homônima, e a fonte da
- * verdade é `jobs.status = awaiting_payment` no OS (dono, 18/08/2026). O app
- * põe/tira a tag na mudança de status; esta guarda horária cura deriva nos
- * dois sentidos: tagueia ticket de job que entrou no status, destagueia o de
- * job que saiu. Lotes via update_many — ticket closed é imutável e o Zendesk
- * só pula ele dentro do lote, sem derrubar o resto.
+ * A fila "💷 Awaiting Payment" do Zendesk vive da tag homônima + custom
+ * status próprio, e a fonte da verdade é `jobs.status = awaiting_payment` no
+ * OS (dono, 18/08/2026). O app põe/tira tag e status na mudança de status;
+ * esta guarda horária cura deriva nos dois sentidos: ticket de job que entrou
+ * no status ganha tag + 💷 Awaiting Payment (pending — solved arquivaria em
+ * 24h pela automation e sumiria da view), ticket de job que saiu perde a tag.
+ * Também re-impõe o status em ticket vivo da fila que alguém resolveu na mão
+ * antes do pagamento cair. Lotes via update_many — ticket closed é imutável
+ * para status e o Zendesk pula ele dentro do lote, sem derrubar o resto.
  */
 async function sincronizarAwaitingPayment(): Promise<void> {
   const sbBase = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -207,18 +212,24 @@ async function sincronizarAwaitingPayment(): Promise<void> {
     jobs.filter((j) => !j.deleted_at && j.external_source === "zendesk" && j.external_ref).map((j) => String(j.external_ref)),
   );
 
-  const marcados = new Set<string>();
+  const marcados = new Map<string, string>(); // ticket id → status base atual
   let url = `${baseUrl()}/search.json?query=${encodeURIComponent(`type:ticket tags:${TAG_AWAITING}`)}&per_page=100`;
   while (url) {
     const r = await fetch(url, { headers: { Authorization: authHeader() } });
     if (!r.ok) { console.error(`[harvey] awaiting: search HTTP ${r.status}`); return; }
-    const j = (await r.json()) as { results?: Array<{ id: number }>; next_page?: string };
-    for (const t of j.results ?? []) marcados.add(String(t.id));
+    const j = (await r.json()) as { results?: Array<{ id: number; status: string }>; next_page?: string };
+    for (const t of j.results ?? []) marcados.set(String(t.id), t.status);
     url = j.next_page ?? "";
   }
 
   const faltam = [...devem].filter((id) => !marcados.has(id));
-  const sobram = [...marcados].filter((id) => !devem.has(id));
+  // Já tem a tag mas está fora do status certo (ex.: agente resolveu na mão):
+  // re-impõe enquanto o ticket não arquivar. Closed é imutável — nem tenta.
+  const impor = [...devem].filter((id) => {
+    const st = marcados.get(id);
+    return st !== undefined && st !== "pending" && st !== "closed";
+  });
+  const sobram = [...marcados.keys()].filter((id) => !devem.has(id));
   const emLotes = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100));
   const atualizar = async (ids: string[], corpo: object) => {
     const r = await fetch(`${baseUrl()}/tickets/update_many.json?ids=${ids.join(",")}`, {
@@ -228,9 +239,13 @@ async function sincronizarAwaitingPayment(): Promise<void> {
     });
     if (!r.ok) console.error(`[harvey] awaiting: update_many HTTP ${r.status}`);
   };
-  for (const lote of emLotes(faltam)) await atualizar(lote, { additional_tags: [TAG_AWAITING] });
+  const paraFila = { additional_tags: [TAG_AWAITING], custom_status_id: STATUS_AWAITING, status: "pending" };
+  for (const lote of emLotes([...faltam, ...impor])) await atualizar(lote, paraFila);
   for (const lote of emLotes(sobram)) await atualizar(lote, { remove_tags: [TAG_AWAITING] });
-  console.log(`[harvey] awaiting payment: ${devem.size} job(s) no OS, ${marcados.size} ticket(s) com tag, +${faltam.length} −${sobram.length}`);
+  console.log(
+    `[harvey] awaiting payment: ${devem.size} job(s) no OS, ${marcados.size} ticket(s) com tag, ` +
+      `+${faltam.length} tag(s), ${impor.length} status re-imposto(s), −${sobram.length}`,
+  );
 }
 
 async function ciclo(): Promise<void> {

@@ -22,6 +22,7 @@ import {
 } from "@/lib/zendesk";
 import {
   ZD_STATUS_AWAITING_APPROVAL,
+  ZD_STATUS_AWAITING_PAYMENT,
   ZD_STATUS_BIDDING,
   ZD_STATUS_CANCELLED,
   ZD_STATUS_COMPLETED,
@@ -82,12 +83,12 @@ export function jobStatusToZendesk(status: JobStatus): number | null {
       return ZD_STATUS_IN_PROGRESS;
     case "final_check":
       return ZD_STATUS_FINAL_CHECKS;
-    /** Work is done; only payment collection is pending. From the customer's
-     *  perspective the support thread is closed, so flip the ticket to
-     *  Completed (which auto-solves it in Zendesk). If finance moves the job
-     *  back to final_check / in_progress, the trigger fires again and the
-     *  ticket re-opens to the right status. */
+    /** Work done, payment pending: status próprio 💷 Awaiting Payment
+     *  (categoria pending — solved fecharia e arquivaria o ticket em 24h
+     *  pela automation, e a fila de cobrança sumiria da view). O ticket só
+     *  vira Completed/solved quando o pagamento cai e o job vai a completed. */
     case "awaiting_payment":
+      return ZD_STATUS_AWAITING_PAYMENT;
     case "completed":
       return ZD_STATUS_COMPLETED;
     case "on_hold":
