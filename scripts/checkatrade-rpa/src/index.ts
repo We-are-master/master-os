@@ -4,7 +4,7 @@ import { CloudflareBlockedError, scrapeNewOnly, scrapeOpportunities } from "./ch
 import { createMasterOsClient } from "./masterOs/client.js";
 import { handleOpportunity } from "./classify.js";
 import { countJobsAcceptedToday } from "./dedupe/seenStore.js";
-import { isWithinRunWindow } from "./time.js";
+import { isWithinRunWindow, tzNow } from "./time.js";
 import { logger } from "./logger.js";
 import { isPriority } from "./jobRules.js";
 import { rodarConclusoes } from "./express/completion.js";
@@ -95,6 +95,12 @@ async function main(): Promise<void> {
          */
         await rodarConclusoes(page, cfg, masterOs);
 
+        // Dono (18/08): expediente até 22h, mas depois das 21h NENHUMA
+        // mensagem a lead — expressar interesse manda mensagem, então lead
+        // congela; job Express não fala com ninguém, só aceita e sobe pro OS,
+        // então segue a noite toda. Lead que apareceu tarde continua New no
+        // board e a primeira passada da manhã pega.
+        const leadsAbertos = tzNow(cfg.schedule.timezone).hour < cfg.schedule.leadsEndHour;
         let opportunities;
         if (deepDue) {
           opportunities = await scrapeOpportunities(page);
@@ -102,9 +108,16 @@ async function main(): Promise<void> {
           lastLeadsAt = cycleStartedAt;
         } else {
           opportunities = await scrapeNewOnly(page, "jobs");
-          if (leadsDue) {
+          if (leadsDue && leadsAbertos) {
             opportunities.push(...(await scrapeNewOnly(page, "leads")));
             lastLeadsAt = cycleStartedAt;
+          }
+        }
+        if (!leadsAbertos) {
+          const antes = opportunities.length;
+          opportunities = opportunities.filter((o) => o.kind !== "lead");
+          if (antes !== opportunities.length) {
+            logger.info(`Night mode (>= ${cfg.schedule.leadsEndHour}h London): ${antes - opportunities.length} lead(s) left for the morning pass`);
           }
         }
 
