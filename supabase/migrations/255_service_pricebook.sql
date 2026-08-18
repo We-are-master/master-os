@@ -180,3 +180,9 @@ insert into service_pricebook (trade, service, unit, price_gbp, min_charge_gbp, 
   ('certificates', 'FRA - Business 2-3 storey up to 200 sq m', 'per_job', 449, null, 'espelho do catalogo do OS (validado, decisao do dono 17/08); parceiro £349', 'approved', 'Victor (revisao completa em chat, 17/08/2026)', now()),
   ('certificates', 'Emergency Lighting Certificate', 'per_job', 150, null, 'SEM preco no catalogo (fixed=0): rascunho novo p/ validar; paridade FAC comercial', 'draft', null, null)
 on conflict (trade, service) do nothing;
+
+-- 18/08: linha nascida de caso real (#48833) — caulking de janela/madeira não
+-- cabe na linha de banheiro, e o dono validou £130 na composição £282.98.
+insert into service_pricebook (trade, service, unit, price_gbp, min_charge_gbp, basis, status, approved_by, approved_at) values
+  ('handyman', 'Crack filling & caulking (interior, up to ~2m)', 'per_job', 130, null, 'validado pelo dono no #48833 (18/08): a composicao £282.98 com caulking a £130 estava certa; linha propria porque a de banheiro nao cobre janela/madeira', 'approved', 'Victor (chat, 18/08/2026)', '2026-08-18T04:00:00Z')
+on conflict (trade, service) do nothing;

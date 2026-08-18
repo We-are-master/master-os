@@ -96,3 +96,8 @@ insert into service_material_kits (trade, service, family, variant, qty, optiona
   ('fencing', 'Fence post replacement (labour)', 'garden', 'Poste de cerca 75mm 2.4m (unidade)', 1, false, 'qty por poste'),
   ('fencing', 'Fence post replacement (labour)', 'garden', 'Postcrete/PostFix 20kg', 2, false, '2 sacos por poste')
 on conflict (trade, service, family, variant) do nothing;
+
+-- 18/08: kit da linha de caulking nascida do #48833.
+insert into service_material_kits (trade, service, family, variant, qty, optional, note) values
+  ('handyman', 'Crack filling & caulking (interior, up to ~2m)', 'sealant', 'Silicone branco (standard)', 1, false, 'caulk/decorators sealant')
+on conflict (trade, service, family, variant) do nothing;
