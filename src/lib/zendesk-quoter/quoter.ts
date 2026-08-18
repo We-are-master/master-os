@@ -278,6 +278,12 @@ export type ExtracaoBooking = {
   serviceSummary: string | null;
   company: string | null;
   missing: string[];
+  /** Nome do serviço como a plataforma escreve (ex. "End-of-tenancy clean"). */
+  jobNome: string | null;
+  /** Bloco "Job details" inteiro do card, pronto pro scope (dono, 18/08). */
+  detalhesJob: string | null;
+  /** O link tokenizado do card — vira jobs.report_link. */
+  cardUrl: string | null;
 };
 
 export async function extrairBooking(ticket: TicketLido, apiKey: string): Promise<ExtracaoBooking> {
@@ -319,6 +325,10 @@ JSON: {"is_confirmed_booking":bool,"client_name":str|null,"property_address":str
     serviceSummary: (j.service_summary as string) || null,
     company: (j.company as string) || null,
     missing: Array.isArray(j.missing) ? (j.missing as string[]) : [],
+    // Detalhes ricos moram no card da plataforma, não no e-mail.
+    jobNome: null,
+    detalhesJob: null,
+    cardUrl: null,
   };
 }
 
@@ -344,7 +354,7 @@ async function acharConta(pistas: Array<string | null>): Promise<{ id: string; n
  * endereço; o card sempre. Playwright porque a página é app renderizado no
  * cliente: fetch puro devolve casca vazia.
  */
-async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial<ExtracaoBooking>> {
+export async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial<ExtracaoBooking>> {
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   try {
@@ -365,7 +375,7 @@ async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial
           {
             role: "system",
             content:
-              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"arrival_window":str|null,"price_gbp":num|null,"service_summary":str|null}',
+              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"visit_date_label":str|null,"arrival_window":"HH:MM - HH:MM"|null,"length":str|null,"price_gbp":num|null,"service_summary":str|null,"job":str|null,"property_type":str|null,"bedrooms":num|null,"bathrooms":num|null,"additional_rooms":num|null,"tasks":[str]|null}. "job" is the service name as the page writes it (e.g. "End-of-tenancy clean"); "visit_date_label" the date as written (e.g. "Thursday, 20 August 2026"); "length" the booked duration if shown; "tasks" the extra/additional tasks booked for the job (e.g. "Balcony cleaning") — NEVER workflow checklist steps like "Start job", "Before photos", "Finish job", "After photos".',
           },
           { role: "user", content: texto.slice(0, 6000) },
         ],
@@ -374,6 +384,23 @@ async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial
     if (!resposta.ok) return {};
     const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const j = JSON.parse(corpo.choices?.[0]?.message?.content ?? "{}") as Record<string, unknown>;
+
+    // O bloco "Job details" do card, linha a linha, só com o que existe —
+    // é ele que o dono quer ver inteiro no scope do job (18/08/2026).
+    const linha = (rotulo: string, v: unknown): string | null =>
+      v === null || v === undefined || v === "" ? null : `${rotulo}: ${Array.isArray(v) ? v.join(", ") : String(v)}`;
+    const detalhes = [
+      linha("Job", j.job),
+      linha("Visit date", j.visit_date_label ?? j.date),
+      linha("Booked arrival time", j.arrival_window),
+      linha("Length", j.length),
+      linha("Property type", j.property_type),
+      linha("Bedrooms", j.bedrooms),
+      linha("Bathrooms", j.bathrooms),
+      linha("Additional rooms", j.additional_rooms),
+      linha("Tasks", j.tasks),
+    ].filter(Boolean) as string[];
+
     return {
       clientName: (j.client_name as string) || null,
       propertyAddress: (j.property_address as string) || null,
@@ -382,6 +409,9 @@ async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial
       arrivalWindow: (j.arrival_window as string) || null,
       priceGbp: typeof j.price_gbp === "number" ? j.price_gbp : null,
       serviceSummary: (j.service_summary as string) || null,
+      jobNome: (j.job as string) || null,
+      detalhesJob: detalhes.length > 0 ? ["Job details", "", ...detalhes].join("\n") : null,
+      cardUrl: url,
     };
   } finally {
     await browser.close();
@@ -401,9 +431,11 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   const ex = await extrairBooking(ticket, apiKey);
   if (!ex.isConfirmedBooking) return { status: "nao_e_booking" };
 
-  // O e-mail da Housekeep nunca traz o endereço; o card do "Link" sempre.
-  // Faltou dado essencial E tem link? Pesca no card e completa só os nulos.
-  if ((!ex.clientName || !ex.propertyAddress || !ex.date) && ticket.linksHousekeep.length > 0) {
+  // O e-mail da Housekeep nunca traz endereço nem os Job details; o card do
+  // "Link" traz tudo. Tem link? Pesca SEMPRE (dono, 18/08: o job nasce com
+  // report link, janela de chegada, length e o Job details inteiro no scope)
+  // e completa só os nulos.
+  if (ticket.linksHousekeep.length > 0) {
     for (const link of ticket.linksHousekeep.slice(0, 2)) {
       try {
         const card = await pescarCardHousekeep(link, apiKey);
@@ -414,7 +446,10 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
         ex.arrivalWindow ||= card.arrivalWindow ?? null;
         ex.priceGbp ??= card.priceGbp ?? null;
         ex.serviceSummary ||= card.serviceSummary ?? null;
-        if (ex.clientName && ex.propertyAddress && ex.date) break;
+        ex.jobNome ||= card.jobNome ?? null;
+        ex.detalhesJob ||= card.detalhesJob ?? null;
+        ex.cardUrl ||= card.cardUrl ?? null;
+        if (ex.clientName && ex.propertyAddress && ex.date && ex.detalhesJob) break;
       } catch {
         /* card fora do ar não derruba o fluxo: os portões decidem */
       }
@@ -455,6 +490,14 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     };
   }
 
+  // Janela completa "HH:MM - HH:MM" quando o card dá (o OS deriva início E
+  // fim = length); só o início se foi só isso que veio; 09:00 como último
+  // recurso. Texto solto ("Morning") não passa — o parser do OS rejeitaria.
+  const janelaCrua = (ex.arrivalWindow ?? "").replace(/[‐-―−–—]/g, "-").trim();
+  const arrivalTime = /^\d{1,2}:\d{2}(\s*-\s*\d{1,2}:\d{2})?$/.test(janelaCrua)
+    ? janelaCrua
+    : janelaCrua.match(/\d{1,2}:\d{2}/)?.[0] ?? "09:00";
+
   const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
@@ -465,14 +508,17 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     body: JSON.stringify({
       account_id: conta!.id,
       date: ex.date,
-      arrival_time: ex.arrivalWindow?.split("-")[0]?.trim() || "09:00",
+      arrival_time: arrivalTime,
       client_name: ex.clientName,
       property_address: ex.propertyAddress,
       postcode: ex.postcode ?? undefined,
-      title: ex.serviceSummary?.slice(0, 120) ?? ticket.subject,
-      service_type: "General Maintenance",
-      description: ex.serviceSummary ?? undefined,
+      title: (ex.jobNome ?? ex.serviceSummary)?.slice(0, 120) ?? ticket.subject,
+      service_type: ex.jobNome ?? "General Maintenance",
+      // → jobs.scope: o bloco Job details INTEIRO do card (dono, 18/08).
+      description: [ex.serviceSummary, ex.detalhesJob].filter(Boolean).join("\n\n") || undefined,
       client_price: ex.priceGbp ?? undefined,
+      // O link tokenizado do card é onde a Stefane submete o report.
+      report_link: ex.cardUrl ?? ticket.linksHousekeep[0] ?? undefined,
       internal_notes: `Created by Harvey from Zendesk booking #${ticketId} (${conta!.nome}).`,
       auto_assign: false,
       // O ticket JÁ existe: linka por external_source/external_ref e ganha
@@ -490,6 +536,7 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     `Client: ${ex.clientName} · ${ex.propertyAddress}${ex.postcode ? ` · ${ex.postcode}` : ""}`,
     `Date: ${ex.date}${ex.arrivalWindow ? ` · ${ex.arrivalWindow}` : ""}`,
     ex.priceGbp != null ? `Value: £${ex.priceGbp.toFixed(2)}` : "Value: not stated in ticket",
+    ...(ex.cardUrl ? [`Report link: ${ex.cardUrl}`] : []),
     "",
     "Unassigned — office picks the partner in the OS.",
   ].join("\n");
