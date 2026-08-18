@@ -40,6 +40,9 @@ export type TicketLido = {
   /** Imagens baixadas como data URL, prontas para o modelo com visão. */
   imagens: Array<{ filename: string; dataUrl: string }>;
   totalAnexos: number;
+  /** Links housekeep.com achados no HTML dos comentários — o card do job
+   * ("Link") mora aí, e é nele que o endereço vive. */
+  linksHousekeep: string[];
 };
 
 export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
@@ -58,6 +61,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
       author_id: number;
       public: boolean;
       body: string;
+      html_body?: string;
       attachments?: Array<{ file_name: string; content_url: string; content_type: string; size: number }>;
     }>;
     users?: Array<{ id: number; name: string; role: string }>;
@@ -65,12 +69,17 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
 
   const quem = new Map((cJson.users ?? []).map((u) => [u.id, `${u.name} (${u.role})`]));
   const partes: string[] = [];
+  const linksHousekeep: string[] = [];
   const anexosDeImagem: Array<{ file_name: string; content_url: string; content_type: string; size: number }> = [];
   let totalAnexos = 0;
 
   for (const c of cJson.comments) {
     const autor = quem.get(c.author_id) ?? `user ${c.author_id}`;
     partes.push(`[${autor}${c.public ? "" : " — internal note"}]\n${c.body.trim()}`);
+    for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]*housekeep\.com[^"]*)"/g)) {
+      const url = m[1]!.replace(/&amp;/g, "&");
+      if (!linksHousekeep.includes(url)) linksHousekeep.push(url);
+    }
     for (const a of c.attachments ?? []) {
       totalAnexos++;
       if (a.content_type?.startsWith("image/") && a.size <= MAX_BYTES_IMAGEM) {
@@ -101,6 +110,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     thread: partes.join("\n\n---\n\n"),
     imagens,
     totalAnexos,
+    linksHousekeep,
   };
 }
 
@@ -319,6 +329,56 @@ async function acharConta(pistas: Array<string | null>): Promise<{ id: string; n
   return null;
 }
 
+/**
+ * O card da Housekeep ("Link" no e-mail deles) abre SEM login — página
+ * tokenizada, a mesma porta que a Stefane usa. O e-mail nunca traz o
+ * endereço; o card sempre. Playwright porque a página é app renderizado no
+ * cliente: fetch puro devolve casca vazia.
+ */
+async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial<ExtracaoBooking>> {
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    const texto = (await page.evaluate("document.body.innerText")) as string;
+    if (!texto || texto.trim().length < 40) return {};
+
+    const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"arrival_window":str|null,"price_gbp":num|null,"service_summary":str|null}',
+          },
+          { role: "user", content: texto.slice(0, 6000) },
+        ],
+      }),
+    });
+    if (!resposta.ok) return {};
+    const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const j = JSON.parse(corpo.choices?.[0]?.message?.content ?? "{}") as Record<string, unknown>;
+    return {
+      clientName: (j.client_name as string) || null,
+      propertyAddress: (j.property_address as string) || null,
+      postcode: (j.postcode as string) || null,
+      date: (j.date as string) || null,
+      arrivalWindow: (j.arrival_window as string) || null,
+      priceGbp: typeof j.price_gbp === "number" ? j.price_gbp : null,
+      serviceSummary: (j.service_summary as string) || null,
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
 export type ResultadoBooking =
   | { status: "criado"; reference: string; nota: string }
   | { status: "faltando"; nota: string }
@@ -332,7 +392,30 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   const ex = await extrairBooking(ticket, apiKey);
   if (!ex.isConfirmedBooking) return { status: "nao_e_booking" };
 
-  const conta = await acharConta([ex.company, ticket.subject]);
+  // O e-mail da Housekeep nunca traz o endereço; o card do "Link" sempre.
+  // Faltou dado essencial E tem link? Pesca no card e completa só os nulos.
+  if ((!ex.clientName || !ex.propertyAddress || !ex.date) && ticket.linksHousekeep.length > 0) {
+    for (const link of ticket.linksHousekeep.slice(0, 2)) {
+      try {
+        const card = await pescarCardHousekeep(link, apiKey);
+        ex.clientName ||= card.clientName ?? null;
+        ex.propertyAddress ||= card.propertyAddress ?? null;
+        ex.postcode ||= card.postcode ?? null;
+        ex.date ||= card.date ?? null;
+        ex.arrivalWindow ||= card.arrivalWindow ?? null;
+        ex.priceGbp ??= card.priceGbp ?? null;
+        ex.serviceSummary ||= card.serviceSummary ?? null;
+        if (ex.clientName && ex.propertyAddress && ex.date) break;
+      } catch {
+        /* card fora do ar não derruba o fluxo: os portões decidem */
+      }
+    }
+    ex.missing = [];
+  }
+
+  // O palpite "housekeep" só vale com link deles no ticket — senão um booking
+  // da Homyze sem empresa citada cairia na conta errada.
+  const conta = await acharConta([ex.company, ticket.subject, ticket.linksHousekeep.length > 0 ? "housekeep" : null]);
   const faltas = [...ex.missing];
   if (!ex.clientName) faltas.push("client name");
   if (!ex.propertyAddress) faltas.push("property address");
@@ -352,6 +435,15 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     ].join("\n");
     if (postar) await postarNotaInterna(ticketId, nota);
     return { status: "faltando", nota };
+  }
+
+  if (!postar) {
+    // Dry-run NÃO cria: mostra o que criaria. Efeito real só com postar=true.
+    return {
+      status: "criado",
+      reference: "(dry-run, nada criado)",
+      nota: `DRY-RUN — criaria: ${ex.clientName} · ${ex.propertyAddress} · ${ex.postcode ?? "s/ postcode"} · ${ex.date} · conta ${conta!.nome} · £${ex.priceGbp ?? "?"}`,
+    };
   }
 
   const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
