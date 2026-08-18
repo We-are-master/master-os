@@ -71,6 +71,8 @@ async function main(): Promise<void> {
   // Bloqueios Cloudflare consecutivos — cada um aumenta o cool-off (5, 10,
   // 15, 20 min). Insistir na cadência normal só mantém o flag quente.
   let cfBlocks = 0;
+  // Ciclos seguidos com o browser morto — 2 = fatal, sai e o launchd renasce.
+  let browserMorto = 0;
 
   while (!stopping) {
     const inWindow = isWithinRunWindow(cfg.schedule);
@@ -153,6 +155,7 @@ async function main(): Promise<void> {
         const queue = [...jobs, ...leadsThisCycle];
 
         cfBlocks = 0;
+        browserMorto = 0;
         // Scrape time matters: the sleep below is only part of the gap between
         // checks, and Express jobs get taken by other trades within minutes.
         // Log the real cost so the true cadence is measurable, not guessed.
@@ -210,6 +213,20 @@ async function main(): Promise<void> {
           const backoffMin = Math.min(20, 5 * cfBlocks);
           logger.error(`CLOUDFLARE BLOCK #${cfBlocks} — esfriando ${backoffMin} min antes do próximo ciclo`);
           await sleep(backoffMin * 60_000);
+        } else if (/target page, context or browser has been closed|browser has been disconnected/i.test(String(err))) {
+          // O browser MORREU (crash do Chromium, macOS matou no idle da
+          // madrugada) e este loop reusa a mesma page para sempre — foi assim
+          // que o Ruben passou 18/08 inteiro (07:00–16:30) errando a cada 12s
+          // sem se recuperar, enquanto o dono pegava job na mão. Não há
+          // conserto in-place que valha o risco: sai com erro e o launchd
+          // (KeepAlive, ThrottleInterval 60s) renasce o processo com browser
+          // zero-quilômetro em um minuto.
+          browserMorto += 1;
+          if (browserMorto >= 2) {
+            logger.error("Browser is DEAD (2 cycles in a row) — exiting so launchd restarts us fresh");
+            process.exit(1);
+          }
+          logger.error("Poll cycle failed — browser possibly dead, one more cycle to confirm", err);
         } else {
           // Network blip, selector break, whatever — log and try again next cycle.
           logger.error("Poll cycle failed", err);
