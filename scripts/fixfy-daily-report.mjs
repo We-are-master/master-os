@@ -84,17 +84,43 @@ const travados = await q("jobs", `select=reference,client_name,completed_date&st
 const semParceiro = await q("jobs", `select=reference,client_name,scheduled_date&status=in.("unassigned","auto_assigning")&scheduled_date=gte.${hojeLdn}&deleted_at=is.null&limit=50`);
 const atrasados = await q("jobs", `select=reference,client_name,scheduled_date&status=eq.late&deleted_at=is.null&limit=50`);
 
-// ── O que os agentes fizeram (do log do RPA) ─────────────────────────────
+// ── O que os agentes fizeram (dos logs deles) ────────────────────────────
+// Cada agente escreve num formato próprio; o relatório lê e traduz. Ler log em
+// vez de exigir que cada um reporte mantém os agentes independentes: nenhum
+// precisa saber que este relatório existe.
+const linhasDe = (caminho) => {
+  try { return readFileSync(caminho, "utf8").split("\n"); } catch { return []; }
+};
+
 let rpaCiclos = 0, rpaPerdidos = 0, rpaCards = 0;
-try {
-  for (const l of readFileSync("/Users/victorsouza/checkatrade-rpa/.logs/rpa.log", "utf8").split("\n")) {
-    if (!l.startsWith("[" + hojeLdn)) continue;
-    if (/Poll cycle:/.test(l)) rpaCiclos++;
-    if (/LOST job/.test(l)) rpaPerdidos++;
-    const m = /Boards read: (\d+) cards/.exec(l);
-    if (m) rpaCards = Math.max(rpaCards, Number(m[1]));
-  }
-} catch {}
+for (const l of linhasDe("/Users/victorsouza/checkatrade-rpa/.logs/rpa.log")) {
+  if (!l.startsWith("[" + hojeLdn)) continue;
+  if (/Poll cycle:/.test(l)) rpaCiclos++;
+  if (/LOST job/.test(l)) rpaPerdidos++;
+  const m = /Boards read: (\d+) cards/.exec(l);
+  if (m) rpaCards = Math.max(rpaCards, Number(m[1]));
+}
+
+// Harvey carimba a data em cada ciclo; o resto das linhas do ciclo vem depois.
+let hvCiclos = 0, hvRascunhos = 0, hvPendencias = 0, dentroDoDia = false;
+for (const l of linhasDe("/Users/victorsouza/master-os/.logs/harvey.log")) {
+  const c = /^\[harvey\] (\d{4}-\d{2}-\d{2})T/.exec(l);
+  if (c) { dentroDoDia = c[1] === hojeLdn; if (dentroDoDia) hvCiclos++; continue; }
+  if (!dentroDoDia) continue;
+  const r = /ciclo fechado: (\d+) rascunho/.exec(l);
+  if (r) hvRascunhos += Number(r[1]);
+  const p = /reconciliacao: \d+ tickets, (\d+) pendencia/.exec(l);
+  if (p) hvPendencias = Number(p[1]);
+}
+
+// Alex e o dispatch não carimbam data por linha, então o relatório conta o
+// arquivo inteiro e diz isso: número honesto é melhor que número inventado.
+const alexLinhas = linhasDe("/Users/victorsouza/fixfy-sales/.logs/alex.log");
+const alexVendas = alexLinhas.filter((l) => /completado da conversa/.test(l)).length;
+const alexHandoff = alexLinhas.filter((l) => /handoff:/.test(l)).length;
+const alexFalhas = alexLinhas.filter((l) => /venda não virou job/.test(l)).length;
+const mikeLinhas = linhasDe("/Users/victorsouza/fixfy-sales/.logs/sales-dispatch-novos.log");
+const mikeForaDeTurno = mikeLinhas.filter((l) => /Fora da janela/.test(l)).length;
 
 // ── Montagem ─────────────────────────────────────────────────────────────
 const NAVY = "#020040", LARANJA = "#ED4B00", FUNDO = "#F5F5F7";
@@ -138,6 +164,7 @@ if (vencidas.length) alertas.push(alerta("Faturas vencidas", `${vencidas.length}
 if (travados.length) alertas.push(alerta("Esperando seu Finish work", `${travados.length} job(s) entregues, parados em revisão. Enquanto não aprova, a fatura não sai e o dinheiro não é cobrado.`, `${travados.length}`, LARANJA));
 if (semParceiro.length) alertas.push(alerta("Sem parceiro designado", `${semParceiro.length} job(s) agendados de hoje em diante e ainda sem ninguém para executar.`, `${semParceiro.length}`, "#C2410C"));
 if (atrasados.length) alertas.push(alerta("Passou da data e não foi concluído", `${atrasados.map((j) => j.reference).join(", ")}`, `${atrasados.length}`, "#B91C1C"));
+if (alexFalhas) alertas.push(alerta("Venda fechada que não virou job", `O Alex fechou na conversa e a criação do job falhou ${alexFalhas}x. Cliente confirmou e ninguém foi agendado.`, `${alexFalhas}`, "#B91C1C"));
 if (cancel.length) alertas.push(alerta("Cancelados hoje", cancel.map((j) => `${j.reference} · ${String(j.cancellation_reason ?? "sem motivo").slice(0, 40)}`).join("<br>"), `${cancel.length}`, MUDO));
 
 const linhasAgentes = [
@@ -145,6 +172,9 @@ const linhasAgentes = [
   agente("Stefane", "Relatórios", reports.length ? `${reports.length} relatório(s) entregues na plataforma do cliente.` : "Nenhum relatório para entregar hoje.", "#7C3AED"),
   agente("Financeiro", "Recebimentos", pagos.length ? `${pagos.length} pagamento(s) escriturados, ${lb(soma(pagos, "payment_amount"))}. Conferência de coerência rodou.` : "Nenhum pagamento novo confirmado pelas plataformas.", "#059669"),
   agente("Sam", "Dispatch", criados.length ? `${criados.length} job(s) entraram no OS.` : "Nenhum job novo hoje.", "#EA580C"),
+  agente("Harvey", "Quotes no Zendesk", hvCiclos ? `${hvCiclos} ciclos, ${hvRascunhos} rascunho(s) de quote${hvPendencias ? `, ${hvPendencias} pendência(s) na reconciliação` : ""}.` : "Sem ciclo registrado hoje.", "#DB2777"),
+  agente("Alex", "WhatsApp", `${alexVendas} venda(s) fechadas na conversa, ${alexHandoff} passada(s) para humano${alexFalhas ? `. ${alexFalhas} venda(s) não viraram job` : ""}.`, "#0891B2"),
+  agente("Mike", "Dispatch de leads", mikeForaDeTurno ? `Rodou fora da janela de 8h-20h ${mikeForaDeTurno}x e não enviou nada, como esperado.` : "Dentro do turno.", "#CA8A04"),
 ].join("");
 
 const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><title>Fixfy Daily Report</title></head>
