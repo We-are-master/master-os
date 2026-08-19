@@ -247,7 +247,7 @@
 @media (min-width: 640px) {
   .bl-standalone .bl-sb-table {
     display: grid;
-    grid-template-columns: minmax(7rem, 1fr) repeat(7, max-content);
+    grid-template-columns: minmax(7rem, 1fr) repeat(6, max-content);
     column-gap: 0.625rem;
     align-items: center;
     overflow-x: auto;
