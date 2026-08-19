@@ -299,6 +299,7 @@ import { isJobOnHoldComplaint, JOB_STATUS_BADGE_VARIANT, jobOnHoldDisplayBadge, 
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
   buildSchedulePatchForResume,
+  onHoldScheduleSnapshotAndClearPatch,
   onHoldSnapshotArrivalYmd,
   resumeRequiresStrictFutureArrivalDate,
   validateResumeArrivalDate,
@@ -2852,13 +2853,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   // que não pode ser zero é o preço do cliente, que é a receita. Exigir custo
   // acima de zero só desabilitava o botão sem dizer por quê, e a saída era
   // inventar um número que depois virava margem errada no relatório.
+  // Picking "Unassigned" on a job that has a partner is an action (remove the
+  // partner), not a missing field — the confirm button must stay live for it.
+  // Allowed on the statuses where clearing the partner flips the job back to
+  // Unassigned, plus paused/stale rows where the status simply stays put.
+  const partnerAssignIsUnassign =
+    !selectedPartnerId &&
+    !!job &&
+    jobHasPartnerSet(job) &&
+    (JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status) ||
+      job.status === "on_hold" ||
+      job.status === "unassigned");
   const partnerAssignCanConfirm =
-    !!selectedPartnerId &&
-    (partnerAssignRateType === "hourly"
-      ? !!partnerAssignServiceId &&
-        Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
-        Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0
-      : partnerAssignBaseCost >= 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0);
+    partnerAssignIsUnassign ||
+    (!!selectedPartnerId &&
+      (partnerAssignRateType === "hourly"
+        ? !!partnerAssignServiceId &&
+          Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
+          Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0
+        : partnerAssignBaseCost >= 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0));
 
   useEffect(() => {
     if (!job) return;
@@ -3098,9 +3111,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const handleQuickUnassignPartner = useCallback(async () => {
     if (!job?.partner_id?.trim()) return;
-    if (!JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status)) {
+    const returnsToUnassigned = JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status);
+    if (!returnsToUnassigned && job.status !== "on_hold" && job.status !== "unassigned") {
       toast.error(
-        "Can't remove the partner while the job is in this status. Use Assign → No partner when the job is Scheduled, Late, or Unassigned.",
+        "Can't remove the partner at this stage. Move the job back a step first, or swap the partner instead.",
       );
       setSelectedPartnerId("");
       setPartnerModalOpen(true);
@@ -3108,7 +3122,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     if (
       typeof window !== "undefined" &&
-      !window.confirm("Remove this partner? The job will return to Unassigned.")
+      !window.confirm(
+        returnsToUnassigned
+          ? "Remove this partner? The job will return to Unassigned."
+          : "Remove this partner from the job?",
+      )
     ) {
       return;
     }
@@ -3120,7 +3138,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         { silent: true },
       );
       if (updated) {
-        toast.success("Partner removed — job is Unassigned");
+        toast.success(
+          returnsToUnassigned ? "Partner removed. Job is back to Unassigned." : "Partner removed.",
+        );
       }
     } finally {
       setSigningOffPartner(false);
@@ -4070,10 +4090,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         on_hold_reason_preset_id: presetId,
         on_hold_complaint_description: complaintDesc || null,
         on_hold_reason: reason,
-        on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
-        on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
-        on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
-        on_hold_snapshot_scheduled_finish_date: job.scheduled_finish_date ?? null,
+        ...onHoldScheduleSnapshotAndClearPatch(job),
       };
       const updated = await handleStatusChange(job, "on_hold", { extraPatch });
       if (updated) {
@@ -11320,7 +11337,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.status = "unassigned";
                   }
                   const prevPartnerId = job.partner_id ?? null;
-                  await handleJobUpdate(job.id, partnerPatch);
+                  const savedJob = await handleJobUpdate(job.id, partnerPatch);
+                  if (!selectedPartnerId && savedJob) {
+                    toast.success(
+                      partnerPatch.status === "unassigned"
+                        ? "Partner removed. Job is back to Unassigned."
+                        : "Partner removed.",
+                    );
+                  }
                   if (selectedPartnerId) {
                     setPartnerExtrasUiValue(extrasCombined);
                     setPartnerExtraBreakdownUi({
@@ -11353,7 +11377,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 }
               }}
             >
-              Assign & Confirm
+              {partnerAssignIsUnassign ? "Unassign Partner" : "Assign & Confirm"}
             </Button>
           </div>
         </div>

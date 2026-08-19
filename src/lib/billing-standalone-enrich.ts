@@ -99,7 +99,7 @@ export function openSelfBillIdsForEnrichment(sbRows: SelfBill[]): string[] {
   return sbRows.filter((sb) => !isSelfBillClosed(sb)).map((sb) => sb.id);
 }
 
-async function fetchPartnerBillingMeta(partnerIds: string[]): Promise<{
+export async function fetchPartnerBillingMeta(partnerIds: string[]): Promise<{
   termsById: Record<string, string | null>;
   avatarById: Record<string, string | null>;
 }> {

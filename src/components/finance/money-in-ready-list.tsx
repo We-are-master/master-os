@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, FileText } from "lucide-react";
+import { Briefcase, Check, ChevronDown, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { displayBillingReference } from "@/lib/billing-reference";
@@ -162,6 +162,13 @@ function MoneyInReadyListInner({
               <div className="divide-y divide-border-light border-t border-border-light">
                 {visibleRows.map((row, rowIdx) => {
                   const canSelect = invoiceCanSelectForPayment(row.invoice, jobsByRef);
+                  const jobRef = row.invoice.job_reference?.trim() || "";
+                  const job = jobRef ? jobsByRef[jobRef] : undefined;
+                  const jobDateYmd =
+                    job?.completed_date?.trim().slice(0, 10) ||
+                    job?.scheduled_date?.trim().slice(0, 10) ||
+                    job?.scheduled_start_at?.trim().slice(0, 10) ||
+                    "";
                   return (
                     <div
                       key={row.invoice.id}
@@ -194,6 +201,7 @@ function MoneyInReadyListInner({
                         <p className="text-xs text-text-secondary">
                           {displayBillingReference(row.invoice.reference)}
                           {row.invoice.job_reference ? ` · ${row.invoice.job_reference}` : ""}
+                          {jobDateYmd ? ` · Job ${formatDate(jobDateYmd)}` : ""}
                           {" · "}Issued {formatDate(row.invoice.created_at.slice(0, 10))}
                           {row.expectedPayYmd
                             ? ` · Due ${formatDate(row.expectedPayYmd)}`
@@ -216,6 +224,18 @@ function MoneyInReadyListInner({
                         {formatCurrency(row.balanceDue)}
                       </span>
                       <div className="flex gap-1">
+                        {job ? (
+                          <button
+                            type="button"
+                            title={`Open ${jobRef}${jobDateYmd ? ` · ${formatDate(jobDateYmd)}` : ""}`}
+                            className="rounded border border-border-light p-1 hover:bg-surface-hover"
+                            onClick={() =>
+                              window.open(`/jobs/${job.id}`, "_blank", "noopener,noreferrer")
+                            }
+                          >
+                            <Briefcase className="h-3.5 w-3.5 text-text-secondary" />
+                          </button>
+                        ) : null}
                         {canSelect ? (
                           <button
                             type="button"

@@ -3,6 +3,31 @@ import { scheduledEndFromWindow } from "@/lib/job-arrival-window";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import type { Job } from "@/types/database";
 
+/**
+ * Entering on hold: snapshot the live schedule, then clear it. A job on hold
+ * has no date — it must stop occupying calendars and date pickers, and Resume
+ * already asks for a fresh date (prefilled from the snapshot). Every writer of
+ * `status: "on_hold"` goes through this so UI and webhook stay in step.
+ */
+export function onHoldScheduleSnapshotAndClearPatch(job: {
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+  scheduled_finish_date?: string | null;
+}): Partial<Job> {
+  return {
+    on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
+    on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
+    on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
+    on_hold_snapshot_scheduled_finish_date: job.scheduled_finish_date ?? null,
+    scheduled_date: null,
+    scheduled_start_at: null,
+    scheduled_end_at: null,
+    scheduled_finish_date: null,
+    /** `scheduled_date`/`_start_at`/`_end_at` are typed non-null on `Job` but the DB clears them with null (same dodge as `buildSchedulePatchForResume`). */
+  } as unknown as Partial<Job>;
+}
+
 /** Civil YYYY-MM-DD for the snapshot arrival day (prefer date column, else local day from start timestamp). */
 export function onHoldSnapshotArrivalYmd(job: Pick<Job, "on_hold_snapshot_scheduled_date" | "on_hold_snapshot_scheduled_start_at">): string | null {
   const d = job.on_hold_snapshot_scheduled_date;

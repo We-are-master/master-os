@@ -232,9 +232,65 @@
   border-bottom: 1px solid rgba(2, 0, 64, 0.05);
 }
 
+/**
+ * One grid for the whole partner block. Header and rows are `display: contents`,
+ * so every cell is a child of the SAME grid: a header can never sit in a
+ * different column than its values.
+ *
+ * Sizing rule that matters: the seven right-hand columns are `max-content`
+ * (each as wide as its widest header or value, never wider) and the name column
+ * takes the rest, truncating with an ellipsis when the panel is narrow. Sizing
+ * the name column with a plain `1fr` is what broke this before — the numeric
+ * columns ate the width and the reference collapsed under the status pill.
+ * `overflow-x` is the last resort, only if even the minimums do not fit.
+ */
 @media (min-width: 640px) {
-  .bl-standalone .bl-sb-row {
-    grid-template-columns: minmax(0, 1fr) repeat(7, minmax(0, auto));
+  .bl-standalone .bl-sb-table {
+    display: grid;
+    grid-template-columns: minmax(7rem, 1fr) repeat(7, max-content);
+    column-gap: 0.625rem;
+    align-items: center;
+    overflow-x: auto;
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__colhead,
+  .bl-standalone .bl-sb-table .bl-sb-row,
+  .bl-standalone .bl-sb-table .bl-sb-row .bl-sb-row__cols {
+    display: contents;
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__colhead > span {
+    padding: 0.375rem 0;
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row > *:not(.bl-sb-row__cols),
+  .bl-standalone .bl-sb-table .bl-sb-row .bl-sb-row__cols > * {
+    align-self: stretch;
+    /** Beats the legacy `justify-self: end/center` rules below, so each cell fills its column and the row divider is continuous. */
+    justify-self: stretch;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+    border-bottom: 1px solid rgba(2, 0, 64, 0.06);
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__identity {
+    padding-left: 1rem;
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__open {
+    padding-right: 1rem;
+    justify-content: flex-end;
+  }
+  .bl-standalone .bl-sb-table .bl-ledger-row--alt > *:not(.bl-sb-row__cols),
+  .bl-standalone .bl-sb-table .bl-ledger-row--alt .bl-sb-row__cols > * {
+    background: rgba(2, 0, 64, 0.025);
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__amount,
+  .bl-standalone .bl-sb-table .bl-sb-row__paid,
+  .bl-standalone .bl-sb-table .bl-sb-row__outstanding,
+  .bl-standalone .bl-sb-table .bl-sb-row__next-due {
+    justify-content: flex-end;
+  }
+  .bl-standalone .bl-sb-table .bl-sb-row__actions {
+    justify-content: center;
   }
 }
 
@@ -243,8 +299,6 @@
 }
 
 .bl-standalone .bl-sb-row__colhead {
-  grid-template-columns: minmax(0, 1fr) 4.5rem 5rem 5rem 5.5rem 5rem minmax(7rem, 1fr) auto;
-  column-gap: 0.75rem;
   align-items: center;
 }
 

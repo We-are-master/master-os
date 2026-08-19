@@ -153,3 +153,38 @@ test("cancelar e pôr em espera continuam livres", () => {
   assert.equal(canAdvanceJob(job, "cancelled").ok, true);
   assert.equal(canAdvanceJob(job, "on_hold").ok, true);
 });
+
+test("report enviado à mão na plataforma do cliente libera o job, mesmo com envelope vazio", () => {
+  // O caso do JOB-9448: relatório feito direto no site do cliente, marcado como
+  // "sent manually", e o Force approve batia em "Could not move the job to
+  // Awaiting payment" porque o portão só olhava o envelope interno.
+  const job = jobLimpezaCompleto({
+    final_report_submitted: false,
+    start_report: null,
+    final_report: null,
+    external_report_manual_at: "2026-08-18T21:12:00Z",
+  } as unknown as Partial<Job>);
+  assert.equal(reportCompletionGate(job).ok, true);
+  assert.equal(canAdvanceJob(job, "awaiting_payment").ok, true);
+});
+
+test("envio da Stefane também conta como relatório entregue", () => {
+  const job = jobLimpezaCompleto({
+    final_report_submitted: false,
+    start_report: null,
+    final_report: null,
+    external_report_submitted_at: "2026-08-18T20:00:00Z",
+  } as unknown as Partial<Job>);
+  assert.equal(reportCompletionGate(job).ok, true);
+});
+
+test("sem envio externo, o portão continua cobrando o envelope interno", () => {
+  const job = jobLimpezaCompleto({
+    final_report_submitted: false,
+    start_report: null,
+    final_report: null,
+    external_report_manual_at: null,
+    external_report_submitted_at: null,
+  } as unknown as Partial<Job>);
+  assert.equal(reportCompletionGate(job).ok, false);
+});

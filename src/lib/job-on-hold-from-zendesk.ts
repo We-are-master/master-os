@@ -12,6 +12,7 @@ import {
   parseJobOnHoldReasonId,
   resolveJobOnHoldReasonIdFromLabel,
 } from "@/lib/job-on-hold-reasons";
+import { onHoldScheduleSnapshotAndClearPatch } from "@/lib/job-on-hold";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
@@ -136,10 +137,7 @@ export async function putJobOnHoldFromZendesk(
       on_hold_reason_preset_id: presetId,
       on_hold_complaint_description: notes,
       on_hold_reason: reasonText,
-      on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
-      on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
-      on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
-      on_hold_snapshot_scheduled_finish_date: job.scheduled_finish_date ?? null,
+      ...onHoldScheduleSnapshotAndClearPatch(job),
     })
     .eq("id", job.id);
 

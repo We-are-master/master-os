@@ -9,6 +9,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
+import { HoverPreview } from "@/components/ui/hover-preview";
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
@@ -2265,14 +2266,30 @@ function JobsPageContent() {
           item.client_id && clientAccountLogoByClientId[item.client_id] != null
             ? clientAccountLogoByClientId[item.client_id]?.trim() || undefined
             : undefined;
+        const scopeText = item.scope?.trim();
         return (
-          <div className="flex items-start gap-2 min-w-0">
-            <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
-            <div className="min-w-0 leading-tight">
-              <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
-              <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
+          <HoverPreview
+            content={
+              scopeText ? (
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    Scope of work · {item.reference}
+                  </p>
+                  <p className="mt-1.5 max-h-64 overflow-hidden whitespace-pre-line text-xs leading-relaxed text-text-primary">
+                    {scopeText}
+                  </p>
+                </div>
+              ) : null
+            }
+          >
+            <div className="flex items-start gap-2 min-w-0">
+              <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
+              <div className="min-w-0 leading-tight">
+                <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
+                <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
+              </div>
             </div>
-          </div>
+          </HoverPreview>
         );
       },
     },
