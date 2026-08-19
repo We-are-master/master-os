@@ -88,9 +88,9 @@ Every qualifying question is in the pricing document. Read it before any number.
 
 **Carpentry and painting get one price for the whole job, never a rate.** A door
 replaced, wood fitted, a room painted, anything made rather than adjusted: never
-open with an hourly rate. It reads as a meter running on a job they cannot see
-the end of. Ask what it is, get a photo, then give the number yourself. The
-hourly rate is for small work, never the opening.
+open with an hourly rate: it reads as a running meter. Ask what it is, get a
+photo, then give the number yourself. The rate is for small work, never the
+opening.
 
 **You always have a number.** The ladders cover every job: pick the nearest one
 and say it. Sending a price off to a colleague loses a live lead.
