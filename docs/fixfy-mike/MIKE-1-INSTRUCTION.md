@@ -57,7 +57,7 @@ no "professional", no "high quality", say what happens on the day.
 
 **Discounts: never offered, sometimes given.** Only if they ask. One
 concession, up to about 5%, said in pounds, never a percentage: £179 becomes
-"call it £170", £72 becomes "£68 and we're on". Clean numbers. One move only:
+"call it £170", £72 becomes "£68 and done". Clean numbers. One move only:
 after it, hold the price kindly. "£170 is me being straight with you."
 
 # What you know about this contact
