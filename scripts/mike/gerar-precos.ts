@@ -35,6 +35,8 @@ type Linha = {
 const UNIDADE: Record<string, string> = {
   per_job: "fixed price", per_item: "each", per_room: "per room",
   per_door: "per door", per_m2: "per m²", per_hour: "per hour",
+  per_day: "per day", per_half_day: "per half day", per_window: "per window",
+  per_panel: "per panel", per_post: "per post", per_load: "per load",
 };
 
 async function main(): Promise<void> {
@@ -45,8 +47,14 @@ async function main(): Promise<void> {
   if (!r.ok) throw new Error(`pricebook HTTP ${r.status}`);
   const linhas = (await r.json()) as Linha[];
 
+  // O Mike só vende o que ele pode vender. Deixar preço de encanamento ou de
+  // jardim no doc faz ele cotar: a knowledge ganha da instruction (medido em
+  // 2026-08-14, o caso da porta). Fora do escopo não entra na lista.
+  const FORA_DO_ESCOPO = new Set(["plumber", "garden", "decking", "fencing", "paving"]);
+
   const porTrade = new Map<string, Linha[]>();
   for (const l of linhas) {
+    if (FORA_DO_ESCOPO.has(l.trade)) continue;
     if (!porTrade.has(l.trade)) porTrade.set(l.trade, []);
     porTrade.get(l.trade)!.push(l);
   }
@@ -56,19 +64,24 @@ async function main(): Promise<void> {
     "",
     "## The fixed price list (from our system)",
     "",
-    "These are the exact prices, straight from our pricing system — the same",
-    "one that fills `quote_ready`. Rules:",
+    "These are the exact prices from our pricing system. They are the numbers",
+    "you quote. Rules:",
     "",
-    "- **If `quote_ready` is filled, that number wins over this list** — it",
-    "  already includes materials for that exact enquiry.",
-    "- From this list you quote the labour price and say materials come on",
-    "  top: \"that covers the labour — materials are added at cost from our",
-    "  supplier, I'll confirm the exact figure when we book\".",
+    "- **Quote from this list first.** It beats any figure you remember and any",
+    "  number you would work out from the ladders.",
+    "- **Every price here is labour, inc VAT.** Materials are never in it and we",
+    "  never buy them: \"that covers the labour, materials aren't included\".",
+    "- Minimums are real. Under the minimum you charge the minimum, never the",
+    "  rate times the size.",
+    "- Per-m² lines: ask the size first. No size, no number.",
     "- A job that is NOT on this list and not covered by the ladders is a",
     "  handoff. **Never invent a line, never average two lines.**",
-    "- Per-m² lines: ask the size first. No size, no number.",
-    "- Electrical INSTALLATION (sockets, lights, rewiring) is never offered",
-    "  — certificates only. Hand off any install ask.",
+    "- If `quote_ready` is filled, the office has already priced that exact",
+    "  enquiry and that number wins over this list. You never write that field.",
+    "- Electrical INSTALLATION (sockets, lights, rewiring) is never offered,",
+    "  certificates only. Hand off any install ask.",
+    "- Plumbing, gardening, decking, fencing, paving and driveways are not ours",
+    "  at any price. They are off this list on purpose. Hand off, never quote.",
     "",
   ];
 
@@ -78,16 +91,23 @@ async function main(): Promise<void> {
       const preco = l.override_gbp ?? l.price_gbp;
       const unidade = UNIDADE[l.unit] ?? l.unit;
       const minimo = l.min_charge_gbp ? ` (minimum £${Number(l.min_charge_gbp).toFixed(0)})` : "";
-      partes.push(`- ${l.service} — **£${Number(preco).toFixed(2)}** ${unidade}${minimo}`);
+      partes.push(`- ${l.service}: **£${Number(preco).toFixed(2)}** ${unidade}${minimo}`);
     }
     partes.push("");
   }
   partes.push(FIM);
   const secao = partes.join("\n");
 
+  // Recorte por índice, não por regex: o marcador tem parênteses, ponto e
+  // travessão, e como RegExp ele deixava de casar em silêncio — o script
+  // dizia que tinha gerado e regravava o documento idêntico.
   let doc = readFileSync(DOC, "utf8");
-  if (doc.includes(INICIO)) {
-    doc = doc.replace(new RegExp(`${INICIO}[\\s\\S]*?${FIM}`), secao);
+  const i = doc.indexOf(INICIO);
+  const f = doc.indexOf(FIM, i + 1);
+  if (i !== -1 && f !== -1) {
+    doc = doc.slice(0, i) + secao + doc.slice(f + FIM.length);
+  } else if (i !== -1 || f !== -1) {
+    throw new Error("marcadores PRICEBOOK desemparelhados no documento");
   } else {
     doc = `${doc.trimEnd()}\n\n---\n\n${secao}\n`;
   }
