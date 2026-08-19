@@ -22,10 +22,22 @@ import {
   formaDoFormulario,
   type PayloadHousekeep,
   type PayloadLimpeza,
+  HOUSEKEEP_COMODOS,
+  HOUSEKEEP_SECOES_FOTO,
 } from "./housekeep-report-form";
 
 /** Fotos de um envio: antes e depois, na ordem dos dois blocos do formulário. */
-export type FotosDoEnvio = { antes: string[]; depois: string[] };
+export type FotosDoEnvio = {
+  antes: string[];
+  depois: string[];
+  /**
+   * As mesmas fotos, ainda separadas por cômodo, quando o relatório foi
+   * preenchido no formulário de limpeza. As listas achatadas acima continuam
+   * existindo para o formulário de trade, que tem dois blocos só.
+   */
+  antesPorComodo?: Record<string, string[]>;
+  depoisPorComodo?: Record<string, string[]>;
+};
 
 /** Anexo pronto para o `setInputFiles`, já em memória. */
 type Anexo = { name: string; mimeType: string; buffer: Buffer };
@@ -68,6 +80,73 @@ async function baixarFotos(urls: string[], prefixo: string): Promise<Anexo[]> {
     );
   }
   return out;
+}
+
+/**
+ * Onde está cada campo de arquivo da página: seção da sanfona e rótulo do bloco.
+ *
+ * Por RÓTULO e não por índice porque índice é promessa que a página não fez: o
+ * bloco de vapor só existe quando a limpeza a vapor foi contratada, e qualquer
+ * cômodo novo que eles adicionem empurra todos os outros. O rótulo é o que o
+ * parceiro lê e é o que sobrevive.
+ */
+async function mapaDosBlocos(page: Page): Promise<Array<{ indice: number; secao: string; rotulo: string }>> {
+  return page.evaluate(() => {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    const secaoDe = (el: Element): string => {
+      let p: Element | null = el;
+      while ((p = p.parentElement)) {
+        const h = p.querySelector?.("h5.collapsible");
+        if (h?.textContent) return h.textContent.trim();
+      }
+      return "";
+    };
+    const rotuloDe = (el: Element): string => {
+      let p: Element | null = el.closest("div");
+      for (let k = 0; k < 5 && p; k++) {
+        const l = p.querySelector("label, strong, h4");
+        const t = l?.textContent?.trim();
+        if (t && t.length < 90) return t;
+        p = p.parentElement?.closest("div") ?? null;
+      }
+      return "";
+    };
+    return inputs.map((el, indice) => ({ indice, secao: secaoDe(el), rotulo: rotuloDe(el) }));
+  });
+}
+
+/**
+ * Sobe as fotos de limpeza cômodo a cômodo, cada uma no bloco com o nome dela.
+ *
+ * Devolve o que NÃO encontrou lugar: cômodo que a página não tem (vapor não
+ * contratado, por exemplo) não é erro, mas precisa aparecer no log — foto que
+ * ninguém sobe é serviço que ninguém prova.
+ */
+async function anexarPorComodo(
+  page: Page,
+  secaoAlvo: string,
+  fotos: Record<string, string[]>,
+  prefixoLog: string,
+): Promise<string[]> {
+  const blocos = await mapaDosBlocos(page);
+  const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
+  const semLugar: string[] = [];
+  for (const [chave, urls] of Object.entries(fotos)) {
+    if (!urls || urls.length === 0) continue;
+    const rotulo = HOUSEKEEP_COMODOS[chave];
+    const alvo = rotulo
+      ? blocos.find((b) => b.secao === secaoAlvo && b.rotulo.toLowerCase().startsWith(rotulo.toLowerCase()))
+      : undefined;
+    if (!alvo) {
+      semLugar.push(chave);
+      continue;
+    }
+    const anexos = await baixarFotos(urls, `${prefixoLog}/${chave}`);
+    if (anexos.length === 0) continue;
+    await inputs.nth(alvo.indice).setInputFiles(anexos, { timeout: 60_000 });
+    console.log(`[stefane] ${prefixoLog}: ${anexos.length} foto(s) em "${alvo.rotulo.slice(0, 40)}"`);
+  }
+  return semLugar;
 }
 
 /** Põe os arquivos no bloco de índice `indice` (0 = antes, 1 = depois). */
@@ -236,15 +315,36 @@ export async function submeterRelatorioHousekeep(args: {
     // Fotos por último: o download é a parte lenta, e não faz sentido pagar por
     // ele se o preenchimento já falhou acima.
     if (args.fotos) {
-      const [antes, depois] = await Promise.all([
-        baixarFotos(args.fotos.antes, "before"),
-        baixarFotos(args.fotos.depois, "after"),
-      ]);
-      await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
-      await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
-      // A página processa cada arquivo (miniatura, upload) antes de aceitar o
-      // submit; sem essa folga o Submit chega antes das fotos.
-      if (antes.length || depois.length) await page.waitForTimeout(3000);
+      /**
+       * Limpeza sobe cômodo a cômodo; trade continua com os dois baldes.
+       *
+       * Este é o par do espelho que o app do parceiro já fazia: lá o parceiro
+       * fotografa cozinha, banheiro e quartos em campos separados, e até 19/08
+       * tudo isso era achatado em duas listas na hora de subir — o formulário
+       * deles tem treze campos e recebia dois. Relatório coletado certo,
+       * entregue errado.
+       */
+      const porComodo =
+        forma === "limpeza" && (args.fotos.antesPorComodo || args.fotos.depoisPorComodo);
+      if (porComodo) {
+        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before");
+        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after");
+        const perdidos = [...new Set([...perdidosA, ...perdidosD])];
+        if (perdidos.length) {
+          console.warn(`[stefane] cômodo(s) sem bloco correspondente na página: ${perdidos.join(", ")}`);
+        }
+        await page.waitForTimeout(3000);
+      } else {
+        const [antes, depois] = await Promise.all([
+          baixarFotos(args.fotos.antes, "before"),
+          baixarFotos(args.fotos.depois, "after"),
+        ]);
+        await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
+        await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
+        // A página processa cada arquivo (miniatura, upload) antes de aceitar o
+        // submit; sem essa folga o Submit chega antes das fotos.
+        if (antes.length || depois.length) await page.waitForTimeout(3000);
+      }
     }
 
     /**

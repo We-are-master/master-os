@@ -118,6 +118,34 @@ export const HOUSEKEEP_FOTOS = {
   maximoPorBloco: HOUSEKEEP_MAX_FOTOS,
 } as const;
 
+/**
+ * O formulário de LIMPEZA tem TREZE campos de arquivo, não dois.
+ *
+ * Contados na página real em 19/08/2026 (JOB-9450): sete em "Before photos"
+ * (equipamento + cinco cômodos + vapor) e seis em "After photos". O código
+ * mandava tudo para os índices 0 e 1 — ou seja, as 20 fotos de chegada iam
+ * para "Cleaning equipment", que aceita DUAS, e as de conclusão iam para a
+ * sala do "antes". Era por isso que o formulário deles aparecia vazio depois
+ * de um envio que o nosso lado dava por feito.
+ *
+ * A chave é a MESMA do nosso app do parceiro (photoSlotsForTemplate): o
+ * espelho só serve se os dois lados chamarem o cômodo pelo mesmo nome. O
+ * rótulo é o começo do texto do bloco na página deles, e casa por prefixo
+ * porque o resto do rótulo é a lista de itens ("include: oven, hob…").
+ */
+export const HOUSEKEEP_COMODOS: Record<string, string> = {
+  equipment: "Cleaning equipment",
+  living_room: "Living room",
+  hallways: "Hallways",
+  kitchen: "Kitchen",
+  bathrooms: "Bathrooms",
+  bedrooms: "Bedrooms",
+  steam_cleaning: "Steam cleaning",
+};
+
+/** Os títulos das duas sanfonas de foto, como a página deles escreve. */
+export const HOUSEKEEP_SECOES_FOTO = { antes: "Before photos", depois: "After photos" } as const;
+
 /** Índice do radio de conclusão, na ordem do formulário. */
 export const CONCLUSAO = {
   completo: 0, // Yes, no further work required

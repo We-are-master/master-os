@@ -74,6 +74,30 @@ export function urlsDeFoto(report: unknown): string[] {
   return [];
 }
 
+/**
+ * As fotos de um report AINDA separadas por cômodo.
+ *
+ * `urlsDeFoto` acima achata, e achatar é o certo para o formulário de trade,
+ * que tem dois campos. O de limpeza tem treze, um por cômodo, e para ele o
+ * mapa precisa chegar inteiro — foi exatamente essa perda que fazia o
+ * relatório de End of Tenancy chegar vazio do outro lado.
+ *
+ * Devolve null quando o envelope é lista plana (report antigo ou template de
+ * trade): quem chama volta para o caminho de dois blocos.
+ */
+export function fotosPorComodo(report: unknown): Record<string, string[]> | null {
+  const p = (report as { photos?: unknown } | null)?.photos;
+  if (!p || Array.isArray(p) || typeof p !== "object") return null;
+  const out: Record<string, string[]> = {};
+  for (const [chave, valor] of Object.entries(p as Record<string, unknown>)) {
+    const urls = Array.isArray(valor)
+      ? valor.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      : [];
+    if (urls.length > 0) out[chave] = urls;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 const BUCKET_FOTOS = "job-reports";
 
 /**
@@ -252,10 +276,24 @@ export async function enviarRelatorioExterno(
     assinarFotos(supabase, urlsDeFoto(j.final_report)),
   ]);
 
+  // Mapa por cômodo quando o report foi preenchido no formulário de limpeza:
+  // é ele que alimenta os treze campos da Housekeep. Assinar cada lista, e não
+  // a lista achatada, porque a URL assinada é por arquivo.
+  const assinarMapa = async (mapa: Record<string, string[]> | null) => {
+    if (!mapa) return undefined;
+    const out: Record<string, string[]> = {};
+    for (const [chave, urls] of Object.entries(mapa)) out[chave] = await assinarFotos(supabase, urls);
+    return out;
+  };
+  const [antesPorComodo, depoisPorComodo] = await Promise.all([
+    assinarMapa(fotosPorComodo(j.start_report)),
+    assinarMapa(fotosPorComodo(j.final_report)),
+  ]);
+
   const res = await submeterRelatorioHousekeep({
     url: String(j.report_link).split("?")[0],
     payload: montado.payload,
-    fotos: { antes: fotosAntes, depois: fotosDepois },
+    fotos: { antes: fotosAntes, depois: fotosDepois, antesPorComodo, depoisPorComodo },
     simular: opcoes?.simular,
   });
 
