@@ -550,7 +550,21 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       client_price: ex.priceGbp ?? undefined,
       // O link tokenizado do card é onde a Stefane submete o report.
       report_link: ex.cardUrl ?? ticket.linksHousekeep[0] ?? undefined,
-      internal_notes: `Created by Harvey from Zendesk booking #${ticketId} (${conta!.nome}).`,
+      /**
+       * Booking sem card no e-mail nasce INCOMPLETO, e isso fica escrito no
+       * job em vez de virar surpresa: o e-mail da Express não traz link do
+       * card (só redirects rastreados), então não há report link para a
+       * Stefane nem o brief que o cliente escreveu. O Ruben preenche os dois
+       * na próxima varredura completa, casando por postcode + valor.
+       */
+      internal_notes: [
+        `Created by Harvey from Zendesk booking #${ticketId} (${conta!.nome}).`,
+        ex.cardUrl || ticket.linksHousekeep[0]
+          ? null
+          : "No card link in this email: report link and the customer's brief are still missing. Ruben fills them from the board on his next full sweep.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
       auto_assign: false,
       // O ticket JÁ existe: linka por external_source/external_ref e ganha
       // idempotência — repostar o mesmo ticket devolve o job existente.
