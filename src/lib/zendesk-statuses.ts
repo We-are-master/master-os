@@ -50,6 +50,13 @@ export const ZD_STATUS_FINAL_CHECKS = 5688492712607;
  */
 export const ZD_STATUS_ON_HOLD = 5679178036127;
 
+/** 💷 Awaiting Payment — work done, waiting for the customer to pay.
+ *  PENDING category on purpose (dono, 18/08/2026): a automation "Close
+ *  ticket 1 day after solved" fecha e arquiva qualquer ticket solved em 24h,
+ *  e ticket arquivado some de toda view — pending mantém o ticket vivo na
+ *  fila "💷 Awaiting Payment" até o pagamento cair de verdade. */
+export const ZD_STATUS_AWAITING_PAYMENT = 6165486711711;
+
 /** Completed — job finished successfully. Solved category (auto-closes the ticket).
  *  Uses the built-in "Solved" custom status (always enabled on every form);
  *  the previous custom "Completed" id (5688725804959) wasn't enabled on the
@@ -92,6 +99,7 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_IN_PROGRESS]:       "open",
   [ZD_STATUS_FINAL_CHECKS]:      "open",
   [ZD_STATUS_ON_HOLD]:           "pending",
+  [ZD_STATUS_AWAITING_PAYMENT]:  "pending",
   [ZD_STATUS_COMPLETED]:         "solved",
   [ZD_STATUS_CANCELLED]:         "solved",
   [ZD_STATUS_LOST]:              "solved",

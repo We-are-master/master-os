@@ -4,7 +4,7 @@ import { CloudflareBlockedError, scrapeNewOnly, scrapeOpportunities } from "./ch
 import { createMasterOsClient } from "./masterOs/client.js";
 import { handleOpportunity } from "./classify.js";
 import { countJobsAcceptedToday } from "./dedupe/seenStore.js";
-import { isWithinRunWindow } from "./time.js";
+import { isWithinRunWindow, tzNow } from "./time.js";
 import { logger } from "./logger.js";
 import { isPriority } from "./jobRules.js";
 import { rodarConclusoes } from "./express/completion.js";
@@ -60,9 +60,19 @@ async function main(): Promise<void> {
    */
   let lastLeadsAt = 0;
   let lastDeepAt = 0;
+  /**
+   * Batimento: o fast pass vazio não loga (senão o log vira metralhadora),
+   * mas log mudo por 10 minutos é como a TV do escritório declara o robô
+   * morto — "RUBEN · ALERT" com ele caçando normalmente. Uma linha a cada 5
+   * minutos resume o silêncio e mantém o atestado de vida honesto.
+   */
+  let passesCalados = 0;
+  let ultimoBatimento = Date.now();
   // Bloqueios Cloudflare consecutivos — cada um aumenta o cool-off (5, 10,
   // 15, 20 min). Insistir na cadência normal só mantém o flag quente.
   let cfBlocks = 0;
+  // Ciclos seguidos com o browser morto — 2 = fatal, sai e o launchd renasce.
+  let browserMorto = 0;
 
   while (!stopping) {
     const inWindow = isWithinRunWindow(cfg.schedule);
@@ -85,6 +95,15 @@ async function main(): Promise<void> {
          */
         await rodarConclusoes(page, cfg, masterOs);
 
+        // Dono (18/08, de noite, depois de perder um EICR que entrou e foi
+        // embora): os agentes trabalham 24 HORAS — Ruben ligado a cada ciclo,
+        // job Express aceito na hora, madrugada inclusive. A ÚNICA exceção é
+        // mensagem a lead do Checkatrade, permitida só entre LEADS_START_HOUR
+        // e LEADS_END_HOUR (07–21 London): expressar interesse manda mensagem
+        // e ninguém quer WhatsApp de madrugada; job não fala com ninguém.
+        // Lead fora da janela continua New no board e a manhã pega.
+        const horaLondres = tzNow(cfg.schedule.timezone).hour;
+        const leadsAbertos = horaLondres >= cfg.schedule.leadsStartHour && horaLondres < cfg.schedule.leadsEndHour;
         let opportunities;
         if (deepDue) {
           opportunities = await scrapeOpportunities(page);
@@ -92,9 +111,16 @@ async function main(): Promise<void> {
           lastLeadsAt = cycleStartedAt;
         } else {
           opportunities = await scrapeNewOnly(page, "jobs");
-          if (leadsDue) {
+          if (leadsDue && leadsAbertos) {
             opportunities.push(...(await scrapeNewOnly(page, "leads")));
             lastLeadsAt = cycleStartedAt;
+          }
+        }
+        if (!leadsAbertos) {
+          const antes = opportunities.length;
+          opportunities = opportunities.filter((o) => o.kind !== "lead");
+          if (antes !== opportunities.length) {
+            logger.info(`Leads frozen (window ${cfg.schedule.leadsStartHour}-${cfg.schedule.leadsEndHour}h London): ${antes - opportunities.length} lead(s) left for the day pass`);
           }
         }
 
@@ -145,10 +171,19 @@ async function main(): Promise<void> {
         const queue = [...jobs, ...leadsThisCycle];
 
         cfBlocks = 0;
+        browserMorto = 0;
         // Scrape time matters: the sleep below is only part of the gap between
         // checks, and Express jobs get taken by other trades within minutes.
         // Log the real cost so the true cadence is measurable, not guessed.
         const scrapeMs = Date.now() - cycleStartedAt;
+        if (!deepDue && opportunities.length === 0) passesCalados += 1;
+        if (Date.now() - ultimoBatimento >= 5 * 60_000) {
+          if (passesCalados > 0) {
+            logger.info(`Alive: ${passesCalados} quiet fast pass(es) in the last 5m — nothing New on the board`);
+          }
+          passesCalados = 0;
+          ultimoBatimento = Date.now();
+        }
         if (deepDue || opportunities.length > 0) {
           logger.info(
             `${deepDue ? "Deep scan" : "Fast pass"}: ${opportunities.length} opportunities — ${jobs.length} job(s), ${leadsThisCycle.length} lead(s) this pass` +
@@ -194,6 +229,20 @@ async function main(): Promise<void> {
           const backoffMin = Math.min(20, 5 * cfBlocks);
           logger.error(`CLOUDFLARE BLOCK #${cfBlocks} — esfriando ${backoffMin} min antes do próximo ciclo`);
           await sleep(backoffMin * 60_000);
+        } else if (/target page, context or browser has been closed|browser has been disconnected/i.test(String(err))) {
+          // O browser MORREU (crash do Chromium, macOS matou no idle da
+          // madrugada) e este loop reusa a mesma page para sempre — foi assim
+          // que o Ruben passou 18/08 inteiro (07:00–16:30) errando a cada 12s
+          // sem se recuperar, enquanto o dono pegava job na mão. Não há
+          // conserto in-place que valha o risco: sai com erro e o launchd
+          // (KeepAlive, ThrottleInterval 60s) renasce o processo com browser
+          // zero-quilômetro em um minuto.
+          browserMorto += 1;
+          if (browserMorto >= 2) {
+            logger.error("Browser is DEAD (2 cycles in a row) — exiting so launchd restarts us fresh");
+            process.exit(1);
+          }
+          logger.error("Poll cycle failed — browser possibly dead, one more cycle to confirm", err);
         } else {
           // Network blip, selector break, whatever — log and try again next cycle.
           logger.error("Poll cycle failed", err);

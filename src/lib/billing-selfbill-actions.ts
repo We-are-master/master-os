@@ -25,6 +25,8 @@ export type SelfBillJobLine = Pick<
   | "deleted_at"
   | "partner_cancelled_at"
   | "billed_hours"
+  | "scheduled_date"
+  | "scheduled_start_at"
 >;
 
 export async function markSelfBillsPaid(ids: string[]): Promise<void> {

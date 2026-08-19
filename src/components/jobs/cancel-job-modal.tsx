@@ -76,7 +76,7 @@ function applyFaultPreset(
     chargeClient: false,
     clientFeeInput: "",
     partnerFee: false,
-    partnerFlow: "owes",
+    partnerFlow: "paid",
     partnerFeeInput: "",
   };
 }
@@ -179,19 +179,24 @@ function CancelJobModalBody({
     }
   };
 
-  const clientFeeLabel =
-    cancelFault === "partner"
-      ? "Amount account charges Fixfy (£)"
-      : cancelFault === "account"
-        ? "Charge account (£)"
-        : "Amount (£)";
+  /** Prefill for the client fee: account default, then company default, then the job's price. */
+  const prefillClientFee = (): string => {
+    const v =
+      feeDefaults?.accountFaultClientChargeGbp ??
+      feeDefaults?.clientFeeGbp ??
+      (Number(displayJob?.client_price ?? 0) > 0 ? Number(displayJob?.client_price) : null);
+    return formatGbpInput(v);
+  };
 
-  const partnerFeeLabel =
-    cancelFault === "partner"
-      ? "Deduct from partner on self-bill (£)"
-      : cancelFault === "account"
-        ? "Pay partner compensation (£)"
-        : "Amount (£)";
+  /** Prefill for the partner amount: paying uses the agreed job cost, charging uses the default fee. */
+  const prefillPartnerFee = (flow: "owes" | "paid"): string => {
+    if (flow === "paid") {
+      const cost = Number(displayJob?.partner_cost ?? 0);
+      if (cost > 0) return formatGbpInput(cost);
+      return formatGbpInput(feeDefaults?.accountFaultPartnerCompGbp ?? null);
+    }
+    return formatGbpInput(feeDefaults?.partnerOwesFeeGbp ?? null);
+  };
 
   return (
     <Modal
@@ -250,11 +255,11 @@ function CancelJobModalBody({
             <div className="flex flex-col gap-2 text-sm">
               {(
                 [
-                  ["partner", "Partner fault — account charges Fixfy; deduct from partner"],
-                  ["account", "Account fault — pay partner; charge account"],
-                  ["custom", "Custom — set fees manually"],
+                  ["partner", "Partner fault", "Deduct the fee from the partner"],
+                  ["account", "Account fault", "Pay the partner and charge the account"],
+                  ["custom", "Custom", "You choose below"],
                 ] as const
-              ).map(([id, label]) => (
+              ).map(([id, label, sub]) => (
                 <label key={id} className="flex items-start gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -264,10 +269,16 @@ function CancelJobModalBody({
                     disabled={isSubmitting}
                     className="mt-0.5"
                   />
-                  <span>{label}</span>
+                  <span>
+                    {label}
+                    <span className="block text-[11px] text-text-tertiary font-normal">{sub}</span>
+                  </span>
                 </label>
               ))}
             </div>
+            <p className="text-[11px] text-text-tertiary">
+              Presets only pre-fill. Everything below stays editable.
+            </p>
           </div>
         )}
 
@@ -277,15 +288,18 @@ function CancelJobModalBody({
               <input
                 type="checkbox"
                 checked={chargeClient}
-                onChange={(e) => setChargeClient(e.target.checked)}
-                disabled={isSubmitting || cancelFault !== "custom"}
+                onChange={(e) => {
+                  setChargeClient(e.target.checked);
+                  if (e.target.checked && !clientFeeInput.trim()) setClientFeeInput(prefillClientFee());
+                }}
+                disabled={isSubmitting}
                 className="rounded border-border"
               />
-              {cancelFault === "partner" ? "Account charges Fixfy (invoice)" : "Charge account / client fee"}
+              Charge the client
             </label>
             {chargeClient && (
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">{clientFeeLabel}</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Amount (£)</label>
                 <input
                   type="number"
                   min={0}
@@ -295,6 +309,9 @@ function CancelJobModalBody({
                   disabled={isSubmitting}
                   className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
                 />
+                <p className="text-[11px] text-text-tertiary mt-1">
+                  Goes out as a cancellation fee invoice to the client.
+                </p>
               </div>
             )}
           </div>
@@ -306,41 +323,48 @@ function CancelJobModalBody({
               <input
                 type="checkbox"
                 checked={partnerFee}
-                onChange={(e) => setPartnerFee(e.target.checked)}
-                disabled={isSubmitting || cancelFault !== "custom"}
+                onChange={(e) => {
+                  setPartnerFee(e.target.checked);
+                  if (e.target.checked && !partnerFeeInput.trim()) setPartnerFeeInput(prefillPartnerFee(partnerFlow));
+                }}
+                disabled={isSubmitting}
                 className="rounded border-border"
               />
-              Partner fee on self-bill
+              Pay or charge the partner
               {partnerLabel ? <span className="text-text-tertiary font-normal">({partnerLabel})</span> : null}
             </label>
             {partnerFee && (
               <div className="space-y-2">
-                {cancelFault === "custom" && (
-                  <div className="flex flex-wrap gap-3 text-sm">
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="partnerFlow"
-                        checked={partnerFlow === "owes"}
-                        onChange={() => setPartnerFlow("owes")}
-                        disabled={isSubmitting}
-                      />
-                      Partner owes Fixfy
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="partnerFlow"
-                        checked={partnerFlow === "paid"}
-                        onChange={() => setPartnerFlow("paid")}
-                        disabled={isSubmitting}
-                      />
-                      Fixfy pays partner
-                    </label>
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="partnerFlow"
+                      checked={partnerFlow === "paid"}
+                      onChange={() => {
+                        setPartnerFlow("paid");
+                        setPartnerFeeInput(prefillPartnerFee("paid"));
+                      }}
+                      disabled={isSubmitting}
+                    />
+                    Pay the partner
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="partnerFlow"
+                      checked={partnerFlow === "owes"}
+                      onChange={() => {
+                        setPartnerFlow("owes");
+                        setPartnerFeeInput(prefillPartnerFee("owes"));
+                      }}
+                      disabled={isSubmitting}
+                    />
+                    Charge the partner
+                  </label>
+                </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">{partnerFeeLabel}</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Amount (£)</label>
                   <input
                     type="number"
                     min={0}
@@ -350,11 +374,11 @@ function CancelJobModalBody({
                     disabled={isSubmitting}
                     className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
                   />
-                  {cancelFault === "partner" ? (
-                    <p className="text-[11px] text-text-tertiary mt-1">
-                      Shown on self-bill as (Cancelled - Fee Applied) and reduces net payout.
-                    </p>
-                  ) : null}
+                  <p className="text-[11px] text-text-tertiary mt-1">
+                    {partnerFlow === "paid"
+                      ? "Added to the self-bill as (Cancelled - Compensation). The client is only charged if you tick the box above."
+                      : "Comes off the self-bill as (Cancelled - Fee Applied)."}
+                  </p>
                 </div>
               </div>
             )}

@@ -103,6 +103,17 @@ function reportTemplateForJob(job: Job): ReportTemplate {
  * it came from does not matter.
  */
 export function reportCompletionGate(job: Job): { ok: boolean; message?: string } {
+  // The report already reached the client's platform — Stefane submitted it, or
+  // someone sent it by hand and marked it sent. The envelopes on this row stop
+  // mattering at that point: what this gate protects (finalising with nothing
+  // delivered to the client) has already been done the right way.
+  const external = job as {
+    external_report_submitted_at?: string | null;
+    external_report_manual_at?: string | null;
+  };
+  if (external.external_report_submitted_at || external.external_report_manual_at) {
+    return { ok: true };
+  }
   const health = reportHealth({
     template: reportTemplateForJob(job),
     startReport: job.start_report,
@@ -525,6 +536,9 @@ export function applyOfficeRescheduleStatus(
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
   if (!jobPatchTouchesSchedule(patch)) return patch;
+  // An explicit status in the patch wins: putting a job on hold clears its
+  // schedule in the same update, and that must not read as a reschedule.
+  if (Object.prototype.hasOwnProperty.call(patch, "status")) return patch;
   if (!STATUSES_RESET_TO_SCHEDULED_ON_RESCHEDULE.has(beforeStatus)) return patch;
   return { ...patch, status: "scheduled" };
 }

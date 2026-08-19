@@ -32,10 +32,44 @@ import {
 } from "@/lib/services-pricing-display";
 import { entryForSlug } from "@/lib/service-display-icons";
 import { useServiceCatalogEditor } from "@/app/(dashboard)/settings/service-catalog-editor";
+import { LabourPricebookView } from "./labour-pricebook-view";
+import { MaterialsQuotesView } from "./materials-quotes-view";
+import { QuotePlaygroundView } from "./quote-playground-view";
 import type { CatalogService } from "@/types/database";
 import "./services-pricing.css";
 
 type ViewMode = "list" | "cards";
+
+/**
+ * As três metades do preço (regra do dono, 17/08/2026): o CATÁLOGO que o OS
+ * sempre teve, o pricebook de LABOUR (preço exato por serviço) e MATERIALS
+ * (vender pela média do mercado comprando do mais barato, com link). Um
+ * toggle porque quem cota precisa das três na mesma tela.
+ */
+type PricingArea = "catalog" | "labour" | "materials" | "quote";
+
+function AreaSegment({ area, onChange }: { area: PricingArea; onChange: (a: PricingArea) => void }) {
+  const tabs: { id: PricingArea; label: string }[] = [
+    { id: "catalog", label: "Catalog" },
+    { id: "labour", label: "Labour" },
+    { id: "materials", label: "Materials" },
+    { id: "quote", label: "Quote" },
+  ];
+  return (
+    <div className="fx-seg">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          className={cn("fx-seg__btn", area === t.id && "is-active")}
+          onClick={() => onChange(t.id)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function fmtPct(pct: number): string {
   return `${pct.toFixed(pct % 1 === 0 ? 0 : 1)}%`;
@@ -515,6 +549,7 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
   const editor = useServiceCatalogEditor({ onSaved: refresh });
   const [shareOpen, setShareOpen] = useState(false);
 
+  const [area, setArea] = useState<PricingArea>("catalog");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<ServicesStatusFilter>("active");
   const [search, setSearch] = useState("");
@@ -577,6 +612,27 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
     </>
   );
 
+  if (area !== "catalog") {
+    // max-w + centro: em monitor largo a tabela esticada de borda a borda
+    // espreme as colunas numéricas na direita e corta a margem ("tudo
+    // grudado", dono, 17/08). O catálogo mantém o layout que sempre teve.
+    return wrap(
+      <div className="svc-pricing mx-auto w-full max-w-6xl space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-text-secondary">
+            {area === "labour"
+              ? "The exact labour price of every service — approved lines are what gets quoted."
+              : area === "materials"
+                ? "Sell at the market average, buy from the cheapest — every price links to the product it came from."
+                : "Type the customer's request; the pricing brain assembles the quote from approved labour and material kits."}
+          </p>
+          <AreaSegment area={area} onChange={setArea} />
+        </div>
+        {area === "labour" ? <LabourPricebookView /> : area === "materials" ? <MaterialsQuotesView /> : <QuotePlaygroundView />}
+      </div>,
+    );
+  }
+
   return wrap(
     <div className="svc-pricing space-y-6">
       {embedded ? (
@@ -584,7 +640,10 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
           <p className="text-sm text-text-secondary">
             What you pay, what you charge, and what you keep — for every service.
           </p>
-          <div className="flex flex-wrap items-center gap-2">{headerActions}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <AreaSegment area={area} onChange={setArea} />
+            {headerActions}
+          </div>
         </div>
       ) : (
         <PageHeader
@@ -592,6 +651,7 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
           title="Services"
           subtitle="What you pay, what you charge, and what you keep — for every service. Click a row to expand add-ons; click edit to change pricing."
         >
+          <AreaSegment area={area} onChange={setArea} />
           {headerActions}
         </PageHeader>
       )}

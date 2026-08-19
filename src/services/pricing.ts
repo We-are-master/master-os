@@ -1,0 +1,67 @@
+import { getSupabase } from "./base";
+import {
+  quoteFromSuppliers,
+  type MaterialQuoteCalc,
+  type SupplierPriceFact,
+} from "@/lib/orcamentista/material-math";
+
+/**
+ * O motor de preço do orçamentista, em duas metades:
+ *
+ *   service_pricebook  — LABOUR. Preço exato por serviço, aprovado pelo dono.
+ *                        `override_gbp` sempre ganha de `price_gbp`.
+ *   supplier_prices    — MATERIAL. Fato puro: o preço de cada fornecedor com
+ *                        o link do produto. A política (vender pela média,
+ *                        comprar do mais barato, piso de 30%) é CONTA, não
+ *                        coluna — vive em lib/orcamentista/material-math,
+ *                        espelhando a view `material_quotes` do banco.
+ */
+
+export type PricebookLine = {
+  id: string;
+  trade: string;
+  service: string;
+  unit: string;
+  price_gbp: number;
+  min_charge_gbp: number | null;
+  basis: string;
+  status: "draft" | "approved" | "retired";
+  override_gbp: number | null;
+  approved_by: string | null;
+  approved_at: string | null;
+};
+
+export async function listPricebook(): Promise<PricebookLine[]> {
+  const { data, error } = await getSupabase()
+    .from("service_pricebook")
+    .select(
+      "id, trade, service, unit, price_gbp, min_charge_gbp, basis, status, override_gbp, approved_by, approved_at",
+    )
+    .order("trade")
+    .order("service");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as PricebookLine[];
+}
+
+export async function updatePricebookLine(
+  id: string,
+  patch: Partial<Pick<PricebookLine, "override_gbp" | "status" | "approved_by" | "approved_at">>,
+): Promise<void> {
+  const { error } = await getSupabase().from("service_pricebook").update(patch).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export type SupplierPrice = SupplierPriceFact;
+export type MaterialQuote = MaterialQuoteCalc;
+export { quoteFromSuppliers };
+
+export async function listSupplierPrices(): Promise<SupplierPrice[]> {
+  const { data, error } = await getSupabase()
+    .from("supplier_prices")
+    .select("id, family, variant, query, supplier, unit_cost, list_price, spec, sample_product, source_url")
+    .order("family")
+    .order("variant")
+    .order("unit_cost");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SupplierPrice[];
+}

@@ -1,0 +1,4220 @@
+[
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 75mm satin (pair)",
+  "query": "butt hinge 75mm satin stainless pair",
+  "supplier": "screwfix",
+  "unit_cost": 6.39,
+  "list_price": 8.99,
+  "spec": {
+   "size_mm": 75,
+   "fire_rated": false
+  },
+  "sample": "Smith & Locke Satin Stainless Steel Grade 7 Fire Rated Ball Bearing Hinges 76mm x 51mm 2 Pack",
+  "url": "https://www.screwfix.com/p/smith-locke-satin-stainless-steel-grade-7-fire-rated-ball-bearing-hinges-76mm-x-51mm-2-pack/9988j"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 100mm satin (pair)",
+  "query": "butt hinge 100mm satin stainless",
+  "supplier": "screwfix",
+  "unit_cost": 4.59,
+  "list_price": 5.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": false
+  },
+  "sample": "Smith & Locke Satin Chrome Grade 13 Fire Rated Ball Bearing Door Hinges 102mm x 76mm 2 Pack",
+  "url": "https://www.screwfix.com/p/smith-locke-satin-chrome-grade-13-fire-rated-ball-bearing-door-hinges-102mm-x-76mm-2-pack/710px"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Fire door hinge grade 13 CE 100mm (pack of 3)",
+  "query": "fire door hinges grade 13 100mm pack 3",
+  "supplier": "screwfix",
+  "unit_cost": 15.99,
+  "list_price": 20.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": true,
+   "pack": 3
+  },
+  "sample": "Union PowerLoad Zinc-Plated Left-Handed Grade 13 Fire Rated Lift-Off Hinges 100mm x 88mm 3 Pack",
+  "url": "https://www.screwfix.com/p/union-powerload-zinc-plated-left-handed-grade-13-fire-rated-lift-off-hinges-100mm-x-88mm-3-pack/8113t"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 64mm",
+  "query": "tubular mortice latch 64mm",
+  "supplier": "screwfix",
+  "unit_cost": 1.99,
+  "list_price": 2.99,
+  "spec": {
+   "size_mm": 64,
+   "fire_rated": false
+  },
+  "sample": "Smith & Locke Chrome Tubular Mortice Latch 64mm Case - 45mm Backset",
+  "url": "https://www.screwfix.com/p/smith-locke-chrome-tubular-mortice-latch-64mm-case-45mm-backset/339px"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 76mm",
+  "query": "tubular mortice latch 76mm",
+  "supplier": "screwfix",
+  "unit_cost": 1.99,
+  "list_price": 2.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": false
+  },
+  "sample": "Smith & Locke Chrome Tubular Mortice Latch 76mm Case - 57mm Backset",
+  "url": "https://www.screwfix.com/p/smith-locke-chrome-tubular-mortice-latch-76mm-case-57mm-backset/322py"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on rose satin (pair)",
+  "query": "lever door handle on rose satin pair",
+  "supplier": "screwfix",
+  "unit_cost": 12.69,
+  "list_price": 16.99,
+  "spec": {
+   "style": "rose",
+   "fire_rated": false
+  },
+  "sample": "Smith & Locke Bourne Fire Rated Lever on Rose Door Handles Pair Satin Chrome",
+  "url": "https://www.screwfix.com/p/smith-locke-bourne-fire-rated-lever-on-rose-door-handles-pair-satin-chrome/101hy"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on backplate with lock",
+  "query": "lever lock door handle backplate",
+  "supplier": "screwfix",
+  "unit_cost": 6.89,
+  "list_price": 8.99,
+  "spec": {
+   "style": "backplate-lock"
+  },
+  "sample": "Smith & Locke Contract Fire Rated Lever Lock Door Handle Pair Satin Anodised Aluminium",
+  "url": "https://www.screwfix.com/p/smith-locke-contract-fire-rated-lever-lock-door-handle-pair-satin-anodised-aluminium/2089r"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Fire-rated lever handle (pair)",
+  "query": "fire rated door handle lever",
+  "supplier": "screwfix",
+  "unit_cost": 13.49,
+  "list_price": 17.99,
+  "spec": {
+   "fire_rated": true
+  },
+  "sample": "Smith & Locke Corfe Fire Rated Latch Lever Door Handles Pair Polished Chrome",
+  "url": "https://www.screwfix.com/p/smith-locke-corfe-fire-rated-latch-lever-door-handles-pair-polished-chrome/588hy"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 686mm (27\")",
+  "query": "internal door white primed 686mm",
+  "supplier": "screwfix",
+  "unit_cost": 117.99,
+  "list_price": 153.99,
+  "spec": {
+   "width_mm": 686,
+   "fire_rated": false
+  },
+  "sample": "Green & Taylor Primed White Wooden Shaker Internal Door 1981mm x 686mm",
+  "url": "https://www.screwfix.com/p/green-taylor-primed-white-wooden-shaker-internal-door-1981mm-x-686mm/499ct"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 762mm (30\") \u2014 padr\u00e3o",
+  "query": "internal door white primed 762mm",
+  "supplier": "screwfix",
+  "unit_cost": 98.99,
+  "list_price": 128.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": false
+  },
+  "sample": "Primed White Wooden 4-Panel Shaker Internal Door 1981mm x 762mm",
+  "url": "https://www.screwfix.com/p/primed-white-wooden-4-panel-shaker-internal-door-1981mm-x-762mm/370fa"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 838mm (33\")",
+  "query": "internal door white primed 838mm",
+  "supplier": "screwfix",
+  "unit_cost": 127.99,
+  "list_price": 166.99,
+  "spec": {
+   "width_mm": 838,
+   "fire_rated": false
+  },
+  "sample": "Primed White Wooden 4-Panel Shaker Internal Edwardian-Style Door 1981mm x 838mm",
+  "url": "https://www.screwfix.com/p/primed-white-wooden-4-panel-shaker-internal-edwardian-style-door-1981mm-x-838mm/562fa"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Fire door FD30 762mm",
+  "query": "fire door fd30 762mm",
+  "supplier": "screwfix",
+  "unit_cost": 169.99,
+  "list_price": 220.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": true
+  },
+  "sample": "Green & Taylor Satin Painted White Wooden Cottage Internal Fire FD30 Door 1981mm x 762mm",
+  "url": "https://www.screwfix.com/p/green-taylor-satin-painted-white-wooden-cottage-internal-fire-fd30-door-1981mm-x-762mm/501ct"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed at\u00e9 32\"",
+  "query": "tv bracket fixed small",
+  "supplier": "screwfix",
+  "unit_cost": 34.99,
+  "list_price": 45.99,
+  "spec": {
+   "tv_max_in": 32,
+   "type": "fixed"
+  },
+  "sample": "Sanus TV Wall Bracket Fixed 22-50\"",
+  "url": "https://www.screwfix.com/p/sanus-tv-wall-bracket-fixed-22-50-/4079j"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Tilt 32\u201355\"",
+  "query": "tv wall bracket tilt 55 inch",
+  "supplier": "screwfix",
+  "unit_cost": 25.99,
+  "list_price": 33.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "tilt"
+  },
+  "sample": "Sanus QMT35-B2 Universal TV Wall Bracket Tilt 32-55\"",
+  "url": "https://www.screwfix.com/p/sanus-qmt35-b2-universal-tv-wall-bracket-tilt-32-55-/161kr"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed/tilt 55\u201385\"",
+  "query": "tv wall bracket 85 inch",
+  "supplier": "screwfix",
+  "unit_cost": 17.39,
+  "list_price": 22.99,
+  "spec": {
+   "tv_max_in": 85,
+   "type": "large"
+  },
+  "sample": "Ross RTMF600 Flat-to-Wall TV Bracket Fixed 50-85\"",
+  "url": "https://www.screwfix.com/p/ross-rtmf600-flat-to-wall-tv-bracket-fixed-50-85-/510yn"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone branco (standard)",
+  "query": "white silicone sealant 310ml",
+  "supplier": "screwfix",
+  "unit_cost": 5.89,
+  "list_price": 7.99,
+  "spec": {
+   "colour": "white"
+  },
+  "sample": "No Nonsense 820 Sanitary Silicone White 310ml",
+  "url": "https://www.screwfix.com/p/no-nonsense-820-sanitary-silicone-white-310ml/47187"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone transparente",
+  "query": "clear silicone sealant 310ml",
+  "supplier": "screwfix",
+  "unit_cost": 11.29,
+  "list_price": 14.99,
+  "spec": {
+   "colour": "clear"
+  },
+  "sample": "Dow 781 Acetoxy Silicone Sealant Clear 310ml",
+  "url": "https://www.screwfix.com/p/dow-781-acetoxy-silicone-sealant-clear-310ml/32576"
+ },
+ {
+  "family": "sealant",
+  "variant": "Sanit\u00e1rio HA6 (banheiro)",
+  "query": "sanitary silicone sealant bathroom",
+  "supplier": "screwfix",
+  "unit_cost": 10.99,
+  "list_price": 14.99,
+  "spec": {
+   "grade": "sanitary"
+  },
+  "sample": "Unibond Kitchen & Bathroom Anti-Mould Sealant White 280ml",
+  "url": "https://www.screwfix.com/p/unibond-kitchen-bathroom-anti-mould-sealant-white-280ml/219cw"
+ },
+ {
+  "family": "filler",
+  "variant": "Filler pronto (interior)",
+  "query": "polyfilla ready mixed filler",
+  "supplier": "screwfix",
+  "unit_cost": 12.99,
+  "list_price": 16.99,
+  "spec": {
+   "type": "ready-mixed"
+  },
+  "sample": "Polycell Trade Polyfilla All-Purpose Ready Mix Filler White 2kg",
+  "url": "https://www.screwfix.com/p/polycell-trade-polyfilla-all-purpose-ready-mix-filler-white-2kg/29114"
+ },
+ {
+  "family": "filler",
+  "variant": "Wood filler 2 partes",
+  "query": "two part wood filler high performance",
+  "supplier": "screwfix",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "type": "2-part-wood"
+  },
+  "sample": "Ronseal High Performance Wood Filler White 550g",
+  "url": "https://www.screwfix.com/p/ronseal-high-performance-wood-filler-white-550g/45077"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o branca matt 5L (trade)",
+  "query": "trade white matt emulsion 5l",
+  "supplier": "screwfix",
+  "unit_cost": 31.19,
+  "list_price": 40.99,
+  "spec": {
+   "finish": "matt",
+   "litres": 5
+  },
+  "sample": "Dulux Trade Supermatt 5Ltr White Matt Emulsion Paint",
+  "url": "https://www.screwfix.com/p/dulux-trade-supermatt-5ltr-white-matt-emulsion-paint/48384"
+ },
+ {
+  "family": "paint",
+  "variant": "Kitchen & bathroom 2.5L",
+  "query": "kitchen bathroom paint 2.5l",
+  "supplier": "screwfix",
+  "unit_cost": 17.99,
+  "list_price": 23.99,
+  "spec": {
+   "finish": "k&b",
+   "litres": 2.5
+  },
+  "sample": "Fortress 2.5Ltr Brilliant White Soft Sheen Emulsion Kitchen & Bathroom Paint",
+  "url": "https://www.screwfix.com/p/fortress-2-5ltr-brilliant-white-soft-sheen-emulsion-kitchen-bathroom-paint/637jm"
+ },
+ {
+  "family": "paint",
+  "variant": "Gloss branco 2.5L (madeira)",
+  "query": "white gloss paint 2.5l wood",
+  "supplier": "screwfix",
+  "unit_cost": 35.99,
+  "list_price": 46.99,
+  "spec": {
+   "finish": "gloss",
+   "litres": 2.5
+  },
+  "sample": "Dulux Trade 2.5Ltr Pure Brilliant White High Gloss Solvent-Based Trim Paint",
+  "url": "https://www.screwfix.com/p/dulux-trade-2-5ltr-pure-brilliant-white-high-gloss-solvent-based-trim-paint/83378"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 60cm",
+  "query": "venetian blind 60cm",
+  "supplier": "screwfix",
+  "unit_cost": 8.99,
+  "list_price": 11.99,
+  "spec": {
+   "width_cm": 60
+  },
+  "sample": "Renaissance Venetian Blind Grey 60cm x 150cm Drop",
+  "url": "https://www.screwfix.com/p/renaissance-venetian-blind-grey-60cm-x-150cm-drop/939ck"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 90cm",
+  "query": "venetian blind 90cm",
+  "supplier": "screwfix",
+  "unit_cost": 12.99,
+  "list_price": 16.99,
+  "spec": {
+   "width_cm": 90
+  },
+  "sample": "Renaissance Venetian Blind White 90cm x 150cm Drop",
+  "url": "https://www.screwfix.com/p/renaissance-venetian-blind-white-90cm-x-150cm-drop/270ck"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 120cm",
+  "query": "venetian blind 120cm",
+  "supplier": "screwfix",
+  "unit_cost": 16.99,
+  "list_price": 22.99,
+  "spec": {
+   "width_cm": 120
+  },
+  "sample": "Renaissance Venetian Blind White 120cm x 150cm Drop",
+  "url": "https://www.screwfix.com/p/renaissance-venetian-blind-white-120cm-x-150cm-drop/408ck"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 120\u2013210cm",
+  "query": "extendable curtain pole 210cm",
+  "supplier": "screwfix",
+  "unit_cost": 26.99,
+  "list_price": 35.99,
+  "spec": {
+   "max_cm": 210
+  },
+  "sample": "Renaissance Antique Brass Curtain Pole 28/25mm x 120-210cm",
+  "url": "https://www.screwfix.com/p/renaissance-antique-brass-curtain-pole-28-25mm-x-120-210cm/372ck"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 170\u2013300cm",
+  "query": "extendable curtain pole 300cm",
+  "supplier": "screwfix",
+  "unit_cost": 40.99,
+  "list_price": 53.99,
+  "spec": {
+   "max_cm": 300
+  },
+  "sample": "Rothley Brushed Stainless Steel Extendable Curtain Pole w/ Stud Finials 28mm x 165-300cm",
+  "url": "https://www.screwfix.com/p/rothley-brushed-stainless-steel-extendable-curtain-pole-w-stud-finials-28mm-x-165-300cm/472yu"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "150mm (par)",
+  "query": "shelf bracket 150mm",
+  "supplier": "screwfix",
+  "unit_cost": 0.6,
+  "list_price": 0.99,
+  "spec": {
+   "size_mm": 150,
+   "pack_math": "\u00a35.99/20 \u00d7 2 (par)"
+  },
+  "sample": "Essentials London Shelf Brackets Grey 200mm x 150mm 20 Pack",
+  "url": "https://www.screwfix.com/p/essentials-london-shelf-brackets-grey-200mm-x-150mm-20-pack/416vj"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "Heavy duty 200mm+",
+  "query": "heavy duty shelf bracket 250mm",
+  "supplier": "screwfix",
+  "unit_cost": 7.0,
+  "list_price": 9.99,
+  "spec": {
+   "size_mm": 250,
+   "duty": "heavy",
+   "pack_math": "13.99/2=7.00"
+  },
+  "sample": "Heavy Duty Brackets Black 300mm x 300mm 2 Pack",
+  "url": "https://www.screwfix.com/p/heavy-duty-brackets-black-300mm-x-300mm-2-pack/78941"
+ },
+ {
+  "family": "screws",
+  "variant": "Sortidos (caixa trade)",
+  "query": "wood screws trade pack assorted",
+  "supplier": "screwfix",
+  "unit_cost": 26.99,
+  "list_price": 35.99,
+  "spec": {
+   "pack": "assorted"
+  },
+  "sample": "TurboGold PZ Double-Countersunk Woodscrews Trade Pack 1400 Pcs",
+  "url": "https://www.screwfix.com/p/turbogold-pz-double-countersunk-woodscrews-trade-pack-1400-pcs/40237"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o de teto 5L",
+  "query": "ceiling paint white 5l",
+  "supplier": "screwfix",
+  "unit_cost": 24.99,
+  "list_price": 32.99,
+  "spec": {
+   "finish": "ceiling",
+   "litres": 5
+  },
+  "sample": "Dulux Walls & Ceilings 5Ltr Pure Brilliant White Matt Emulsion Paint",
+  "url": "https://www.screwfix.com/p/dulux-walls-ceilings-5ltr-pure-brilliant-white-matt-emulsion-paint/22939"
+ },
+ {
+  "family": "paint",
+  "variant": "Primer/undercoat madeira 2.5L",
+  "query": "wood primer undercoat 2.5l",
+  "supplier": "screwfix",
+  "unit_cost": 18.99,
+  "list_price": 24.99,
+  "spec": {
+   "finish": "primer-wood",
+   "litres": 2.5
+  },
+  "sample": "Leyland Trade Acrylic 2.5Ltr White Matt Interior & Exterior Wood Primer Undercoat",
+  "url": "https://www.screwfix.com/p/leyland-trade-acrylic-2-5ltr-white-matt-interior-exterior-wood-primer-undercoat/64719"
+ },
+ {
+  "family": "paint",
+  "variant": "Verniz madeira interior 750ml",
+  "query": "interior wood varnish 750ml",
+  "supplier": "screwfix",
+  "unit_cost": 17.99,
+  "list_price": 23.99,
+  "spec": {
+   "finish": "varnish",
+   "litres": 0.75
+  },
+  "sample": "Ronseal 750ml Clear Satin Water-Based Interior Wood Varnish",
+  "url": "https://www.screwfix.com/p/ronseal-750ml-clear-satin-water-based-interior-wood-varnish/551ht"
+ },
+ {
+  "family": "paint",
+  "variant": "Masonry externa 5L",
+  "query": "masonry paint 5l white",
+  "supplier": "screwfix",
+  "unit_cost": 27.99,
+  "list_price": 36.99,
+  "spec": {
+   "finish": "masonry",
+   "litres": 5
+  },
+  "sample": "Sandtex 5Ltr Ultra Smooth Pure Brilliant White Masonry Paint",
+  "url": "https://www.screwfix.com/p/sandtex-5ltr-ultra-smooth-pure-brilliant-white-masonry-paint/87794"
+ },
+ {
+  "family": "paint",
+  "variant": "Tinta de radiador 750ml",
+  "query": "radiator paint white 750ml",
+  "supplier": "screwfix",
+  "unit_cost": 13.99,
+  "list_price": 18.99,
+  "spec": {
+   "finish": "radiator",
+   "litres": 0.75
+  },
+  "sample": "Fortress 750ml White Satin Heat Resistant Radiator Paint",
+  "url": "https://www.screwfix.com/p/fortress-750ml-white-satin-heat-resistant-radiator-paint/376jm"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Kit rolo + bandeja",
+  "query": "paint roller set tray",
+  "supplier": "screwfix",
+  "unit_cost": 12.99,
+  "list_price": 16.99,
+  "spec": {
+   "kind": "roller-set"
+  },
+  "sample": "9\" Roller Set 7 Pieces",
+  "url": "https://www.screwfix.com/p/9-roller-set-7-pieces/843fm"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Jogo de trinchas",
+  "query": "paint brush set",
+  "supplier": "screwfix",
+  "unit_cost": 21.99,
+  "list_price": 28.99,
+  "spec": {
+   "kind": "brush-set"
+  },
+  "sample": "LickTools Paint Brush Set 5 Pieces",
+  "url": "https://www.screwfix.com/p/licktools-paint-brush-set-5-pieces/388vx"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Fita de pintor 48mm",
+  "query": "masking tape 48mm painters",
+  "supplier": "screwfix",
+  "unit_cost": 9.99,
+  "list_price": 12.99,
+  "spec": {
+   "kind": "masking-tape"
+  },
+  "sample": "Frogtape Painters Multi-Surface 21-Day Masking Tape 55m x 48mm",
+  "url": "https://www.screwfix.com/p/frogtape-painters-multi-surface-21-day-masking-tape-55m-x-48mm/428ay"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lona/dust sheet",
+  "query": "dust sheet cotton",
+  "supplier": "screwfix",
+  "unit_cost": 13.29,
+  "list_price": 17.99,
+  "spec": {
+   "kind": "dust-sheet"
+  },
+  "sample": "Cotton Dust Sheet 12' x 12'",
+  "url": "https://www.screwfix.com/p/cotton-dust-sheet-12-x-12-/217fm"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de enchimento (fill valve)",
+  "query": "toilet fill valve",
+  "supplier": "screwfix",
+  "unit_cost": 26.51,
+  "list_price": 34.99,
+  "spec": {
+   "part": "fill-valve"
+  },
+  "sample": "Thomas Dudley Ltd Bottom-Entry Delay Fill Professional Brass Tail Inlet Valve 1/2\"",
+  "url": "https://www.screwfix.com/p/thomas-dudley-ltd-bottom-entry-delay-fill-professional-brass-tail-inlet-valve-1-2-/4777r"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de descarga (flush valve)",
+  "query": "toilet flush valve",
+  "supplier": "screwfix",
+  "unit_cost": 13.19,
+  "list_price": 17.99,
+  "spec": {
+   "part": "flush-valve"
+  },
+  "sample": "Fluidmaster Push Button Cable Dual-Flush Valve",
+  "url": "https://www.screwfix.com/p/fluidmaster-push-button-cable-dual-flush-valve/51173"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Assento sanit\u00e1rio (soft close)",
+  "query": "soft close toilet seat",
+  "supplier": "screwfix",
+  "unit_cost": 22.79,
+  "list_price": 29.99,
+  "spec": {
+   "part": "toilet-seat"
+  },
+  "sample": "Soft-Close with Quick-Release Toilet Seat Duraplast White",
+  "url": "https://www.screwfix.com/p/soft-close-with-quick-release-toilet-seat-duraplast-white/2401k"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira misturadora cozinha",
+  "query": "kitchen mixer tap",
+  "supplier": "screwfix",
+  "unit_cost": 46.99,
+  "list_price": 61.99,
+  "spec": {
+   "part": "kitchen-tap"
+  },
+  "sample": "Trebbia Dual-Lever Mono Mixer Kitchen Tap Chrome",
+  "url": "https://www.screwfix.com/p/trebbia-dual-lever-mono-mixer-kitchen-tap-chrome/9385t"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira de lavat\u00f3rio (par)",
+  "query": "basin taps pair",
+  "supplier": "screwfix",
+  "unit_cost": 24.99,
+  "list_price": 32.99,
+  "spec": {
+   "part": "basin-taps"
+  },
+  "sample": "Swirl Traditional Chrome 82mm Cloakroom Cross Head 2 Tap Holes Basin Pillar Tap",
+  "url": "https://www.screwfix.com/p/swirl-traditional-chrome-82mm-cloakroom-cross-head-2-tap-holes-basin-pillar-tap/88965"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Flex\u00edveis (par)",
+  "query": "flexible tap connectors 15mm",
+  "supplier": "screwfix",
+  "unit_cost": 4.15,
+  "list_price": 5.99,
+  "spec": {
+   "part": "flexi"
+  },
+  "sample": "Tesla Brass Compression Adapting Flexible Tap Connectors 15mm x 3/8\" 2 Pack",
+  "url": "https://www.screwfix.com/p/tesla-brass-compression-adapting-flexible-tap-connectors-15mm-x-3-8-2-pack/6089r"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Sif\u00e3o de pia",
+  "query": "basin waste trap",
+  "supplier": "screwfix",
+  "unit_cost": 8.49,
+  "list_price": 11.99,
+  "spec": {
+   "part": "trap"
+  },
+  "sample": "McAlpine Adjustable Inlet Tubular 'P' Trap White 32mm",
+  "url": "https://www.screwfix.com/p/mcalpine-adjustable-inlet-tubular-p-trap-white-32mm/89677"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de isolamento 15mm",
+  "query": "isolation valve 15mm",
+  "supplier": "screwfix",
+  "unit_cost": 1.0,
+  "list_price": 1.99,
+  "spec": {
+   "part": "iso-valve",
+   "pack_math": "9.99/10=1.00"
+  },
+  "sample": "Flomasta Isolating Valves 15mm 10 Pack",
+  "url": "https://www.screwfix.com/p/flomasta-isolating-valves-15mm-10-pack/32802"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Ducha + mangueira",
+  "query": "shower head hose set",
+  "supplier": "screwfix",
+  "unit_cost": 39.2,
+  "list_price": 50.99,
+  "spec": {
+   "part": "shower-set"
+  },
+  "sample": "Hansgrohe Vernis Blend Ecosmart Shower Set Chrome",
+  "url": "https://www.screwfix.com/p/hansgrohe-vernis-blend-ecosmart-shower-set-chrome/268vg"
+ },
+ {
+  "family": "electrical",
+  "variant": "Tomada dupla branca",
+  "query": "double socket white 13a",
+  "supplier": "screwfix",
+  "unit_cost": 2.4,
+  "list_price": 3.99,
+  "spec": {
+   "part": "double-socket",
+   "pack_math": "11.99/5=2.40"
+  },
+  "sample": "LAP 13A 2-Gang DP Switched Plug Sockets White 5 Pack",
+  "url": "https://www.screwfix.com/p/lap-13a-2-gang-dp-switched-plug-sockets-white-5-pack/49620"
+ },
+ {
+  "family": "electrical",
+  "variant": "Interruptor simples",
+  "query": "light switch 1 gang white",
+  "supplier": "screwfix",
+  "unit_cost": 2.99,
+  "list_price": 3.99,
+  "spec": {
+   "part": "switch-1g"
+  },
+  "sample": "MK Logic Plus 10AX 1-Gang 2-Way Light Switch White",
+  "url": "https://www.screwfix.com/p/mk-logic-plus-10ax-1-gang-2-way-light-switch-white/11822"
+ },
+ {
+  "family": "electrical",
+  "variant": "Pendente/lumin\u00e1ria teto",
+  "query": "ceiling pendant light fitting",
+  "supplier": "screwfix",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "part": "pendant"
+  },
+  "sample": "Knightsbridge Contemporary Pendant Matt Black",
+  "url": "https://www.screwfix.com/p/knightsbridge-contemporary-pendant-matt-black/497ty"
+ },
+ {
+  "family": "electrical",
+  "variant": "L\u00e2mpada LED E27 (pack)",
+  "query": "led bulb e27 pack",
+  "supplier": "screwfix",
+  "unit_cost": 14.98,
+  "list_price": 19.99,
+  "spec": {
+   "part": "led-e27"
+  },
+  "sample": "Sylvania ToLEDo E27 GLS LED Light Bulb 1521lm 15W 4 Pack",
+  "url": "https://www.screwfix.com/p/sylvania-toledo-e27-gls-led-light-bulb-1521lm-15w-4-pack/523pp"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de CO",
+  "query": "carbon monoxide alarm",
+  "supplier": "screwfix",
+  "unit_cost": 16.49,
+  "list_price": 21.99,
+  "spec": {
+   "part": "co-alarm",
+   "compliance": true
+  },
+  "sample": "FireAngel FA6813 Battery Standalone Carbon Monoxide Alarm",
+  "url": "https://www.screwfix.com/p/fireangel-fa6813-battery-standalone-carbon-monoxide-alarm/707kc"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas heavy-duty p/ drywall",
+  "query": "heavy duty plasterboard fixings",
+  "supplier": "screwfix",
+  "unit_cost": 12.19,
+  "list_price": 15.99,
+  "spec": {
+   "part": "plasterboard-heavy"
+  },
+  "sample": "Bullfix STR-UNI-10 Universal Plasterboard Fixings 24mm x 44mm 10 Pack",
+  "url": "https://www.screwfix.com/p/bullfix-str-uni-10-universal-plasterboard-fixings-24mm-x-44mm-10-pack/172ja"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas sortidas parede",
+  "query": "wall plugs assorted",
+  "supplier": "screwfix",
+  "unit_cost": 13.99,
+  "list_price": 18.99,
+  "spec": {
+   "part": "wall-plugs"
+  },
+  "sample": "Rawlplug Uno Mixed Wall Plugs 250 Pcs",
+  "url": "https://www.screwfix.com/p/rawlplug-uno-mixed-wall-plugs-250-pcs/7574g"
+ },
+ {
+  "family": "fixings",
+  "variant": "Cola grab (No More Nails)",
+  "query": "grab adhesive no more nails",
+  "supplier": "screwfix",
+  "unit_cost": 8.49,
+  "list_price": 11.99,
+  "spec": {
+   "part": "grab-adhesive"
+  },
+  "sample": "Evo-Stik Sticks Like Sh*t Solvent-Free Grab Adhesive Clear 290ml",
+  "url": "https://www.screwfix.com/p/evo-stik-sticks-like-sh-t-solvent-free-grab-adhesive-clear-290ml/57252"
+ },
+ {
+  "family": "tiling",
+  "variant": "Cola de azulejo rapid-set 20kg",
+  "query": "tile adhesive ready mixed 10l",
+  "supplier": "screwfix",
+  "unit_cost": 11.29,
+  "list_price": 14.99,
+  "spec": {
+   "part": "tile-adhesive"
+  },
+  "sample": "No Nonsense Wall & Floor Rapid Set Tile Adhesive Grey 20kg",
+  "url": "https://www.screwfix.com/p/no-nonsense-wall-floor-rapid-set-tile-adhesive-grey-20kg/799hu"
+ },
+ {
+  "family": "tiling",
+  "variant": "Rejunte imperme\u00e1vel 1.5kg",
+  "query": "tile grout white 2.5kg",
+  "supplier": "screwfix",
+  "unit_cost": 8.19,
+  "list_price": 10.99,
+  "spec": {
+   "part": "grout"
+  },
+  "sample": "Mapei Wall Waterproof Fix & Grout White 1.5kg",
+  "url": "https://www.screwfix.com/p/mapei-wall-waterproof-fix-grout-white-1-5kg/64982"
+ },
+ {
+  "family": "garden",
+  "variant": "Painel de cerca closeboard 6\u00d76 (unidade)",
+  "query": "closeboard fence panel 6ft",
+  "supplier": "screwfix",
+  "unit_cost": 66.0,
+  "list_price": 85.99,
+  "spec": {
+   "part": "fence-panel",
+   "pack_math": "197.99/3=66.00"
+  },
+  "sample": "Forest Vertical Board Closeboard Fence Panels Natural Timber 6' x 6' Pack of 3",
+  "url": "https://www.screwfix.com/p/forest-vertical-board-closeboard-fence-panels-natural-timber-6-x-6-pack-of-3/273fl"
+ },
+ {
+  "family": "garden",
+  "variant": "Poste de cerca 75mm 2.4m (unidade)",
+  "query": "timber fence post 75mm 2.4m",
+  "supplier": "screwfix",
+  "unit_cost": 24.91,
+  "list_price": 32.99,
+  "spec": {
+   "part": "fence-post",
+   "pack_math": "273.99/11=24.91"
+  },
+  "sample": "Forest Natural Timber Fence Posts 75mm x 75mm x 2.4m 11 Pack",
+  "url": "https://www.screwfix.com/p/forest-natural-timber-fence-posts-75mm-x-75mm-x-2-4m-11-pack/23734"
+ },
+ {
+  "family": "garden",
+  "variant": "Postcrete/PostFix 20kg",
+  "query": "blue circle postcrete",
+  "supplier": "screwfix",
+  "unit_cost": 7.49,
+  "list_price": 9.99,
+  "spec": {
+   "part": "postcrete"
+  },
+  "sample": "No Nonsense CP48 PostFix Concrete Grey 20kg",
+  "url": "https://www.screwfix.com/p/no-nonsense-cp48-postfix-concrete-grey-20kg/156gl"
+ },
+ {
+  "family": "garden",
+  "variant": "Semente de grama 120m\u00b2",
+  "query": "lawn seed multipurpose",
+  "supplier": "screwfix",
+  "unit_cost": 32.99,
+  "list_price": 42.99,
+  "spec": {
+   "part": "lawn-seed",
+   "coverage_m2": 120
+  },
+  "sample": "Westland Gro-Sure Multipurpose Lawn Seed 120m\u00b2 3.6kg",
+  "url": "https://www.screwfix.com/p/westland-gro-sure-multipurpose-lawn-seed-120m-3-6kg/132kh"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de fuma\u00e7a (10 anos)",
+  "query": "smoke alarm",
+  "supplier": "screwfix",
+  "unit_cost": 13.49,
+  "list_price": 17.99,
+  "spec": {
+   "part": "smoke-alarm",
+   "compliance": true
+  },
+  "sample": "FireAngel FA6620-R Battery Standalone Optical Smoke Alarm",
+  "url": "https://www.screwfix.com/p/fireangel-fa6620-r-battery-standalone-optical-smoke-alarm/758pv"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lixa sortida (pack 10)",
+  "query": "sanding sheets assorted pack",
+  "supplier": "screwfix",
+  "unit_cost": 4.99,
+  "list_price": 6.99,
+  "spec": {
+   "kind": "sandpaper"
+  },
+  "sample": "Essentials 120 Grit Multi-Material Sanding Sheets 280mm x 230mm 10 Pack",
+  "url": "https://www.screwfix.com/p/essentials-120-grit-multi-material-sanding-sheets-280mm-x-230mm-10-pack/820jg"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 75mm satin (pair)",
+  "query": "butt hinge 75mm satin stainless pair",
+  "supplier": "bandq",
+  "unit_cost": 15.19,
+  "list_price": 19.99,
+  "spec": {
+   "size_mm": 75,
+   "fire_rated": false
+  },
+  "sample": "PAIR 76 x 76 x 2mm Standard Bearing Door Hinge Satin Stainless Steel",
+  "url": "https://www.diy.com/departments/pair-76-x-76-x-2mm-standard-bearing-door-hinge-satin-stainless-steel/5056492565881_BQ.prd"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 100mm satin (pair)",
+  "query": "butt hinge 100mm satin stainless",
+  "supplier": "bandq",
+  "unit_cost": 9.54,
+  "list_price": 12.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": false
+  },
+  "sample": "Securit Stainless Steel Butt Hinges (Pack of 2) Satin (100mm)",
+  "url": "https://www.diy.com/departments/securit-stainless-steel-butt-hinges-pack-of-2-satin-100mm-/5059444316562_BQ.prd"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Fire door hinge grade 13 CE 100mm (pack of 3)",
+  "query": "fire door hinges grade 13 100mm pack 3",
+  "supplier": "bandq",
+  "unit_cost": 14.2,
+  "list_price": 18.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": true,
+   "pack": 3
+  },
+  "sample": "EAI 4\" Stainless Fire Door Hinges PACK 3 Grade 13 G13 & Screws - 102x76x3mm Square Corners - Satin",
+  "url": "https://www.diy.com/departments/eai-4-stainless-fire-door-hinges-pack-3-grade-13-g13-screws-102x76x3mm-square-corners-satin/0660989871031_BQ.prd"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 64mm",
+  "query": "tubular mortice latch 64mm",
+  "supplier": "bandq",
+  "unit_cost": 3.0,
+  "list_price": 3.99,
+  "spec": {
+   "size_mm": 64,
+   "fire_rated": false
+  },
+  "sample": "Diall Polished Chrome effect Metal Tubular Mortice latch (L)64mm",
+  "url": "https://www.diy.com/departments/diall-polished-chrome-effect-metal-tubular-mortice-latch-l-64mm/179604_BQ.prd"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 76mm",
+  "query": "tubular mortice latch 76mm",
+  "supplier": "bandq",
+  "unit_cost": 5.0,
+  "list_price": 6.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": false
+  },
+  "sample": "Yale Polished Chrome effect Metal Tubular Mortice latch (L)76mm",
+  "url": "https://www.diy.com/departments/yale-polished-chrome-effect-metal-tubular-mortice-latch-l-76mm/213753_BQ.prd"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Fire-rated tubular latch 76mm (FD30/60)",
+  "query": "fire rated tubular mortice latch 76mm",
+  "supplier": "bandq",
+  "unit_cost": 11.9,
+  "list_price": 15.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": true
+  },
+  "sample": "AFIT Fire Rated Tubular Latch - Satin Brass 76mm / 3 Inch Tubular Latch with 57mm Backset for Fire Doors - Pac",
+  "url": "https://www.diy.com/departments/afit-fire-rated-tubular-latch-satin-brass-76mm-3-inch-tubular-latch-with-57mm-backset-for-fire-doors-pack-of-1/5063498061279_BQ.prd"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on rose satin (pair)",
+  "query": "lever door handle on rose satin pair",
+  "supplier": "bandq",
+  "unit_cost": 18.7,
+  "list_price": 24.99,
+  "spec": {
+   "style": "rose",
+   "fire_rated": false
+  },
+  "sample": "AFIT Satin Door Handle, Satin Nickel Internal Lever on Rose Door Handle, Tempo 1 Pair",
+  "url": "https://www.diy.com/departments/afit-satin-door-handle-satin-nickel-internal-lever-on-rose-door-handle-tempo-1-pair/5063498105263_BQ.prd"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on backplate with lock",
+  "query": "lever lock door handle backplate",
+  "supplier": "bandq",
+  "unit_cost": 16.5,
+  "list_price": 21.99,
+  "spec": {
+   "style": "backplate-lock"
+  },
+  "sample": "Berkeley Lever Lock Door Handle On Backplate - Brushed Brass - Designer Levers",
+  "url": "https://www.diy.com/departments/berkeley-lever-lock-door-handle-on-backplate-brushed-brass-designer-levers/5034344156173_BQ.prd"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Fire-rated lever handle (pair)",
+  "query": "fire rated door handle lever",
+  "supplier": "bandq",
+  "unit_cost": 18.7,
+  "list_price": 24.99,
+  "spec": {
+   "fire_rated": true
+  },
+  "sample": "AFIT Antique Brass Fire Door Handle, Internal Lever on Rose Fire Rated Door Handle, Linea 1 Pair",
+  "url": "https://www.diy.com/departments/afit-antique-brass-fire-door-handle-internal-lever-on-rose-fire-rated-door-handle-linea-1-pair/5063498092082_BQ.prd"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 686mm (27\")",
+  "query": "internal door white primed 686mm",
+  "supplier": "bandq",
+  "unit_cost": 170.0,
+  "list_price": 220.99,
+  "spec": {
+   "width_mm": 686,
+   "fire_rated": false
+  },
+  "sample": "Edwardian 4 Panel White Primed Internal Door 1981 x 686mm",
+  "url": "https://www.diy.com/departments/edwardian-4-panel-white-primed-internal-door-1981-x-686mm/5060812320586_BQ.prd"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 762mm (30\") \u2014 padr\u00e3o",
+  "query": "internal door white primed 762mm",
+  "supplier": "bandq",
+  "unit_cost": 35.0,
+  "list_price": 45.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": false
+  },
+  "sample": "1 panel Unglazed Cottage Primed White Woodgrain effect Internal Door, (H)1981mm (W)762mm (T)35mm",
+  "url": "https://www.diy.com/departments/1-panel-unglazed-cottage-primed-white-woodgrain-effect-internal-door-h-1981mm-w-762mm-t-35mm/175401_BQ.prd"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 838mm (33\")",
+  "query": "internal door white primed 838mm",
+  "supplier": "bandq",
+  "unit_cost": 178.0,
+  "list_price": 231.99,
+  "spec": {
+   "width_mm": 838,
+   "fire_rated": false
+  },
+  "sample": "Shaker 4 Panel White Primed Internal Door 1981 x 838mm",
+  "url": "https://www.diy.com/departments/shaker-4-panel-white-primed-internal-door-1981-x-838mm/5060812321057_BQ.prd"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Fire door FD30 762mm",
+  "query": "fire door fd30 762mm",
+  "supplier": "bandq",
+  "unit_cost": 219.0,
+  "list_price": 284.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": true
+  },
+  "sample": "Hawthorne Wiltshire Internal Prefinished Oak Veneer Fire Door with solid core 1981mm x 762mm x 44mm - 10 Year ",
+  "url": "https://www.diy.com/departments/hawthorne-wiltshire-internal-prefinished-oak-veneer-fire-door-with-solid-core-1981mm-x-762mm-x-44mm-10-year-guarantee-fd30-/5060729156681_BQ.prd"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Oak veneer 762mm",
+  "query": "internal door oak 762mm",
+  "supplier": "bandq",
+  "unit_cost": 84.0,
+  "list_price": 109.99,
+  "spec": {
+   "width_mm": 762,
+   "finish": "oak"
+  },
+  "sample": "Fortia 4 panel Traditional Oak veneer Internal Oak Door, (H)1981mm (W)762mm (T)35mm",
+  "url": "https://www.diy.com/departments/fortia-4-panel-traditional-oak-veneer-internal-oak-door-h-1981mm-w-762mm-t-35mm/5063022657466_BQ.prd"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed at\u00e9 32\"",
+  "query": "tv bracket fixed small",
+  "supplier": "bandq",
+  "unit_cost": 19.99,
+  "list_price": 25.99,
+  "spec": {
+   "tv_max_in": 32,
+   "type": "fixed"
+  },
+  "sample": "TTAP Slim Fixed TV Bracket, TTD202F for 17\" - 43\" Screens",
+  "url": "https://www.diy.com/departments/ttap-slim-fixed-tv-bracket-ttd202f-for-17-43-screens/5060161681024_BQ.prd"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Tilt 32\u201355\"",
+  "query": "tv wall bracket tilt 55 inch",
+  "supplier": "bandq",
+  "unit_cost": 21.99,
+  "list_price": 28.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "tilt"
+  },
+  "sample": "Tilt Tv Wall Bracket Up To 55 Inch With A Television Mount",
+  "url": "https://www.diy.com/departments/tilt-tv-wall-bracket-up-to-55-inch-with-a-television-mount/5021196750994_BQ.prd"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Full-motion 32\u201355\"",
+  "query": "tv wall bracket full motion 55 inch",
+  "supplier": "bandq",
+  "unit_cost": 63.99,
+  "list_price": 83.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "full-motion"
+  },
+  "sample": "Vivanco Tilt & Swing TV Wall Bracket up to 55\" - Full Motion Wall Mount with Swivel - Tilt & Cable Management ",
+  "url": "https://www.diy.com/departments/vivanco-tilt-swing-tv-wall-bracket-up-to-55-full-motion-wall-mount-with-swivel-tilt-cable-management-heavy-duty-steel/8019387541569_BQ.prd"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed/tilt 55\u201385\"",
+  "query": "tv wall bracket 85 inch",
+  "supplier": "bandq",
+  "unit_cost": 34.99,
+  "list_price": 45.99,
+  "spec": {
+   "tv_max_in": 85,
+   "type": "large"
+  },
+  "sample": "Tilt TV Wall Bracket upto 85inch",
+  "url": "https://www.diy.com/departments/tilt-tv-wall-bracket-upto-85inch/4008928379761_BQ.prd"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone branco (standard)",
+  "query": "white silicone sealant 310ml",
+  "supplier": "bandq",
+  "unit_cost": 9.99,
+  "list_price": 12.99,
+  "spec": {
+   "colour": "white"
+  },
+  "sample": "Dow 785+ White Silicone-based Living area Sealant, 310ml",
+  "url": "https://www.diy.com/departments/dow-785-white-silicone-based-living-area-sealant-310ml/47289_BQ.prd"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone transparente",
+  "query": "clear silicone sealant 310ml",
+  "supplier": "bandq",
+  "unit_cost": 9.99,
+  "list_price": 12.99,
+  "spec": {
+   "colour": "clear"
+  },
+  "sample": "Dow 785+ Clear Silicone-based Bathroom & kitchen Sanitary sealant, 310ml",
+  "url": "https://www.diy.com/departments/dow-785-clear-silicone-based-bathroom-kitchen-sanitary-sealant-310ml/42860_BQ.prd"
+ },
+ {
+  "family": "sealant",
+  "variant": "Sanit\u00e1rio HA6 (banheiro)",
+  "query": "sanitary silicone sealant bathroom",
+  "supplier": "bandq",
+  "unit_cost": 11.0,
+  "list_price": 14.99,
+  "spec": {
+   "grade": "sanitary"
+  },
+  "sample": "UniBond Sanitary silicone sealant White Silicone-based Bathroom & kitchen Cartridge Sealant, 280ml",
+  "url": "https://www.diy.com/departments/unibond-sanitary-silicone-sealant-white-silicone-based-bathroom-kitchen-cartridge-sealant-280ml/5010305064930_BQ.prd"
+ },
+ {
+  "family": "filler",
+  "variant": "Filler pronto (interior)",
+  "query": "polyfilla ready mixed filler",
+  "supplier": "bandq",
+  "unit_cost": 10.0,
+  "list_price": 12.99,
+  "spec": {
+   "type": "ready-mixed"
+  },
+  "sample": "Polycell Polyfilla Grey Ready mixed Filler, 1L Tub - 360010",
+  "url": "https://www.diy.com/departments/polycell-polyfilla-grey-ready-mixed-filler-1l-tub-360010/254712_BQ.prd"
+ },
+ {
+  "family": "filler",
+  "variant": "Wood filler 2 partes",
+  "query": "two part wood filler high performance",
+  "supplier": "bandq",
+  "unit_cost": 10.99,
+  "list_price": 14.99,
+  "spec": {
+   "type": "2-part-wood"
+  },
+  "sample": "Roxil Two-Part Wood Filler Natural - 220cm Coverage. Premium High-Strength Wood Repair Filler for Interior & E",
+  "url": "https://www.diy.com/departments/roxil-two-part-wood-filler-natural-220cm-coverage-premium-high-strength-wood-repair-filler-for-interior-exterior-timber/5060132765630_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o branca matt 5L (trade)",
+  "query": "trade white matt emulsion 5l",
+  "supplier": "bandq",
+  "unit_cost": 64.0,
+  "list_price": 83.99,
+  "spec": {
+   "finish": "matt",
+   "litres": 5
+  },
+  "sample": "Crown Trade Vinyl Matt Walls & Ceilings Emulsion Paint Knowle White (C5790L) 5L",
+  "url": "https://www.diy.com/departments/crown-trade-vinyl-matt-walls-ceilings-emulsion-paint-knowle-white-c5790l-5l/9552125842848_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Kitchen & bathroom 2.5L",
+  "query": "kitchen bathroom paint 2.5l",
+  "supplier": "bandq",
+  "unit_cost": 49.95,
+  "list_price": 64.99,
+  "spec": {
+   "finish": "k&b",
+   "litres": 2.5
+  },
+  "sample": "HQC Kitchen & Bathroom Paint - Mould Resistant, Washable & Durable - Sage Green - 2.5L",
+  "url": "https://www.diy.com/departments/hqc-kitchen-bathroom-paint-mould-resistant-washable-durable-sage-green-2-5l/5055945325287_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Gloss branco 2.5L (madeira)",
+  "query": "white gloss paint 2.5l wood",
+  "supplier": "bandq",
+  "unit_cost": 32.0,
+  "list_price": 41.99,
+  "spec": {
+   "finish": "gloss",
+   "litres": 2.5
+  },
+  "sample": "Crown Wood & Metal Non-Drip Gloss Paint Pure Brilliant White - 2.5L",
+  "url": "https://www.diy.com/departments/crown-wood-metal-non-drip-gloss-paint-pure-brilliant-white-2-5l/5061012170001_BQ.prd"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 60cm",
+  "query": "venetian blind 60cm",
+  "supplier": "bandq",
+  "unit_cost": 7.95,
+  "list_price": 10.99,
+  "spec": {
+   "width_cm": 60
+  },
+  "sample": "ALUMINIUM WHITE VENETIAN WINDOW BLINDS 60CM X 150CM",
+  "url": "https://www.diy.com/departments/aluminium-white-venetian-window-blinds-60cm-x-150cm/0123456783812_BQ.prd"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 90cm",
+  "query": "venetian blind 90cm",
+  "supplier": "bandq",
+  "unit_cost": 12.0,
+  "list_price": 15.99,
+  "spec": {
+   "width_cm": 90
+  },
+  "sample": "White PVC Venetian Blind (W)90cm (L)180cm",
+  "url": "https://www.diy.com/departments/white-pvc-venetian-blind-w-90cm-l-180cm/5063022000538_BQ.prd"
+ },
+ {
+  "family": "blind",
+  "variant": "Veneziana 120cm",
+  "query": "venetian blind 120cm",
+  "supplier": "bandq",
+  "unit_cost": 21.95,
+  "list_price": 28.99,
+  "spec": {
+   "width_cm": 120
+  },
+  "sample": "ALUMINIUM WHITE VENETIAN WINDOW BLINDS 120CM X 213CM",
+  "url": "https://www.diy.com/departments/aluminium-white-venetian-window-blinds-120cm-x-213cm/0123456783959_BQ.prd"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 120\u2013210cm",
+  "query": "extendable curtain pole 210cm",
+  "supplier": "bandq",
+  "unit_cost": 20.99,
+  "list_price": 27.99,
+  "spec": {
+   "max_cm": 210
+  },
+  "sample": "Black Curtain Pole for Patio 120 to 210cm Extendable Curtain Pole Includes Finials, Rings, & Brackets",
+  "url": "https://www.diy.com/departments/black-curtain-pole-for-patio-120-to-210cm-extendable-curtain-pole-includes-finials-rings-brackets/5056570637844_BQ.prd"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 170\u2013300cm",
+  "query": "extendable curtain pole 300cm",
+  "supplier": "bandq",
+  "unit_cost": 16.49,
+  "list_price": 21.99,
+  "spec": {
+   "max_cm": 300
+  },
+  "sample": "Metal Sliced 19mm Extendable Curtain Pole, Brushed Silver - 160 to 300cm with End Finials",
+  "url": "https://www.diy.com/departments/metal-sliced-19mm-extendable-curtain-pole-brushed-silver-160-to-300cm-with-end-finials/5050238079809_BQ.prd"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "Heavy duty 200mm+",
+  "query": "heavy duty shelf bracket 250mm",
+  "supplier": "bandq",
+  "unit_cost": 24.99,
+  "list_price": 32.99,
+  "spec": {
+   "size_mm": 250,
+   "duty": "heavy"
+  },
+  "sample": "Heavy Duty Metal Flat Shelf Brackets, 250mm Top Notch Home & Living Steel Brackets for Wood Wall Shelves, Inc ",
+  "url": "https://www.diy.com/departments/heavy-duty-metal-flat-shelf-brackets-250mm-top-notch-home-living-steel-brackets-for-wood-wall-shelves-inc-fixtures-fittings/5060898760771_BQ.prd"
+ },
+ {
+  "family": "mdf",
+  "variant": "12mm 2440\u00d71220",
+  "query": "mdf board 12mm 2440",
+  "supplier": "bandq",
+  "unit_cost": 26.0,
+  "list_price": 33.99,
+  "spec": {
+   "thickness_mm": 12
+  },
+  "sample": "Medium-density fibreboard (MDF) Fibreboard (L)2440mm (W)1220mm (T)12mm",
+  "url": "https://www.diy.com/departments/medium-density-fibreboard-mdf-fibreboard-l-2440mm-w-1220mm-t-12mm/1696260_BQ.prd"
+ },
+ {
+  "family": "mdf",
+  "variant": "18mm 2440\u00d71220",
+  "query": "mdf board 18mm 2440",
+  "supplier": "bandq",
+  "unit_cost": 30.0,
+  "list_price": 38.99,
+  "spec": {
+   "thickness_mm": 18
+  },
+  "sample": "Medium-density fibreboard (MDF) Fibreboard (L)2440mm (W)1220mm (T)18mm",
+  "url": "https://www.diy.com/departments/medium-density-fibreboard-mdf-fibreboard-l-2440mm-w-1220mm-t-18mm/1696262_BQ.prd"
+ },
+ {
+  "family": "screws",
+  "variant": "Sortidos (caixa trade)",
+  "query": "wood screws trade pack assorted",
+  "supplier": "bandq",
+  "unit_cost": 17.5,
+  "list_price": 22.99,
+  "spec": {
+   "pack": "assorted"
+  },
+  "sample": "AFIT Wood Screws Pozi Drive Muti Purpose Trade Pack 1000 Screws Plus 2 FREE Driver Bits",
+  "url": "https://www.diy.com/departments/afit-wood-screws-pozi-drive-muti-purpose-trade-pack-1000-screws-plus-2-free-driver-bits/0722777534655_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o de teto 5L",
+  "query": "ceiling paint white 5l",
+  "supplier": "bandq",
+  "unit_cost": 40.0,
+  "list_price": 51.99,
+  "spec": {
+   "finish": "ceiling",
+   "litres": 5
+  },
+  "sample": "Dulux Walls & Ceilings White cotton Matt Emulsion paint, 5L",
+  "url": "https://www.diy.com/departments/dulux-walls-ceilings-white-cotton-matt-emulsion-paint-5l/257019_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Primer/undercoat madeira 2.5L",
+  "query": "wood primer undercoat 2.5l",
+  "supplier": "bandq",
+  "unit_cost": 28.0,
+  "list_price": 36.99,
+  "spec": {
+   "finish": "primer-wood",
+   "litres": 2.5
+  },
+  "sample": "Valspar White Wood Primer & undercoat, 2.5L",
+  "url": "https://www.diy.com/departments/valspar-white-wood-primer-undercoat-2-5l/5055018169336_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Verniz madeira interior 750ml",
+  "query": "interior wood varnish 750ml",
+  "supplier": "bandq",
+  "unit_cost": 18.0,
+  "list_price": 23.99,
+  "spec": {
+   "finish": "varnish",
+   "litres": 0.75
+  },
+  "sample": "Ronseal Walnut Matt Skirting Wood varnish, 750ml",
+  "url": "https://www.diy.com/departments/ronseal-walnut-matt-skirting-wood-varnish-750ml/5010214894260_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Masonry externa 5L",
+  "query": "masonry paint 5l white",
+  "supplier": "bandq",
+  "unit_cost": 28.0,
+  "list_price": 36.99,
+  "spec": {
+   "finish": "masonry",
+   "litres": 5
+  },
+  "sample": "Sandtex Microseal Pure brilliant white Ultra smooth Masonry paint, 5L",
+  "url": "https://www.diy.com/departments/sandtex-microseal-pure-brilliant-white-ultra-smooth-masonry-paint-5l/127469_BQ.prd"
+ },
+ {
+  "family": "paint",
+  "variant": "Tinta de radiador 750ml",
+  "query": "radiator paint white 750ml",
+  "supplier": "bandq",
+  "unit_cost": 28.2,
+  "list_price": 36.99,
+  "spec": {
+   "finish": "radiator",
+   "litres": 0.75
+  },
+  "sample": "Ronseal Stays White Radiator Paint White Satin 750ml",
+  "url": "https://www.diy.com/departments/ronseal-stays-white-radiator-paint-white-satin-750ml/5010214875061_BQ.prd"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Kit rolo + bandeja",
+  "query": "paint roller set tray",
+  "supplier": "bandq",
+  "unit_cost": 9.99,
+  "list_price": 12.99,
+  "spec": {
+   "kind": "roller-set"
+  },
+  "sample": "9inch Paint Roller Set with 3 Roller Sleeves and 1 Paint Tray",
+  "url": "https://www.diy.com/departments/9inch-paint-roller-set-with-3-roller-sleeves-and-1-paint-tray/0000736584133_BQ.prd"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Jogo de trinchas",
+  "query": "paint brush set",
+  "supplier": "bandq",
+  "unit_cost": 7.66,
+  "list_price": 9.99,
+  "spec": {
+   "kind": "brush-set"
+  },
+  "sample": "Hardys 5pc Fine Paint Brush Set Soft Synthetic Bristles Home Painting DIY Decorating",
+  "url": "https://www.diy.com/departments/hardys-5pc-fine-paint-brush-set-soft-synthetic-bristles-home-painting-diy-decorating/5055521174445_BQ.prd"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Fita de pintor 48mm",
+  "query": "masking tape 48mm painters",
+  "supplier": "bandq",
+  "unit_cost": 9.85,
+  "list_price": 12.99,
+  "spec": {
+   "kind": "masking-tape"
+  },
+  "sample": "Painters Masking Tape 48mm x 50m White Multipurpose Low Tack Decorating Tape for Wall Wood Trim Glass Crafts D",
+  "url": "https://www.diy.com/departments/painters-masking-tape-48mm-x-50m-white-multipurpose-low-tack-decorating-tape-for-wall-wood-trim-glass-crafts-diy-projects-painting/5060998965847_BQ.prd"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lona/dust sheet",
+  "query": "dust sheet cotton",
+  "supplier": "bandq",
+  "unit_cost": 7.5,
+  "list_price": 9.99,
+  "spec": {
+   "kind": "dust-sheet",
+   "pack_math": "\u00a314.99/2"
+  },
+  "sample": "Cotton Dust Sheets Twin Pack 9ft x 5ft (2.7 m x 1.5 m) Heavyweight Reusable & Washable Dust Sheet for Painting",
+  "url": "https://www.diy.com/departments/cotton-dust-sheets-twin-pack-9ft-x-5ft-2-7-m-x-1-5-m-heavyweight-reusable-washable-dust-sheet-for-painting-decorating-/5060051606359_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de enchimento (fill valve)",
+  "query": "toilet fill valve",
+  "supplier": "bandq",
+  "unit_cost": 11.99,
+  "list_price": 15.99,
+  "spec": {
+   "part": "fill-valve"
+  },
+  "sample": "Side Entry Toilet Fill Valve, 12.7mm Brass Tail, Quiet Refill, Quick Shut Off, WRAS Approved Inlet Valve for C",
+  "url": "https://www.diy.com/departments/side-entry-toilet-fill-valve-12-7mm-brass-tail-quiet-refill-quick-shut-off-wras-approved-inlet-valve-for-cisterns/5060807963897_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de descarga (flush valve)",
+  "query": "toilet flush valve",
+  "supplier": "bandq",
+  "unit_cost": 21.9,
+  "list_price": 28.99,
+  "spec": {
+   "part": "flush-valve"
+  },
+  "sample": "Taps2Traps Geberit Ideal Standard Replacement Twico Toilet Flush Valve Impuls250 Main Body",
+  "url": "https://www.diy.com/departments/taps2traps-geberit-ideal-standard-replacement-twico-toilet-flush-valve-impuls250-main-body/0790295537335_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Assento sanit\u00e1rio (soft close)",
+  "query": "soft close toilet seat",
+  "supplier": "bandq",
+  "unit_cost": 24.29,
+  "list_price": 31.99,
+  "spec": {
+   "part": "toilet-seat"
+  },
+  "sample": "Futura Toilet Seat Soft Close Sage D Shape, Premium Thermoplastic, Quick Release, Easy Clean, Top & Bottom Fix",
+  "url": "https://www.diy.com/departments/futura-toilet-seat-soft-close-sage-d-shape-premium-thermoplastic-quick-release-easy-clean-top-bottom-fixings/5061113613087_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira misturadora cozinha",
+  "query": "kitchen mixer tap",
+  "supplier": "bandq",
+  "unit_cost": 110.0,
+  "list_price": 142.99,
+  "spec": {
+   "part": "kitchen-tap"
+  },
+  "sample": "Bristan Raspberry Gloss Chrome-plated Kitchen Monobloc mixer Tap",
+  "url": "https://www.diy.com/departments/bristan-raspberry-gloss-chrome-plated-kitchen-monobloc-mixer-tap/5014868094397_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira de lavat\u00f3rio (par)",
+  "query": "basin taps pair",
+  "supplier": "bandq",
+  "unit_cost": 149.0,
+  "list_price": 193.99,
+  "spec": {
+   "part": "basin-taps"
+  },
+  "sample": "Heritage Salcombe Basin Pillar Taps Matt Black",
+  "url": "https://www.diy.com/departments/heritage-salcombe-basin-pillar-taps-matt-black/5055138576922_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Sif\u00e3o de pia",
+  "query": "basin waste trap",
+  "supplier": "bandq",
+  "unit_cost": 8.94,
+  "list_price": 11.99,
+  "spec": {
+   "part": "trap"
+  },
+  "sample": "McAlpine Adjustable Bottle Sink & basin Trap (Dia)32mm",
+  "url": "https://www.diy.com/departments/mcalpine-adjustable-bottle-sink-basin-trap-dia-32mm/278324_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de isolamento 15mm",
+  "query": "isolation valve 15mm",
+  "supplier": "bandq",
+  "unit_cost": 7.99,
+  "list_price": 10.99,
+  "spec": {
+   "part": "iso-valve"
+  },
+  "sample": "15mm x 3/8\" Isolation Valve Flat-Faced Straight Compression x Male BSP",
+  "url": "https://www.diy.com/departments/15mm-x-3-8-isolation-valve-flat-faced-straight-compression-x-male-bsp/5060698185408_BQ.prd"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Ducha + mangueira",
+  "query": "shower head hose set",
+  "supplier": "bandq",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "part": "shower-set"
+  },
+  "sample": "SLINE Shower Head and Hose Set, 3-Function Chrome Handheld Easy Install",
+  "url": "https://www.diy.com/departments/sline-shower-head-and-hose-set-3-function-chrome-handheld-easy-install/4643123354788_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "Tomada dupla branca",
+  "query": "double socket white 13a",
+  "supplier": "bandq",
+  "unit_cost": 2.8,
+  "list_price": 3.99,
+  "spec": {
+   "part": "double-socket"
+  },
+  "sample": "LAP Double 13A Gloss White Socket",
+  "url": "https://www.diy.com/departments/lap-double-13a-gloss-white-socket/05301201_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "Interruptor simples",
+  "query": "light switch 1 gang white",
+  "supplier": "bandq",
+  "unit_cost": 1.68,
+  "list_price": 2.99,
+  "spec": {
+   "part": "switch-1g"
+  },
+  "sample": "BG White 20A 1 way 1 gang Light Switch",
+  "url": "https://www.diy.com/departments/bg-white-20a-1-way-1-gang-light-switch/5050765217767_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "Pendente/lumin\u00e1ria teto",
+  "query": "ceiling pendant light fitting",
+  "supplier": "bandq",
+  "unit_cost": 11.56,
+  "list_price": 15.99,
+  "spec": {
+   "part": "pendant"
+  },
+  "sample": "LEDSone Vintage Pendant Light Fitting, Modern Retro Industrial Style E27 Black Lamp Holder Black Ceiling Rose,",
+  "url": "https://www.diy.com/departments/ledsone-vintage-pendant-light-fitting-modern-retro-industrial-style-e27-black-lamp-holder-black-ceiling-rose-1m/5056756315696_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "L\u00e2mpada LED E27 (pack)",
+  "query": "led bulb e27 pack",
+  "supplier": "bandq",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "part": "led-e27"
+  },
+  "sample": "BELL Lighting 6 Pack E27 LED Filament GLS Bulbs 7W 806lm , Warm White 2700K , 60W Equivalent , Dimmable Screw ",
+  "url": "https://www.diy.com/departments/bell-lighting-6-pack-e27-led-filament-gls-bulbs-7w-806lm-warm-white-2700k-60w-equivalent-dimmable-screw-cap-bulbs/5013588550305_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de CO",
+  "query": "carbon monoxide alarm",
+  "supplier": "bandq",
+  "unit_cost": 22.0,
+  "list_price": 28.99,
+  "spec": {
+   "part": "co-alarm",
+   "compliance": true
+  },
+  "sample": "FireAngel FA3313-EUX10 Wireless Standalone Carbon monoxide Alarm with Replaceable battery",
+  "url": "https://www.diy.com/departments/fireangel-fa3313-eux10-wireless-standalone-carbon-monoxide-alarm-with-replaceable-battery/0816317005894_BQ.prd"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas heavy-duty p/ drywall",
+  "query": "heavy duty plasterboard fixings",
+  "supplier": "bandq",
+  "unit_cost": 11.99,
+  "list_price": 15.99,
+  "spec": {
+   "part": "plasterboard-heavy"
+  },
+  "sample": "Bullfix Universal Heavy Duty Plasterboard Fixings Starter Pack of 10",
+  "url": "https://www.diy.com/departments/bullfix-universal-heavy-duty-plasterboard-fixings-starter-pack-of-10/5065002347008_BQ.prd"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas sortidas parede",
+  "query": "wall plugs assorted",
+  "supplier": "bandq",
+  "unit_cost": 9.32,
+  "list_price": 12.99,
+  "spec": {
+   "part": "wall-plugs"
+  },
+  "sample": "Wall Plugs. Assorted Raw Rawl Plugs with Screws. 285pc Rawlplugs and Screws set",
+  "url": "https://www.diy.com/departments/wall-plugs-assorted-raw-rawl-plugs-with-screws-285pc-rawlplugs-and-screws-set/5055143923469_BQ.prd"
+ },
+ {
+  "family": "fixings",
+  "variant": "Cola grab (No More Nails)",
+  "query": "grab adhesive no more nails",
+  "supplier": "bandq",
+  "unit_cost": 6.5,
+  "list_price": 8.99,
+  "spec": {
+   "part": "grab-adhesive"
+  },
+  "sample": "UniBond No More Nails White Not water resistant Adhesive 443g, Volume 280ml",
+  "url": "https://www.diy.com/departments/unibond-no-more-nails-white-not-water-resistant-adhesive-443g-volume-280ml/5010383323752_BQ.prd"
+ },
+ {
+  "family": "tiling",
+  "variant": "Cola de azulejo rapid-set 20kg",
+  "query": "tile adhesive ready mixed 10l",
+  "supplier": "bandq",
+  "unit_cost": 16.0,
+  "list_price": 20.99,
+  "spec": {
+   "part": "tile-adhesive"
+  },
+  "sample": "NX Rapid Set Flexible Ready mixed Grey Wall & floor tile Adhesive, 20kg",
+  "url": "https://www.diy.com/departments/nx-rapid-set-flexible-ready-mixed-grey-wall-floor-tile-adhesive-20kg/780764_BQ.prd"
+ },
+ {
+  "family": "garden",
+  "variant": "Painel de cerca closeboard 6\u00d76 (unidade)",
+  "query": "closeboard fence panel 6ft",
+  "supplier": "bandq",
+  "unit_cost": 59.0,
+  "list_price": 76.99,
+  "spec": {
+   "part": "fence-panel",
+   "pack_math": "\u00a3249.99/3"
+  },
+  "sample": "Forest Garden Traditional Closeboard Pressure treated 6ft Timber Fence panel (W)1.83m (H)1.83m",
+  "url": "https://www.diy.com/departments/forest-garden-traditional-closeboard-pressure-treated-6ft-timber-fence-panel-w-1-83m-h-1-83m/5013053204573_BQ.prd"
+ },
+ {
+  "family": "garden",
+  "variant": "Poste de cerca 75mm 2.4m (unidade)",
+  "query": "timber fence post 75mm 2.4m",
+  "supplier": "bandq",
+  "unit_cost": 16.88,
+  "list_price": 21.99,
+  "spec": {
+   "part": "fence-post",
+   "pack_math": "\u00a367.50/4"
+  },
+  "sample": "Snowdon Timber Treated 3x3\" Fence Post (W) 75mm (H) 2.4m - Pack of 4",
+  "url": "https://www.diy.com/departments/snowdon-timber-treated-3x3-fence-post-w-75mm-h-2-4m-pack-of-4/5060893861343_BQ.prd"
+ },
+ {
+  "family": "garden",
+  "variant": "Postcrete/PostFix 20kg",
+  "query": "blue circle postcrete",
+  "supplier": "bandq",
+  "unit_cost": 7.5,
+  "list_price": 9.99,
+  "spec": {
+   "part": "postcrete"
+  },
+  "sample": "Blue Circle Postcrete, 20kg Bag - Ready mixed",
+  "url": "https://www.diy.com/departments/blue-circle-postcrete-20kg-bag-ready-mixed/35713_BQ.prd"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de fuma\u00e7a (10 anos)",
+  "query": "smoke alarm",
+  "supplier": "bandq",
+  "unit_cost": 14.0,
+  "list_price": 18.99,
+  "spec": {
+   "part": "smoke-alarm",
+   "compliance": true,
+   "pack_math": "\u00a328.00/2"
+  },
+  "sample": "FireAngel FA6620-R-T2 Standalone Optical Smoke Alarm with 10-year lifetime battery, Pack of 2",
+  "url": "https://www.diy.com/departments/fireangel-fa6620-r-t2-standalone-optical-smoke-alarm-with-10-year-lifetime-battery-pack-of-2/0816317006327_BQ.prd"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lixa sortida (pack 10)",
+  "query": "sanding sheets assorted pack",
+  "supplier": "bandq",
+  "unit_cost": 4.47,
+  "list_price": 5.99,
+  "spec": {
+   "kind": "sandpaper"
+  },
+  "sample": "Faithfull 742510 Cork Block Glasspaper Sanding Sheets Assorted Pack 10 FAIACBGPA",
+  "url": "https://www.diy.com/departments/faithfull-742510-cork-block-glasspaper-sanding-sheets-assorted-pack-10-faiacbgpa/5023969320045_BQ.prd"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 75mm satin (pair)",
+  "query": "butt hinge 75mm satin stainless pair",
+  "supplier": "travisperkins",
+  "unit_cost": 5.7,
+  "list_price": 7.99,
+  "spec": {
+   "size_mm": 75,
+   "fire_rated": false,
+   "ex_vat": 4.75
+  },
+  "sample": "Eclipse 14838 Plain Bearing Butt Hinge Satin Stainless 76 x 51 x 1.5mm 2 Pack",
+  "url": "https://www.travisperkins.co.uk/butt-hinges/eclipse-14838-plain-bearing-butt-hinge-satin-stainless-76-x-51-x-1-5mm-2-pack/p/553786"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 100mm satin (pair)",
+  "query": "butt hinge 100mm satin stainless",
+  "supplier": "travisperkins",
+  "unit_cost": 18.1,
+  "list_price": 23.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": false,
+   "pack_math": "\u00a39.05 EACH \u00d7 2 (par)",
+   "ex_vat": 7.54
+  },
+  "sample": "Eclipse Grade 11 Hinge Ball Bearing Satin Stainless Steel 4 Inch",
+  "url": "https://www.travisperkins.co.uk/fire-door-hinges/eclipse-grade-11-hinge-ball-bearing-satin-stainless-steel-4-inch/p/964501"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Fire door hinge grade 13 CE 100mm (pack of 3)",
+  "query": "fire door hinges grade 13 100mm pack 3",
+  "supplier": "travisperkins",
+  "unit_cost": 13.34,
+  "list_price": 17.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": true,
+   "pack": 3,
+   "ex_vat": 11.12
+  },
+  "sample": "Ball Bearing Hinge Polished Stainless Steel 102mm x 76mm x 3mm FD130 pack of ...",
+  "url": "https://www.travisperkins.co.uk/fire-door-hinges/ball-bearing-hinge-polished-stainless-steel-102mm-x-76mm-x-3mm-fd130-pack-of-3/p/275010"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 64mm",
+  "query": "tubular mortice latch 64mm",
+  "supplier": "travisperkins",
+  "unit_cost": 3.22,
+  "list_price": 4.99,
+  "spec": {
+   "size_mm": 64,
+   "fire_rated": false,
+   "ex_vat": 2.68
+  },
+  "sample": "ERA Brass Tubular Latch 63.5mm",
+  "url": "https://www.travisperkins.co.uk/door-accessories/era-brass-tubular-latch-63-5mm/p/108473"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 76mm",
+  "query": "tubular mortice latch 76mm",
+  "supplier": "travisperkins",
+  "unit_cost": 8.1,
+  "list_price": 10.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": false,
+   "ex_vat": 6.75
+  },
+  "sample": "4FireDoors Heavy Duty Tubular Latch Satin Stainless Steel 76mm",
+  "url": "https://www.travisperkins.co.uk/door-accessories/4firedoors-heavy-duty-tubular-latch-satin-stainless-steel-76mm/p/274482"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on rose satin (pair)",
+  "query": "lever door handle on rose satin pair",
+  "supplier": "travisperkins",
+  "unit_cost": 18.84,
+  "list_price": 24.99,
+  "spec": {
+   "style": "rose",
+   "fire_rated": false,
+   "ex_vat": 15.7
+  },
+  "sample": "Carlisle Brass Settanta Lever On Round Rose Sn - Satin Nickel",
+  "url": "https://www.travisperkins.co.uk/rose-door-handles/carlisle-brass-settanta-lever-on-round-rose-sn-satin-nickel/p/185307"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on backplate with lock",
+  "query": "lever lock door handle backplate",
+  "supplier": "travisperkins",
+  "unit_cost": 11.65,
+  "list_price": 15.99,
+  "spec": {
+   "style": "backplate-lock",
+   "ex_vat": 9.71
+  },
+  "sample": "4Trade Victorian Lever Lock Handle Satin Nickel",
+  "url": "https://www.travisperkins.co.uk/lever-lock-door-handles/4trade-victorian-lever-lock-handle-satin-nickel/p/147480"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Fire-rated lever handle (pair)",
+  "query": "fire rated door handle lever",
+  "supplier": "travisperkins",
+  "unit_cost": 17.68,
+  "list_price": 22.99,
+  "spec": {
+   "fire_rated": true,
+   "ex_vat": 14.73
+  },
+  "sample": "4FireDoors Round Bar Lever On Europrofile Backplate 19mm",
+  "url": "https://www.travisperkins.co.uk/fire-door-handles/4firedoors-round-bar-lever-on-europrofile-backplate-19mm/p/243349"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 686mm (27\")",
+  "query": "internal door white primed 686mm",
+  "supplier": "travisperkins",
+  "unit_cost": 46.19,
+  "list_price": 60.99,
+  "spec": {
+   "width_mm": 686,
+   "fire_rated": false,
+   "ex_vat": 38.49
+  },
+  "sample": "Internal Moulded Kensington Door 1981 mm x 686 mm x 35 mm",
+  "url": "https://www.travisperkins.co.uk/internal-moulded-doors/internal-moulded-kensington-door-1981-mm-x-686-mm-x-35-mm/p/168401"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 762mm (30\") \u2014 padr\u00e3o",
+  "query": "internal door white primed 762mm",
+  "supplier": "travisperkins",
+  "unit_cost": 46.19,
+  "list_price": 60.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": false,
+   "ex_vat": 38.49
+  },
+  "sample": "Internal Moulded Kensington Door 1981 mm x 762 mm x 35 mm",
+  "url": "https://www.travisperkins.co.uk/internal-moulded-doors/internal-moulded-kensington-door-1981-mm-x-762-mm-x-35-mm/p/168400"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 838mm (33\")",
+  "query": "internal door white primed 838mm",
+  "supplier": "travisperkins",
+  "unit_cost": 46.19,
+  "list_price": 60.99,
+  "spec": {
+   "width_mm": 838,
+   "fire_rated": false,
+   "ex_vat": 38.49
+  },
+  "sample": "Internal Moulded Kensington Door 1981 mm x 838 mm x 35 mm",
+  "url": "https://www.travisperkins.co.uk/internal-moulded-doors/internal-moulded-kensington-door-1981-mm-x-838-mm-x-35-mm/p/750606"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Fire door FD30 762mm",
+  "query": "fire door fd30 762mm",
+  "supplier": "travisperkins",
+  "unit_cost": 80.62,
+  "list_price": 104.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": true,
+   "ex_vat": 67.18
+  },
+  "sample": "Internal Flush Paint Grade Plus 30 Min Fire Door 1981 mm x 762 mm x 44 mm",
+  "url": "https://www.travisperkins.co.uk/internal-flush-doors/internal-flush-paint-grade-plus-30-min-fire-door-1981-mm-x-762-mm-x-44-mm/p/322840"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Oak veneer 762mm",
+  "query": "internal door oak 762mm",
+  "supplier": "travisperkins",
+  "unit_cost": 97.43,
+  "list_price": 126.99,
+  "spec": {
+   "width_mm": 762,
+   "finish": "oak",
+   "ex_vat": 81.19
+  },
+  "sample": "Deanta Ely Unfinished Oak Door 1981 x 762 x 35mm",
+  "url": "https://www.travisperkins.co.uk/oak-internal-doors/deanta-ely-unfinished-oak-door-1981-x-762-x-35mm/p/111185"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone branco (standard)",
+  "query": "white silicone sealant 310ml",
+  "supplier": "travisperkins",
+  "unit_cost": 11.57,
+  "list_price": 15.99,
+  "spec": {
+   "colour": "white",
+   "ex_vat": 9.64
+  },
+  "sample": "Dowsil 785+ Sanitary Sealant White 310ml",
+  "url": "https://www.travisperkins.co.uk/bathroom-and-sanitary-sealants/dowsil-785-sanitary-sealant-white-310ml/p/740176"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone transparente",
+  "query": "clear silicone sealant 310ml",
+  "supplier": "travisperkins",
+  "unit_cost": 6.48,
+  "list_price": 8.99,
+  "spec": {
+   "colour": "clear",
+   "ex_vat": 5.4
+  },
+  "sample": "Safeguard Dryzone Anti-mould Silicone Sealant Clear 310 Ml",
+  "url": "https://www.travisperkins.co.uk/bathroom-and-sanitary-sealants/safeguard-dryzone-anti-mould-silicone-sealant-clear-310-ml/p/383266"
+ },
+ {
+  "family": "sealant",
+  "variant": "Sanit\u00e1rio HA6 (banheiro)",
+  "query": "sanitary silicone sealant bathroom",
+  "supplier": "travisperkins",
+  "unit_cost": 11.27,
+  "list_price": 14.99,
+  "spec": {
+   "grade": "sanitary",
+   "ex_vat": 9.39
+  },
+  "sample": "Evo-Stik Stay White Sanitary Silicone Sealant White",
+  "url": "https://www.travisperkins.co.uk/bathroom-and-sanitary-sealants/evo-stik-stay-white-sanitary-silicone-sealant-white/p/131402"
+ },
+ {
+  "family": "filler",
+  "variant": "Filler pronto (interior)",
+  "query": "polyfilla ready mixed filler",
+  "supplier": "travisperkins",
+  "unit_cost": 16.12,
+  "list_price": 20.99,
+  "spec": {
+   "type": "ready-mixed",
+   "ex_vat": 13.43
+  },
+  "sample": "Polycell Polyfilla Trade All Purpose Ready Mixed Filler - 1kg",
+  "url": "https://www.travisperkins.co.uk/fillers/polycell-polyfilla-trade-all-purpose-ready-mixed-filler-1kg/p/507072"
+ },
+ {
+  "family": "filler",
+  "variant": "Wood filler 2 partes",
+  "query": "two part wood filler high performance",
+  "supplier": "travisperkins",
+  "unit_cost": 32.95,
+  "list_price": 42.99,
+  "spec": {
+   "type": "2-part-wood",
+   "ex_vat": 27.46
+  },
+  "sample": "Ronseal High Performance Wood Filler White 1Kg",
+  "url": "https://www.travisperkins.co.uk/fillers/ronseal-high-performance-wood-filler-white-1kg/p/454561"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o branca matt 5L (trade)",
+  "query": "trade white matt emulsion 5l",
+  "supplier": "travisperkins",
+  "unit_cost": 57.36,
+  "list_price": 74.99,
+  "spec": {
+   "finish": "matt",
+   "litres": 5,
+   "ex_vat": 47.8
+  },
+  "sample": "Dulux Trade Vinyl Matt Emulsion Paint 5L White",
+  "url": "https://www.travisperkins.co.uk/emulsion-paints/dulux-trade-vinyl-matt-emulsion-paint-5l-white/p/820184"
+ },
+ {
+  "family": "paint",
+  "variant": "Gloss branco 2.5L (madeira)",
+  "query": "white gloss paint 2.5l wood",
+  "supplier": "travisperkins",
+  "unit_cost": 51.46,
+  "list_price": 66.99,
+  "spec": {
+   "finish": "gloss",
+   "litres": 2.5,
+   "ex_vat": 42.88
+  },
+  "sample": "Dulux Trade High Gloss Paint 2.5L White",
+  "url": "https://www.travisperkins.co.uk/gloss-paints/dulux-trade-high-gloss-paint-2-5l-white/p/820200"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "150mm (par)",
+  "query": "shelf bracket 150mm",
+  "supplier": "travisperkins",
+  "unit_cost": 1.8,
+  "list_price": 2.99,
+  "spec": {
+   "size_mm": 150,
+   "ex_vat": 0.75,
+   "pack_math": "\u00a30.90 EACH \u00d7 2 (par)"
+  },
+  "sample": "Rothley London Bracket (6in x 8in) White 150 x 200mm",
+  "url": "https://www.travisperkins.co.uk/shelf-brackets-and-supports/rothley-london-bracket-6in-x-8in-white-150-x-200mm/p/240953"
+ },
+ {
+  "family": "mdf",
+  "variant": "12mm 2440\u00d71220",
+  "query": "mdf board 12mm 2440",
+  "supplier": "travisperkins",
+  "unit_cost": 34.84,
+  "list_price": 45.99,
+  "spec": {
+   "thickness_mm": 12,
+   "ex_vat": 29.03
+  },
+  "sample": "12mm x 2440mm x 1220mm Kronobuild MDF",
+  "url": "https://www.travisperkins.co.uk/mdf-hardboard-and-pinboard/12mm-x-2440mm-x-1220mm-kronobuild-mdf/p/874668"
+ },
+ {
+  "family": "mdf",
+  "variant": "18mm 2440\u00d71220",
+  "query": "mdf board 18mm 2440",
+  "supplier": "travisperkins",
+  "unit_cost": 38.59,
+  "list_price": 50.99,
+  "spec": {
+   "thickness_mm": 18,
+   "ex_vat": 32.16
+  },
+  "sample": "18mm x 2440mm x 1220mm Kronobuild MDF",
+  "url": "https://www.travisperkins.co.uk/mdf-hardboard-and-pinboard/18mm-x-2440mm-x-1220mm-kronobuild-mdf/p/874667"
+ },
+ {
+  "family": "screws",
+  "variant": "Sortidos (caixa trade)",
+  "query": "wood screws trade pack assorted",
+  "supplier": "travisperkins",
+  "unit_cost": 26.77,
+  "list_price": 34.99,
+  "spec": {
+   "pack": "assorted",
+   "ex_vat": 22.31
+  },
+  "sample": "Ulti-Mate\u00ae Stick-Fit\u00ae Wood Screws Trade Assortment Qty 1000",
+  "url": "https://www.travisperkins.co.uk/wood-screws/ulti-mate-stick-fit-wood-screws-trade-assortment-qty-1000/p/460983"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o de teto 5L",
+  "query": "ceiling paint white 5l",
+  "supplier": "travisperkins",
+  "unit_cost": 50.77,
+  "list_price": 65.99,
+  "spec": {
+   "finish": "ceiling",
+   "litres": 5,
+   "ex_vat": 42.31
+  },
+  "sample": "Dulux Trade Supermatt Emulsion Paint 5L White",
+  "url": "https://www.travisperkins.co.uk/emulsion-paints/dulux-trade-supermatt-emulsion-paint-5l-white/p/820980"
+ },
+ {
+  "family": "paint",
+  "variant": "Primer/undercoat madeira 2.5L",
+  "query": "wood primer undercoat 2.5l",
+  "supplier": "travisperkins",
+  "unit_cost": 66.86,
+  "list_price": 86.99,
+  "spec": {
+   "finish": "primer-wood",
+   "litres": 2.5,
+   "ex_vat": 55.72
+  },
+  "sample": "Dulux Trade Quick Dry Wood Primer Undercoat 2.5L White",
+  "url": "https://www.travisperkins.co.uk/undercoat-and-primers/dulux-trade-quick-dry-wood-primer-undercoat-2-5l-white/p/821027"
+ },
+ {
+  "family": "paint",
+  "variant": "Verniz madeira interior 750ml",
+  "query": "interior wood varnish 750ml",
+  "supplier": "travisperkins",
+  "unit_cost": 22.54,
+  "list_price": 29.99,
+  "spec": {
+   "finish": "varnish",
+   "litres": 0.75,
+   "ex_vat": 18.78
+  },
+  "sample": "Ronseal Trade Interior Varnish Satin Clear 750ml",
+  "url": "https://www.travisperkins.co.uk/wood-dyes-and-varnishes/ronseal-trade-interior-varnish-satin-clear-750ml/p/167093"
+ },
+ {
+  "family": "paint",
+  "variant": "Masonry externa 5L",
+  "query": "masonry paint 5l white",
+  "supplier": "travisperkins",
+  "unit_cost": 60,
+  "list_price": 77.99,
+  "spec": {
+   "finish": "masonry",
+   "litres": 5,
+   "ex_vat": 50
+  },
+  "sample": "Dulux Trade Weathershield Maximum Exposure 5L Paint Brilliant White",
+  "url": "https://www.travisperkins.co.uk/exterior-and-masonry-paints/dulux-trade-weathershield-maximum-exposure-5l-paint-brilliant-white/p/408180"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Kit rolo + bandeja",
+  "query": "paint roller set tray",
+  "supplier": "travisperkins",
+  "unit_cost": 16.39,
+  "list_price": 21.99,
+  "spec": {
+   "kind": "roller-set",
+   "ex_vat": 13.66
+  },
+  "sample": "Hamilton Roller Masonry Set with Tray",
+  "url": "https://www.travisperkins.co.uk/paint-rollers/hamilton-roller-masonry-set-with-tray/p/876155"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Jogo de trinchas",
+  "query": "paint brush set",
+  "supplier": "travisperkins",
+  "unit_cost": 8.94,
+  "list_price": 11.99,
+  "spec": {
+   "kind": "brush-set",
+   "ex_vat": 7.45
+  },
+  "sample": "4Trade Brushes Pack of 3",
+  "url": "https://www.travisperkins.co.uk/paint-brushes/4trade-brushes-pack-of-3/p/321496"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Fita de pintor 48mm",
+  "query": "masking tape 48mm painters",
+  "supplier": "travisperkins",
+  "unit_cost": 3.05,
+  "list_price": 3.99,
+  "spec": {
+   "kind": "masking-tape",
+   "ex_vat": 2.54
+  },
+  "sample": "4Trade Masking Tape 48mm x 50m",
+  "url": "https://www.travisperkins.co.uk/masking-tapes/4trade-masking-tape-48mm-x-50m/p/294397"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lona/dust sheet",
+  "query": "dust sheet cotton",
+  "supplier": "travisperkins",
+  "unit_cost": 22.06,
+  "list_price": 28.99,
+  "spec": {
+   "kind": "dust-sheet",
+   "ex_vat": 18.38
+  },
+  "sample": "4Trade New Dust Sheet Cotton Mix 3.6m x 3.6m",
+  "url": "https://www.travisperkins.co.uk/dust-sheets/4trade-new-dust-sheet-cotton-mix-3-6m-x-3-6m/p/465657"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de enchimento (fill valve)",
+  "query": "toilet fill valve",
+  "supplier": "travisperkins",
+  "unit_cost": 6.26,
+  "list_price": 8.99,
+  "spec": {
+   "part": "fill-valve",
+   "ex_vat": 5.22
+  },
+  "sample": "Delchem 9.5 Inch Adjustable Arm Bottom Entry Fill Valve",
+  "url": "https://www.travisperkins.co.uk/flush-valves-and-toilet-spares/delchem-9-5-inch-adjustable-arm-bottom-entry-fill-valve/p/130317"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de descarga (flush valve)",
+  "query": "toilet flush valve",
+  "supplier": "travisperkins",
+  "unit_cost": 19.43,
+  "list_price": 25.99,
+  "spec": {
+   "part": "flush-valve",
+   "ex_vat": 16.19
+  },
+  "sample": "Fluidmaster Pro Cable Dual Flush Valve",
+  "url": "https://www.travisperkins.co.uk/flush-valves-and-toilet-spares/fluidmaster-pro-cable-dual-flush-valve/p/229257"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Assento sanit\u00e1rio (soft close)",
+  "query": "soft close toilet seat",
+  "supplier": "travisperkins",
+  "unit_cost": 35.93,
+  "list_price": 46.99,
+  "spec": {
+   "part": "toilet-seat",
+   "ex_vat": 29.94
+  },
+  "sample": "Croydex Constance Flexi-Fix Soft-Close Toilet Seat",
+  "url": "https://www.travisperkins.co.uk/toilet-seats-and-accessories/croydex-constance-flexi-fix-soft-close-toilet-seat/p/418438"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira misturadora cozinha",
+  "query": "kitchen mixer tap",
+  "supplier": "travisperkins",
+  "unit_cost": 62.71,
+  "list_price": 81.99,
+  "spec": {
+   "part": "kitchen-tap",
+   "ex_vat": 52.26
+  },
+  "sample": "Belfort Deck Sink Mixer Chrome",
+  "url": "https://www.travisperkins.co.uk/deck-mixer-taps/belfort-deck-sink-mixer-chrome/p/740910"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira de lavat\u00f3rio (par)",
+  "query": "basin taps pair",
+  "supplier": "travisperkins",
+  "unit_cost": 30.47,
+  "list_price": 39.99,
+  "spec": {
+   "part": "basin-taps",
+   "ex_vat": 25.39
+  },
+  "sample": "Standard Base Basin Taps Pair",
+  "url": "https://www.travisperkins.co.uk/basin-taps/standard-base-basin-taps-pair/p/805774"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Flex\u00edveis (par)",
+  "query": "flexible tap connectors 15mm",
+  "supplier": "travisperkins",
+  "unit_cost": 22.08,
+  "list_price": 28.99,
+  "spec": {
+   "part": "flexi",
+   "ex_vat": 18.4
+  },
+  "sample": "Hep2O Flexible Tap Connector 300mm X 15mm X 15mm HD125H/15W Qty 2",
+  "url": "https://www.travisperkins.co.uk/push-fit-hoses/hep2o-flexible-tap-connector-300mm-x-15mm-x-15mm-hd125h15w-qty-2/p/488933"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Sif\u00e3o de pia",
+  "query": "basin waste trap",
+  "supplier": "travisperkins",
+  "unit_cost": 10.28,
+  "list_price": 13.99,
+  "spec": {
+   "part": "trap",
+   "ex_vat": 8.57
+  },
+  "sample": "McAlpine SB10 Seal S Trap 32mm x 75mm",
+  "url": "https://www.travisperkins.co.uk/shower-wastes/mcalpine-sb10-seal-s-trap-32mm-x-75mm/p/960851"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de isolamento 15mm",
+  "query": "isolation valve 15mm",
+  "supplier": "travisperkins",
+  "unit_cost": 1.4,
+  "list_price": 1.99,
+  "spec": {
+   "part": "iso-valve",
+   "ex_vat": 1.17
+  },
+  "sample": "15mm Straight Isolating Valve Chrome",
+  "url": "https://www.travisperkins.co.uk/brassware-and-valves/15mm-straight-isolating-valve-chrome/p/961159"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Ducha + mangueira",
+  "query": "shower head hose set",
+  "supplier": "travisperkins",
+  "unit_cost": 59.54,
+  "list_price": 77.99,
+  "spec": {
+   "part": "shower-set",
+   "ex_vat": 49.62
+  },
+  "sample": "Hansgrohe Vernis Blend Shower Holder set 100 Vario EcoSmart & Shower hose 160...",
+  "url": "https://www.travisperkins.co.uk/shower-heads-and-hoses/hansgrohe-vernis-blend-shower-holder-set-100-vario-ecosmart-and-shower-hose-160cm-chrome-26278000/p/149165"
+ },
+ {
+  "family": "electrical",
+  "variant": "Tomada dupla branca",
+  "query": "double socket white 13a",
+  "supplier": "travisperkins",
+  "unit_cost": 4.66,
+  "list_price": 6.99,
+  "spec": {
+   "part": "double-socket",
+   "ex_vat": 3.88
+  },
+  "sample": "BG Electrical 921DP 2 Gang 13A Double Pole Switched Socket White",
+  "url": "https://www.travisperkins.co.uk/internal-sockets/bg-electrical-921dp-2-gang-13a-double-pole-switched-socket-white/p/442557"
+ },
+ {
+  "family": "electrical",
+  "variant": "Interruptor simples",
+  "query": "light switch 1 gang white",
+  "supplier": "travisperkins",
+  "unit_cost": 1.6,
+  "list_price": 2.99,
+  "spec": {
+   "part": "switch-1g",
+   "ex_vat": 1.33
+  },
+  "sample": "BG Electrical 912 1 Gang 2 Way Light Switch 10AX Square Edge White",
+  "url": "https://www.travisperkins.co.uk/internal-switches/bg-electrical-912-1-gang-2-way-light-switch-10ax-square-edge-white/p/402983"
+ },
+ {
+  "family": "electrical",
+  "variant": "Pendente/lumin\u00e1ria teto",
+  "query": "ceiling pendant light fitting",
+  "supplier": "travisperkins",
+  "unit_cost": 2.36,
+  "list_price": 3.99,
+  "spec": {
+   "part": "pendant",
+   "ex_vat": 1.97
+  },
+  "sample": "BG 666 6-Inch Pendant Set White Ceiling Rose, Flex & Lampholder",
+  "url": "https://www.travisperkins.co.uk/light-fittings-and-ceiling-switches/bg-666-6-inch-pendant-set-white-ceiling-rose-flex-and-lampholder/p/402785"
+ },
+ {
+  "family": "electrical",
+  "variant": "L\u00e2mpada LED E27 (pack)",
+  "query": "led bulb e27 pack",
+  "supplier": "travisperkins",
+  "unit_cost": 12.13,
+  "list_price": 15.99,
+  "spec": {
+   "part": "led-e27",
+   "ex_vat": 10.11
+  },
+  "sample": "Philips LED 60W E27 GLS 6 Pack",
+  "url": "https://www.travisperkins.co.uk/light-bulbs-and-tubes/philips-led-60w-e27-gls-6-pack/p/145020"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de CO",
+  "query": "carbon monoxide alarm",
+  "supplier": "travisperkins",
+  "unit_cost": 26.66,
+  "list_price": 34.99,
+  "spec": {
+   "part": "co-alarm",
+   "compliance": true,
+   "ex_vat": 22.22
+  },
+  "sample": "Aico Carbon Monoxide Alarm with Lithium Battery",
+  "url": "https://www.travisperkins.co.uk/carbon-monoxide-detectors/aico-carbon-monoxide-alarm-with-lithium-battery/p/107142"
+ },
+ {
+  "family": "fixings",
+  "variant": "Cola grab (No More Nails)",
+  "query": "grab adhesive no more nails",
+  "supplier": "travisperkins",
+  "unit_cost": 5.92,
+  "list_price": 7.99,
+  "spec": {
+   "part": "grab-adhesive",
+   "ex_vat": 4.93
+  },
+  "sample": "UniBond 310ml No More Nails Cartridge",
+  "url": "https://www.travisperkins.co.uk/filling-and-grab-adhesives/unibond-310ml-no-more-nails-cartridge/p/610912"
+ },
+ {
+  "family": "garden",
+  "variant": "Painel de cerca closeboard 6\u00d76 (unidade)",
+  "query": "closeboard fence panel 6ft",
+  "supplier": "travisperkins",
+  "unit_cost": 59.99,
+  "list_price": 77.99,
+  "spec": {
+   "part": "fence-panel",
+   "pack_math": "\u00a3249.99/3",
+   "ex_vat": 49.99
+  },
+  "sample": "Dip Treated Closeboard Fence Panel 6ft x 6ft",
+  "url": "https://www.travisperkins.co.uk/fence-panels/dip-treated-closeboard-fence-panel-6ft-x-6ft/p/186442"
+ },
+ {
+  "family": "garden",
+  "variant": "Poste de cerca 75mm 2.4m (unidade)",
+  "query": "timber fence post 75mm 2.4m",
+  "supplier": "travisperkins",
+  "unit_cost": 9.17,
+  "list_price": 11.99,
+  "spec": {
+   "part": "fence-post",
+   "pack_math": "\u00a3122.98/11",
+   "ex_vat": 7.64
+  },
+  "sample": "Green Treated UC4 Incised Fence Post 75 x 75mm x 2.4m",
+  "url": "https://www.travisperkins.co.uk/fence-posts/green-treated-uc4-incised-fence-post-75-x-75mm-x-2-4m/p/939377"
+ },
+ {
+  "family": "garden",
+  "variant": "Postcrete/PostFix 20kg",
+  "query": "blue circle postcrete",
+  "supplier": "travisperkins",
+  "unit_cost": 8.17,
+  "list_price": 10.99,
+  "spec": {
+   "part": "postcrete",
+   "ex_vat": 6.81
+  },
+  "sample": "Blue Circle Ready to Use Postcrete 20kg",
+  "url": "https://www.travisperkins.co.uk/cement/blue-circle-ready-to-use-postcrete-20kg/p/519476"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de fuma\u00e7a (10 anos)",
+  "query": "smoke alarm",
+  "supplier": "travisperkins",
+  "unit_cost": 18.74,
+  "list_price": 24.99,
+  "spec": {
+   "part": "smoke-alarm",
+   "compliance": true,
+   "ex_vat": 15.62
+  },
+  "sample": "Fireangel ST-622 Smoke Alarm 10 Year Battery Thermoptek Multi-sensor",
+  "url": "https://www.travisperkins.co.uk/carbon-monoxide-detectors/fireangel-st-622-smoke-alarm-10-year-battery-thermoptek-multi-sensor/p/775450"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 75mm satin (pair)",
+  "query": "butt hinge 75mm satin stainless pair",
+  "supplier": "wickes",
+  "unit_cost": 5.5,
+  "list_price": 7.99,
+  "spec": {
+   "size_mm": 75,
+   "fire_rated": false
+  },
+  "sample": "Wickes Satin Nickel Double Steel Washered Butt Hinge - 76mm - Pack of 2",
+  "url": "https://www.wickes.co.uk/Wickes-Satin-Nickel-Double-Steel-Washered-Butt-Hinge---76mm---Pack-of-2/p/256884"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 100mm satin (pair)",
+  "query": "butt hinge 100mm satin stainless",
+  "supplier": "wickes",
+  "unit_cost": 10.06,
+  "list_price": 13.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": false,
+   "pack_math": "\u00a315.10/3 \u00d7 2 (par)"
+  },
+  "sample": "4FireDoors Satin Steel Ball Bearing Hinge - 102 x 76 x 3mm - Pack of 3",
+  "url": "https://www.wickes.co.uk/4FireDoors-Satin-Steel-Ball-Bearing-Hinge---102-x-76-x-3mm---Pack-of-3/p/119168"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Fire door hinge grade 13 CE 100mm (pack of 3)",
+  "query": "fire door hinges grade 13 100mm pack 3",
+  "supplier": "wickes",
+  "unit_cost": 12,
+  "list_price": 15.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": true,
+   "pack": 3
+  },
+  "sample": "Wickes Polished Chrome Grade 13 Fire Rated Ball Bearing Hinge - 102mm - Pack of 3",
+  "url": "https://www.wickes.co.uk/Wickes-Polished-Chrome-Grade-13-Fire-Rated-Ball-Bearing-Hinge---102mm---Pack-of-3/p/256987"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 64mm",
+  "query": "tubular mortice latch 64mm",
+  "supplier": "wickes",
+  "unit_cost": 4,
+  "list_price": 5.99,
+  "spec": {
+   "size_mm": 64,
+   "fire_rated": false
+  },
+  "sample": "Carlisle Antique Brass Bolt Through Square Tubular Mortice Latch - 64mm",
+  "url": "https://www.wickes.co.uk/Carlisle-Antique-Brass-Bolt-Through-Square-Tubular-Mortice-Latch---64mm/p/257334"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 76mm",
+  "query": "tubular mortice latch 76mm",
+  "supplier": "wickes",
+  "unit_cost": 4,
+  "list_price": 5.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": false
+  },
+  "sample": "Carlisle Antique Brass Bolt Through Square Tubular Mortice Latch - 76mm",
+  "url": "https://www.wickes.co.uk/Carlisle-Antique-Brass-Bolt-Through-Square-Tubular-Mortice-Latch---76mm/p/257336"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Fire-rated tubular latch 76mm (FD30/60)",
+  "query": "fire rated tubular mortice latch 76mm",
+  "supplier": "wickes",
+  "unit_cost": 7.3,
+  "list_price": 9.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": true
+  },
+  "sample": "4FireDoors Heavy Duty Tubular Door Latch - Satin Stainless Steel - 76mm",
+  "url": "https://www.wickes.co.uk/4FireDoors-Heavy-Duty-Tubular-Door-Latch---Satin-Stainless-Steel---76mm/p/116670"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on rose satin (pair)",
+  "query": "lever door handle on rose satin pair",
+  "supplier": "wickes",
+  "unit_cost": 18,
+  "list_price": 23.99,
+  "spec": {
+   "style": "rose",
+   "fire_rated": false
+  },
+  "sample": "Paris Satin Nickel Round Rose Door Handle - 1 Pair",
+  "url": "https://www.wickes.co.uk/Paris-Satin-Nickel-Round-Rose-Door-Handle---1-Pair/p/103087"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on backplate with lock",
+  "query": "lever lock door handle backplate",
+  "supplier": "wickes",
+  "unit_cost": 14,
+  "list_price": 18.99,
+  "spec": {
+   "style": "backplate-lock"
+  },
+  "sample": "Goodrich Matt Black Lever Lock Door Handle - 1 Pair",
+  "url": "https://www.wickes.co.uk/Goodrich-Matt-Black-Lever-Lock-Door-Handle---1-Pair/p/275763"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Fire-rated lever handle (pair)",
+  "query": "fire rated door handle lever",
+  "supplier": "wickes",
+  "unit_cost": 15.8,
+  "list_price": 20.99,
+  "spec": {
+   "fire_rated": true
+  },
+  "sample": "4FireDoors 19mm Roundbar Lever Door Handle on Backplate - Satin Aluminium",
+  "url": "https://www.wickes.co.uk/4FireDoors-19mm-Roundbar-Lever-Door-Handle-on-Backplate---Satin-Aluminium/p/116663"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 686mm (27\")",
+  "query": "internal door white primed 686mm",
+  "supplier": "wickes",
+  "unit_cost": 85,
+  "list_price": 110.99,
+  "spec": {
+   "width_mm": 686,
+   "fire_rated": false
+  },
+  "sample": "Wickes Thame Ladder White Primed Solid Core Internal Door - 1981 x 686mm",
+  "url": "https://www.wickes.co.uk/Wickes-Thame-Ladder-White-Primed-Solid-Core-Internal-Door---1981-x-686mm/p/236439"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 762mm (30\") \u2014 padr\u00e3o",
+  "query": "internal door white primed 762mm",
+  "supplier": "wickes",
+  "unit_cost": 80,
+  "list_price": 103.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": false
+  },
+  "sample": "Wickes Geneva Cottage White Primed Solid Core Door - 1981 x 762mm",
+  "url": "https://www.wickes.co.uk/Wickes-Geneva-Cottage-White-Primed-Solid-Core-Door---1981-x-762mm/p/236568"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 838mm (33\")",
+  "query": "internal door white primed 838mm",
+  "supplier": "wickes",
+  "unit_cost": 104,
+  "list_price": 135.99,
+  "spec": {
+   "width_mm": 838,
+   "fire_rated": false
+  },
+  "sample": "Wickes Thame Ladder White Primed Solid Core Internal Door - 1981 x 838mm",
+  "url": "https://www.wickes.co.uk/Wickes-Thame-Ladder-White-Primed-Solid-Core-Internal-Door---1981-x-838mm/p/236441"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Fire door FD30 762mm",
+  "query": "fire door fd30 762mm",
+  "supplier": "wickes",
+  "unit_cost": 74,
+  "list_price": 96.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": true
+  },
+  "sample": "Wickes Flush Primed Paint Grade FD30 Internal Fire Resistant Door - 1981 x 762mm",
+  "url": "https://www.wickes.co.uk/Wickes-Flush-Primed-Paint-Grade-FD30-Internal-Fire-Resistant-Door---1981-x-762mm/p/239056"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Oak veneer 762mm",
+  "query": "internal door oak 762mm",
+  "supplier": "wickes",
+  "unit_cost": 84,
+  "list_price": 109.99,
+  "spec": {
+   "width_mm": 762,
+   "finish": "oak"
+  },
+  "sample": "Wickes Geneva Oak Veneer Cottage Internal Door - 1981 x 762mm",
+  "url": "https://www.wickes.co.uk/Wickes-Geneva-Oak-Veneer-Cottage-Internal-Door---1981-x-762mm/p/214699"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed at\u00e9 32\"",
+  "query": "tv bracket fixed small",
+  "supplier": "wickes",
+  "unit_cost": 15,
+  "list_price": 19.99,
+  "spec": {
+   "tv_max_in": 32,
+   "type": "fixed"
+  },
+  "sample": "Ross RTMF600-RO Flat-To-Wall TV Mount - Max VESA 600 x 400mm",
+  "url": "https://www.wickes.co.uk/Ross-RTMF600-RO-Flat-To-Wall-TV-Mount---Max-VESA-600-x-400mm/p/300258"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Tilt 32\u201355\"",
+  "query": "tv wall bracket tilt 55 inch",
+  "supplier": "wickes",
+  "unit_cost": 16,
+  "list_price": 20.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "tilt"
+  },
+  "sample": "Ross RTMT400-RO Variable Tilt TV Wall Mount - Max VESA 400 x 400mm",
+  "url": "https://www.wickes.co.uk/Ross-RTMT400-RO-Variable-Tilt-TV-Wall-Mount---Max-VESA-400-x-400mm/p/300259"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Full-motion 32\u201355\"",
+  "query": "tv wall bracket full motion 55 inch",
+  "supplier": "wickes",
+  "unit_cost": 39,
+  "list_price": 50.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "full-motion"
+  },
+  "sample": "Ross RTMRTA400-RO Full Motion Triple Arm TV Wall Mount - Max VESA 400 x 400mm",
+  "url": "https://www.wickes.co.uk/Ross-RTMRTA400-RO-Full-Motion-Triple-Arm-TV-Wall-Mount---Max-VESA-400-x-400mm/p/300264"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone branco (standard)",
+  "query": "white silicone sealant 310ml",
+  "supplier": "wickes",
+  "unit_cost": 21,
+  "list_price": 27.99,
+  "spec": {
+   "colour": "white"
+  },
+  "sample": "Multipanel Silicone Sealant White - 310ml",
+  "url": "https://www.wickes.co.uk/Multipanel-Silicone-Sealant-White---310ml/p/288996"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone transparente",
+  "query": "clear silicone sealant 310ml",
+  "supplier": "wickes",
+  "unit_cost": 21,
+  "list_price": 27.99,
+  "spec": {
+   "colour": "clear"
+  },
+  "sample": "Multipanel Silicone Sealant Clear - 310ml",
+  "url": "https://www.wickes.co.uk/Multipanel-Silicone-Sealant-Clear---310ml/p/288991"
+ },
+ {
+  "family": "sealant",
+  "variant": "Sanit\u00e1rio HA6 (banheiro)",
+  "query": "sanitary silicone sealant bathroom",
+  "supplier": "wickes",
+  "unit_cost": 9,
+  "list_price": 11.99,
+  "spec": {
+   "grade": "sanitary"
+  },
+  "sample": "Evo-Stik Trade Only Sanitary Silicone White Sealant - 280ml",
+  "url": "https://www.wickes.co.uk/Evo-Stik-Trade-Only-Sanitary-Silicone-White-Sealant---280ml/p/151163"
+ },
+ {
+  "family": "filler",
+  "variant": "Filler pronto (interior)",
+  "query": "polyfilla ready mixed filler",
+  "supplier": "wickes",
+  "unit_cost": 8.7,
+  "list_price": 11.99,
+  "spec": {
+   "type": "ready-mixed"
+  },
+  "sample": "Polycell Polyfilla Multi-Purpose Ready Mixed Filler - 1kg",
+  "url": "https://www.wickes.co.uk/Polycell-Polyfilla-Multi-Purpose-Ready-Mixed-Filler---1kg/p/157561"
+ },
+ {
+  "family": "filler",
+  "variant": "Wood filler 2 partes",
+  "query": "two part wood filler high performance",
+  "supplier": "wickes",
+  "unit_cost": 16,
+  "list_price": 20.99,
+  "spec": {
+   "type": "2-part-wood"
+  },
+  "sample": "Ronseal High Performance Wood Filler - Natural 550g",
+  "url": "https://www.wickes.co.uk/Ronseal-High-Performance-Wood-Filler---Natural-550g/p/117938"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o branca matt 5L (trade)",
+  "query": "trade white matt emulsion 5l",
+  "supplier": "wickes",
+  "unit_cost": 40,
+  "list_price": 51.99,
+  "spec": {
+   "finish": "matt",
+   "litres": 5
+  },
+  "sample": "Dulux Trade Supermatt Emulsion Paint - White - 5L",
+  "url": "https://www.wickes.co.uk/Dulux-Trade-Supermatt-Emulsion-Paint---White---5L/p/175375"
+ },
+ {
+  "family": "paint",
+  "variant": "Kitchen & bathroom 2.5L",
+  "query": "kitchen bathroom paint 2.5l",
+  "supplier": "wickes",
+  "unit_cost": 17,
+  "list_price": 22.99,
+  "spec": {
+   "finish": "k&b",
+   "litres": 2.5
+  },
+  "sample": "Wickes Bathroom Soft Sheen Emulsion Paint - Pure Brilliant White No.0 - 2.5L",
+  "url": "https://www.wickes.co.uk/Wickes-Bathroom-Soft-Sheen-Emulsion-Paint---Pure-Brilliant-White-No-0---2-5L/p/121848"
+ },
+ {
+  "family": "paint",
+  "variant": "Gloss branco 2.5L (madeira)",
+  "query": "white gloss paint 2.5l wood",
+  "supplier": "wickes",
+  "unit_cost": 23,
+  "list_price": 29.99,
+  "spec": {
+   "finish": "gloss",
+   "litres": 2.5
+  },
+  "sample": "Wickes One Coat Gloss Wood & Metal Paint - Pure Brilliant White - 2.5L",
+  "url": "https://www.wickes.co.uk/Wickes-One-Coat-Gloss-Wood+Metal-Paint---Pure-Brilliant-White---2-5L/p/122156"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 120\u2013210cm",
+  "query": "extendable curtain pole 210cm",
+  "supplier": "wickes",
+  "unit_cost": 22,
+  "list_price": 28.99,
+  "spec": {
+   "max_cm": 210
+  },
+  "sample": "Wickes 16/19mm Extendable Metal Curtain Pole Stainless Steel (1.2 - 2.1m)",
+  "url": "https://www.wickes.co.uk/Wickes-16-19mm-Extendable-Metal-Curtain-Pole-Stainless-Steel-1-2---2-1m/p/241032"
+ },
+ {
+  "family": "curtain_pole",
+  "variant": "Extens\u00edvel 170\u2013300cm",
+  "query": "extendable curtain pole 300cm",
+  "supplier": "wickes",
+  "unit_cost": 28,
+  "list_price": 36.99,
+  "spec": {
+   "max_cm": 300
+  },
+  "sample": "Wickes 16/19mm Extendable Metal Curtain Pole Stainless Steel (2.1 - 3.6m)",
+  "url": "https://www.wickes.co.uk/Wickes-16-19mm-Extendable-Metal-Curtain-Pole-Stainless-Steel-2-1---3-6m/p/241035"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "Heavy duty 200mm+",
+  "query": "heavy duty shelf bracket 250mm",
+  "supplier": "wickes",
+  "unit_cost": 6,
+  "list_price": 7.99,
+  "spec": {
+   "size_mm": 250,
+   "duty": "heavy"
+  },
+  "sample": "Wickes Heavy Duty Matt Black Shelf Bracket",
+  "url": "https://www.wickes.co.uk/Wickes-Heavy-Duty-Matt-Black-Shelf-Bracket/p/9000280502"
+ },
+ {
+  "family": "mdf",
+  "variant": "12mm 2440\u00d71220",
+  "query": "mdf board 12mm 2440",
+  "supplier": "wickes",
+  "unit_cost": 26,
+  "list_price": 33.99,
+  "spec": {
+   "thickness_mm": 12
+  },
+  "sample": "General Purpose MDF Sheet - 12 x 1220 x 2440mm",
+  "url": "https://www.wickes.co.uk/General-Purpose-MDF-Sheet---12-x-1220-x-2440mm/p/110034"
+ },
+ {
+  "family": "mdf",
+  "variant": "18mm 2440\u00d71220",
+  "query": "mdf board 18mm 2440",
+  "supplier": "wickes",
+  "unit_cost": 30,
+  "list_price": 38.99,
+  "spec": {
+   "thickness_mm": 18
+  },
+  "sample": "General Purpose MDF Sheet - 18 x 1220 x 2440mm",
+  "url": "https://www.wickes.co.uk/General-Purpose-MDF-Sheet---18-x-1220-x-2440mm/p/110113"
+ },
+ {
+  "family": "screws",
+  "variant": "Sortidos (caixa trade)",
+  "query": "wood screws trade pack assorted",
+  "supplier": "wickes",
+  "unit_cost": 20,
+  "list_price": 25.99,
+  "spec": {
+   "pack": "assorted"
+  },
+  "sample": "Wickes Single Thread Trade Pack Zinc & Yellow Screws - Pack of 1000",
+  "url": "https://www.wickes.co.uk/Wickes-Single-Thread-Trade-Pack-Zinc+Yellow-Screws---Pack-of-1000/p/285384"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o de teto 5L",
+  "query": "ceiling paint white 5l",
+  "supplier": "wickes",
+  "unit_cost": 26,
+  "list_price": 33.99,
+  "spec": {
+   "finish": "ceiling",
+   "litres": 5
+  },
+  "sample": "Dulux Matt Emulsion Paint - Pure Brilliant White - 5L",
+  "url": "https://www.wickes.co.uk/Dulux-Matt-Emulsion-Paint---Pure-Brilliant-White---5L/p/121110"
+ },
+ {
+  "family": "paint",
+  "variant": "Primer/undercoat madeira 2.5L",
+  "query": "wood primer undercoat 2.5l",
+  "supplier": "wickes",
+  "unit_cost": 21,
+  "list_price": 27.99,
+  "spec": {
+   "finish": "primer-wood",
+   "litres": 2.5
+  },
+  "sample": "Crown Wood & MDF Primer & Undercoat - White - 2.5L",
+  "url": "https://www.wickes.co.uk/Crown-Wood+MDF-Primer+Undercoat---White---2-5L/p/289243"
+ },
+ {
+  "family": "paint",
+  "variant": "Verniz madeira interior 750ml",
+  "query": "interior wood varnish 750ml",
+  "supplier": "wickes",
+  "unit_cost": 16,
+  "list_price": 20.99,
+  "spec": {
+   "finish": "varnish",
+   "litres": 0.75
+  },
+  "sample": "Wickes Quick Dry Interior Satin Varnish - Natural Oak - 750ml",
+  "url": "https://www.wickes.co.uk/Wickes-Quick-Dry-Interior-Satin-Varnish---Natural-Oak---750ml/p/253678"
+ },
+ {
+  "family": "paint",
+  "variant": "Masonry externa 5L",
+  "query": "masonry paint 5l white",
+  "supplier": "wickes",
+  "unit_cost": 24,
+  "list_price": 31.99,
+  "spec": {
+   "finish": "masonry",
+   "litres": 5
+  },
+  "sample": "Wickes Smooth Masonry Paint - Pure Brilliant White - 5L",
+  "url": "https://www.wickes.co.uk/Wickes-Smooth-Masonry-Paint---Pure-Brilliant-White---5L/p/214121"
+ },
+ {
+  "family": "paint",
+  "variant": "Tinta de radiador 750ml",
+  "query": "radiator paint white 750ml",
+  "supplier": "wickes",
+  "unit_cost": 22,
+  "list_price": 28.99,
+  "spec": {
+   "finish": "radiator",
+   "litres": 0.75
+  },
+  "sample": "Ronseal Stays White Radiator Gloss Paint - 750ml",
+  "url": "https://www.wickes.co.uk/Ronseal-Stays-White-Radiator-Gloss-Paint---750ml/p/173957"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Kit rolo + bandeja",
+  "query": "paint roller set tray",
+  "supplier": "wickes",
+  "unit_cost": 6,
+  "list_price": 7.99,
+  "spec": {
+   "kind": "roller-set"
+  },
+  "sample": "Wickes Trade Paint Roller Set - 9in",
+  "url": "https://www.wickes.co.uk/Wickes-Trade-Paint-Roller-Set---9in/p/154868"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Jogo de trinchas",
+  "query": "paint brush set",
+  "supplier": "wickes",
+  "unit_cost": 12,
+  "list_price": 15.99,
+  "spec": {
+   "kind": "brush-set"
+  },
+  "sample": "Harris Seriously Good Walls & Ceilings Paint Brush Set - Pack of 5",
+  "url": "https://www.wickes.co.uk/Harris-Seriously-Good-Walls+Ceilings-Paint-Brush-Set---Pack-of-5/p/236680"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Fita de pintor 48mm",
+  "query": "masking tape 48mm painters",
+  "supplier": "wickes",
+  "unit_cost": 3.5,
+  "list_price": 4.99,
+  "spec": {
+   "kind": "masking-tape"
+  },
+  "sample": "Wickes Multi-Surface Cream Masking Tape - 48mm x 50m",
+  "url": "https://www.wickes.co.uk/Wickes-Multi-Surface-Cream-Masking-Tape---48mm-x-50m/p/600718"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lona/dust sheet",
+  "query": "dust sheet cotton",
+  "supplier": "wickes",
+  "unit_cost": 15.75,
+  "list_price": 20.99,
+  "spec": {
+   "kind": "dust-sheet"
+  },
+  "sample": "Professional Cotton Dust Sheet - 3.6 x 2.7m",
+  "url": "https://www.wickes.co.uk/Professional-Cotton-Dust-Sheet---3-6-x-2-7m/p/154963"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de enchimento (fill valve)",
+  "query": "toilet fill valve",
+  "supplier": "wickes",
+  "unit_cost": 17,
+  "list_price": 22.99,
+  "spec": {
+   "part": "fill-valve"
+  },
+  "sample": "Fluidmaster 400 Brass Shank Bottom Entry Fill Valve - 12.7mm",
+  "url": "https://www.wickes.co.uk/Fluidmaster-400-Brass-Shank-Bottom-Entry-Fill-Valve---12-7mm/p/118747"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de descarga (flush valve)",
+  "query": "toilet flush valve",
+  "supplier": "wickes",
+  "unit_cost": 13.9,
+  "list_price": 18.99,
+  "spec": {
+   "part": "flush-valve"
+  },
+  "sample": "Fluidmaster Push Button Cistern Dual Flush Valve",
+  "url": "https://www.wickes.co.uk/Fluidmaster-Push-Button-Cistern-Dual-Flush-Valve/p/118754"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Assento sanit\u00e1rio (soft close)",
+  "query": "soft close toilet seat",
+  "supplier": "wickes",
+  "unit_cost": 38,
+  "list_price": 49.99,
+  "spec": {
+   "part": "toilet-seat"
+  },
+  "sample": "Croydex Eyre Flexi-Fix D Shaped Soft Close Quick Release Toilet Seat - White",
+  "url": "https://www.wickes.co.uk/Croydex-Eyre-Flexi-Fix%E2%84%A2-D-Shaped-Soft-Close-Quick-Release-Toilet-Seat---White/p/234925"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira misturadora cozinha",
+  "query": "kitchen mixer tap",
+  "supplier": "wickes",
+  "unit_cost": 44,
+  "list_price": 57.99,
+  "spec": {
+   "part": "kitchen-tap"
+  },
+  "sample": "Wickes Cosa Monobloc Kitchen Sink Mixer Tap - Chrome",
+  "url": "https://www.wickes.co.uk/Wickes-Cosa-Monobloc-Kitchen-Sink-Mixer-Tap---Chrome/p/180981"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira de lavat\u00f3rio (par)",
+  "query": "basin taps pair",
+  "supplier": "wickes",
+  "unit_cost": 139,
+  "list_price": 180.99,
+  "spec": {
+   "part": "basin-taps"
+  },
+  "sample": "Bristan Renaissance Pair of Chrome Lever Vanity Basin Taps",
+  "url": "https://www.wickes.co.uk/Bristan-Renaissance-Pair-of-Chrome-Lever-Vanity-Basin-Taps/p/225917"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Flex\u00edveis (par)",
+  "query": "flexible tap connectors 15mm",
+  "supplier": "wickes",
+  "unit_cost": 15,
+  "list_price": 19.99,
+  "spec": {
+   "part": "flexi"
+  },
+  "sample": "Hep2O HD125A/15W Flexi Tap Connector - 15 x 300mm - Pack of 2",
+  "url": "https://www.wickes.co.uk/Hep2O-HD125A-15W-Flexi-Tap-Connector---15-x-300mm---Pack-of-2/p/149156"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Sif\u00e3o de pia",
+  "query": "basin waste trap",
+  "supplier": "wickes",
+  "unit_cost": 24,
+  "list_price": 31.99,
+  "spec": {
+   "part": "trap"
+  },
+  "sample": "McAlpine ASA10 White Adjustable P Trap - 32mm",
+  "url": "https://www.wickes.co.uk/McAlpine-ASA10-White-Adjustable-P-Trap---32mm/p/227022"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de isolamento 15mm",
+  "query": "isolation valve 15mm",
+  "supplier": "wickes",
+  "unit_cost": 1.4,
+  "list_price": 1.99,
+  "spec": {
+   "part": "iso-valve"
+  },
+  "sample": "Primaflow Chrome Plated Isolating Valve - 15mm",
+  "url": "https://www.wickes.co.uk/Primaflow-Chrome-Plated-Isolating-Valve---15mm/p/9000294723"
+ },
+ {
+  "family": "electrical",
+  "variant": "Tomada dupla branca",
+  "query": "double socket white 13a",
+  "supplier": "wickes",
+  "unit_cost": 1.65,
+  "list_price": 2.99,
+  "spec": {
+   "part": "double-socket"
+  },
+  "sample": "Wickes 13A Twin Switch Plug Socket - White",
+  "url": "https://www.wickes.co.uk/Wickes-13A-Twin-Switch-Plug-Socket---White/p/710023"
+ },
+ {
+  "family": "electrical",
+  "variant": "Interruptor simples",
+  "query": "light switch 1 gang white",
+  "supplier": "wickes",
+  "unit_cost": 3,
+  "list_price": 3.99,
+  "spec": {
+   "part": "switch-1g"
+  },
+  "sample": "MK 10A 1 Gang 1 Way Light Switch - White",
+  "url": "https://www.wickes.co.uk/MK-10A-1-Gang-1-Way-Light-Switch---White/p/107363"
+ },
+ {
+  "family": "electrical",
+  "variant": "Pendente/lumin\u00e1ria teto",
+  "query": "ceiling pendant light fitting",
+  "supplier": "wickes",
+  "unit_cost": 1.9,
+  "list_price": 2.99,
+  "spec": {
+   "part": "pendant"
+  },
+  "sample": "Wickes Ceiling Pendant & Rose with 6in Cable - White",
+  "url": "https://www.wickes.co.uk/Wickes-Ceiling-Pendant+Rose-with-6in-Cable---White/p/710127"
+ },
+ {
+  "family": "electrical",
+  "variant": "L\u00e2mpada LED E27 (pack)",
+  "query": "led bulb e27 pack",
+  "supplier": "wickes",
+  "unit_cost": 7,
+  "list_price": 9.99,
+  "spec": {
+   "part": "led-e27"
+  },
+  "sample": "Wickes Non-Dimmable GLS Opal LED E27 8.8W Warm White Light Bulb - Pack of 4",
+  "url": "https://www.wickes.co.uk/Wickes-Non-Dimmable-GLS-Opal-LED-E27-8-8W-Warm-White-Light-Bulb---Pack-of-4/p/261647"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de CO",
+  "query": "carbon monoxide alarm",
+  "supplier": "wickes",
+  "unit_cost": 28,
+  "list_price": 36.99,
+  "spec": {
+   "part": "co-alarm",
+   "compliance": true
+  },
+  "sample": "FireAngel FA3820x4 10 Year Battery Carbon Monoxide Alarm",
+  "url": "https://www.wickes.co.uk/FireAngel-FA3820x4-10-Year-Battery-Carbon-Monoxide-Alarm/p/274946"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas heavy-duty p/ drywall",
+  "query": "heavy duty plasterboard fixings",
+  "supplier": "wickes",
+  "unit_cost": 12.75,
+  "list_price": 16.99,
+  "spec": {
+   "part": "plasterboard-heavy"
+  },
+  "sample": "Bullfix Universal Heavy Duty Plasterboard Fixings Starter Kit - Pack of 10",
+  "url": "https://www.wickes.co.uk/Bullfix-Universal-Heavy-Duty-Plasterboard-Fixings-Starter-Kit---Pack-of-10/p/299917"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas sortidas parede",
+  "query": "wall plugs assorted",
+  "supplier": "wickes",
+  "unit_cost": 5,
+  "list_price": 6.99,
+  "spec": {
+   "part": "wall-plugs"
+  },
+  "sample": "Fischer Assorted Plastic Wall Plugs - 5, 6 & 7mm Pack Of 200",
+  "url": "https://www.wickes.co.uk/Fischer-Assorted-Plastic-Wall-Plugs---5%2C-6+7mm-Pack-Of-200/p/141344"
+ },
+ {
+  "family": "fixings",
+  "variant": "Cola grab (No More Nails)",
+  "query": "grab adhesive no more nails",
+  "supplier": "wickes",
+  "unit_cost": 13.5,
+  "list_price": 17.99,
+  "spec": {
+   "part": "grab-adhesive"
+  },
+  "sample": "UniBond No More Nails Cartridge - 280ml",
+  "url": "https://www.wickes.co.uk/UniBond-No-More-Nails-Cartridge---280ml/p/344751"
+ },
+ {
+  "family": "tiling",
+  "variant": "Cola de azulejo rapid-set 20kg",
+  "query": "tile adhesive ready mixed 10l",
+  "supplier": "wickes",
+  "unit_cost": 52,
+  "list_price": 67.99,
+  "spec": {
+   "part": "tile-adhesive"
+  },
+  "sample": "Mapei Mapeker Rapid Set Grey Flexible Tile Adhesive - 20kg",
+  "url": "https://www.wickes.co.uk/Mapei-Mapeker-Rapid-Set-Grey-Flexible-Tile-Adhesive---20kg/p/102976"
+ },
+ {
+  "family": "garden",
+  "variant": "Painel de cerca closeboard 6\u00d76 (unidade)",
+  "query": "closeboard fence panel 6ft",
+  "supplier": "wickes",
+  "unit_cost": 68,
+  "list_price": 88.99,
+  "spec": {
+   "part": "fence-panel",
+   "pack_math": "\u00a3249.99/3"
+  },
+  "sample": "Forest Garden Dip Treated Closeboard Fence Panel - 6 x 6ft",
+  "url": "https://www.wickes.co.uk/Forest-Garden-Dip-Treated-Closeboard-Fence-Panel---6-x-6ft/p/286638"
+ },
+ {
+  "family": "garden",
+  "variant": "Postcrete/PostFix 20kg",
+  "query": "blue circle postcrete",
+  "supplier": "wickes",
+  "unit_cost": 7.5,
+  "list_price": 9.99,
+  "spec": {
+   "part": "postcrete"
+  },
+  "sample": "Blue Circle Ready To Use Postcrete - 20kg",
+  "url": "https://www.wickes.co.uk/Blue-Circle-Ready-To-Use-Postcrete---20kg/p/221100"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de fuma\u00e7a (10 anos)",
+  "query": "smoke alarm",
+  "supplier": "wickes",
+  "unit_cost": 14,
+  "list_price": 18.99,
+  "spec": {
+   "part": "smoke-alarm",
+   "compliance": true,
+   "pack_math": "28.00 / 2 = 14.00 per alarm"
+  },
+  "sample": "FireAngel FA6620-R-T2 Optical 10 Year Battery Smoke Alarm - Twin Pack",
+  "url": "https://www.wickes.co.uk/FireAngel-FA6620-R-T2-Optical-10-Year-Battery-Smoke-Alarm---Twin-Pack/p/274938"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lixa sortida (pack 10)",
+  "query": "sanding sheets assorted pack",
+  "supplier": "wickes",
+  "unit_cost": 5,
+  "list_price": 6.99,
+  "spec": {
+   "kind": "sandpaper"
+  },
+  "sample": "Wickes Sanding Block & Paper Assorted Sheets - Pack of 10",
+  "url": "https://www.wickes.co.uk/Wickes-Sanding-Block+Paper-Assorted-Sheets---Pack-of-10/p/288622"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 75mm satin (pair)",
+  "query": "butt hinge 75mm satin stainless pair",
+  "supplier": "toolstation",
+  "unit_cost": 9.5,
+  "list_price": 12.99,
+  "spec": {
+   "size_mm": 75,
+   "fire_rated": false,
+   "pack_math": "\u00a34.75\u00d72",
+   "ex_vat": 3.96
+  },
+  "sample": "Stainless Steel Butt Hinge 75mm",
+  "url": "https://www.toolstation.com/stainless-steel-butt-hinge/p23411"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Butt hinge 100mm satin (pair)",
+  "query": "butt hinge 100mm satin stainless",
+  "supplier": "toolstation",
+  "unit_cost": 9.0,
+  "list_price": 11.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": false,
+   "pack_math": "\u00a34.50\u00d72",
+   "ex_vat": 3.75
+  },
+  "sample": "Stainless Steel Butt Hinge 100mm",
+  "url": "https://www.toolstation.com/stainless-steel-butt-hinge/p21170"
+ },
+ {
+  "family": "door_hinge",
+  "variant": "Fire door hinge grade 13 CE 100mm (pack of 3)",
+  "query": "fire door hinges grade 13 100mm pack 3",
+  "supplier": "toolstation",
+  "unit_cost": 14.09,
+  "list_price": 18.99,
+  "spec": {
+   "size_mm": 100,
+   "fire_rated": true,
+   "pack": 3,
+   "ex_vat": 11.74
+  },
+  "sample": "Grade 13 Stainless Steel Ball Bearing Hinge Pack Satin",
+  "url": "https://www.toolstation.com/grade-13-stainless-steel-ball-bearing-hinge-pack/p24218"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 64mm",
+  "query": "tubular mortice latch 64mm",
+  "supplier": "toolstation",
+  "unit_cost": 4.99,
+  "list_price": 6.99,
+  "spec": {
+   "size_mm": 64,
+   "fire_rated": false,
+   "ex_vat": 4.16
+  },
+  "sample": "Premium Sprung Bolt Through Tubular Mortice Latch 64mm Polished",
+  "url": "https://www.toolstation.com/premium-sprung-bolt-through-tubular-mortice-latch/p80028"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Tubular mortice latch 76mm",
+  "query": "tubular mortice latch 76mm",
+  "supplier": "toolstation",
+  "unit_cost": 3.99,
+  "list_price": 5.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": false,
+   "ex_vat": 3.32
+  },
+  "sample": "ERA Tubular Latch 76mm Zinc",
+  "url": "https://www.toolstation.com/era-tubular-latch/p24455"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Fire-rated tubular latch 76mm (FD30/60)",
+  "query": "fire rated tubular mortice latch 76mm",
+  "supplier": "toolstation",
+  "unit_cost": 4.85,
+  "list_price": 6.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": true,
+   "ex_vat": 4.04
+  },
+  "sample": "Fire Door Bolt Through Tubular Latch 75mm Nickel Plate",
+  "url": "https://www.toolstation.com/fire-door-bolt-through-tubular-latch/p52375"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on rose satin (pair)",
+  "query": "lever door handle on rose satin pair",
+  "supplier": "toolstation",
+  "unit_cost": 13.39,
+  "list_price": 17.99,
+  "spec": {
+   "style": "rose",
+   "fire_rated": false,
+   "ex_vat": 11.16
+  },
+  "sample": "Stainless Steel Lever On Rose Door Handles Satin",
+  "url": "https://www.toolstation.com/stainless-steel-lever-on-rose-door-handles/p57853"
+ },
+ {
+  "family": "door_handle",
+  "variant": "Lever handle on backplate with lock",
+  "query": "lever lock door handle backplate",
+  "supplier": "toolstation",
+  "unit_cost": 19.2,
+  "list_price": 24.99,
+  "spec": {
+   "style": "backplate-lock",
+   "ex_vat": 16
+  },
+  "sample": "Stainless Steel Round Bar Lever on Plate Door Handles Lock Plate 175x44mm",
+  "url": "https://www.toolstation.com/stainless-steel-round-bar-lever-on-plate-door-handles/p37678"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 686mm (27\")",
+  "query": "internal door white primed 686mm",
+  "supplier": "toolstation",
+  "unit_cost": 227.9,
+  "list_price": 296.99,
+  "spec": {
+   "width_mm": 686,
+   "fire_rated": false,
+   "ex_vat": 189.92
+  },
+  "sample": "City White Internal Door 35 x 1981 x 686mm",
+  "url": "https://www.toolstation.com/city-white-internal-door/p43581"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 762mm (30\") \u2014 padr\u00e3o",
+  "query": "internal door white primed 762mm",
+  "supplier": "toolstation",
+  "unit_cost": 149.88,
+  "list_price": 194.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": false,
+   "ex_vat": 124.9
+  },
+  "sample": "Cottage 5 White Internal Door 35 x 1981 x 762mm",
+  "url": "https://www.toolstation.com/cottage-5-white-internal-door/p23033"
+ },
+ {
+  "family": "internal_door",
+  "variant": "White primed 838mm (33\")",
+  "query": "internal door white primed 838mm",
+  "supplier": "toolstation",
+  "unit_cost": 180,
+  "list_price": 233.99,
+  "spec": {
+   "width_mm": 838,
+   "fire_rated": false,
+   "ex_vat": 150
+  },
+  "sample": "Colonist White Internal Door Grained 44 x 1981 x 838mm",
+  "url": "https://www.toolstation.com/colonist-white-internal-door/p26950"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Fire door FD30 762mm",
+  "query": "fire door fd30 762mm",
+  "supplier": "toolstation",
+  "unit_cost": 244.8,
+  "list_price": 318.99,
+  "spec": {
+   "width_mm": 762,
+   "fire_rated": true,
+   "ex_vat": 204
+  },
+  "sample": "Eden Oak Internal Door Unfinished FD30 44 x 1981 x 762mm",
+  "url": "https://www.toolstation.com/eden-oak-internal-door-unfinished/p96374"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Oak veneer 762mm",
+  "query": "internal door oak 762mm",
+  "supplier": "toolstation",
+  "unit_cost": 216.29,
+  "list_price": 281.99,
+  "spec": {
+   "width_mm": 762,
+   "finish": "oak",
+   "ex_vat": 180.24
+  },
+  "sample": "Rushmore Oak Internal Door Unfinished 35 x 1981 x 762mm",
+  "url": "https://www.toolstation.com/rushmore-oak-internal-door-unfinished/p40732"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed at\u00e9 32\"",
+  "query": "tv bracket fixed small",
+  "supplier": "toolstation",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "tv_max_in": 32,
+   "type": "fixed",
+   "ex_vat": 12.49
+  },
+  "sample": "Vivanco Fixed TV Wall Mount Bracket Up To 43\"",
+  "url": "https://www.toolstation.com/vivanco-fixed-tv-wall-mount-bracket/pAI023"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Tilt 32\u201355\"",
+  "query": "tv wall bracket tilt 55 inch",
+  "supplier": "toolstation",
+  "unit_cost": 34.69,
+  "list_price": 45.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "tilt",
+   "ex_vat": 28.91
+  },
+  "sample": "Vivanco Tilt TV Wall Mount Bracket Medium Up To 55\"",
+  "url": "https://www.toolstation.com/vivanco-tilt-tv-wall-mount-bracket/p36219"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Full-motion 32\u201355\"",
+  "query": "tv wall bracket full motion 55 inch",
+  "supplier": "toolstation",
+  "unit_cost": 49.49,
+  "list_price": 64.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "full-motion",
+   "ex_vat": 41.24
+  },
+  "sample": "Vivanco Full Motion TV Wall Mount Bracket Up To 55\"",
+  "url": "https://www.toolstation.com/vivanco-full-motion-tv-wall-mount-bracket/pAI021"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Fixed/tilt 55\u201385\"",
+  "query": "tv wall bracket 85 inch",
+  "supplier": "toolstation",
+  "unit_cost": 32.99,
+  "list_price": 42.99,
+  "spec": {
+   "tv_max_in": 85,
+   "type": "large",
+   "ex_vat": 27.49
+  },
+  "sample": "Vivanco Tilt TV Wall Mount Bracket X Large Up To 85\"",
+  "url": "https://www.toolstation.com/vivanco-tilt-tv-wall-mount-bracket/p83625"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone branco (standard)",
+  "query": "white silicone sealant 310ml",
+  "supplier": "toolstation",
+  "unit_cost": 5.35,
+  "list_price": 6.99,
+  "spec": {
+   "colour": "white",
+   "ex_vat": 4.46
+  },
+  "sample": "Soudal Trade Multi Purpose Silicone 270ml White",
+  "url": "https://www.toolstation.com/soudal-trade-multi-purpose-silicone/p90043"
+ },
+ {
+  "family": "sealant",
+  "variant": "Silicone transparente",
+  "query": "clear silicone sealant 310ml",
+  "supplier": "toolstation",
+  "unit_cost": 5.35,
+  "list_price": 6.99,
+  "spec": {
+   "colour": "clear",
+   "ex_vat": 4.46
+  },
+  "sample": "Soudal Trade Multi Purpose Silicone 270ml Clear",
+  "url": "https://www.toolstation.com/soudal-trade-multi-purpose-silicone/p80122"
+ },
+ {
+  "family": "sealant",
+  "variant": "Sanit\u00e1rio HA6 (banheiro)",
+  "query": "sanitary silicone sealant bathroom",
+  "supplier": "toolstation",
+  "unit_cost": 5.99,
+  "list_price": 7.99,
+  "spec": {
+   "grade": "sanitary",
+   "ex_vat": 4.99
+  },
+  "sample": "Everflex 500 Bath & Sanitary Silicone 295ml White",
+  "url": "https://www.toolstation.com/everflex-500-bath-sanitary-silicone/p85399"
+ },
+ {
+  "family": "filler",
+  "variant": "Filler pronto (interior)",
+  "query": "polyfilla ready mixed filler",
+  "supplier": "toolstation",
+  "unit_cost": 13.39,
+  "list_price": 17.99,
+  "spec": {
+   "type": "ready-mixed",
+   "ex_vat": 11.16
+  },
+  "sample": "Polycell Trade Polyfilla Ready Mixed All Purpose Filler 2kg",
+  "url": "https://www.toolstation.com/polycell-trade-polyfilla-ready-mixed-all-purpose-filler/p65062"
+ },
+ {
+  "family": "filler",
+  "variant": "Wood filler 2 partes",
+  "query": "two part wood filler high performance",
+  "supplier": "toolstation",
+  "unit_cost": 17.59,
+  "list_price": 22.99,
+  "spec": {
+   "type": "2-part-wood",
+   "ex_vat": 14.66
+  },
+  "sample": "Ronseal High Performance Wood Filler White 550g",
+  "url": "https://www.toolstation.com/ronseal-high-performance-wood-filler/p95718"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o branca matt 5L (trade)",
+  "query": "trade white matt emulsion 5l",
+  "supplier": "toolstation",
+  "unit_cost": 46.59,
+  "list_price": 60.99,
+  "spec": {
+   "finish": "matt",
+   "litres": 5,
+   "ex_vat": 38.82
+  },
+  "sample": "Dulux Trade Vinyl Matt Emulsion Paint Pure Brilliant White 5L",
+  "url": "https://www.toolstation.com/dulux-trade-vinyl-matt-emulsion-paint/p45146"
+ },
+ {
+  "family": "paint",
+  "variant": "Kitchen & bathroom 2.5L",
+  "query": "kitchen bathroom paint 2.5l",
+  "supplier": "toolstation",
+  "unit_cost": 44.49,
+  "list_price": 57.99,
+  "spec": {
+   "finish": "k&b",
+   "litres": 2.5,
+   "ex_vat": 37.07
+  },
+  "sample": "Zinsser Perma White Self-Priming Interior Paint Matt White 2.5L",
+  "url": "https://www.toolstation.com/zinsser-perma-white-self-priming-interior-paint/p23234"
+ },
+ {
+  "family": "paint",
+  "variant": "Gloss branco 2.5L (madeira)",
+  "query": "white gloss paint 2.5l wood",
+  "supplier": "toolstation",
+  "unit_cost": 23.29,
+  "list_price": 30.99,
+  "spec": {
+   "finish": "gloss",
+   "litres": 2.5,
+   "ex_vat": 19.41
+  },
+  "sample": "Crown Contract High Gloss Paint Brilliant White 2.5L",
+  "url": "https://www.toolstation.com/crown-contract-high-gloss-paint/p46768"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "150mm (par)",
+  "query": "shelf bracket 150mm",
+  "supplier": "toolstation",
+  "unit_cost": 21.38,
+  "list_price": 27.99,
+  "spec": {
+   "size_mm": 150,
+   "pack_math": "\u00a310.69\u00d72",
+   "ex_vat": 8.91
+  },
+  "sample": "Rothley London White Shelf Bracket 150 x 125mm",
+  "url": "https://www.toolstation.com/rothley-london-white-shelf-bracket/p98541"
+ },
+ {
+  "family": "shelf_bracket",
+  "variant": "Heavy duty 200mm+",
+  "query": "heavy duty shelf bracket 250mm",
+  "supplier": "toolstation",
+  "unit_cost": 8.65,
+  "list_price": 11.99,
+  "spec": {
+   "size_mm": 250,
+   "duty": "heavy",
+   "ex_vat": 7.21
+  },
+  "sample": "Strong Stay Bracket 450 x 400mm",
+  "url": "https://www.toolstation.com/strong-stay-bracket/p62650"
+ },
+ {
+  "family": "screws",
+  "variant": "Sortidos (caixa trade)",
+  "query": "wood screws trade pack assorted",
+  "supplier": "toolstation",
+  "unit_cost": 21.69,
+  "list_price": 28.99,
+  "spec": {
+   "pack": "assorted",
+   "ex_vat": 18.07
+  },
+  "sample": "Ulti-Mate Stick-Fit Woodscrew Trade Pack 1000 Screws",
+  "url": "https://www.toolstation.com/ulti-mate-stick-fit-woodscrew-trade-pack/p73300"
+ },
+ {
+  "family": "paint",
+  "variant": "Emuls\u00e3o de teto 5L",
+  "query": "ceiling paint white 5l",
+  "supplier": "toolstation",
+  "unit_cost": 41.89,
+  "list_price": 54.99,
+  "spec": {
+   "finish": "ceiling",
+   "litres": 5,
+   "ex_vat": 34.91
+  },
+  "sample": "Polycell Crack Free Ceilings Paint Smooth Matt 5L",
+  "url": "https://www.toolstation.com/polycell-crack-free-ceilings-paint/p58533"
+ },
+ {
+  "family": "paint",
+  "variant": "Primer/undercoat madeira 2.5L",
+  "query": "wood primer undercoat 2.5l",
+  "supplier": "toolstation",
+  "unit_cost": 19.49,
+  "list_price": 25.99,
+  "spec": {
+   "finish": "primer-wood",
+   "litres": 2.5,
+   "ex_vat": 16.24
+  },
+  "sample": "Leyland Trade Acrylic Primer Undercoat Paint White 2.5L",
+  "url": "https://www.toolstation.com/leyland-trade-acrylic-primer-undercoat-paint/p78174"
+ },
+ {
+  "family": "paint",
+  "variant": "Verniz madeira interior 750ml",
+  "query": "interior wood varnish 750ml",
+  "supplier": "toolstation",
+  "unit_cost": 18.09,
+  "list_price": 23.99,
+  "spec": {
+   "finish": "varnish",
+   "litres": 0.75,
+   "ex_vat": 15.07
+  },
+  "sample": "Ronseal Interior Varnish 750ml Matt Clear",
+  "url": "https://www.toolstation.com/ronseal-interior-varnish-750ml/p95505"
+ },
+ {
+  "family": "paint",
+  "variant": "Masonry externa 5L",
+  "query": "masonry paint 5l white",
+  "supplier": "toolstation",
+  "unit_cost": 27.98,
+  "list_price": 36.99,
+  "spec": {
+   "finish": "masonry",
+   "litres": 5,
+   "ex_vat": 23.32
+  },
+  "sample": "Sandtex Ultra Smooth Masonry Paint 5L Pure Brilliant White",
+  "url": "https://www.toolstation.com/sandtex-ultra-smooth-masonry-paint-5l/p18930"
+ },
+ {
+  "family": "paint",
+  "variant": "Tinta de radiador 750ml",
+  "query": "radiator paint white 750ml",
+  "supplier": "toolstation",
+  "unit_cost": 25.39,
+  "list_price": 33.0,
+  "spec": {
+   "finish": "radiator",
+   "litres": 0.75,
+   "ex_vat": 21.16
+  },
+  "sample": "Bedec Multi Surface Paint Satin White 750ml",
+  "url": "https://www.toolstation.com/bedec-multi-surface-paint/p84694"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Kit rolo + bandeja",
+  "query": "paint roller set tray",
+  "supplier": "toolstation",
+  "unit_cost": 8.82,
+  "list_price": 11.99,
+  "spec": {
+   "kind": "roller-set",
+   "ex_vat": 7.35
+  },
+  "sample": "Hamilton For The Trade 5 Piece Roller Set 9\"",
+  "url": "https://www.toolstation.com/hamilton-for-the-trade-5-piece-roller-set/p75199"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Jogo de trinchas",
+  "query": "paint brush set",
+  "supplier": "toolstation",
+  "unit_cost": 9.68,
+  "list_price": 12.99,
+  "spec": {
+   "kind": "brush-set",
+   "ex_vat": 8.07
+  },
+  "sample": "Hamilton For The Trade Synthetic Paintbrush Set 5 Piece",
+  "url": "https://www.toolstation.com/hamilton-for-the-trade-synthetic-paintbrush-set/p53040"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Fita de pintor 48mm",
+  "query": "masking tape 48mm painters",
+  "supplier": "toolstation",
+  "unit_cost": 2.48,
+  "list_price": 3.99,
+  "spec": {
+   "kind": "masking-tape",
+   "ex_vat": 2.07
+  },
+  "sample": "Pinnacle Masking Tape 48mm x 50m",
+  "url": "https://www.toolstation.com/pinnacle-masking-tape/p67832"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lona/dust sheet",
+  "query": "dust sheet cotton",
+  "supplier": "toolstation",
+  "unit_cost": 9.99,
+  "list_price": 12.99,
+  "spec": {
+   "kind": "dust-sheet",
+   "ex_vat": 8.32
+  },
+  "sample": "Pinnacle Cotton Dust Sheet 3.60 x 2.70m",
+  "url": "https://www.toolstation.com/pinnacle-cotton-dust-sheet/pAA099"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de enchimento (fill valve)",
+  "query": "toilet fill valve",
+  "supplier": "toolstation",
+  "unit_cost": 11.95,
+  "list_price": 15.99,
+  "spec": {
+   "part": "fill-valve",
+   "ex_vat": 9.96
+  },
+  "sample": "Viva Skylo Bottom Entry Fill Valve Brass Shank",
+  "url": "https://www.toolstation.com/viva-skylo-bottom-entry-fill-valve/p35993"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de descarga (flush valve)",
+  "query": "toilet flush valve",
+  "supplier": "toolstation",
+  "unit_cost": 13.19,
+  "list_price": 17.99,
+  "spec": {
+   "part": "flush-valve",
+   "ex_vat": 10.99
+  },
+  "sample": "Fluidmaster Dual Flush Push Button Valve",
+  "url": "https://www.toolstation.com/fluidmaster-dual-flush-push-button-valve/p65429"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Assento sanit\u00e1rio (soft close)",
+  "query": "soft close toilet seat",
+  "supplier": "toolstation",
+  "unit_cost": 28.79,
+  "list_price": 37.99,
+  "spec": {
+   "part": "toilet-seat",
+   "ex_vat": 23.99
+  },
+  "sample": "Croydex Constance Thermoset Soft Close Toilet Seat",
+  "url": "https://www.toolstation.com/croydex-constance-thermoset-soft-close-toilet-seat/p10974"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira misturadora cozinha",
+  "query": "kitchen mixer tap",
+  "supplier": "toolstation",
+  "unit_cost": 39.99,
+  "list_price": 51.99,
+  "spec": {
+   "part": "kitchen-tap",
+   "ex_vat": 33.32
+  },
+  "sample": "Ebb + Flo Porth Mono Mixer Kitchen Tap",
+  "url": "https://www.toolstation.com/ebb-flo-porth-mono-mixer-kitchen-tap/p69736"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Torneira de lavat\u00f3rio (par)",
+  "query": "basin taps pair",
+  "supplier": "toolstation",
+  "unit_cost": 34.19,
+  "list_price": 44.99,
+  "spec": {
+   "part": "basin-taps",
+   "ex_vat": 28.49
+  },
+  "sample": "Ebb + Flo Pentle Taps Basin Pillar",
+  "url": "https://www.toolstation.com/ebb-flo-pentle-taps/p92643"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Flex\u00edveis (par)",
+  "query": "flexible tap connectors 15mm",
+  "supplier": "toolstation",
+  "unit_cost": 7.78,
+  "list_price": 10.99,
+  "spec": {
+   "part": "flexi",
+   "pack_math": "\u00a33.89\u00d72",
+   "ex_vat": 3.24
+  },
+  "sample": "Flexible Tap Connector with Isolating Valve 15mm x 1/2\" 10mm Bore. 300mm",
+  "url": "https://www.toolstation.com/flexible-tap-connector-with-isolating-valve/p77655"
+ },
+ {
+  "family": "plumbing",
+  "variant": "Sif\u00e3o de pia",
+  "query": "basin waste trap",
+  "supplier": "toolstation",
+  "unit_cost": 8.49,
+  "list_price": 11.99,
+  "spec": {
+   "part": "trap",
+   "ex_vat": 7.07
+  },
+  "sample": "McAlpine Adjustable Inlet Bottle Trap 1 1/4\" A10A",
+  "url": "https://www.toolstation.com/mcalpine-adjustable-inlet-bottle-trap/p93064"
+ },
+ {
+  "family": "plumbing",
+  "variant": "V\u00e1lvula de isolamento 15mm",
+  "query": "isolation valve 15mm",
+  "supplier": "toolstation",
+  "unit_cost": 1.3,
+  "list_price": 1.99,
+  "spec": {
+   "part": "iso-valve",
+   "ex_vat": 1.08
+  },
+  "sample": "Flume Isolating Valve CP 15mm",
+  "url": "https://www.toolstation.com/flume-isolating-valve-cp/p71997"
+ },
+ {
+  "family": "electrical",
+  "variant": "Tomada dupla branca",
+  "query": "double socket white 13a",
+  "supplier": "toolstation",
+  "unit_cost": 3.99,
+  "list_price": 5.99,
+  "spec": {
+   "part": "double-socket",
+   "ex_vat": 3.32
+  },
+  "sample": "BG 13A Low Profile Switched Socket 2 Gang Double Pole",
+  "url": "https://www.toolstation.com/bg-13a-low-profile-switched-socket/p58196"
+ },
+ {
+  "family": "electrical",
+  "variant": "Interruptor simples",
+  "query": "light switch 1 gang white",
+  "supplier": "toolstation",
+  "unit_cost": 3.15,
+  "list_price": 4.99,
+  "spec": {
+   "part": "switch-1g",
+   "ex_vat": 2.62
+  },
+  "sample": "MK Light Switch 1 Gang 2 Way",
+  "url": "https://www.toolstation.com/mk-light-switch/p78751"
+ },
+ {
+  "family": "electrical",
+  "variant": "Pendente/lumin\u00e1ria teto",
+  "query": "ceiling pendant light fitting",
+  "supplier": "toolstation",
+  "unit_cost": 4.49,
+  "list_price": 5.99,
+  "spec": {
+   "part": "pendant",
+   "ex_vat": 3.74
+  },
+  "sample": "MK Pendant Set 150mm",
+  "url": "https://www.toolstation.com/mk-pendant-set/p27046"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de CO",
+  "query": "carbon monoxide alarm",
+  "supplier": "toolstation",
+  "unit_cost": 21.99,
+  "list_price": 28.99,
+  "spec": {
+   "part": "co-alarm",
+   "compliance": true,
+   "ex_vat": 18.32
+  },
+  "sample": "FireAngel 10 Year Carbon Monoxide Alarm - Replaceable Batteries FA3313",
+  "url": "https://www.toolstation.com/fireangel-10-year-carbon-monoxide-alarm-replaceable-batteries/p65450"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas heavy-duty p/ drywall",
+  "query": "heavy duty plasterboard fixings",
+  "supplier": "toolstation",
+  "unit_cost": 17.58,
+  "list_price": 22.99,
+  "spec": {
+   "part": "plasterboard-heavy",
+   "ex_vat": 14.65
+  },
+  "sample": "GripIt Plasterboard Fixing Kit Assorted",
+  "url": "https://www.toolstation.com/gripit-plasterboard-fixing-kit/p90134"
+ },
+ {
+  "family": "fixings",
+  "variant": "Buchas sortidas parede",
+  "query": "wall plugs assorted",
+  "supplier": "toolstation",
+  "unit_cost": 4.99,
+  "list_price": 6.99,
+  "spec": {
+   "part": "wall-plugs",
+   "ex_vat": 4.16
+  },
+  "sample": "Fischer Plastic Contract Wall Plug 5, 6 & 7mm",
+  "url": "https://www.toolstation.com/fischer-plastic-contract-wall-plug/p43414"
+ },
+ {
+  "family": "fixings",
+  "variant": "Cola grab (No More Nails)",
+  "query": "grab adhesive no more nails",
+  "supplier": "toolstation",
+  "unit_cost": 2.99,
+  "list_price": 3.99,
+  "spec": {
+   "part": "grab-adhesive",
+   "ex_vat": 2.49
+  },
+  "sample": "Sika Instant Nails Solvent Free Grab Adhesive 290ml White",
+  "url": "https://www.toolstation.com/sika-instant-nails-solvent-free-grab-adhesive-290ml/p51064"
+ },
+ {
+  "family": "garden",
+  "variant": "Postcrete/PostFix 20kg",
+  "query": "blue circle postcrete",
+  "supplier": "toolstation",
+  "unit_cost": 7.5,
+  "list_price": 9.99,
+  "spec": {
+   "part": "postcrete",
+   "ex_vat": 6.25
+  },
+  "sample": "Blue Circle Postcrete 20kg",
+  "url": "https://www.toolstation.com/blue-circle-postcrete/p38931"
+ },
+ {
+  "family": "garden",
+  "variant": "Semente de grama 120m\u00b2",
+  "query": "lawn seed multipurpose",
+  "supplier": "toolstation",
+  "unit_cost": 32.49,
+  "list_price": 42.99,
+  "spec": {
+   "part": "lawn-seed",
+   "coverage_m2": 120,
+   "ex_vat": 27.07
+  },
+  "sample": "Turfline Grass Seed 4kg",
+  "url": "https://www.toolstation.com/turfline-grass-seed/p79599"
+ },
+ {
+  "family": "electrical",
+  "variant": "Alarme de fuma\u00e7a (10 anos)",
+  "query": "smoke alarm",
+  "supplier": "toolstation",
+  "unit_cost": 14.99,
+  "list_price": 19.99,
+  "spec": {
+   "part": "smoke-alarm",
+   "compliance": true,
+   "ex_vat": 12.49
+  },
+  "sample": "FireAngel 10 Year Battery Smoke Alarm FA6620-R",
+  "url": "https://www.toolstation.com/fireangel-10-year-battery-smoke-alarm/p71669"
+ },
+ {
+  "family": "paint_sundries",
+  "variant": "Lixa sortida (pack 10)",
+  "query": "sanding sheets assorted pack",
+  "supplier": "toolstation",
+  "unit_cost": 1.88,
+  "list_price": 2.99,
+  "spec": {
+   "kind": "sandpaper",
+   "ex_vat": 1.57
+  },
+  "sample": "Prep Hand Sanding Sheets 140 x 230mm Assorted",
+  "url": "https://www.toolstation.com/prep-hand-sanding-sheets-140-x-230mm/p53168"
+ },
+ {
+  "family": "door_latch",
+  "variant": "Fire-rated tubular latch 76mm (FD30/60)",
+  "query": "fire rated tubular mortice latch 76mm",
+  "supplier": "screwfix",
+  "unit_cost": 3.19,
+  "list_price": 4.99,
+  "spec": {
+   "size_mm": 76,
+   "fire_rated": true,
+   "nota": "valor do cache de 17/08 (busca fresca n\u00e3o achou o produto); renovar no supplier-RPA"
+  },
+  "sample": "Smith & Locke Chrome Tubular Mortice Latch 76mm Case - 57mm Backset\u00a0(322PY)",
+  "url": "https://www.screwfix.com/search?search=fire%20rated%20tubular%20mortice%20latch%2076mm"
+ },
+ {
+  "family": "internal_door",
+  "variant": "Oak veneer 762mm",
+  "query": "internal door oak 762mm",
+  "supplier": "screwfix",
+  "unit_cost": 169.49,
+  "list_price": 220.99,
+  "spec": {
+   "width_mm": 762,
+   "finish": "oak",
+   "nota": "valor do cache de 17/08 (busca fresca n\u00e3o achou o produto); renovar no supplier-RPA"
+  },
+  "sample": "Green & Taylor  1-Clear Light Satin Lacquered Oak Wooden Traditional Internal Fire Doors w",
+  "url": "https://www.screwfix.com/search?search=internal%20door%20oak%20762mm"
+ },
+ {
+  "family": "tv_bracket",
+  "variant": "Full-motion 32\u201355\"",
+  "query": "tv wall bracket full motion 55 inch",
+  "supplier": "screwfix",
+  "unit_cost": 39.99,
+  "list_price": 51.99,
+  "spec": {
+   "tv_max_in": 55,
+   "type": "full-motion",
+   "nota": "valor do cache de 17/08 (busca fresca n\u00e3o achou o produto); renovar no supplier-RPA"
+  },
+  "sample": "Ross RTMTA200 TV Bracket Full Motion 23-50\"\u00a0(711YN)",
+  "url": "https://www.screwfix.com/search?search=tv%20wall%20bracket%20full%20motion%2055%20inch"
+ },
+ {
+  "family": "mdf",
+  "variant": "12mm 2440\u00d71220",
+  "query": "mdf board 12mm 2440",
+  "supplier": "screwfix",
+  "unit_cost": 54.99,
+  "list_price": 71.99,
+  "spec": {
+   "thickness_mm": 12,
+   "nota": "valor do cache de 17/08 (busca fresca n\u00e3o achou o produto); renovar no supplier-RPA"
+  },
+  "sample": "Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack\u00a0(724RE)",
+  "url": "https://www.screwfix.com/search?search=mdf%20board%2012mm%202440"
+ },
+ {
+  "family": "mdf",
+  "variant": "18mm 2440\u00d71220",
+  "query": "mdf board 18mm 2440",
+  "supplier": "screwfix",
+  "unit_cost": 54.99,
+  "list_price": 71.99,
+  "spec": {
+   "thickness_mm": 18,
+   "nota": "valor do cache de 17/08 (busca fresca n\u00e3o achou o produto); renovar no supplier-RPA"
+  },
+  "sample": "Essentials Primed MDF Torus Skirting Board 2400mm x 119mm x 18mm 4 Pack\u00a0(724RE)",
+  "url": "https://www.screwfix.com/search?search=mdf%20board%2018mm%202440"
+ }
+]

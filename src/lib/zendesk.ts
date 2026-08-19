@@ -309,6 +309,38 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   }
 }
 
+/** Tag que espelha `jobs.status = awaiting_payment` no ticket — a view
+ *  "Awaiting Payment" do Zendesk lista por ela (dono, 18/08/2026). */
+export const ZENDESK_AWAITING_PAYMENT_TAG = "awaiting_payment";
+
+/** Add tags to a ticket, leaving every other tag untouched. */
+export async function addTicketTags(ticketId: string | number, tags: string[]): Promise<void> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+  const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}/tags.json`, {
+    method: "POST",
+    headers: { "Authorization": authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify({ tags }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Zendesk add tags failed (${res.status}): ${text}`);
+  }
+}
+
+/** Remove tags from a ticket; tags it doesn't have are ignored by Zendesk. */
+export async function removeTicketTags(ticketId: string | number, tags: string[]): Promise<void> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+  const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}/tags.json`, {
+    method: "DELETE",
+    headers: { "Authorization": authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify({ tags }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Zendesk remove tags failed (${res.status}): ${text}`);
+  }
+}
+
 /**
  * Read a ticket's current requester (id + email). Best-effort: returns
  * `ok:false` on any failure so callers can decide conservatively (e.g. never

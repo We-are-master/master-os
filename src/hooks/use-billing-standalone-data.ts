@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/services/base";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
+import { fetchAccountMetadataForBilling } from "@/lib/billing-account-metadata";
 import { effectiveInvoiceSourceAccountId } from "@/lib/billing-invoice-list-data";
 import {
   billingPerfMark,
@@ -11,6 +12,7 @@ import {
   enrichDeferredBillingRows,
   enrichRunwayBillingRows,
   enrichSelfBillJobsForIds,
+  fetchPartnerBillingMeta,
   openSelfBillIdsForEnrichment,
   type BillingEnrichmentState,
 } from "@/lib/billing-standalone-enrich";
@@ -29,7 +31,6 @@ import {
   resolveBillingStandaloneFilterBounds,
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
-import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
 import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
@@ -60,6 +61,13 @@ export function useBillingStandaloneData() {
   const hasLoadedOnceRef = useRef(false);
   const selfBillJobsLoadedRef = useRef<Set<string>>(new Set());
   const enrichGenerationRef = useRef(0);
+  /** Mirrors `refreshing` for the realtime scheduler — coalesce instead of stacking pipelines. */
+  const refreshingRef = useRef(false);
+  const pendingWhileHiddenRef = useRef(false);
+
+  useEffect(() => {
+    refreshingRef.current = refreshing;
+  }, [refreshing]);
 
   const dueCtx = useMemo(
     () => ({
@@ -81,44 +89,71 @@ export function useBillingStandaloneData() {
     [],
   );
 
+  /**
+   * Three independent legs, each painting the screen as soon as ITS data lands.
+   * They used to sit behind one Promise.all, so account names (cheap) waited for
+   * the payroll/pipeline runway fetch and the self-bill job lines (expensive) —
+   * the list said "Unknown account" until the slowest leg finished.
+   */
   const runDeferredEnrichment = useCallback(
     async (invRows: Invoice[], sbRows: SelfBill[], generation: number, bounds: YmdBounds | null) => {
       const invoiceJobRefs = new Set(
         invRows.map((i) => i.job_reference?.trim()).filter(Boolean) as string[],
       );
-      try {
-        const [deferred, runway] = await Promise.all([
-          enrichDeferredBillingRows(invRows, sbRows),
-          enrichRunwayBillingRows(bounds, invoiceJobRefs),
-        ]);
-        if (enrichGenerationRef.current !== generation) return;
-        setEnrichment((prev) => ({
-          ...prev,
-          jobRefToAccountId: deferred.jobRefToAccountId,
-          clientNameToAccountId: deferred.clientNameToAccountId,
-          accountNameById: deferred.accountNameById,
-          accountTermsById: deferred.accountTermsById,
-          accountLogoById: deferred.accountLogoById,
-          partnerTermsById: deferred.partnerTermsById,
-          partnerAvatarById: deferred.partnerAvatarById,
-          payrollRunwayRows: runway.payrollRunwayRows,
-          pipelineJobs: runway.pipelineJobs,
-          clientIdToAccountId: runway.clientIdToAccountId,
-        }));
-        if (deferred.mapsFailed || deferred.accountMetaFailed) {
-          console.warn("Billing loaded partially — some account or job details may be missing.");
-        }
 
-        const openIds = openSelfBillIdsForEnrichment(sbRows).filter(
-          (id) => !selfBillJobsLoadedRef.current.has(id),
+      const legs: Promise<void>[] = [];
+
+      legs.push(
+        enrichDeferredBillingRows(invRows, sbRows)
+          .then((deferred) => {
+            if (enrichGenerationRef.current !== generation) return;
+            setEnrichment((prev) => ({
+              ...prev,
+              jobRefToAccountId: deferred.jobRefToAccountId,
+              clientNameToAccountId: deferred.clientNameToAccountId,
+              accountNameById: { ...prev.accountNameById, ...deferred.accountNameById },
+              accountTermsById: { ...prev.accountTermsById, ...deferred.accountTermsById },
+              accountLogoById: { ...prev.accountLogoById, ...deferred.accountLogoById },
+              partnerTermsById: { ...prev.partnerTermsById, ...deferred.partnerTermsById },
+              partnerAvatarById: { ...prev.partnerAvatarById, ...deferred.partnerAvatarById },
+            }));
+            if (deferred.mapsFailed || deferred.accountMetaFailed) {
+              console.warn("Billing loaded partially — some account or job details may be missing.");
+            }
+          })
+          .catch((e) => console.error("billing deferred account enrichment failed", e)),
+      );
+
+      legs.push(
+        enrichRunwayBillingRows(bounds, invoiceJobRefs)
+          .then((runway) => {
+            if (enrichGenerationRef.current !== generation) return;
+            setEnrichment((prev) => ({
+              ...prev,
+              payrollRunwayRows: runway.payrollRunwayRows,
+              pipelineJobs: runway.pipelineJobs,
+              clientIdToAccountId: runway.clientIdToAccountId,
+            }));
+          })
+          .catch((e) => console.error("billing runway enrichment failed", e)),
+      );
+
+      const openIds = openSelfBillIdsForEnrichment(sbRows).filter(
+        (id) => !selfBillJobsLoadedRef.current.has(id),
+      );
+      if (openIds.length > 0) {
+        legs.push(
+          enrichSelfBillJobsForIds(openIds)
+            .then((jobPartial) => {
+              if (enrichGenerationRef.current !== generation) return;
+              mergeSelfBillJobEnrichment(jobPartial, openIds);
+            })
+            .catch((e) => console.error("billing self-bill job enrich failed", e)),
         );
-        if (openIds.length > 0) {
-          const jobPartial = await enrichSelfBillJobsForIds(openIds);
-          if (enrichGenerationRef.current !== generation) return;
-          mergeSelfBillJobEnrichment(jobPartial, openIds);
-        }
-      } catch (e) {
-        console.error("billing deferred enrichment failed", e);
+      }
+
+      try {
+        await Promise.allSettled(legs);
       } finally {
         if (enrichGenerationRef.current === generation) setRefreshing(false);
       }
@@ -194,12 +229,12 @@ export function useBillingStandaloneData() {
       setLoading(true);
     }
 
-    const shouldSyncWorkforce = !background && !hasLoadedOnceRef.current;
-    if (shouldSyncWorkforce) {
-      void syncWorkforceSelfBillsForBilling(bounds).catch((e) =>
-        console.error("workforce self-bill sync failed", e),
-      );
-    }
+    // Deliberately NO workforce sync here. Opening the page used to fire a
+    // write sync (purge + upsert of monthly workforce self-bills), whose own
+    // writes echoed back through the realtime channel below and re-ran this
+    // whole pipeline several times — the "sync, sync, sync" slow open. The
+    // sync lives on the manual Sync button (handleSync) and can be scheduled
+    // server-side; reading a page must not write.
 
     let invRows: Invoice[] = [];
     let sbRows: SelfBill[] = [];
@@ -215,13 +250,6 @@ export function useBillingStandaloneData() {
     if (invResult.status === "fulfilled") {
       invRows = invResult.value;
       setInvoices(invRows);
-      try {
-        const instMap = await fetchInstallmentsForBilling(invRows);
-        setInstallmentsByInvoiceId(instMap);
-      } catch (e) {
-        console.error("billing installments fetch failed", e);
-        setInstallmentsByInvoiceId({});
-      }
     } else {
       fetchHadErrors = true;
       console.error("billing invoices fetch failed", invResult.reason);
@@ -234,13 +262,6 @@ export function useBillingStandaloneData() {
     if (sbResult.status === "fulfilled") {
       sbRows = sbResult.value;
       setSelfBills(sbRows);
-      try {
-        const sbInstMap = await fetchSelfBillInstallmentsForBilling(sbRows);
-        setInstallmentsBySelfBillId(sbInstMap);
-      } catch (e) {
-        console.error("billing self-bill installments fetch failed", e);
-        setInstallmentsBySelfBillId({});
-      }
     } else {
       fetchHadErrors = true;
       console.error("billing self-bills fetch failed", sbResult.reason);
@@ -250,13 +271,22 @@ export function useBillingStandaloneData() {
       }
     }
 
-    if (billResult.status === "fulfilled") {
-      billRows = billResult.value;
-      setBills(billRows);
+    /** Both installment maps in one round-trip window — they used to run in series. */
+    const [invInstResult, sbInstResult] = await Promise.allSettled([
+      invResult.status === "fulfilled" ? fetchInstallmentsForBilling(invRows) : Promise.resolve(null),
+      sbResult.status === "fulfilled" ? fetchSelfBillInstallmentsForBilling(sbRows) : Promise.resolve(null),
+    ]);
+    if (invInstResult.status === "fulfilled") {
+      if (invInstResult.value) setInstallmentsByInvoiceId(invInstResult.value);
     } else {
-      fetchHadErrors = true;
-      console.error("billing bills fetch failed", billResult.reason);
-      if (!background && !hasLoadedOnceRef.current) setBills([]);
+      console.error("billing installments fetch failed", invInstResult.reason);
+      setInstallmentsByInvoiceId({});
+    }
+    if (sbInstResult.status === "fulfilled") {
+      if (sbInstResult.value) setInstallmentsBySelfBillId(sbInstResult.value);
+    } else {
+      console.error("billing self-bill installments fetch failed", sbInstResult.reason);
+      setInstallmentsBySelfBillId({});
     }
 
     if (billResult.status === "fulfilled") {
@@ -291,6 +321,41 @@ export function useBillingStandaloneData() {
       setHasLoadedOnce(true);
     }
     setRefreshing(true);
+
+    /**
+     * Account names paint immediately: most invoices already carry
+     * source_account_id, and the accounts lookup is one cheap query. The full
+     * invoice→job→client→quote→ticket crawl (deferred leg) still fills the
+     * unlinked stragglers later — but the list must not say "Unknown account"
+     * for a minute while that crawl runs.
+     */
+    void fetchAccountMetadataForBilling(
+      invRows.map((i) => i.source_account_id?.trim() ?? "").filter(Boolean),
+    )
+      .then((meta) => {
+        if (enrichGenerationRef.current !== generation) return;
+        setEnrichment((prev) => ({
+          ...prev,
+          accountNameById: { ...prev.accountNameById, ...meta.accountNameById },
+          accountTermsById: { ...prev.accountTermsById, ...meta.accountTermsById },
+          accountLogoById: { ...prev.accountLogoById, ...meta.accountLogoById },
+        }));
+      })
+      .catch((e) => console.error("billing early account meta failed", e));
+
+    /** Same treatment for partner avatars/terms: one cheap query, straight onto the ledger rows. */
+    void fetchPartnerBillingMeta(
+      [...new Set(sbRows.map((s) => s.partner_id?.trim()).filter(Boolean))] as string[],
+    )
+      .then((meta) => {
+        if (enrichGenerationRef.current !== generation) return;
+        setEnrichment((prev) => ({
+          ...prev,
+          partnerTermsById: { ...prev.partnerTermsById, ...meta.termsById },
+          partnerAvatarById: { ...prev.partnerAvatarById, ...meta.avatarById },
+        }));
+      })
+      .catch((e) => console.error("billing early partner meta failed", e));
 
     try {
       const critical = await enrichCriticalBillingRows(invRows);
@@ -365,16 +430,41 @@ export function useBillingStandaloneData() {
 
   useEffect(() => {
     const supabase = getSupabase();
-    let t: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      clearTimeout(t);
-      t = setTimeout(() => {
-        void loadData({
-          background: true,
-          bounds: fullHistoryLoadedRef.current ? null : getBillingInitialFetchBounds(),
-        });
-      }, 350);
+    let t: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * Realtime hardening. A change on any of these tables used to refire the
+     * FULL fetch+enrich pipeline after 350ms — and agents/robots write these
+     * tables all day, so the page never settled. Now: longer debounce, one
+     * pipeline at a time (coalesce while a cycle is still running), and no
+     * reloads while the tab is hidden (a single one runs on return instead).
+     */
+    const REALTIME_DEBOUNCE_MS = 2500;
+    const run = () => {
+      t = null;
+      if (refreshingRef.current) {
+        t = setTimeout(run, REALTIME_DEBOUNCE_MS);
+        return;
+      }
+      void loadData({
+        background: true,
+        bounds: fullHistoryLoadedRef.current ? null : getBillingInitialFetchBounds(),
+      });
     };
+    const schedule = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        pendingWhileHiddenRef.current = true;
+        return;
+      }
+      if (t) clearTimeout(t);
+      t = setTimeout(run, REALTIME_DEBOUNCE_MS);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && pendingWhileHiddenRef.current) {
+        pendingWhileHiddenRef.current = false;
+        schedule();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     const ch = supabase
       .channel("billing_standalone")
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, schedule)
@@ -388,7 +478,8 @@ export function useBillingStandaloneData() {
       .on("postgres_changes", { event: "*", schema: "public", table: "bills" }, schedule)
       .subscribe();
     return () => {
-      clearTimeout(t);
+      if (t) clearTimeout(t);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       supabase.removeChannel(ch);
     };
   }, [loadData]);

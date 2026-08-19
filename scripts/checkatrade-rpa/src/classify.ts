@@ -241,6 +241,9 @@ async function handleJob(
   const jobPayload = {
     account_id: cfg.masterOs.accountId,
     date: accepted.acceptedDate,
+    // Janela COMPLETA da plataforma, sempre (dono, 18/08: "todo job sobe com
+    // arrival time certinho"). O fallback existe porque a API exige o campo,
+    // mas ele é uma mentira educada — quando disparar, a nota interna grita.
     arrival_time: accepted.acceptedTimeWindow ?? "09:00",
     client_name: clientName,
     // Passing the revealed contact makes /api/jobs create (or match) a REAL
@@ -250,17 +253,17 @@ async function handleJob(
     client_phone: accepted.customerPhone,
     property_address: propertyAddress,
     postcode,
-    // Specific Checkatrade title for display (jobs.title) — separate from
-    // service_type. Certificado vai com o SKU canônico do catálogo (decisão
-    // do dono, 17/08/2026 — o JOB-9406 nasceu "General Maintenance" sendo um
-    // EICR e o relatório saiu com template errado); o resto segue no
-    // fallback, que é o certo para trabalho geral.
-    title,
+    // Título NUNCA inventado (dono, 19/08: "só os que já tem de type of
+    // work"): o chip do job no OS é o título, e ele só pode ser um nome da
+    // lista canônica — certificado vai com o SKU do catálogo, o resto é
+    // General Maintenance. O título rico da plataforma não some: vira a
+    // primeira linha do scope, que é onde detalhe mora.
+    title: tipoDeTrabalho(title) ?? cfg.fallbackCategory,
     service_type: tipoDeTrabalho(title) ?? cfg.fallbackCategory,
     // Three sources for the brief, best first: the customer's own notes on the
     // accepted page, then the pre-accept "Message" block, then the card's
     // truncated boilerplate.
-    description: scopeLimpo,
+    description: [`Job: ${title}`, scopeLimpo].filter(Boolean).join("\n\n"),
     // "Your Earnings" beats the card's teaser: it is exact, it already has
     // Checkatrade's fee removed, and the card sometimes has no price at all.
     client_price: accepted.earnings ?? o.priceHint,
@@ -268,6 +271,7 @@ async function handleJob(
     // neither exists anywhere else. `internal_notes` because /api/jobs has no
     // field for them yet; they are worth more written down than lost.
     internal_notes: [
+      accepted.acceptedTimeWindow ? null : "ATTENTION: arrival window NOT captured from the platform — 09:00 is a placeholder, confirm the real slot before dispatch.",
       accepted.duration ? `Booked duration: ${accepted.duration}` : null,
       accepted.parking === undefined ? null : `Parking available: ${accepted.parking ? "yes" : "no"}`,
       accepted.earnings ? `Value: £${accepted.earnings}` : null,

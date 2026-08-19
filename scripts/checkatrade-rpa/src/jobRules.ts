@@ -95,6 +95,20 @@ const EICR = /\beicr\b|electrical installation condition/i;
 export const HIGH_VALUE_DEFAULT = 150;
 
 /**
+ * Trabalho elétrico que NÃO é certificado: fora, por ordem do dono (17/08/2026):
+ * "elétrica é o único que não vamos arriscar for now — não pegamos nada, só
+ * certificados". Instalação, troca, rewire: tudo recusado até segunda ordem.
+ *
+ * Só o TÍTULO decide, nunca a descrição — mesma lição do patio door: um brief
+ * de TV mount perfeitamente bom diz "hide cables in the socket behind the TV",
+ * e job elétrico de verdade se anuncia no título ("Socket Replacement",
+ * "Light Fitting Installation"). O certificado passa antes deste teste, então
+ * EICR/PAT/emergency lighting seguem entrando normalmente.
+ */
+const ELECTRICAL_WORK =
+  /electric|electrician|rewir|\bsockets?\b|fuse\s*box|consumer unit|light fitting|light switch|lighting install|downlight|spotlight|chandelier|ceiling (light|rose|fan)|extractor fan|ev charg|(oven|hob|cooker)\s*(install|replac|connect)|storage heater|immersion heater/i;
+
+/**
  * Preço do parceiro por certificado, e por faixa.
  *
  * Acordado com o LandLord Certificate em 14 ago 2026. É daqui que sai o piso
@@ -235,6 +249,8 @@ export type JobVerdict = {
  * @param nonCertMinValue floor for everything EXCEPT certificates (£100).
  * @param highValueMin     at or above this, a job is chased as priority (£150).
  * @param certMinValue     floor for certificates (£70). EPC is excluded outright.
+ * @param titulo           só o título do job, quando o chamador o tem separado.
+ *                         É nele (e nunca no brief) que o gate de elétrica roda.
  */
 export function evaluateJob(
   text: string,
@@ -243,9 +259,22 @@ export function evaluateJob(
   highValueMin: number = HIGH_VALUE_DEFAULT,
   certMinValue: number = CERT_MIN_DEFAULT,
   margemMinimaPct: number = MARGEM_MINIMA_PCT_DEFAULT,
+  titulo?: string,
 ): JobVerdict {
   const bucket = classifyJob(text);
   const priority = isPriority(text, price, highValueMin);
+
+  // Elétrica sem certificado não entra, seja qual for o preço. Testado depois
+  // do classify porque o bucket "certificate" tem precedência: um EICR contém
+  // "electrical" e continua passando.
+  if (bucket !== "certificate" && ELECTRICAL_WORK.test(titulo ?? text)) {
+    return {
+      ok: false,
+      bucket,
+      priority: false,
+      reason: "electrical work without certificate — not taking for now (owner rule, 17/08/2026)",
+    };
+  }
 
   /** Shared floor check. Every bucket is priced now, certificates included. */
   const belowFloor = (label: string, floor: number): JobVerdict | null => {

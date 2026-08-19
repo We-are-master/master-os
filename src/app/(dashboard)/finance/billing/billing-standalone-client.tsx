@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink } from "lucide-react";
+import { Plus, Download, RefreshCw, Briefcase, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -73,7 +73,6 @@ import {
   getBulkCancellableSelfBillIds,
   getBulkEligibleSelfBillIds,
   markSelfBillsPaid,
-  payWithWise,
   type SelfBillJobLine,
 } from "@/lib/billing-selfbill-actions";
 import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
@@ -114,7 +113,7 @@ const SelfBillDetailDrawer = dynamic(
 );
 
 type MoneyInTab = "draft" | "ready";
-type MoneyOutTab = "draft" | "ready" | "paid";
+type MoneyOutTab = "draft" | "ready";
 
 const CASHFLOW_WINDOW_WEEKS = 10;
 
@@ -213,9 +212,8 @@ function BillingStandaloneInner() {
   });
   const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>(() => {
     const outTab = searchParams.get("out");
-    const legacyTab = searchParams.get("tab");
-    if (outTab === "draft" || outTab === "ready" || outTab === "paid") return outTab;
-    if (legacyTab === "sb") return "ready";
+    /** "paid" stopped being a tab (bottom fold now) — old links land on Ready. */
+    if (outTab === "draft" || outTab === "ready") return outTab;
     return "ready";
   });
   const invoiceIdFromUrl = searchParams.get("invoiceId");
@@ -227,7 +225,6 @@ function BillingStandaloneInner() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
   const [sendingSelfBillIds, setSendingSelfBillIds] = useState<Set<string>>(new Set());
-  const [payingSelfBillIds, setPayingSelfBillIds] = useState<Set<string>>(new Set());
   const [approvingSelfBillIds, setApprovingSelfBillIds] = useState<Set<string>>(new Set());
   const [readyingSelfBillIds, setReadyingSelfBillIds] = useState<Set<string>>(new Set());
   const [moneyOutSelectedIds, setMoneyOutSelectedIds] = useState<Set<string>>(new Set());
@@ -297,6 +294,41 @@ function BillingStandaloneInner() {
     [loadData],
   );
 
+  /** Inverse of Mark ready: a self-bill made Ready by mistake goes back to Draft (accumulating). */
+  const handleMoveSelfBillsBackToDraft = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      const eligible = ids.filter((id) => {
+        const sb = billingSelfBills.find((s) => s.id === id);
+        return !!sb && sb.status !== "paid" && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb);
+      });
+      if (!eligible.length) {
+        toast.error("Nothing to move back to draft.");
+        return;
+      }
+      setBulkSaving(true);
+      try {
+        const supabase = getSupabase();
+        const { error } = await supabase
+          .from("self_bills")
+          .update({ status: "accumulating", approved_at: null, approved_by: null })
+          .in("id", eligible);
+        if (error) throw error;
+        toast.success(
+          eligible.length === 1 ? "Moved back to Draft" : `${eligible.length} moved back to Draft`,
+        );
+        setMoneyOutSelectedIds(new Set());
+        setSelectedSbIds(new Set());
+        await loadData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to move back to draft");
+      } finally {
+        setBulkSaving(false);
+      }
+    },
+    [billingSelfBills, loadData],
+  );
+
   const handleMarkSelfBillsReadyToPay = useCallback(
     async (ids: string[]) => {
       if (!ids.length) return;
@@ -362,42 +394,10 @@ function BillingStandaloneInner() {
     [billingSelfBills, loadData],
   );
 
-  /** Sequential Wise payouts — used by the Approved tab's Pay all / Pay selected button. */
-  const handleBulkPayWithWise = useCallback(
-    async (ids: string[]) => {
-      if (!ids.length) return;
-      let success = 0;
-      let failed = 0;
-      for (const id of ids) {
-        setPayingSelfBillIds((prev) => new Set(prev).add(id));
-        try {
-          const r = await payWithWise(id, { scope: "full" });
-          if (r.ok) success += 1;
-          else {
-            failed += 1;
-            toast.error(`${id.slice(0, 8)} — ${r.error ?? "Wise pay failed"}`);
-          }
-        } catch (e) {
-          failed += 1;
-          toast.error(e instanceof Error ? e.message : "Wise pay failed");
-        } finally {
-          setPayingSelfBillIds((prev) => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-        }
-      }
-      if (success > 0) toast.success(`${success} payment${success === 1 ? "" : "s"} sent`);
-      if (failed === 0) {
-        setSelectedSbIds(new Set());
-        setMoneyOutSelectedIds(new Set());
-      }
-      await loadData();
-    },
-    [loadData],
-  );
-
+  /**
+   * Bulk Wise payout was removed with the header's "Pay with Wise" button
+   * (not in use for now) — restore both from git history if Wise returns.
+   */
   const handleBulkMarkSelfBillsPaid = useCallback(
     async (ids: string[]) => {
       if (!ids.length) return;
@@ -422,7 +422,8 @@ function BillingStandaloneInner() {
         );
         setMoneyOutSelectedIds(new Set());
         setSelectedSbIds(new Set());
-        setMoneyOutTab("paid");
+        /** Paid is a bottom fold now — open it so the rows visibly land there. */
+        setShowPaidSelfBills(true);
         await loadData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to mark paid");
@@ -488,35 +489,6 @@ function BillingStandaloneInner() {
       }
     },
     [billingSelfBills, data.installmentsBySelfBillId, data.partnerDueCtx, loadData],
-  );
-
-  const handlePayWithWise = useCallback(
-    async (selfBillId: string) => {
-      setPayingSelfBillIds((prev) => {
-        const next = new Set(prev);
-        next.add(selfBillId);
-        return next;
-      });
-      try {
-        const r = await payWithWise(selfBillId, { scope: "full" });
-        if (!r.ok) {
-          toast.error(r.error ?? "Wise pay failed");
-          return;
-        }
-        if (r.funded) toast.success("Payment funded");
-        else toast.success(`Transfer created — ${r.wise_status ?? "pending fund"}`);
-        await loadData();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Wise pay failed");
-      } finally {
-        setPayingSelfBillIds((prev) => {
-          const next = new Set(prev);
-          next.delete(selfBillId);
-          return next;
-        });
-      }
-    },
-    [loadData],
   );
 
   const handleSendSelfBills = useCallback(
@@ -633,6 +605,8 @@ function BillingStandaloneInner() {
   const [loadingDrawerJobs, setLoadingDrawerJobs] = useState(false);
   const [showInactiveInvoices, setShowInactiveInvoices] = useState(false);
   const [showInactiveSelfBills, setShowInactiveSelfBills] = useState(false);
+  /** Paid self-bills live in a bottom fold (like Closed), not as a top tab. */
+  const [showPaidSelfBills, setShowPaidSelfBills] = useState(false);
   const [expandedGoingOutPartners, setExpandedGoingOutPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
@@ -1339,7 +1313,7 @@ function BillingStandaloneInner() {
             <Button
               variant="outline"
               size="sm"
-              loading={syncing || data.refreshing}
+              loading={syncing}
               icon={<RefreshCw className="h-3.5 w-3.5" />}
               onClick={() => void handleSync()}
             >
@@ -1530,7 +1504,7 @@ function BillingStandaloneInner() {
 
             <div className="grid min-h-[calc(100dvh-22rem)] grid-cols-1 items-stretch gap-4 sm:gap-5 lg:min-h-[calc(100dvh-20rem)] lg:grid-cols-2 lg:gap-6">
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
-                <div className="shrink-0 border-b border-border-light px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                       Money In
@@ -1539,28 +1513,28 @@ function BillingStandaloneInner() {
                         placement="bottom-start"
                       />
                     </h2>
-                  </div>
-                  <div className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1 pb-1">
-                    <TabPill
-                      active={moneyInTab === "draft"}
-                      onClick={() => {
-                        setMoneyInTab("draft");
-                        setSelectedInvoiceIds(new Set());
-                      }}
-                      label="Draft"
-                      count={draftPeriodInvoices.length}
-                      total={draftInvoiceTotal}
-                    />
-                    <TabPill
-                      active={moneyInTab === "ready"}
-                      onClick={() => {
-                        setMoneyInTab("ready");
-                        setSelectedInvoiceIds(new Set());
-                      }}
-                      label="Ready to receive"
-                      count={kpiRow.toCollectCount}
-                      total={kpiRow.toCollect}
-                    />
+                    <div className="flex gap-1">
+                      <TabPill
+                        active={moneyInTab === "draft"}
+                        onClick={() => {
+                          setMoneyInTab("draft");
+                          setSelectedInvoiceIds(new Set());
+                        }}
+                        label="Draft"
+                        count={draftPeriodInvoices.length}
+                        total={draftInvoiceTotal}
+                      />
+                      <TabPill
+                        active={moneyInTab === "ready"}
+                        onClick={() => {
+                          setMoneyInTab("ready");
+                          setSelectedInvoiceIds(new Set());
+                        }}
+                        label="Ready to receive"
+                        count={kpiRow.toCollectCount}
+                        total={kpiRow.toCollect}
+                      />
+                    </div>
                   </div>
                 </div>
                 {moneyInTab === "ready" ? (
@@ -1692,7 +1666,7 @@ function BillingStandaloneInner() {
               </div>
 
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
-                <div className="shrink-0 border-b border-border-light px-4 py-4 sm:px-5">
+                <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
                       Money Out
@@ -1701,41 +1675,30 @@ function BillingStandaloneInner() {
                         placement="bottom-start"
                       />
                     </h2>
-                  </div>
-                  <div className="-mx-1 mt-3 flex gap-1 overflow-x-auto px-1 pb-1">
-                    <TabPill
-                      active={moneyOutTab === "draft"}
-                      onClick={() => {
-                        setMoneyOutTab("draft");
-                        setSelectedSbIds(new Set());
-                        setMoneyOutSelectedIds(new Set());
-                      }}
-                      label="Draft"
-                      count={ledgerSbDraftSelfBills.length}
-                      total={ledgerSbDraftTotal}
-                    />
-                    <TabPill
-                      active={moneyOutTab === "ready"}
-                      onClick={() => {
-                        setMoneyOutTab("ready");
-                        setSelectedSbIds(new Set());
-                        setMoneyOutSelectedIds(new Set());
-                      }}
-                      label="Ready"
-                      count={goingOutApprovedSelfBills.length}
-                      total={goingOutReadyTotal}
-                    />
-                    <TabPill
-                      active={moneyOutTab === "paid"}
-                      onClick={() => {
-                        setMoneyOutTab("paid");
-                        setSelectedSbIds(new Set());
-                        setMoneyOutSelectedIds(new Set());
-                      }}
-                      label="Paid"
-                      count={paidPeriodSelfBills.length}
-                      total={paidPeriodTotal}
-                    />
+                    <div className="flex gap-1">
+                      <TabPill
+                        active={moneyOutTab === "draft"}
+                        onClick={() => {
+                          setMoneyOutTab("draft");
+                          setSelectedSbIds(new Set());
+                          setMoneyOutSelectedIds(new Set());
+                        }}
+                        label="Draft"
+                        count={ledgerSbDraftSelfBills.length}
+                        total={ledgerSbDraftTotal}
+                      />
+                      <TabPill
+                        active={moneyOutTab === "ready"}
+                        onClick={() => {
+                          setMoneyOutTab("ready");
+                          setSelectedSbIds(new Set());
+                          setMoneyOutSelectedIds(new Set());
+                        }}
+                        label="Ready"
+                        count={goingOutApprovedSelfBills.length}
+                        total={goingOutReadyTotal}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1839,40 +1802,6 @@ function BillingStandaloneInner() {
                       </div>
                     ) : null}
                   </>
-                ) : moneyOutTab === "paid" ? (
-                  <>
-                    <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                          {paidPeriodSelfBills.length} paid
-                        </p>
-                        <p className="text-lg font-bold tabular-nums text-[#020040]">{formatCurrency(paidPeriodTotal)}</p>
-                      </div>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      <SelfBillGroupedLedger
-                        mode="payQueue"
-                        variant="compact"
-                        workforceGroups={paidSelfBillLedgerSections.workforce}
-                        partnerGroups={paidSelfBillLedgerSections.partners}
-                        todayYmd={todayYmd}
-                        selectedIds={new Set()}
-                        onSelectionChange={() => {}}
-                        partnerDueCtx={data.partnerDueCtx}
-                        partnerAvatarById={data.partnerAvatarById}
-                        jobsBySelfBillId={data.jobsBySelfBillId}
-                        partnerPaidByJobId={data.partnerPaidByJobId}
-                        installmentsBySelfBillId={data.installmentsBySelfBillId}
-                        onOpen={(sb) => void openSelfBill(sb)}
-                        onMarkPaid={async () => {}}
-                        collapsiblePartners={{
-                          expandedKeys: expandedGoingOutPartners,
-                          onToggle: toggleGoingOutPartner,
-                        }}
-                        emptyLabel="No paid self-bills in this period."
-                      />
-                    </div>
-                  </>
                 ) : (
                   (() => {
                     const eligiblePayIds = goingOutApprovedSelfBills
@@ -1895,19 +1824,10 @@ function BillingStandaloneInner() {
                     const hasPaySelection = selectedPayInTab.length > 0;
                     const payTargetIds = hasPaySelection ? selectedPayInTab : eligiblePayIds;
                     const markTargetIds = hasPaySelection ? selectedPayInTab : selectableIds;
-                    const payTargetTotal = sumDue(
-                      goingOutApprovedSelfBills.filter((sb) => payTargetIds.includes(sb.id)),
-                    );
                     const allPaySelected =
                       hasPaySelection &&
                       selectableIds.length > 0 &&
                       selectedPayInTab.length === selectableIds.length;
-                    const payButtonLabel =
-                      !hasPaySelection || allPaySelected
-                        ? `Pay all ${formatCurrency(payTargetTotal)}`
-                        : selectedPayInTab.length <= 2
-                          ? `Pay ${formatCurrency(payTargetTotal)}`
-                          : `Pay selected ${formatCurrency(payTargetTotal)}`;
 
                     return (
                       <>
@@ -1937,14 +1857,11 @@ function BillingStandaloneInner() {
                               {formatCurrency(goingOutApprovedTotal)}
                             </p>
                             <MoneyOutPayActions
-                              payLabel={payButtonLabel}
                               loading={
                                 bulkSaving ||
-                                payTargetIds.some((id) => payingSelfBillIds.has(id)) ||
                                 payTargetIds.some((id) => schedulingPaymentIds.has(id))
                               }
                               disabled={markTargetIds.length === 0 && payTargetIds.length === 0}
-                              onPayNow={() => void handleBulkPayWithWise(payTargetIds)}
                               onSchedulePayment={() => void handleBulkSchedulePayment(payTargetIds)}
                               onMarkAsPaid={() => void handleBulkMarkSelfBillsPaid(markTargetIds)}
                             />
@@ -1979,6 +1896,48 @@ function BillingStandaloneInner() {
                     );
                   })()
                 )}
+                {paidPeriodSelfBills.length > 0 ? (
+                  <div className="shrink-0 border-t border-border-light bg-surface-hover/20">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-hover/40"
+                      onClick={() => setShowPaidSelfBills((v) => !v)}
+                    >
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-semibold text-text-secondary">Paid</span>
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                          {paidPeriodSelfBills.length} · {formatCurrency(paidPeriodTotal)}
+                        </span>
+                      </div>
+                      <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", showPaidSelfBills && "rotate-180")} />
+                    </button>
+                    {showPaidSelfBills ? (
+                      <div className="max-h-[40vh] overflow-y-auto">
+                        <SelfBillGroupedLedger
+                          mode="payQueue"
+                          variant="compact"
+                          workforceGroups={paidSelfBillLedgerSections.workforce}
+                          partnerGroups={paidSelfBillLedgerSections.partners}
+                          todayYmd={todayYmd}
+                          selectedIds={new Set()}
+                          onSelectionChange={() => {}}
+                          partnerDueCtx={data.partnerDueCtx}
+                          partnerAvatarById={data.partnerAvatarById}
+                          jobsBySelfBillId={data.jobsBySelfBillId}
+                          partnerPaidByJobId={data.partnerPaidByJobId}
+                          installmentsBySelfBillId={data.installmentsBySelfBillId}
+                          onOpen={(sb) => void openSelfBill(sb)}
+                          onMarkPaid={async () => {}}
+                          collapsiblePartners={{
+                            expandedKeys: expandedGoingOutPartners,
+                            onToggle: toggleGoingOutPartner,
+                          }}
+                          emptyLabel="No paid self-bills in this period."
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -2048,7 +2007,7 @@ function BillingStandaloneInner() {
           savingOpeningBalance={savingRunwayOpening}
         />
 
-        {moneyOutTab === "paid" ? null : selectedInvoiceIds.size > 0 ? (
+        {selectedInvoiceIds.size > 0 ? (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
             saving={bulkSaving}
@@ -2077,6 +2036,9 @@ function BillingStandaloneInner() {
             onClear={() => setMoneyOutSelectedIds(new Set())}
             onMarkPaid={async () => {
               await handleBulkMarkSelfBillsPaid([...moneyOutSelectedIds]);
+            }}
+            onBackToDraft={async () => {
+              await handleMoveSelfBillsBackToDraft([...moneyOutSelectedIds]);
             }}
             onCancel={async () => {
               const eligible = getBulkCancellableSelfBillIds(moneyOutSelectedIds, data.selfBills, sbCancellableIdSet);
@@ -2970,16 +2932,10 @@ function SelfBillGroupedLedger({
                 </div>
               )}
               {partnerOpen ? (
-              <div>
-                    <div
-                      className={cn(
-                        "bl-sb-row__colhead hidden px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-tertiary sm:grid",
-                        compact ? "sm:pl-12" : "sm:pl-12",
-                      )}
-                    >
+              <div className="bl-sb-table">
+                    <div className="bl-sb-row__colhead hidden px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-tertiary sm:grid">
                       <span className="sm:col-start-2">Status</span>
                       <span className="text-right">Total</span>
-                      <span className="text-right">Paid</span>
                       <span className="text-right">Outstanding</span>
                       <span className="text-right">Next due</span>
                       <span className="text-center">
@@ -3044,8 +3000,38 @@ function SelfBillGroupedLedger({
                               ) : null}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="inline-flex flex-wrap items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                                {sb.reference}
+                              <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-[#020040]">
+                                <span className="truncate">{sb.reference}</span>
+                                {(() => {
+                                  /**
+                                   * Single-job self-bill: one hop to the job. The job number is spelled
+                                   * out only when the self-bill reference does not already carry it
+                                   * (`SB-2026-W32-JOB-9391` says it twice otherwise); the date rides in
+                                   * the tooltip so the row stays on one line.
+                                   */
+                                  const linked = jobsBySelfBillId[sb.id] ?? [];
+                                  const only = linked.length === 1 ? linked[0] : null;
+                                  if (!only) return null;
+                                  const jobYmd =
+                                    only.scheduled_date?.trim().slice(0, 10) ||
+                                    only.scheduled_start_at?.trim().slice(0, 10) ||
+                                    "";
+                                  const refShowsJob = sb.reference?.includes(only.reference) ?? false;
+                                  return (
+                                    <button
+                                      type="button"
+                                      title={`Open ${only.reference}${jobYmd ? ` · ${formatDate(jobYmd)}` : ""}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(`/jobs/${only.id}`, "_blank", "noopener,noreferrer");
+                                      }}
+                                      className="inline-flex shrink-0 items-center gap-1 rounded border border-border-light px-1.5 py-0.5 text-[10px] font-medium text-text-secondary hover:bg-surface-hover"
+                                    >
+                                      <Briefcase className="h-3 w-3" aria-hidden />
+                                      {refShowsJob ? null : only.reference}
+                                    </button>
+                                  );
+                                })()}
                                 {sb.bill_origin === "internal" ? (
                                   <Badge variant="info" size="sm" className="text-[9px] uppercase tracking-wide">
                                     Workforce
@@ -3076,10 +3062,14 @@ function SelfBillGroupedLedger({
                             </div>
                           </div>
                           <div className="bl-sb-row__cols">
-                            <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
-                            <span className="bl-sb-row__amount text-sm tabular-nums">{formatCurrency(total)}</span>
-                            <span className="bl-sb-row__paid text-sm tabular-nums text-emerald-700">
-                              {paid > 0.02 ? formatCurrency(paid) : "—"}
+                            <span className="bl-sb-row__statuscell">
+                              <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                            </span>
+                            <span
+                              className="bl-sb-row__amount text-sm tabular-nums"
+                              title={paid > 0.02 ? `${formatCurrency(paid)} already paid` : undefined}
+                            >
+                              {formatCurrency(total)}
                             </span>
                             <span
                               className={cn(
@@ -3241,6 +3231,7 @@ function KpiCard({ label, value, sub, alert, coral, green }: { label: string; va
   );
 }
 
+/** Clean pill: numbers live in the hover tooltip, not inline — the header stays scannable. */
 function TabPill({
   active,
   onClick,
@@ -3254,10 +3245,15 @@ function TabPill({
   count?: number | null;
   total?: number;
 }) {
+  const hoverDetail =
+    count != null
+      ? `${count} item${count === 1 ? "" : "s"}${total != null && count > 0 ? ` · ${formatCurrency(total)}` : ""}`
+      : undefined;
   return (
     <button
       type="button"
       onClick={onClick}
+      title={hoverDetail}
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
         active
@@ -3266,16 +3262,6 @@ function TabPill({
       )}
     >
       {label}
-      {count != null ? (
-        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] tabular-nums", active ? "bg-white/20 text-white" : "bg-white text-text-secondary")}>
-          {count}
-        </span>
-      ) : null}
-      {count != null && count > 0 && total != null ? (
-        <span className={cn("hidden text-[10px] tabular-nums sm:inline", active ? "text-white/80" : "text-text-tertiary")}>
-          {formatCurrency(total)}
-        </span>
-      ) : null}
     </button>
   );
 }

@@ -19,6 +19,8 @@ type Props = {
   onApproveAndSend?: () => void;
   onMarkReadyToPay?: () => void;
   onUnapprove?: () => void;
+  /** Ready-tab escape hatch: send the selected self-bills back to Draft. */
+  onBackToDraft?: () => void;
 };
 
 export function BillingBulkBar({
@@ -36,6 +38,7 @@ export function BillingBulkBar({
   onApproveAndSend,
   onMarkReadyToPay,
   onUnapprove,
+  onBackToDraft,
 }: Props) {
   if (count <= 0) return null;
   const busy = saving || emailSending;
@@ -101,6 +104,18 @@ export function BillingBulkBar({
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
               {markPaidLabel}
+            </button>
+          ) : null}
+          {onBackToDraft ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onBackToDraft}
+              title="Made Ready by mistake? Send the selection back to Draft."
+              className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              Back to draft
             </button>
           ) : null}
           {onUnapprove ? (

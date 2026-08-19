@@ -12,9 +12,17 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getZendeskTicketId, isZendeskConfigured, updateTicket as zdUpdateTicket } from "@/lib/zendesk";
+import {
+  addTicketTags,
+  getZendeskTicketId,
+  isZendeskConfigured,
+  removeTicketTags,
+  updateTicket as zdUpdateTicket,
+  ZENDESK_AWAITING_PAYMENT_TAG,
+} from "@/lib/zendesk";
 import {
   ZD_STATUS_AWAITING_APPROVAL,
+  ZD_STATUS_AWAITING_PAYMENT,
   ZD_STATUS_BIDDING,
   ZD_STATUS_CANCELLED,
   ZD_STATUS_COMPLETED,
@@ -75,12 +83,12 @@ export function jobStatusToZendesk(status: JobStatus): number | null {
       return ZD_STATUS_IN_PROGRESS;
     case "final_check":
       return ZD_STATUS_FINAL_CHECKS;
-    /** Work is done; only payment collection is pending. From the customer's
-     *  perspective the support thread is closed, so flip the ticket to
-     *  Completed (which auto-solves it in Zendesk). If finance moves the job
-     *  back to final_check / in_progress, the trigger fires again and the
-     *  ticket re-opens to the right status. */
+    /** Work done, payment pending: status próprio 💷 Awaiting Payment
+     *  (categoria pending — solved fecharia e arquivaria o ticket em 24h
+     *  pela automation, e a fila de cobrança sumiria da view). O ticket só
+     *  vira Completed/solved quando o pagamento cai e o job vai a completed. */
     case "awaiting_payment":
+      return ZD_STATUS_AWAITING_PAYMENT;
     case "completed":
       return ZD_STATUS_COMPLETED;
     case "on_hold":
@@ -162,6 +170,24 @@ export async function syncJobZendeskStatus(
   const syncStatus = jobStatusForZendeskSync(
     job as Parameters<typeof jobStatusForZendeskSync>[0],
   );
+
+  // Awaiting Payment (dono, 18/08/2026): o status do OS é a fonte da verdade
+  // e o ticket espelha via tag — a view "Awaiting Payment" do Zendesk lista
+  // por ela. Entra no status → ganha a tag; sai → perde. Best-effort: falha
+  // de tag não pode derrubar o sync de status (Harvey cura deriva de hora em
+  // hora). Job deletado não mexe no ticket, mesma regra do status abaixo.
+  if (syncStatus !== "deleted") {
+    try {
+      if (syncStatus === "awaiting_payment") {
+        await addTicketTags(ticketId, [ZENDESK_AWAITING_PAYMENT_TAG]);
+      } else {
+        await removeTicketTags(ticketId, [ZENDESK_AWAITING_PAYMENT_TAG]);
+      }
+    } catch (err) {
+      console.error(`[zendesk-status-sync] awaiting_payment tag sync failed ticket=${ticketId}:`, err);
+    }
+  }
+
   const customStatusId = jobStatusToZendesk(syncStatus);
   if (customStatusId == null) {
     return { ok: true, synced: false, ticketId, skip: "no_status_mapping" };
