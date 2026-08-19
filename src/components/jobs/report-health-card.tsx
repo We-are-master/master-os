@@ -16,7 +16,7 @@
 import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, CircleAlert } from "lucide-react";
 import { reportHealth, faixaDaNota, type SaudeDoRelatorio } from "@/lib/report-health";
-import { pickReportTemplate } from "@/lib/public-report-templates";
+import { pickReportTemplate, usesCleaningForm } from "@/lib/public-report-templates";
 
 const CORES = {
   bloqueado:  { fg: "#B4231C", bg: "#FDF2F1", bd: "#F3D2CF" },
@@ -66,6 +66,27 @@ export function ReportHealthCard({
     });
   }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt]);
 
+  /**
+   * Relatório preenchido no formulário ERRADO para este cliente.
+   *
+   * Visto no JOB-9450 (19/08): um End of Tenancy da Housekeep foi preenchido no
+   * formulário geral — uma descrição e um monte de 20 fotos — e este cartão deu
+   * 100/100 "ready to send", porque media o relatório contra as regras do
+   * formulário que ele mesmo usou. Só que o destino pede cômodo a cômodo, com
+   * mínimo por cômodo, e nenhum monte achatado satisfaz isso: o envio foi
+   * recusado e o formulário deles ficou vazio.
+   *
+   * Só a limpeza entra nesta trava, e por assimetria real: um relatório geral
+   * NÃO tem como virar um de cômodos (ninguém sabe qual foto é do banheiro),
+   * enquanto os outros formulários pedem texto e foto solta, que qualquer
+   * template entrega.
+   */
+  const formaErrada = useMemo(() => {
+    const gravado = (finalReport as { template?: unknown } | null)?.template;
+    if (typeof gravado !== "string" || gravado === "cleaner") return null;
+    return usesCleaningForm(pickReportTemplate({ title: jobTitle })) ? gravado : null;
+  }, [finalReport, jobTitle]);
+
   const faixa = faixaDaNota(saude);
   const c = CORES[faixa];
   const Icone = faixa === "pronto" ? CheckCircle2 : faixa === "bloqueado" ? AlertTriangle : CircleAlert;
@@ -90,6 +111,16 @@ export function ReportHealthCard({
           </p>
         </div>
       </div>
+
+      {formaErrada ? (
+        <p
+          className="mt-2.5 border-t pt-2 text-[11px] font-semibold"
+          style={{ borderColor: c.bd, color: CORES.bloqueado.fg }}
+        >
+          Filled with the {formaErrada} form, but this client needs the cleaning form, room by room.
+          Ask the partner to refill before approving: flat photo piles are refused on submit.
+        </p>
+      ) : null}
 
       {saude.pendencias.length > 0 ? (
         <ul className="mt-2.5 space-y-1 border-t pt-2" style={{ borderColor: c.bd }}>
