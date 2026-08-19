@@ -484,3 +484,189 @@ price. Handyman work never gets a survey visit, because you can price it here.
    plasterboard.
 3. **Do you have the parts?** A visit without the parts is a wasted visit and a
    refund conversation.
+
+---
+
+<!-- PRICEBOOK:INICIO (gerado por scripts/mike/gerar-precos.ts — NÃO editar à mão) -->
+
+## The fixed price list (from our system)
+
+These are the exact prices, straight from our pricing system — the same
+one that fills `quote_ready`. Rules:
+
+- **If `quote_ready` is filled, that number wins over this list** — it
+  already includes materials for that exact enquiry.
+- From this list you quote the labour price and say materials come on
+  top: "that covers the labour — materials are added at cost from our
+  supplier, I'll confirm the exact figure when we book".
+- A job that is NOT on this list and not covered by the ladders is a
+  handoff. **Never invent a line, never average two lines.**
+- Per-m² lines: ask the size first. No size, no number.
+- Electrical INSTALLATION (sockets, lights, rewiring) is never offered
+  — certificates only. Hand off any install ask.
+
+### carpenter
+
+- Alcove shelving/cupboard (bespoke, materials excl.) — **£950.00** fixed price
+- Boxing-in pipes — **£400.00** fixed price
+- Built-in fitted wardrobe — **£1200.00** fixed price
+- Fit fire door FD30 (compliance fit, door excl.) — **£180.00** per door
+- Hang internal door (door excl.) — **£140.00** per door
+- Install external/front door (labour) — **£600.00** per door
+- New loft hatch installation — **£250.00** fixed price
+- Replace architrave, per door — **£100.00** per door
+- Replace skirting, medium room (labour) — **£280.00** per room
+
+### certificates
+
+- EICR - 1-bed Flat (up to 8 circuits) — **£100.00** fixed price
+- EICR - 2 Bed Property (up to 8 circuits) — **£127.00** fixed price
+- EICR - 3 Bed Property (up to 10 circuits) — **£149.50** fixed price
+- EICR - 4 Bed Property (up to 12 circuits) — **£172.00** fixed price
+- EICR - Studio (up to 8 circuits) — **£100.00** fixed price
+- EICR - Up to 6 Bed Property (up to 14 circuits) — **£203.50** fixed price
+- EPC - 1 Bed Flat — **£56.35** fixed price
+- EPC - 1 Bed House — **£59.00** fixed price
+- EPC - 2 Bed Flat — **£63.55** fixed price
+- EPC - 2 Bed House — **£66.70** fixed price
+- EPC - 3 Bed Flat — **£71.20** fixed price
+- EPC - 3 Bed House — **£74.35** fixed price
+- EPC - 4 Bed Flat — **£78.85** fixed price
+- EPC - 4 Bed House — **£81.55** fixed price
+- EPC - 5 Bed Flat — **£86.05** fixed price
+- EPC - 5 Bed House — **£97.30** fixed price
+- Fire Alarm Certificate - commercial simple (up to 15 devices) — **£91.00** fixed price
+- Fire Alarm Certificate - domestic (up to 10 devices) — **£68.50** fixed price
+- FRA - 1-2 Bed House — **£109.00** fixed price
+- FRA - 3 Bed House — **£122.50** fixed price
+- FRA - 4 Bed House — **£135.95** fixed price
+- FRA - 5 Bed House — **£149.50** fixed price
+- FRA - Business 1 storey up to 100 sq m — **£229.00** fixed price
+- FRA - Business 1 storey up to 200 sq m — **£299.00** fixed price
+- FRA - Business 2-3 storey up to 100 sq m — **£289.00** fixed price
+- FRA - Business 2-3 storey up to 200 sq m — **£449.00** fixed price
+- FRA - Business up to 100 sq ft — **£199.00** fixed price
+- FRA - Business up to 50 sq m — **£219.00** fixed price
+- FRA - Four Storey Communal — **£219.00** fixed price
+- FRA - HMO & Rental 1-2 Beds — **£189.00** fixed price
+- FRA - HMO & Rental 3-4 Beds — **£209.00** fixed price
+- FRA - HMO & Rental 5-6 Beds — **£219.00** fixed price
+- FRA - Single Storey Communal — **£129.00** fixed price
+- FRA - Studio Flat — **£99.00** fixed price
+- FRA - Three Storey Communal — **£189.00** fixed price
+- FRA - Two Storey Communal — **£149.00** fixed price
+- Gas Safety CP12 - 1 appliance — **£70.00** fixed price
+- Gas Safety CP12 - 2 appliances — **£73.00** fixed price
+- Gas Safety CP12 - 3 appliances — **£82.00** fixed price
+- Gas Safety CP12 - 4 appliances — **£91.00** fixed price
+- PAT - 1-10 items — **£69.00** fixed price
+- PAT - 11-20 items — **£95.00** fixed price
+- PAT - 21-30 items — **£109.00** fixed price
+- PAT - 31-40 items — **£139.00** fixed price
+
+### decking
+
+- Decking installation (labour) — **£40.00** per m² (minimum £500)
+
+### fencing
+
+- Fence panel replacement (labour) — **£55.00** per_panel (minimum £220)
+- Fence post replacement (labour) — **£110.00** per_post
+
+### flooring
+
+- Carpet fitting, standard room (labour) — **£110.00** per room
+- Engineered wood fitting (labour) — **£50.00** per m² (minimum £300)
+- Floor sanding + refinish — **£22.00** per m² (minimum £280)
+- Laminate fitting (labour) — **£15.00** per m² (minimum £180)
+- LVT fitting (labour) — **£18.00** per m² (minimum £200)
+- Trim door after new flooring — **£25.00** per door
+
+### garden
+
+- Garden clearance — **£250.00** per_load
+- Turf laying (labour) — **£22.00** per m² (minimum £200)
+
+### handyman
+
+- Bath/shower silicone reseal — **£130.00** fixed price
+- Blind or curtain pole fitting (first window) — **£95.00** per_window
+- Blind/pole additional window (same visit) — **£45.00** per_window
+- Crack filling & caulking (interior, up to ~2m) — **£130.00** fixed price
+- Door handle or lock replacement (labour) — **£95.00** fixed price
+- Draught proofing external door — **£100.00** fixed price
+- Easing/adjusting a sticking door — **£90.00** fixed price
+- Euro cylinder/barrel change (labour) — **£95.00** fixed price
+- Flat-pack assembly, single item (up to 1h) — **£90.00** each
+- Flat-pack wardrobe PAX/sliding doors — **£160.00** each
+- Gutter clean - detached — **£180.00** fixed price
+- Gutter clean - semi-detached — **£150.00** fixed price
+- Gutter clean - terraced — **£120.00** fixed price
+- Hanging pictures/mirrors/shelves (up to 3 items) — **£90.00** fixed price
+- Radiator bleed / minor check visit — **£90.00** fixed price
+- Small plaster patch repair — **£110.00** fixed price
+- TV wall mounting 44-55" — **£150.00** fixed price
+- TV wall mounting 56-65" — **£190.00** fixed price
+- TV wall mounting over 65" — **£240.00** fixed price
+- TV wall mounting up to 43" — **£120.00** fixed price
+
+### handyman time
+
+- Full day (up to 8h) — **£290.00** per_day
+- Half day (up to 4h) — **£190.00** per_half_day
+- Hourly rate (min 1 hour) — **£72.00** per hour
+
+### painter
+
+- Full repaint 1-bed flat — **£1400.00** fixed price
+- Full repaint 2-bed flat — **£1900.00** fixed price
+- Hallway, stairs and landing — **£1600.00** fixed price
+- Mist coat on new plaster, per room — **£140.00** per room
+- Paint ceiling only — **£18.00** per m² (minimum £120)
+- Paint front door (prep + gloss) — **£350.00** fixed price
+- Paint interior door (both sides) — **£110.00** per door
+- Paint large room (walls+ceiling) — **£600.00** per room
+- Paint medium bedroom/living (walls+ceiling) — **£400.00** per room
+- Paint skirting, average room — **£220.00** per room
+- Paint small bedroom (walls+ceiling, 2 coats) — **£300.00** per room
+- Wallpaper hanging, average room (paper excl.) — **£450.00** per room
+
+### paving
+
+- Block paving driveway (labour) — **£45.00** per m² (minimum £900)
+- Patio laying (labour) — **£70.00** per m² (minimum £700)
+- Patio repointing — **£18.00** per m² (minimum £200)
+- Pressure washing patio/driveway — **£5.00** per m² (minimum £150)
+
+### plasterer
+
+- Cover artex (plaster over), per surface — **£300.00** fixed price
+- Overboard + skim damaged ceiling — **£850.00** fixed price
+- Plaster patch repair (proper) — **£130.00** fixed price
+- Skim ceiling, medium — **£400.00** fixed price
+- Skim medium room (walls) — **£520.00** per room
+- Skim single wall — **£200.00** fixed price
+
+### plumber
+
+- Install washing machine/dishwasher — **£110.00** each
+- Outside tap installation — **£160.00** each
+- Replace bar mixer shower (labour) — **£200.00** each
+- Replace kitchen/basin tap (fit only) — **£140.00** each
+- Replace radiator like-for-like (labour) — **£220.00** each
+- Replace toilet (fit only) — **£220.00** each
+- Toilet fill/flush valve repair (labour) — **£110.00** each
+- Unblock external drain (rodding) — **£160.00** each
+- Unblock sink or toilet — **£140.00** each
+
+### tiler
+
+- Floor tiling (labour) — **£55.00** per m² (minimum £250)
+- Full bathroom tiling, walls+floor (labour) — **£1100.00** fixed price
+- Kitchen splashback (labour) — **£220.00** fixed price
+- Regrout full bathroom — **£400.00** fixed price
+- Regrout shower enclosure — **£180.00** fixed price
+- Remove old tiles + adhesive — **£12.00** per m² (minimum £150)
+- Wall tiling (labour) — **£50.00** per m² (minimum £250)
+
+<!-- PRICEBOOK:FIM -->
