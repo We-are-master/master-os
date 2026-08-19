@@ -7271,7 +7271,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ? matchArrivalSlot(scheduleTime.trim(), scheduleWindowMins)
                         : null;
                     const slotLabel = slotId ? ARRIVAL_SLOTS.find((s) => s.id === slotId)?.label : null;
-                    const arrivalDisplay = slotLabel ?? agreedArrivalRange;
+                    /**
+                     * A janela GRAVADA ganha do rótulo do slot.
+                     *
+                     * Visto ao vivo no JOB-9463 (19/08): a plataforma marcou
+                     * 12:00–16:00, o OS gravou 12:00–16:00, e esta tela
+                     * mostrava "01PM–03PM". O culpado é o `nearestArrivalSlot`,
+                     * que hidrata o seletor encaixando 12:00/240min no slot
+                     * mais próximo (13:00/120) — bom para preencher um
+                     * dropdown, péssimo como VERDADE na tela: quem briefa o
+                     * parceiro por aqui manda ele chegar fora da janela que o
+                     * cliente recebeu. Slot só aparece quando não há janela
+                     * gravada nenhuma.
+                     */
+                    const arrivalDisplay = agreedArrivalRange ?? slotLabel;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
                         <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
