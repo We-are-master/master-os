@@ -66,28 +66,22 @@ export async function findDuplicateAccountHints(input: {
   const supabase = getSupabase();
   const email = normalizeEmailForDedupe(input.email);
   const company = input.companyName.trim();
-  const hints: DuplicateAccountHint[] = [];
-  const seen = new Set<string>();
 
-  if (email) {
+  type Row = { id: string; company_name: string; email: string };
+
+  const byEmail = async (): Promise<Row[]> => {
+    if (!email) return [];
     const { data, error } = await supabase
       .from("accounts")
       .select("id, company_name, email")
       .is("deleted_at", null)
       .ilike("email", email)
       .limit(8);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; company_name: string; email: string };
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ company_name: r.company_name, email: r.email });
-        }
-      }
-    }
-  }
+    return error ? [] : ((data ?? []) as Row[]);
+  };
 
-  if (company.length >= 3) {
+  const byCompanyName = async (): Promise<Row[]> => {
+    if (company.length < 3) return [];
     const safe = escapeIlikePattern(company);
     const { data, error } = await supabase
       .from("accounts")
@@ -95,17 +89,19 @@ export async function findDuplicateAccountHints(input: {
       .is("deleted_at", null)
       .ilike("company_name", `%${safe}%`)
       .limit(8);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; company_name: string; email: string };
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ company_name: r.company_name, email: r.email });
-        }
-      }
+    return error ? [] : ((data ?? []) as Row[]);
+  };
+
+  const [emailRows, companyRows] = await Promise.all([byEmail(), byCompanyName()]);
+
+  const hints: DuplicateAccountHint[] = [];
+  const seen = new Set<string>();
+  for (const r of [...emailRows, ...companyRows]) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      hints.push({ company_name: r.company_name, email: r.email });
     }
   }
-
   return hints;
 }
 
@@ -118,28 +114,22 @@ export async function findDuplicateClients(input: {
   const supabase = getSupabase();
   const email = normalizeEmailForDedupe(input.email);
   const phoneDigits = normalizePhoneDigits(input.phone);
-  const hints: DuplicateClientHint[] = [];
-  const seen = new Set<string>();
 
-  if (email) {
+  type Row = { id: string; full_name: string; email?: string | null; phone?: string | null };
+
+  const byEmail = async (): Promise<Row[]> => {
+    if (!email) return [];
     const { data, error } = await supabase
       .from("clients")
       .select("id, full_name, email, phone")
       .is("deleted_at", null)
       .ilike("email", email)
       .limit(15);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; full_name: string; email?: string | null; phone?: string | null };
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ full_name: r.full_name, email: r.email, phone: r.phone });
-        }
-      }
-    }
-  }
+    return error ? [] : ((data ?? []) as Row[]);
+  };
 
-  if (phoneDigits) {
+  const byPhone = async (): Promise<Row[]> => {
+    if (!phoneDigits) return [];
     const tail = phoneDigits.slice(-9);
     const safeTail = escapeIlikePattern(tail);
     const { data, error } = await supabase
@@ -149,18 +139,23 @@ export async function findDuplicateClients(input: {
       .not("phone", "is", null)
       .ilike("phone", `%${safeTail}%`)
       .limit(25);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; full_name: string; email?: string | null; phone?: string | null };
-        const p = normalizePhoneDigits(r.phone);
-        if (p && p === phoneDigits && !seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ full_name: r.full_name, email: r.email, phone: r.phone });
-        }
-      }
+    if (error) return [];
+    return ((data ?? []) as Row[]).filter((r) => {
+      const p = normalizePhoneDigits(r.phone);
+      return p === phoneDigits;
+    });
+  };
+
+  const [emailRows, phoneRows] = await Promise.all([byEmail(), byPhone()]);
+
+  const hints: DuplicateClientHint[] = [];
+  const seen = new Set<string>();
+  for (const r of [...emailRows, ...phoneRows]) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      hints.push({ full_name: r.full_name, email: r.email, phone: r.phone });
     }
   }
-
   return hints;
 }
 
@@ -381,46 +376,42 @@ export async function findDuplicatePartners(input: {
   companyName?: string;
 }): Promise<DuplicatePartnerHint[]> {
   const supabase = getSupabase();
-  const hints: DuplicatePartnerHint[] = [];
-  const seen = new Set<string>();
-
   const email = normalizeEmailForDedupe(input.email);
-  if (email) {
+  const co = input.companyName?.trim();
+
+  type Row = { id: string; company_name: string; email: string };
+
+  const byEmail = async (): Promise<Row[]> => {
+    if (!email) return [];
     const { data, error } = await supabase
       .from("partners")
       .select("id, company_name, email")
       .ilike("email", email)
       .limit(8);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; company_name: string; email: string };
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ company_name: r.company_name, email: r.email });
-        }
-      }
-    }
-  }
+    return error ? [] : ((data ?? []) as Row[]);
+  };
 
-  const co = input.companyName?.trim();
-  if (co && co.length >= 3) {
+  const byCompanyName = async (): Promise<Row[]> => {
+    if (!co || co.length < 3) return [];
     const safe = escapeIlikePattern(co);
     const { data, error } = await supabase
       .from("partners")
       .select("id, company_name, email")
       .ilike("company_name", `%${safe}%`)
       .limit(8);
-    if (!error) {
-      for (const row of data ?? []) {
-        const r = row as { id: string; company_name: string; email: string };
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          hints.push({ company_name: r.company_name, email: r.email });
-        }
-      }
+    return error ? [] : ((data ?? []) as Row[]);
+  };
+
+  const [emailRows, companyRows] = await Promise.all([byEmail(), byCompanyName()]);
+
+  const hints: DuplicatePartnerHint[] = [];
+  const seen = new Set<string>();
+  for (const r of [...emailRows, ...companyRows]) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      hints.push({ company_name: r.company_name, email: r.email });
     }
   }
-
   return hints;
 }
 
