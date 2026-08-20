@@ -231,6 +231,32 @@ export async function listPartnersAll(params: Omit<PartnerListParams, "page" | "
 export async function createPartner(
   input: Omit<Partner, "id" | "joined_at" | "rating" | "jobs_completed" | "total_earnings" | "compliance_score">
 ): Promise<Partner> {
+  // Guard against duplicate partner records: the "Add Partner" wizard already
+  // warns staff about a possible email/name match (findDuplicatePartners) but
+  // that warning is dismissable, and other callers may skip it entirely. This
+  // is the last line of defence — without it, a duplicate partner row ends up
+  // with no `auth_user_id`, so its assigned jobs silently never appear in the
+  // Trade Portal or the app for that partner (incident 2026-08-19: RJ Cleaner
+  // Services). Case-insensitive, since `partners.email` isn't guaranteed
+  // lowercase and partners self-register with mixed case.
+  const email = (input as { email?: string | null }).email?.trim();
+  if (email) {
+    const supabase = getSupabase();
+    const { data: existing } = await supabase
+      .from("partners")
+      .select("id, company_name, status, auth_user_id")
+      .ilike("email", email)
+      .maybeSingle();
+    if (existing) {
+      const e = existing as { id: string; company_name: string; status: string; auth_user_id: string | null };
+      throw new Error(
+        e.auth_user_id
+          ? `A partner with this email already exists: "${e.company_name}" (status: ${e.status}) and already has a Trade Portal login. Open that record in Directory instead of creating a new one.`
+          : `A partner with this email already exists: "${e.company_name}" (status: ${e.status}). Open that record in Directory and edit it instead of creating a duplicate.`
+      );
+    }
+  }
+
   return writePartnerWithSchemaCompat("insert", null, {
     ...(input as unknown as Record<string, unknown>),
     rating: PARTNER_RATING_MAX,
