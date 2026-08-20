@@ -1813,21 +1813,21 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         body: JSON.stringify({ partnerId: created.id }),
       }).catch(() => { /* non-blocking */ });
 
-      let onboardingInviteNote: string | null = null;
-      try {
-        const invite = await requestPartnerOnboardingLink(created.id, { sendEmail: true });
-        if (invite.emailSent && invite.sentTo) {
-          onboardingInviteNote = `Onboarding invite sent to ${invite.sentTo}.`;
-        } else if (invite.emailError) {
-          onboardingInviteNote = `Onboarding email failed: ${invite.emailError}`;
-        } else if (invite.warning) {
-          onboardingInviteNote = invite.warning;
-        } else {
-          onboardingInviteNote = "Partner saved; onboarding email was not sent.";
-        }
-      } catch {
-        onboardingInviteNote = "Partner saved; could not send onboarding invite.";
-      }
+      // Sending the onboarding email is an external call (Resend/SMTP) that
+      // isn't needed to know the partner was created — was previously
+      // awaited before the success toast could even show. Fire it in the
+      // background and report its outcome in its own follow-up toast.
+      void requestPartnerOnboardingLink(created.id, { sendEmail: true })
+        .then((invite) => {
+          if (invite.emailSent && invite.sentTo) {
+            toast.success(`Onboarding invite sent to ${invite.sentTo}.`);
+          } else if (invite.emailError) {
+            toast.error(`Onboarding email failed: ${invite.emailError}`);
+          } else if (invite.warning) {
+            toast.message(invite.warning);
+          }
+        })
+        .catch(() => toast.error("Could not send onboarding invite."));
 
       let partnerToShow: Partner = created;
       if (createAvatarFile) {
@@ -1883,7 +1883,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setPendingCreateDocs([]);
       setPendingCreateRateDrafts({});
       refresh();
-      await loadCounts();
+      void loadCounts(); // sidebar/tab badge counts — doesn't need to block the success toast
       if (viewMode === "team") loadTeam();
       const parts: string[] = ["Partner created."];
       if (pendingCreateDocs.length > 0) {
@@ -1900,7 +1900,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             : `${rateSaveCount} custom rate(s) saved.`,
         );
       }
-      if (onboardingInviteNote) parts.push(onboardingInviteNote);
       toast.success(parts.join(" "));
     } catch (err) {
       toast.error(formatPartnerCreateError(err));
@@ -4639,10 +4638,19 @@ function PartnerDetailDrawer({
       }
     }
     try {
-      const homeAddressPatch = await partnerHomeAddressGeocodePatch(
-        overviewForm.partner_address,
-        resolveJobGeocode,
-      );
+      // Geocoding hits an external API (500-2000ms, unpredictable) — only
+      // worth it when the address text actually changed. Editing any other
+      // field (phone, VAT, etc.) shouldn't re-trigger a geocode lookup for
+      // an address that's staying the same.
+      const addressChanged =
+        (overviewForm.partner_address ?? "").trim() !== (partner.partner_address ?? "").trim();
+      const homeAddressPatch = addressChanged
+        ? await partnerHomeAddressGeocodePatch(overviewForm.partner_address, resolveJobGeocode)
+        : {
+            partner_address: (partner.partner_address ?? "").trim() || null,
+            partner_address_latitude: partner.partner_address_latitude ?? null,
+            partner_address_longitude: partner.partner_address_longitude ?? null,
+          };
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number:
