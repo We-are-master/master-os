@@ -1838,35 +1838,44 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           toast.error(err instanceof Error ? err.message : "Photo upload failed");
         }
       }
-      let rateSaveFailed = 0;
-      let rateSaveCount = 0;
-      for (const [serviceId, draft] of Object.entries(pendingCreateRateDrafts)) {
-        const payload = buildPartnerServicePriceInputFromDraft(created.id, serviceId, draft);
-        if (!payload) continue;
-        try {
-          await upsertPartnerServicePrice(payload);
-          rateSaveCount += 1;
-        } catch {
-          rateSaveFailed += 1;
-        }
-      }
-      let docUploadFailed = 0;
-      for (const d of pendingCreateDocs) {
-        try {
-          await insertAndUploadPartnerDocument({
-            partnerId: created.id,
-            uploadedByName: profile?.full_name,
-            docType: d.docType,
-            name: d.name,
-            file: d.file,
-            previewFile: d.previewFile,
-            expiresAt: d.expiresAt,
-            certificateNumber: d.certificateNumber,
-          });
-        } catch {
-          docUploadFailed += 1;
-        }
-      }
+      // Each rate draft / document is independent — was a sequential for-loop
+      // (one round trip after another) with per-item failure tolerance;
+      // Promise.all keeps that same per-item tolerance but fires them together.
+      const rateSaveResults = await Promise.all(
+        Object.entries(pendingCreateRateDrafts).map(async ([serviceId, draft]) => {
+          const payload = buildPartnerServicePriceInputFromDraft(created.id, serviceId, draft);
+          if (!payload) return "skipped" as const;
+          try {
+            await upsertPartnerServicePrice(payload);
+            return "ok" as const;
+          } catch {
+            return "failed" as const;
+          }
+        }),
+      );
+      const rateSaveCount = rateSaveResults.filter((r) => r === "ok").length;
+      const rateSaveFailed = rateSaveResults.filter((r) => r === "failed").length;
+
+      const docUploadResults = await Promise.all(
+        pendingCreateDocs.map(async (d) => {
+          try {
+            await insertAndUploadPartnerDocument({
+              partnerId: created.id,
+              uploadedByName: profile?.full_name,
+              docType: d.docType,
+              name: d.name,
+              file: d.file,
+              previewFile: d.previewFile,
+              expiresAt: d.expiresAt,
+              certificateNumber: d.certificateNumber,
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      const docUploadFailed = docUploadResults.filter((ok) => !ok).length;
       setPartnerDrawerInitialTab(undefined);
       setSelectedPartner(partnerToShow);
       setCreateOpen(false);
