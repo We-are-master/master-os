@@ -46,13 +46,31 @@ export function FixfyPublicShell({
     };
   }, []);
 
+  /**
+   * A PÁGINA rola. Sempre, em qualquer tela.
+   *
+   * O cartão nasceu com `max-h` e `overflow-hidden`, o que é bonito para um
+   * cartão curto e é uma armadilha para um formulário longo: o relatório de
+   * limpeza tem treze blocos de foto e passa de 3000px depois que o parceiro
+   * anexa. Preso num quadro com teto, ele CORTA — em 20/08/2026 o dono mandou
+   * o print com o texto interrompido no meio de "Include: oven, hob..." e um
+   * vazio embaixo.
+   *
+   * Tentei duas vezes acertar a largura em que o teto podia valer (`sm`, depois
+   * `lg`) e as duas vezes sobrou um tamanho de janela onde ele cortava. A
+   * lição é que o teto não tem largura certa: formulário que cresce com o
+   * conteúdo não pode ter altura fixa, ponto.
+   *
+   * O que sobra do cartão é o que era bom nele: a largura máxima, o canto
+   * arredondado e a sombra numa tela grande. Nada disso corta nada.
+   */
   return (
     <div
-      className={`flex min-h-screen items-center justify-center p-4 sm:p-6 ${className}`}
+      className={`flex min-h-screen items-stretch justify-center p-0 lg:items-start lg:p-6 ${className}`}
       style={{ background: FIXFY_BG, colorScheme: "light" }}
     >
       <div
-        className={`flex w-full ${maxW} max-h-[min(100vh-2rem,920px)] flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_8px_30px_rgba(2,0,64,0.08)]`}
+        className={`flex w-full ${maxW} flex-col rounded-none border-0 bg-white lg:rounded-2xl lg:border lg:shadow-[0_8px_30px_rgba(2,0,64,0.08)]`}
         style={{ borderColor: FIXFY_BORDER }}
       >
         {children}
@@ -163,6 +181,12 @@ export function FixfyPublicLoading({ message = "Loading…" }: { message?: strin
 }
 
 /** Scrollable body below the shared header — used by report/bid forms. */
+/**
+ * O corpo do cartão. NÃO rola por dentro: quem rola é a página.
+ *
+ * O nome ficou por causa dos lugares que já o importam, mas o `overflow` saiu:
+ * rolador dentro de rolador é o que prendia o formulário e cortava o fim dele.
+ */
 export function FixfyPublicScrollBody({ children }: { children: ReactNode }) {
-  return <div className="flex-1 overflow-y-auto">{children}</div>;
+  return <div className="flex-1">{children}</div>;
 }

@@ -126,12 +126,31 @@ export interface ReportField {
  * did not answer, so all three have to agree or the payload disagrees with the
  * screen.
  */
-export function isFieldVisible(field: ReportField, data: Record<string, unknown>): boolean {
+export function isFieldVisible(
+  field: { showIf?: { key: string; equals?: unknown; in?: unknown[] } },
+  data: Record<string, unknown>,
+): boolean {
   const gate = field.showIf;
   if (!gate) return true;
   const value = data[gate.key];
   if (gate.in) return gate.in.includes(value);
   return value === gate.equals;
+}
+
+/**
+ * O cliente recusou as fotos, e aí não há foto para exigir.
+ *
+ * A Housekeep faz exatamente isto: marcado o "Did the customer refuse to have
+ * photos taken?", os treze campos de foto SOMEM do formulário deles e a
+ * exigência some junto. Do nosso lado a exigência continuava de pé, então o
+ * parceiro respondia a verdade e ficava preso numa tela que pedia o que ele
+ * acabou de dizer que não tem.
+ *
+ * As outras perguntas continuam valendo: recusar foto não dispensa dizer o que
+ * foi feito.
+ */
+export function photosRefused(data: Record<string, unknown>): boolean {
+  return data.photos_refused === true;
 }
 
 interface TemplateSpec {
@@ -146,6 +165,19 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         key: "recommend_additional_services",
         label: "Spotted any extra work the customer should know about?",
         type: "boolean",
+      },
+      {
+        /**
+         * A Housekeep torna este texto OBRIGATÓRIO no instante em que o sim/não
+         * acima vira Yes. Sem ele aqui, o parceiro dizia "recomendo" e o campo
+         * do outro lado ficava vazio: ou o envio era recusado, ou a Stefane
+         * respondia "não" por cima dele. Três relatórios da base caíram nisso.
+         */
+        key: "recommend_services_note",
+        label: "What would you recommend?",
+        hint: "The client platform asks what the extra work is. One line is enough.",
+        type: "text",
+        showIf: { key: "recommend_additional_services", equals: true },
       },
     ],
     final: [
@@ -163,8 +195,20 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       {
         key: "additional_charges_note",
         label: "Charges note",
+        hint: "What the extra work was and how much you charged. The client platform requires this.",
         type: "text",
-        optional: true,
+        showIf: { key: "additional_charges", equals: true },
+      },
+      {
+        /**
+         * "Did the customer approve these additional charges?" do lado deles,
+         * obrigatório junto com a nota acima. Sem esta resposta o formulário
+         * de trade era recusado toda vez que houvesse cobrança extra: três
+         * jobs da base (9303, 9368, 9370) estão nessa situação.
+         */
+        key: "additional_charges_approved",
+        label: "Did the customer approve the extra charge?",
+        type: "boolean",
         showIf: { key: "additional_charges", equals: true },
       },
       {
@@ -232,8 +276,8 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       {
         key: "materials_charges_note",
         label: "Materials note",
+        hint: "What you bought and how much you charged. The client platform requires this.",
         type: "text",
-        optional: true,
         showIf: { key: "materials_charges", equals: true },
       },
       {
@@ -265,9 +309,37 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         optional: true,
         showIf: { key: "scope_changes", equals: true },
       },
+      {
+        /** "Did the customer approve these additional charges?" do lado deles. */
+        key: "scope_changes_approved",
+        label: "Did the customer approve the change?",
+        type: "boolean",
+        showIf: { key: "scope_changes", equals: true },
+      },
       { key: "pre_existing_damage",  label: "Pre-existing damage noticed?",   type: "boolean" },
+      {
+        /** Obrigatório do lado deles assim que o dano é marcado. */
+        key: "pre_existing_damage_note",
+        label: "Describe the damage",
+        hint: "What was already damaged before you started, and where.",
+        type: "text",
+        showIf: { key: "pre_existing_damage", equals: true },
+      },
       { key: "photos_refused",       label: "Customer refused photos?",       type: "boolean" },
       { key: "recommend_additional_services", label: "Suggest extra services?", type: "boolean" },
+      {
+        /**
+         * A Housekeep torna este texto OBRIGATÓRIO no instante em que o sim/não
+         * acima vira Yes. Sem ele aqui, o parceiro dizia "recomendo" e o campo
+         * do outro lado ficava vazio: ou o envio era recusado, ou a Stefane
+         * respondia "não" por cima dele. Três relatórios da base caíram nisso.
+         */
+        key: "recommend_services_note",
+        label: "What would you recommend?",
+        hint: "The client platform asks what the extra work is. One line is enough.",
+        type: "text",
+        showIf: { key: "recommend_additional_services", equals: true },
+      },
     ],
     final: [
       { key: "job_complete",       label: "Job complete?",            type: "boolean" },
@@ -348,8 +420,20 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       {
         key: "additional_charges_note",
         label: "Charges note",
+        hint: "What the extra work was and how much you charged. The client platform requires this.",
         type: "text",
-        optional: true,
+        showIf: { key: "additional_charges", equals: true },
+      },
+      {
+        /**
+         * "Did the customer approve these additional charges?" do lado deles,
+         * obrigatório junto com a nota acima. Sem esta resposta o formulário
+         * de trade era recusado toda vez que houvesse cobrança extra: três
+         * jobs da base (9303, 9368, 9370) estão nessa situação.
+         */
+        key: "additional_charges_approved",
+        label: "Did the customer approve the extra charge?",
+        type: "boolean",
         showIf: { key: "additional_charges", equals: true },
       },
       {
@@ -403,6 +487,14 @@ export interface ReportPhotoSlot {
   accept?: string;
   /** Large drop-style upload (certificate PDF/photo). */
   prominent?: boolean;
+  /**
+   * Só aparece quando a resposta acima abre espaço para ele.
+   *
+   * Mesma ideia do `showIf` dos campos de texto, e pelo mesmo motivo: bloco de
+   * foto que não se aplica ao job é ruído na tela de quem está de pé na casa
+   * do cliente.
+   */
+  showIf?: { key: string; equals?: unknown; in?: unknown[] };
 }
 
 /** Mirrors the per-template photo bucket layout from the mobile app. */
@@ -436,6 +528,25 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
     ];
     return {
       start: [
+        {
+          /**
+           * Foto do dano que JÁ ESTAVA lá, e é a que protege o parceiro.
+           *
+           * Sem ela, "havia dano prévio" é a palavra dele contra a do cliente
+           * quando a reclamação chega. Dez é teto generoso de propósito: dano
+           * não tem número certo, e quem está olhando para uma parede riscada
+           * não deve ficar escolhendo quais três fotos valem mais.
+           *
+           * Sem piso: ele já respondeu que havia dano, e exigir uma quantidade
+           * mínima de prova de uma coisa que ele não causou seria cobrar dele
+           * o trabalho do cliente.
+           */
+          key: "pre_existing_damage_photos",
+          label: "Photos of the pre-existing damage",
+          hint: "What was already damaged before you started. These protect you if the customer complains later.",
+          max: 10,
+          showIf: { key: "pre_existing_damage", equals: true },
+        },
         { key: "equipment", label: "Cleaning equipment", hint: "The equipment you are using on the job.", min, max },
         ...rooms,
       ],
@@ -444,7 +555,23 @@ export function photoSlotsForTemplate(template: ReportTemplate): {
   }
   if (template === "certificate") {
     return {
-      start: [],
+      /**
+       * O certificado PRECISA de foto de chegada, descoberto em 20/08/2026.
+       *
+       * Certificado cai no formulário de trade da Housekeep, e esse formulário
+       * exige no mínimo uma foto em "Before photos". Nosso template não tinha
+       * seção de chegada nenhuma, então todo EPC e CP12 ia travar pedindo uma
+       * foto que nunca foi pedida ao parceiro. O JOB-9451 estava exatamente
+       * nisso.
+       */
+      start: [
+        {
+          key: "before",
+          label: "Photo on arrival",
+          hint: "One photo of the property or the equipment before testing. The client platform requires it.",
+          min: 1,
+        },
+      ],
       final: [
         {
           key: "certificate",

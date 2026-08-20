@@ -54,6 +54,25 @@ export const HOUSEKEEP_LIMPEZA = {
   jobCompleto: { prefixo: "gkbj9y40qgz4", tipo: "sim_nao" as const, rotulo: "Job complete" },
   /** "Has the customer or landlord inspected and checked off the clean?" */
   clienteInspecionou: { prefixo: "2kz3prnfllbr", tipo: "sim_nao" as const, rotulo: "Customer inspected" },
+  /**
+   * Os condicionais do formulário de limpeza, lidos da API deles em 20/08/2026.
+   *
+   * Ficaram fora do mapa até hoje porque `formaDoFormulario` enumera o que
+   * está NA PÁGINA, e campo condicional não está lá até alguém responder o
+   * gatilho. Foi assim que o JOB-9450 foi recusado: a limpeza tem os SEUS
+   * próprios ids para "What still needs to be completed?" e para a descrição
+   * do porquê, e nenhum dos dois é o id do trade, que era o único mapeado.
+   *
+   * Os dois ids de escopo diferem por UMA letra do id do dano
+   * (`vjze8w4ty4zn` contra `vjze8w4tkazn`). Por isso vieram da API e não de
+   * leitura de tela.
+   */
+  detalhesDaMudanca: { seletor: 'textarea[name="vjze8w4ty4zn"]', tipo: "texto" as const, rotulo: "Scope change details" },
+  clienteAprovouMudanca: { prefixo: "7yzdrexix3ol", tipo: "escolha" as const, rotulo: "Customer approved changes" },
+  descricaoDoDano: { seletor: 'textarea[name="rnorwrdu55b2"]', tipo: "texto" as const, rotulo: "Pre-existing damage description" },
+  servicosRecomendados: { seletor: 'textarea[name="nqolmdn147z2"]', tipo: "texto" as const, rotulo: "Recommended services" },
+  faltaFazer: { seletor: 'textarea[name="dnb5qnrc8qb4"]', tipo: "texto" as const, rotulo: "What still needs completing" },
+  porqueIncompleto: { seletor: 'textarea[name="v3ba2epfayoe"]', tipo: "texto" as const, rotulo: "Why the job is not complete" },
 } as const;
 
 /** Campo do formulário de trade, endereçado por `name` ou por prefixo de `id`. */
@@ -94,6 +113,25 @@ export const HOUSEKEEP_CAMPOS = {
     tipo: "texto" as const,
     rotulo: "Describe additional work",
   },
+  /**
+   * "Describe the recommended services". Nasce escondido atrás do sim/não de
+   * recomendação, e obrigatório no instante em que ele vira Yes.
+   *
+   * Até 20/08/2026 a Stefane mandava esse sim/não SEMPRE como No, sem nem ler
+   * a resposta do parceiro: três relatórios da base tinham o parceiro dizendo
+   * "recomendo mais serviço" e a Housekeep recebeu "não". Perdia o upsell e
+   * reportava errado, em silêncio, sem nunca falhar.
+   */
+  servicosRecomendados: { seletor: 'textarea[name="lnb7aqj0rabe"]', tipo: "texto" as const, rotulo: "Recommended services" },
+  /**
+   * Os dois que a cobrança extra revela, e que derrubavam o envio.
+   *
+   * `cobrancaExtra` já saía do relatório do parceiro, então bastava ele marcar
+   * cobrança para o formulário pedir duas coisas que ninguém preenchia. Três
+   * jobs da base (9303, 9368, 9370) estão nessa situação.
+   */
+  trabalhoAdicionalCobranca: { seletor: 'textarea[name="nqzxwdkuypok"]', tipo: "texto" as const, rotulo: "Additional work and charge" },
+  clienteAprovouCobranca: { prefixo: "dmz2pagfxxok", tipo: "escolha" as const, rotulo: "Customer approved charges" },
   /** Feedback para a Housekeep: 😞 Bad / 😐 Okay / 🙂 Good */
   feedback: { prefixo: "vxowxmk0npz2", tipo: "escolha" as const, rotulo: "Feedback" },
 } as const;
@@ -117,6 +155,34 @@ export const HOUSEKEEP_FOTOS = {
   /** "Upload or take photos — between 1-20 images", diz o botão. */
   maximoPorBloco: HOUSEKEEP_MAX_FOTOS,
 } as const;
+
+/**
+ * O formulário de LIMPEZA tem TREZE campos de arquivo, não dois.
+ *
+ * Contados na página real em 19/08/2026 (JOB-9450): sete em "Before photos"
+ * (equipamento + cinco cômodos + vapor) e seis em "After photos". O código
+ * mandava tudo para os índices 0 e 1 — ou seja, as 20 fotos de chegada iam
+ * para "Cleaning equipment", que aceita DUAS, e as de conclusão iam para a
+ * sala do "antes". Era por isso que o formulário deles aparecia vazio depois
+ * de um envio que o nosso lado dava por feito.
+ *
+ * A chave é a MESMA do nosso app do parceiro (photoSlotsForTemplate): o
+ * espelho só serve se os dois lados chamarem o cômodo pelo mesmo nome. O
+ * rótulo é o começo do texto do bloco na página deles, e casa por prefixo
+ * porque o resto do rótulo é a lista de itens ("include: oven, hob…").
+ */
+export const HOUSEKEEP_COMODOS: Record<string, string> = {
+  equipment: "Cleaning equipment",
+  living_room: "Living room",
+  hallways: "Hallways",
+  kitchen: "Kitchen",
+  bathrooms: "Bathrooms",
+  bedrooms: "Bedrooms",
+  steam_cleaning: "Steam cleaning",
+};
+
+/** Os títulos das duas sanfonas de foto, como a página deles escreve. */
+export const HOUSEKEEP_SECOES_FOTO = { antes: "Before photos", depois: "After photos" } as const;
 
 /** Índice do radio de conclusão, na ordem do formulário. */
 export const CONCLUSAO = {
@@ -238,11 +304,21 @@ export type PayloadLimpeza = {
   inicio: string | null;
   fim: string | null;
   escopoMudou: boolean;
+  /** Obrigatórios quando `escopoMudou` é true. */
+  detalhesDaMudanca: string | null;
+  clienteAprovouMudanca: boolean;
   danoPrevio: boolean;
+  /** Obrigatório quando `danoPrevio` é true. */
+  descricaoDoDano: string | null;
   recusouFotos: boolean;
   jobCompleto: boolean;
+  /** Os dois que o "job não está completo" revela. */
+  faltaFazer: string | null;
+  porqueIncompleto: string | null;
   clienteInspecionou: boolean;
   recomendaServicos: boolean;
+  /** Obrigatório quando `recomendaServicos` é true. */
+  servicosRecomendados: string | null;
   feedback: number;
 };
 
@@ -254,6 +330,30 @@ export type PayloadLimpeza = {
  * é dele que sai a única pergunta que a Housekeep realmente usa, se o job foi
  * concluído. Sem ele, marcar qualquer coisa é chute.
  */
+/**
+ * Sem horário não se envia, e isso é regra DELES.
+ *
+ * "Start time" e "Finish time" são campos visíveis e obrigatórios nos DOIS
+ * formulários. O código preenchia só quando havia valor (`if (p.inicio)`), e
+ * quando não havia mandava os dois em branco e esperava o melhor.
+ *
+ * Descoberto no JOB-9449 em 20/08/2026, do jeito caro: o parceiro nunca ligou
+ * o timer, o envio subiu as 60 fotos, levou 441 segundos e voltou recusado com
+ * "fields not accepted: Start time, Finish time". Sete minutos para descobrir
+ * uma coisa que se sabia antes de abrir o navegador.
+ */
+function exigirHorarios(
+  inicio: string | null,
+  fim: string | null,
+): { ok: false; motivo: string } | null {
+  if (inicio && fim) return null;
+  const falta = !inicio && !fim ? "start and finish times" : !inicio ? "the start time" : "the finish time";
+  return {
+    ok: false,
+    motivo: `no on-site ${falta}: the client platform requires both, and the partner timer was never run. Set them in Edit report.`,
+  };
+}
+
 export function payloadLimpeza(input: {
   start: Record<string, unknown> | null;
   final: Record<string, unknown> | null;
@@ -261,19 +361,93 @@ export function payloadLimpeza(input: {
   fim: string | null;
 }): { ok: true; payload: PayloadLimpeza } | { ok: false; motivo: string } {
   if (!input.final) return { ok: false, motivo: "no final report from the partner" };
+  const semHora = exigirHorarios(horaLondres(input.inicio), horaLondres(input.fim));
+  if (semHora) return semHora;
   const s = input.start ?? {};
   const f = input.final;
+
+  // Os três gatilhos do formulário de limpeza que abrem campo obrigatório.
+  let detalhes: string | null = null;
+  if (s.scope_changes) {
+    const r = exigirTexto(s.scope_changes_note, "Give details of these changes", "the job scope changed");
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    detalhes = r.texto;
+  }
+  let dano: string | null = null;
+  if (s.pre_existing_damage) {
+    const r = exigirTexto(
+      s.pre_existing_damage_note,
+      "Describe the damage observed before starting the job",
+      "there is pre-existing damage",
+    );
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    dano = r.texto;
+  }
+  let recomendacao: string | null = null;
+  if (s.recommend_additional_services) {
+    const r = exigirTexto(
+      s.recommend_services_note,
+      "Describe the recommended services",
+      "recommends additional services",
+    );
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    recomendacao = r.texto;
+  }
+  /**
+   * "Is the job complete? No" abre DOIS campos obrigatórios, e foi assim que o
+   * JOB-9450 foi recusado: o relatório não trazia `job_complete`, o Boolean de
+   * undefined virou false, a Stefane respondeu "não" e os dois campos que
+   * apareceram ficaram vazios.
+   */
+  const completo =
+    typeof f.job_complete === "boolean"
+      ? f.job_complete
+      : String(f.completion_status ?? "").trim() === "complete";
+  let falta: string | null = null;
+  let porque: string | null = null;
+  if (!completo) {
+    const r = exigirTexto(
+      f.what_needs_completing,
+      "What still needs to be completed?",
+      "the job is not complete",
+    );
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    falta = r.texto;
+    porque = String(f.incomplete_reason ?? "").trim() || r.texto;
+  }
+
   return {
     ok: true,
     payload: {
       inicio: horaLondres(input.inicio),
       fim: horaLondres(input.fim),
       escopoMudou: Boolean(s.scope_changes),
+      detalhesDaMudanca: detalhes,
+      clienteAprovouMudanca: Boolean(s.scope_changes_approved),
       danoPrevio: Boolean(s.pre_existing_damage),
+      descricaoDoDano: dano,
       recusouFotos: Boolean(s.photos_refused),
-      jobCompleto: Boolean(f.job_complete),
+      /**
+       * O relatório nem sempre é o de limpeza, mesmo quando o formulário é.
+       *
+       * No JOB-9450 o parceiro digitou um relatório `general` num End of
+       * Tenancy: não existe `job_complete` ali, existe `completion_status`.
+       * Ler só a primeira chave devolvia `undefined`, `Boolean(undefined)` é
+       * false, e a Stefane respondeu "Is the job complete? No" num job que
+       * estava concluído. Responder "No" abre dois campos de texto
+       * obrigatórios, e foi assim que o envio inteiro foi recusado.
+       */
+      jobCompleto: completo,
+      faltaFazer: falta,
+      porqueIncompleto: porque,
+      /**
+       * Sem equivalente no template chapado, e aqui o padrão honesto é `false`:
+       * dizer que o cliente inspecionou sem ninguém ter registrado isso é
+       * inventar uma resposta que o cliente pode desmentir.
+       */
       clienteInspecionou: Boolean(f.customer_inspected),
       recomendaServicos: Boolean(s.recommend_additional_services),
+      servicosRecomendados: recomendacao,
       feedback: FEEDBACK.bom,
     },
   };
@@ -290,8 +464,35 @@ export type PayloadHousekeep = {
   /** Obrigatório quando `precisaRetorno` é true. Null quando não é. */
   trabalhoAdicional: string | null;
   recomendaServicos: boolean;
+  /** Obrigatório quando `recomendaServicos` é true. */
+  servicosRecomendados: string | null;
+  /** Os dois que a cobrança extra revela e torna obrigatórios. */
+  trabalhoAdicionalCobranca: string | null;
+  clienteAprovouCobranca: boolean;
   feedback: number;
 };
+
+/**
+ * O texto que um sim/não obrigou, ou o motivo de não dar para enviar.
+ *
+ * A Housekeep transforma vários sim/não em pergunta aberta obrigatória. Quando
+ * o parceiro marcou o sim e não escreveu nada, há duas saídas ruins e uma
+ * certa: responder "não" mente sobre o que ele disse, inventar o texto mente
+ * sobre o serviço, e BLOQUEAR devolve a pergunta para quem sabe responder.
+ * Bloquear é o certo, e a mensagem já sai pronta para o card.
+ */
+function exigirTexto(
+  valor: unknown,
+  campo: string,
+  gatilho: string,
+): { ok: true; texto: string } | { ok: false; motivo: string } {
+  const t = String(valor ?? "").trim();
+  if (t) return { ok: true, texto: t };
+  return {
+    ok: false,
+    motivo: `the report says "${gatilho}" but "${campo}" is empty, and the client platform requires it. Fill it in Edit report.`,
+  };
+}
 
 /**
  * Monta o payload a partir do report final do parceiro.
@@ -302,16 +503,104 @@ export type PayloadHousekeep = {
  */
 export function payloadDoReport(input: {
   final: Record<string, unknown> | null;
+  /**
+   * O relatório de CHEGADA entra aqui desde 20/08/2026.
+   *
+   * "Can you recommend any additional Housekeep services?" é pergunta do
+   * template de chegada do nosso lado e do formulário inteiro do lado deles.
+   * Sem este segundo envelope a resposta do parceiro não tinha como chegar, e
+   * a Stefane mandava "não" por cima dela.
+   */
+  start?: Record<string, unknown> | null;
   inicio: string | null;
   fim: string | null;
   recomendaServicos?: boolean;
 }): { ok: true; payload: PayloadHousekeep } | { ok: false; motivo: string } {
   const f = input.final ?? {};
+  const s = input.start ?? {};
   // `inspection_summary` é como o template de certificado chama a descrição.
   // Sem essa segunda chave nenhum job de certificado conseguia ser enviado:
   // morria aqui dizendo que o report não tinha descrição.
   const descricao = String(f.description ?? f.inspection_summary ?? "").trim();
   if (!descricao) return { ok: false, motivo: "the final report has no work description" };
+  const semHora = exigirHorarios(horaLondres(input.inicio), horaLondres(input.fim));
+  if (semHora) return semHora;
+
+  /**
+   * Os dois gatilhos que revelam campo obrigatório, conferidos aqui.
+   *
+   * Antes do envio e não durante: falhar com o nome do campo vazio é uma
+   * mensagem que alguém resolve em trinta segundos; falhar no Submit é uma
+   * recusa da Housekeep que não diz qual campo era.
+   */
+  /**
+   * `seasonal_maintenance` do jardim É uma recomendação de serviço.
+   *
+   * "Feed the lawn in spring" responde exatamente "Can you recommend any
+   * additional Housekeep services?", e ia para o lixo porque o template de
+   * jardim não tem o booleano. Aqui o texto escrito vale como o sim.
+   */
+  const recomendaTexto = String(
+    s.recommend_services_note ?? f.recommend_services_note ?? f.seasonal_maintenance ?? "",
+  ).trim();
+  // Mesma regra do retorno: o booleano do template manda quando existe, e o
+  // texto do jardim só decide onde não há booleano nenhum para consultar.
+  const recomendaExplicito = s.recommend_additional_services ?? f.recommend_additional_services;
+  const recomenda =
+    input.recomendaServicos ??
+    (typeof recomendaExplicito === "boolean" ? recomendaExplicito : recomendaTexto.length > 0);
+  let textoRecomendacao: string | null = null;
+  if (recomenda) {
+    const r = exigirTexto(
+      recomendaTexto,
+      "Describe the recommended services",
+      "recommends additional services",
+    );
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    textoRecomendacao = r.texto;
+  }
+  /**
+   * JARDIM chama cobrança de `materials_charges`, e isso não é sinônimo solto.
+   *
+   * O template de jardim não tem `additional_charges`: quem cobra material ali
+   * marca `materials_charges` e escreve quanto em `materials_charges_note`. O
+   * transporte lia só o nome do template chapado, então um jardineiro que
+   * cobrou £24 de casca produzia um relatório que se contradizia sozinho:
+   * "Additional charges? No" no radio, e "Materials/parts used: £24" na
+   * descrição logo abaixo. Quem lê do outro lado escolhe em qual acreditar.
+   */
+  const cobrou = Boolean(f.additional_charges ?? f.materials_charges);
+  let textoCobranca: string | null = null;
+  if (cobrou) {
+    const r = exigirTexto(
+      f.additional_charges_note ?? f.materials_charges_note ?? f.materials_used,
+      "What additional work was required & how much did you charge",
+      "there are additional charges",
+    );
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    textoCobranca = r.texto;
+  }
+
+  /**
+   * O retorno do jardim já estava escrito, e era jogado fora.
+   *
+   * `next_visit_tasks` é literalmente "o que fica para a próxima visita", e a
+   * Housekeep pergunta "Is any follow up work required?" com um campo de texto
+   * atrás. Um jardineiro escrevendo "a cerca precisa de outro corte em 6
+   * semanas" respondia as duas coisas de uma vez, e nós mandávamos "No" e
+   * descartávamos a frase.
+   */
+  const proximaVisita = String(f.next_visit_tasks ?? "").trim();
+  /**
+   * Resposta EXPLÍCITA sempre ganha da inferida.
+   *
+   * O template chapado tem o booleano e o parceiro respondeu; deduzir "sim" a
+   * partir de um texto que sobrou noutro campo passaria por cima dele. A
+   * inferência existe só onde o booleano NÃO EXISTE, que é o caso do jardim.
+   */
+  const precisaRetorno =
+    typeof f.follow_up_required === "boolean" ? f.follow_up_required : proximaVisita.length > 0;
+  const retornoTexto = String(f.what_needs_completing ?? "").trim() || proximaVisita;
 
   return {
     ok: true,
@@ -321,18 +610,19 @@ export function payloadDoReport(input: {
       // A validação acima olha só a descrição base: relatório que só tem
       // material e nenhuma descrição continua não valendo envio.
       descricao: montarDescricao(f, descricao),
-      cobrancaExtra: Boolean(f.additional_charges),
+      cobrancaExtra: cobrou,
       conclusao: conclusaoDoReport(f),
       faltaFazer: (f.what_needs_completing as string | null)?.trim() || null,
-      precisaRetorno: Boolean(f.follow_up_required),
+      precisaRetorno,
       // Responder "Yes" no retorno revela "Describe additional work" e o torna
       // obrigatório. Ou seja: dizer que precisa voltar sem dizer para quê é o
       // que a Housekeep recusa. Reaproveita o que já foi escrito sobre o que
       // ficou faltando, que é exatamente o trabalho do retorno.
-      trabalhoAdicional: f.follow_up_required
-        ? (f.what_needs_completing as string | null)?.trim() || descricao
-        : null,
-      recomendaServicos: Boolean(input.recomendaServicos),
+      trabalhoAdicional: precisaRetorno ? retornoTexto || descricao : null,
+      recomendaServicos: recomenda,
+      servicosRecomendados: textoRecomendacao,
+      trabalhoAdicionalCobranca: textoCobranca,
+      clienteAprovouCobranca: Boolean(f.additional_charges_approved),
       // Sempre "bom" a menos que o parceiro tenha sinalizado problema: é
       // feedback nosso sobre a Housekeep, não sobre o job, e reclamar sem
       // motivo com quem manda 153 jobs não ajuda ninguém.

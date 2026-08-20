@@ -252,7 +252,7 @@ async function sincronizarAwaitingPayment(): Promise<void> {
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-  const { cotarTicket, subirJobBooked } = await import("../../src/lib/zendesk-quoter/quoter");
+  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro } = await import("../../src/lib/zendesk-quoter/quoter");
 
   const vistos = lerVistos();
   const candidatos = (await buscarCandidatos()).filter(
@@ -271,6 +271,31 @@ async function ciclo(): Promise<void> {
   let cotados = 0, criados = 0;
   for (const t of candidatos.slice(0, MAX_CLASSIFICADOS_POR_CICLO)) {
     if (cotados >= MAX_QUOTES_POR_CICLO && criados >= MAX_JOBS_POR_CICLO) break;
+    /**
+     * PARCEIRO confirmando agendamento vem ANTES do classificador.
+     *
+     * O e-mail deles diz "your booking is confirmed", e o classificador lia
+     * isso como pedido de booking e mandava criar job novo — o que parava na
+     * nota de "missing info" e deixava o ticket aberto. Confirmação de quem
+     * VAI EXECUTAR não é pedido de serviço: fecha o ciclo do job que já
+     * existe. Nem gasta chamada de modelo.
+     */
+    try {
+      const conf = await confirmarBookingDeParceiro(t.id, true);
+      if (conf.status === "confirmado") {
+        vistos.add(t.id); gravarVistos(vistos);
+        console.log(`[harvey] ✔ ${conf.parceiro} confirmou ${conf.reference} a partir do #${t.id} — ticket solved`);
+        continue;
+      }
+      if (conf.status === "sem_job") {
+        vistos.add(t.id); gravarVistos(vistos);
+        console.log(`[harvey] ◐ ${conf.parceiro} confirmou algo no #${t.id} e eu nao achei o job — nota interna pedindo`);
+        continue;
+      }
+    } catch (err) {
+      console.error(`[harvey] confirmacao de parceiro falhou no ${t.id}: ${err}`);
+    }
+
     let quer = { quote: false, booking: false };
     try {
       quer = await pedePreco(t, apiKey);

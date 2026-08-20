@@ -414,6 +414,79 @@ const JOB_AUTO_ASSIGN_SELECT =
   "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids, latitude, longitude";
 
 /**
+ * Quantos parceiros o Auto assign vai chamar, ANTES de chamar. Roda o mesmo
+ * casamento do dispatch e não escreve nada: é o número que o escritório vê na
+ * confirmação, porque "Auto assign" dispara push e e-mail de verdade e não dá
+ * para descobrir o tamanho do disparo depois que ele saiu.
+ *
+ * Se o job já tem fila de convidados, ela manda: é para ela que o reenvio vai,
+ * não para um casamento novo.
+ */
+export async function previewAutoAssignInvitePartners(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<
+  | { ok: true; partnerCount: number; partnerNames: string[]; alreadyInvited: boolean }
+  | { ok: false; error: string; status: number }
+> {
+  const { data: jobRow, error: jobErr } = await supabase
+    .from("jobs")
+    .select(JOB_AUTO_ASSIGN_SELECT)
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (jobErr || !jobRow) {
+    return { ok: false, error: "Job not found.", status: 404 };
+  }
+
+  const job = jobRow as JobAutoAssignRow;
+  if (job.partner_id) {
+    return { ok: false, error: "Job already has a partner assigned.", status: 409 };
+  }
+
+  const queued = (job.auto_assign_invited_partner_ids ?? []).filter(Boolean);
+  let partnerIds = queued;
+  if (partnerIds.length === 0) {
+    const { serviceType, catalogServiceId } = await resolveJobMatchServiceType(supabase, job);
+    partnerIds = await matchPartnerIdsForWork(supabase, {
+      serviceType,
+      catalogServiceId,
+      postcode: extractUkPostcode(job.property_address ?? ""),
+      latitude: job.latitude ?? null,
+      longitude: job.longitude ?? null,
+      kind: "job",
+      availabilitySlot: {
+        scheduledDate: job.scheduled_date,
+        startAt: job.scheduled_start_at,
+        endAt: job.scheduled_end_at,
+      },
+    });
+  }
+
+  if (partnerIds.length === 0) {
+    return { ok: true, partnerCount: 0, partnerNames: [], alreadyInvited: false };
+  }
+
+  const { data: partnerRows } = await supabase
+    .from("partners")
+    .select("id, company_name")
+    .in("id", partnerIds);
+  const nameById = new Map(
+    ((partnerRows ?? []) as { id: string; company_name: string | null }[]).map((r) => [
+      r.id,
+      r.company_name?.trim() || "",
+    ]),
+  );
+
+  return {
+    ok: true,
+    partnerCount: partnerIds.length,
+    partnerNames: partnerIds.map((id) => nameById.get(id) || "Partner").filter(Boolean),
+    alreadyInvited: queued.length > 0,
+  };
+}
+
+/**
  * Match partners (when needed), persist invite list, push + Zendesk Email 1.
  * Safe to call after OS manual create or POST /api/jobs with auto_assign.
  */

@@ -209,9 +209,17 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   if (tabId === "action_required") {
     return jobMatchesJobsManagementTab(jobStatus, "unassigned") || jobStatus === "on_hold";
   }
+  /**
+   * Closed é TERMINAL: job pago ou perdido, nada mais.
+   *
+   * `awaiting_payment` saiu daqui em 20/08/2026 e virou aba própria. Ele estava
+   * dentro de Closed como um balde, e o efeito era esconder trabalho vivo atrás
+   * de um rótulo que diz "acabou": 65 jobs esperando dinheiro moravam na mesma
+   * aba dos 209 já pagos e dos 157 cancelados. Quem procura o que falta receber
+   * tinha que saber que "fechado" também queria dizer "aberto".
+   */
   if (tabId === "closed") {
     return (
-      jobStatus === "awaiting_payment" ||
       jobStatus === "completed" ||
       jobStatus === "cancelled" ||
       jobStatus === "deleted"

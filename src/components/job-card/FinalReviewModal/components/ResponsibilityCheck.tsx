@@ -1,21 +1,37 @@
 type Props = {
   confirmed: boolean;
   onChange: (v: boolean) => void;
-  sentToAccounts: boolean;
-  onSentToAccountsChange: (v: boolean) => void;
   currentUserName: string;
+  /**
+   * O relatório chegou à plataforma do cliente. Vem do `submitted_at` da API
+   * deles, não de opinião de ninguém.
+   */
+  envioResolvido: boolean;
+  /** Quando chegou, para a linha dizer a hora em vez de só "sim". */
+  envioQuando?: string | null;
+  /** Como o relatório foi resolvido, quando não foi por envio automático. */
+  envioNota?: string | null;
   /** True enquanto o relatório pendente estiver travando o Finalise. */
   bloqueadoPeloEnvio?: boolean;
   /** Libera a finalização mesmo com o relatório pendente. */
   onForcar?: () => void;
 };
 
+function hora(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function ResponsibilityCheck({
   confirmed,
   onChange,
-  sentToAccounts,
-  onSentToAccountsChange,
   currentUserName,
+  envioResolvido,
+  envioQuando,
+  envioNota,
   bloqueadoPeloEnvio,
   onForcar,
 }: Props) {
@@ -46,24 +62,36 @@ export function ResponsibilityCheck({
         </span>
       </label>
 
-      <label
-        className="flex items-start gap-[10px] text-[12px] cursor-pointer leading-[1.5]"
-        style={{ color: "#6B6B70" }}
-      >
-        <input
-          type="checkbox"
-          checked={sentToAccounts}
-          onChange={(e) => onSentToAccountsChange(e.target.checked)}
-          style={{ marginTop: "2px", accentColor: "#020040" }}
-        />
-        <span>
-          I confirm the report has also been{" "}
-          <span className="font-medium" style={{ color: "#020040" }}>
-            submitted to the customer
+      {/*
+        O SEGUNDO checkbox saiu em 20/08/2026, e a razão não é economia de
+        clique.
+
+        Ele pedia "confirmo que o relatório foi submetido ao cliente" — um fato
+        que o sistema PROVA e a pessoa só podia adivinhar. Pedir atestado
+        humano de algo verificável tem duas saídas e as duas são ruins: ou trava
+        um envio que já aconteceu, ou colhe um "sim" que ninguém checou. No
+        JOB-9454 o relatório entrou às 18:00 e a tela ainda pedia que alguém
+        jurasse que sim.
+
+        Agora a linha AFIRMA, com a hora que veio do `submitted_at` da API
+        deles. Quando não foi, ela não vira pergunta: vira o aviso abaixo, que
+        é o que de fato precisa de decisão.
+      */}
+      {envioResolvido ? (
+        <p
+          className="m-0 flex items-start gap-[10px] text-[12px] leading-[1.5]"
+          style={{ color: "#12704F" }}
+        >
+          <span aria-hidden style={{ marginTop: "1px" }}>
+            ✓
           </span>
-          .
-        </span>
-      </label>
+          <span>
+            Report is on the client platform
+            {envioQuando ? ` · ${hora(envioQuando)}` : ""}
+            {envioNota ? ` · ${envioNota}` : ""}. Checked on their side, not ticked by hand.
+          </span>
+        </p>
+      ) : null}
 
       {/*
         Enquanto o relatório não chegou na plataforma do cliente, finalizar é o

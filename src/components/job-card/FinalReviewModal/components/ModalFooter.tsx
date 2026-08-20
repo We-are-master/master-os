@@ -9,6 +9,15 @@ type Props = {
    * porque a decisão é outra — e forçar sem perceber era o buraco.
    */
   forcado?: boolean;
+  /**
+   * O que o botão vai FAZER, escrito nele.
+   *
+   * Três trabalhos diferentes se escondiam atrás de "Finalise & approve":
+   * finalizar um job cujo relatório já chegou, MANDAR o relatório e depois
+   * finalizar, e fechar sem mandar. Botão que não diz qual dos três faz é
+   * botão que se aperta no escuro.
+   */
+  rotulo?: string;
 };
 
 export function ModalFooter({
@@ -17,6 +26,7 @@ export function ModalFooter({
   onCancel,
   onApprove,
   forcado,
+  rotulo,
 }: Props) {
   return (
     <div
@@ -42,7 +52,7 @@ export function ModalFooter({
           cursor: !canApprove || submitting ? "not-allowed" : "pointer",
         }}
       >
-        <span>{forcado ? "Force approve" : "Finalise & approve"}</span>
+        <span>{rotulo ?? (forcado ? "Force approve" : "Finalise & approve")}</span>
         <span aria-hidden className="text-[14px]">→</span>
       </button>
     </div>

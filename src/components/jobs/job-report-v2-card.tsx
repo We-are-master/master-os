@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, Download, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   normalizeReport,
@@ -662,16 +662,88 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 export interface JobReportV2DownloadButtonProps {
   jobId:    string;
   reference: string;
+  /** `jobs.final_report` cru: é ele que diz se este job entrega certificado. */
+  rawFinalReport?: unknown;
 }
 
-export function JobReportV2DownloadButton({ jobId, reference }: JobReportV2DownloadButtonProps) {
+const DOWNLOAD_BTN_CLASS =
+  "inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-[#FAFAFB]";
+const DOWNLOAD_BTN_STYLE = { color: "#020040", border: "0.5px solid #D8D8DD" } as const;
+
+/**
+ * Job de certificado entrega o CERTIFICADO, não o relatório do Fixfy.
+ *
+ * O PDF que este botão gerava é o resumo da visita, e para um EICR ele é o
+ * documento errado: quem pede um EICR quer o EICR — é ele que o inquilino, o
+ * agente e o conselho aceitam. O papel que vale está anexado no relatório
+ * final, no bucket privado, então aqui ele é assinado na hora e aberto.
+ *
+ * Sem anexo o botão não cai de volta no PDF do Fixfy: entregar o documento
+ * errado é pior que dizer que ele falta, e a falta é o que o escritório
+ * precisa ver para cobrar o parceiro.
+ */
+export function JobReportV2DownloadButton({ jobId, reference, rawFinalReport }: JobReportV2DownloadButtonProps) {
+  const [abrindo, setAbrindo] = useState<number | null>(null);
+  const ehCertificado =
+    (rawFinalReport as { template?: unknown } | null)?.template === "certificate";
+  const anexos = useMemo(
+    () => (ehCertificado ? certificateAttachmentUrls(rawFinalReport) : []),
+    [ehCertificado, rawFinalReport],
+  );
+
+  const abrirCertificado = useCallback(async (rawUrl: string, i: number) => {
+    setAbrindo(i);
+    try {
+      const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
+      if (!signed) {
+        toast.error("Could not open the certificate file.");
+        return;
+      }
+      window.open(signed, "_blank", "noopener,noreferrer");
+    } finally {
+      setAbrindo(null);
+    }
+  }, []);
+
+  if (ehCertificado) {
+    if (anexos.length === 0) {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+          style={{ color: "#9A9AA0", border: "0.5px solid #E4E4E8" }}
+          title="The partner has not attached the certificate to the final report yet."
+        >
+          <AlertTriangle className="h-3 w-3" />
+          Certificate not attached
+        </span>
+      );
+    }
+    return (
+      <>
+        {anexos.map((url, i) => (
+          <button
+            key={url}
+            type="button"
+            onClick={() => void abrirCertificado(url, i)}
+            disabled={abrindo != null}
+            className={`${DOWNLOAD_BTN_CLASS} cursor-pointer disabled:opacity-40`}
+            style={DOWNLOAD_BTN_STYLE}
+          >
+            {abrindo === i ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+            Certificate{anexos.length > 1 ? ` ${i + 1}` : ""} · {reference}
+          </button>
+        ))}
+      </>
+    );
+  }
+
   return (
     <a
       href={`/api/jobs/${jobId}/reports/pdf`}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-[#FAFAFB]"
-      style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+      className={DOWNLOAD_BTN_CLASS}
+      style={DOWNLOAD_BTN_STYLE}
     >
       <ExternalLink className="h-3 w-3" />
       Download PDF · {reference}
@@ -680,3 +752,59 @@ export function JobReportV2DownloadButton({ jobId, reference }: JobReportV2Downl
 }
 
 export default JobReportV2Card;
+
+/**
+ * Baixa TODAS as fotos do relatório num zip, nomeadas por metade e cômodo.
+ *
+ * Existe porque a aba Reports deixou de ser onde se decide e passou a ser onde
+ * se olha (pedido do dono, 20/08/2026): a nota da IA já diz se o relatório
+ * serve, e o que sobra para uma pessoa é ver as fotos e guardá-las. Trinta
+ * abas de navegador não é ver, e não é guardar.
+ *
+ * O zip é montado no servidor porque as URLs do bucket são privadas e assinar
+ * cento e vinte delas no navegador para baixar uma a uma seria a mesma dor com
+ * mais passos.
+ */
+export function JobReportPhotosZipButton({ jobId, reference }: { jobId: string; reference: string }) {
+  const [baixando, setBaixando] = useState(false);
+
+  const baixar = useCallback(async () => {
+    setBaixando(true);
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/report-photos`);
+      if (!r.ok) {
+        const corpo = (await r.json().catch(() => null)) as { error?: string } | null;
+        toast.error(corpo?.error ?? "Could not build the photo download.");
+        return;
+      }
+      // Um relatório de limpeza passa de 150MB: o blob vira um link temporário
+      // em vez de ir para a memória do React.
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${reference}-report-photos.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not build the photo download.");
+    } finally {
+      setBaixando(false);
+    }
+  }, [jobId, reference]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => void baixar()}
+      disabled={baixando}
+      className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-50"
+      style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+    >
+      <Download className="h-3.5 w-3.5" />
+      {baixando ? "Zipping photos…" : "Download photos"}
+    </button>
+  );
+}

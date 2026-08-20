@@ -209,7 +209,7 @@ const LEGACY_JOBS_MANAGEMENT_TAB: Partial<
 > = {
   unassigned: { tab: "action_required" },
   on_hold: { tab: "action_required" },
-  awaiting_payment: { tab: "closed", closedFilter: "awaiting_payment" },
+  awaiting_payment: { tab: "awaiting_payment" },
   completed: { tab: "closed", closedFilter: "paid" },
   cancelled: { tab: "closed", closedFilter: "lost" },
   deleted: { tab: "closed", closedFilter: "archived" },
@@ -377,6 +377,7 @@ const JOBS_DEFAULT_TAB_IDS = [
   "scheduled",
   "in_progress",
   "final_check",
+  "awaiting_payment",
   "closed",
 ] as const;
 type JobsDefaultTabId = (typeof JOBS_DEFAULT_TAB_IDS)[number];
@@ -386,6 +387,7 @@ const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
   scheduled: "Scheduled",
   in_progress: "In Progress",
   final_check: "Final Checks",
+  awaiting_payment: "Awaiting Payment",
   closed: "Closed",
 };
 
@@ -1237,6 +1239,16 @@ function JobsPageContent() {
         items: scheduleSortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
       },
       {
+        // Entre a entrega e o encerramento: o trabalho acabou, o dinheiro não
+        // entrou. Antes vivia dentro de Closed, o que escondia 65 jobs com
+        // dinheiro a receber atrás de um rótulo que diz "acabou".
+        id: "awaiting_payment",
+        title: "Awaiting payment",
+        color: "bg-amber-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "awaiting_payment")),
+      },
+      {
+        // Terminal de verdade: pago ou cancelado, nada que ainda espere algo.
         id: "closed",
         title: "Closed",
         color: "bg-slate-500",
@@ -1372,8 +1384,11 @@ function JobsPageContent() {
 
   const actionRequiredTabCount = unassignedTabCount + onHoldTabCount;
 
+  const awaitingPaymentTabCount = tabCounts.awaiting_payment ?? 0;
+
+  /** Closed é terminal: pago ou cancelado. `awaiting_payment` saiu daqui e tem
+   *  aba própria, porque job esperando dinheiro é trabalho vivo. */
   const closedTabCount =
-    (tabCounts.awaiting_payment ?? 0) +
     (tabCounts.completed ?? 0) +
     (tabCounts.cancelled ?? 0) +
     (scheduleRange ? (tabCounts.archived_overlap_window ?? 0) : (tabCounts.deleted ?? 0));
@@ -1382,9 +1397,9 @@ function JobsPageContent() {
   const kpiActiveJobsCount =
     actionRequiredTabCount + scheduledTabCount + inProgressTabCount + finalChecksTabCount;
 
-  /** First tab badge = Active jobs (Action Required → Final Checks). Closed
-   *  buckets (awaiting_payment / completed / cancelled / deleted) live under
-   *  the Closed tab and are intentionally excluded here. */
+  /** First tab badge = Active jobs (Action Required → Final Checks).
+   *  `awaiting_payment` tem aba própria e Closed guarda completed / cancelled /
+   *  deleted; nenhum dos dois entra aqui, de propósito. */
   const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
@@ -1393,6 +1408,7 @@ function JobsPageContent() {
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting Payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
@@ -2924,9 +2940,10 @@ function JobsPageContent() {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Closed</span>
               {(
                 [
+                  // "Awaiting Payment" saiu daqui junto com os jobs: eles têm
+                  // aba própria agora, e o botão filtraria por um balde vazio.
                   ["all", "All"],
                   ["paid", "Paid"],
-                  ["awaiting_payment", "Awaiting Payment"],
                   ["archived", "Archived"],
                   ["lost", "Lost"],
                 ] as const

@@ -259,9 +259,17 @@ async function main() {
     for (const g of aDar) {
       const ult = g.cred[g.cred.length - 1];
       const quando = ult.pagoEm ? new Date(ult.pagoEm + " 12:00:00 UTC").toISOString() : ult.criado;
+      // Recebido fecha o job NA HORA, e não só marca as colunas de dinheiro.
+      // Sem esta linha o job ficava em `awaiting_payment` para sempre depois de
+      // pago: em 20/08/2026 havia 29 assim, todos com a invoice já quitada,
+      // entupindo a aba de quem procura o que ainda falta receber.
+      //
+      // Só de `awaiting_payment`. Job em `final_check` tem dinheiro dentro e
+      // relatório pendente, e fechá-lo pularia a entrega que o cliente cobra.
+      const fecha = g.job.status === "awaiting_payment" ? { status: "completed" } : {};
       await fetch(`${SB}/rest/v1/jobs?id=eq.${g.job.id}`, {
         method: "PATCH", headers: SHW,
-        body: JSON.stringify({ payment_status: "paid", finance_status: "paid", payment_amount: g.soma, paid_at: quando }),
+        body: JSON.stringify({ ...fecha, payment_status: "paid", finance_status: "paid", payment_amount: g.soma, paid_at: quando }),
       });
 
       if (!g.job.invoice_id) continue;

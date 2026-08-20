@@ -63,7 +63,14 @@ export async function POST(req: NextRequest) {
   const corpo = (await req.json().catch(() => ({}))) as {
     acao?: string;
     cards?: CardDoBoard[];
-    itens?: { jobId: string; reportLink: string; scope?: string }[];
+    itens?: {
+      jobId: string;
+      reportLink?: string;
+      scope?: string;
+      propertyAddress?: string;
+      clientEmail?: string;
+      clientPhone?: string;
+    }[];
   };
   const supabase = createServiceClient();
 
@@ -72,17 +79,41 @@ export async function POST(req: NextRequest) {
     const itens = (corpo.itens ?? []).slice(0, 20);
     const feitos: { jobId: string; reference: string | null; scopeTrocado: boolean }[] = [];
     for (const item of itens) {
-      if (!item?.jobId || !item?.reportLink) continue;
+      if (!item?.jobId) continue;
       const { data: job } = await supabase
         .from("jobs")
-        .select("id, reference, scope, report_link, internal_notes")
+        .select("id, reference, scope, report_link, internal_notes, property_address, client_id")
         .eq("id", item.jobId)
         .is("deleted_at", null)
         .maybeSingle();
       if (!job) continue;
       // Nunca sobrescreve link que já existe: se alguém preencheu no meio do
       // caminho, a mão de gente ganha da varredura.
-      if (job.report_link) continue;
+      const querLink = !!item.reportLink && !job.report_link;
+
+      /**
+       * Endereço e contato do cliente entram pelo mesmo caminho, porque o
+       * buraco é o mesmo: job importado do e-mail nasce com o POSTCODE e nada
+       * mais, e sem rua ninguém despacha parceiro. Só preenche o que está
+       * vazio — endereço com vírgula já é endereço de verdade, e mão de gente
+       * ganha da varredura aqui também.
+       */
+      const enderecoPobre = !/,/.test(String(job.property_address ?? ""));
+      const querEndereco = !!item.propertyAddress && /,/.test(item.propertyAddress) && enderecoPobre;
+
+      if (job.client_id && (item.clientEmail || item.clientPhone)) {
+        const { data: cliente } = await supabase
+          .from("clients")
+          .select("id, email, phone")
+          .eq("id", job.client_id)
+          .maybeSingle();
+        if (cliente) {
+          const patch: Record<string, string> = {};
+          if (item.clientEmail && !cliente.email) patch.email = item.clientEmail;
+          if (item.clientPhone && !cliente.phone) patch.phone = item.clientPhone;
+          if (Object.keys(patch).length > 0) await supabase.from("clients").update(patch).eq("id", cliente.id);
+        }
+      }
 
       // O scope só é TROCADO quando o que veio do card é mais rico. Um brief
       // escrito à mão pelo escritório pode valer mais que o texto padrão da
@@ -91,12 +122,20 @@ export async function POST(req: NextRequest) {
       const scopeNovo = (item.scope ?? "").trim();
       const trocarScope = scopeNovo.length > scopeAtual.length + 40;
 
-      const marca = `Report link and job details recovered from the board on ${new Date().toISOString().slice(0, 10)}.`;
+      const mudou = [
+        querLink ? "report link" : null,
+        trocarScope ? "job details" : null,
+        querEndereco ? "full address" : null,
+      ].filter(Boolean);
+      if (mudou.length === 0) continue;
+
+      const marca = `Recovered from the board on ${new Date().toISOString().slice(0, 10)}: ${mudou.join(", ")}.`;
       const { error } = await supabase
         .from("jobs")
         .update({
-          report_link: item.reportLink,
+          ...(querLink ? { report_link: item.reportLink } : {}),
           ...(trocarScope ? { scope: scopeNovo } : {}),
+          ...(querEndereco ? { property_address: item.propertyAddress } : {}),
           internal_notes: [job.internal_notes, marca].filter(Boolean).join("\n"),
         })
         .eq("id", job.id);
@@ -164,9 +203,51 @@ export async function POST(req: NextRequest) {
     casados.push({ jobId: job.id, reference: job.reference, externalId: c.externalId, por: `postcode+${por}` });
   }
 
+  /**
+   * Job que TEM link mas nasceu com cliente pela metade.
+   *
+   * O dono viu no JOB-9474 (19/08): importado do e-mail de confirmação, ele
+   * entrou com o postcode como endereço e sem e-mail nenhum. A rua completa só
+   * existe na página `/information` do card e o e-mail só na barra lateral do
+   * job aceito — os dois atrás do mesmo link que o job já carrega, então aqui
+   * não há o que casar: basta dizer ao RPA quais abrir.
+   */
+  const { data: comLink } = await supabase
+    .from("jobs")
+    .select("id, reference, property_address, report_link, client_id")
+    .not("report_link", "is", null)
+    .is("deleted_at", null)
+    .is("cancelled_at", null)
+    .gte("created_at", desde)
+    .limit(200);
+
+  const semRua = (comLink ?? []).filter(
+    (j) => /membersapp\.checkatrade\.com/.test(String(j.report_link)) && !/,/.test(String(j.property_address ?? "")),
+  );
+  const idsClientes = [...new Set(semRua.map((j) => j.client_id).filter(Boolean))] as string[];
+  const semEmail = new Set<string>();
+  if (idsClientes.length > 0) {
+    const { data: clientes } = await supabase.from("clients").select("id, email").in("id", idsClientes);
+    for (const c of clientes ?? []) if (!c.email) semEmail.add(c.id);
+  }
+
+  const incompletos = semRua
+    .map((j) => {
+      const externalId = /business-jobs\/([A-Za-z0-9]+)/.exec(String(j.report_link))?.[1];
+      if (!externalId) return null;
+      return {
+        jobId: j.id,
+        reference: j.reference,
+        externalId,
+        falta: ["street", j.client_id && semEmail.has(j.client_id) ? "email" : null].filter(Boolean),
+      };
+    })
+    .filter(Boolean);
+
   return NextResponse.json({
     semLink: (jobs ?? []).length,
     casados,
     ambiguos,
+    incompletos,
   });
 }

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   fieldsForTemplate,
   isFieldVisible,
+  photosRefused,
   photoSlotsForTemplate,
   reportSectionTitles,
   reportTemplateDisplayLabel,
@@ -268,6 +269,8 @@ export default function PublicReportForm({
   };
 
   const renderPhotoSlot = (slot: ReportPhotoSlot) => {
+    // Bloco condicional: o de dano prévio só nasce depois do "Yes".
+    if (!isFieldVisible(slot, data)) return null;
     const files = photos[slot.key] ?? [];
     const accept = slot.accept ?? "image/*";
 
@@ -382,10 +385,15 @@ export default function PublicReportForm({
    * parceiro ainda está no imóvel com a câmera na mão.
    */
   const veredito = useMemo(() => {
-    const { finalFields } = splitReportFields(spec, data);
+    const { startFields, finalFields } = splitReportFields(spec, data);
     return validarSubmissaoDeReport({
       template,
       finalData: finalFields,
+      // A limpeza guarda escopo, dano e recomendação na seção de chegada.
+      startData: startFields,
+      // Cliente recusou foto: a plataforma some com os campos e a exigência
+      // some junto. Sem isto o parceiro dizia a verdade e ficava preso.
+      photosRefused: photosRefused(data),
       startPhotos: plannedPhotoShape(template, "start", photos, null),
       finalPhotos: plannedPhotoShape(template, "final", photos, null),
       // Presença basta: o item de horários não bloqueia a submissão.
@@ -424,23 +432,63 @@ export default function PublicReportForm({
           form.append(`photos[${slot}][]`, prepared);
         }
       }
-      setProgress("Uploading report…");
+      /**
+       * O tamanho do envio, medido antes de mandar.
+       *
+       * Um relatório de limpeza são 60 fotos, e é ele que estoura limite de
+       * corpo em proxy. Saber o número ANTES transforma "não deu" em "são
+       * 47MB", que é uma frase sobre a qual alguém consegue agir.
+       */
+      let bytes = 0;
+      for (const [, v] of form.entries()) if (v instanceof File) bytes += v.size;
+      const mb = (bytes / 1024 / 1024).toFixed(1);
+      const fotos = Object.values(photos).reduce((n, l) => n + l.length, 0);
+
+      setProgress(`Uploading ${fotos} photo(s), ${mb}MB…`);
       const res = await fetch("/api/quotes/submit-report", { method: "POST", body: form });
       const body = (await res.json().catch(() => null)) as
         | { error?: string; pendencias?: string[] }
         | null;
       if (!res.ok) {
         // 422 = o portão da plataforma: a lista diz o que falta, não só "não deu".
+        if (body?.pendencias?.length) {
+          setError(
+            `${body.error ?? "The report is missing what the client platform requires."}\n— ${body.pendencias.join("\n— ")}`,
+          );
+          return;
+        }
+        if (body?.error) {
+          setError(body.error);
+          return;
+        }
+        /**
+         * Resposta SEM json: aqui morava "Could not submit the report.", uma
+         * frase que não diz nada a quem está de pé na casa do cliente com o
+         * telefone na mão. Quando não há mensagem do servidor, o código HTTP É
+         * a informação, e cada um deles tem uma saída diferente.
+         */
         setError(
-          body?.pendencias?.length
-            ? `${body.error ?? "The report is missing what the client platform requires."}\n— ${body.pendencias.join("\n— ")}`
-            : body?.error ?? "Could not submit the report.",
+          res.status === 413
+            ? `The upload is too large (${fotos} photos, ${mb}MB). Remove a few photos from the fullest blocks and submit again.`
+            : res.status === 429
+              ? "Too many attempts from this connection. Wait a few minutes and submit again."
+              : res.status >= 500
+                ? `The server could not take the report (error ${res.status}). Your answers are still on this page: wait a moment and press Submit again.`
+                : `The report was refused (error ${res.status}) and the server gave no reason. Send this screen to the office.`,
         );
         return;
       }
       onSubmitted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error submitting the report.");
+      /**
+       * Cair aqui é quase sempre a rede do celular, não um defeito do
+       * formulário: `fetch` só rejeita quando a requisição nem completou.
+       */
+      const detalhe = err instanceof Error && err.message ? ` (${err.message})` : "";
+      setError(
+        `The photos could not reach us${detalhe}. Nothing was lost: this page still has everything you typed. ` +
+          `Check your signal and press Submit again.`,
+      );
     } finally {
       setSubmitting(false);
       setProgress("");

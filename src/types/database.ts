@@ -563,6 +563,14 @@ export interface Job {
   vat: number;
   partner_agreed_value: number;
   finance_status: JobFinanceStatus;
+  /**
+   * Gêmea de `finance_status`, e a coluna que a checagem de coerência da Zia lê.
+   *
+   * Existir sem estar declarada aqui foi o que a deixou órfã: o TypeScript
+   * recusava escrevê-la, então o código só escrevia `finance_status` e as duas
+   * divergiram em 16 jobs. Quem escreve uma escreve a outra, na mesma chamada.
+   */
+  payment_status?: JobFinanceStatus;
   service_value: number;
   report_submitted: boolean;
   report_submitted_at?: string;

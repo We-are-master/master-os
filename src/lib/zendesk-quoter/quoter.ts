@@ -438,6 +438,149 @@ function tituloCanonico(nomeServico: string | null): string {
   return "General Maintenance";
 }
 
+/**
+ * Confirmação de PARCEIRO: ele avisa que agendou, e o job já existe.
+ *
+ * Regra do dono (19/08), olhando um e-mail da Landlord Certification: "esse é
+ * system que manda pra nós confirmação quando eles book o job; pode ler,
+ * confirmar que o job foi booked e dar solved — eles são partners". Sem isto o
+ * Harvey lia a palavra "booking", tentava CRIAR job novo e parava na nota de
+ * "missing info": confirmação de quem vai executar não é pedido de serviço.
+ *
+ * O casamento não pode ser pelo remetente: o e-mail sai do sistema deles
+ * (`…@n.servicem8.com`), não do domínio da empresa. Então procura o parceiro
+ * pelo NOME e pelo domínio do e-mail CADASTRADO dele dentro do texto do
+ * ticket — "Landlord Certification" no assunto acha o parceiro cadastrado como
+ * "LandLord Certificate", porque o domínio bate.
+ */
+type ResultadoConfirmacao =
+  | { status: "nao_e_parceiro" }
+  | { status: "confirmado"; reference: string; parceiro: string }
+  | { status: "sem_job"; parceiro: string; nota: string };
+
+const soLetras = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+async function acharParceiroNoTexto(
+  texto: string,
+): Promise<{ id: string; nome: string } | null> {
+  const supabase = createServiceClient();
+  // `partners` não tem deleted_at (conferido na base, 19/08): pedir a coluna
+  // derruba a query inteira e o parceiro nunca é achado.
+  const { data } = await supabase.from("partners").select("id, company_name, email");
+  const alvo = soLetras(texto);
+  for (const p of (data ?? []) as Array<{ id: string; company_name: string; email: string | null }>) {
+    const nome = soLetras(p.company_name ?? "");
+    // Domínio do e-mail sem o TLD: "info@landlordcertification.co.uk" vira
+    // "landlordcertification", que é como a empresa assina no e-mail.
+    const dominio = soLetras((p.email ?? "").split("@")[1]?.split(".")[0] ?? "");
+    if (nome.length >= 6 && alvo.includes(nome)) return { id: p.id, nome: p.company_name };
+    if (dominio.length >= 6 && alvo.includes(dominio)) return { id: p.id, nome: p.company_name };
+  }
+  return null;
+}
+
+export async function confirmarBookingDeParceiro(
+  ticketId: number,
+  postar: boolean,
+): Promise<ResultadoConfirmacao> {
+  const headers = { Authorization: authHeader() };
+  const tRes = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers });
+  if (!tRes.ok) return { status: "nao_e_parceiro" };
+  const { ticket } = (await tRes.json()) as { ticket: { subject: string; description?: string } };
+  const texto = `${ticket.subject ?? ""} ${ticket.description ?? ""}`;
+
+  const parceiro = await acharParceiroNoTexto(texto);
+  if (!parceiro) return { status: "nao_e_parceiro" };
+
+  const supabase = createServiceClient();
+  const { data: jobs } = await supabase
+    .from("jobs")
+    .select("id, reference, client_name, scheduled_date, partner_confirmed_at")
+    .eq("partner_id", parceiro.id)
+    .is("deleted_at", null)
+    .is("cancelled_at", null)
+    .in("status", ["unassigned", "scheduled", "in_progress"])
+    .order("scheduled_date", { ascending: true })
+    .limit(50);
+
+  /**
+   * O nome do cliente no assunto é o que aponta o job: o mesmo parceiro tem
+   * vários jobs abertos ao mesmo tempo. Sem o nome no texto, confirmar seria
+   * chutar qual deles — e confirmação errada faz a operação achar que tem
+   * eletricista a caminho de um endereço onde ninguém vai.
+   */
+  // "21st" vira "21" antes de normalizar: sem isso "21staugust2026" não contém
+  // "21august2026" e a data do e-mail nunca casa com a do job.
+  const alvo = soLetras(texto.replace(/(\d{1,2})(st|nd|rd|th)\b/gi, "$1"));
+  const porNome = (jobs ?? []).filter(
+    (j) => j.client_name && soLetras(j.client_name).length >= 5 && alvo.includes(soLetras(j.client_name)),
+  );
+
+  /**
+   * Mesmo cliente, mesma casa, dois serviços: a Chloe Christian tinha CP12 no
+   * dia 20 e EICR no dia 21, os dois com este parceiro. Nome não resolve; a
+   * DATA resolve, e ela está escrita no e-mail em inglês por extenso. Só entra
+   * como desempate — quando o nome já deu um só, não se mexe.
+   */
+  const MESES = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const dataNoTexto = (ymd: string | null): boolean => {
+    if (!ymd) return false;
+    const [a, m, d] = ymd.split("-");
+    const dia = String(Number(d));
+    const mes = MESES[Number(m) - 1] ?? "";
+    return [`${dia}${mes}${a}`, `${mes}${dia}${a}`, `${d}${m}${a}`, `${a}${m}${d}`].some((v) => alvo.includes(v));
+  };
+  const candidatos =
+    porNome.length > 1 && porNome.some((j) => dataNoTexto(j.scheduled_date))
+      ? porNome.filter((j) => dataNoTexto(j.scheduled_date))
+      : porNome;
+
+  if (candidatos.length !== 1) {
+    const nota = [
+      `🤖 HARVEY — ${parceiro.nome} confirmou um agendamento, mas eu não soube qual job é.`,
+      "",
+      candidatos.length === 0
+        ? "Nenhum job aberto deste parceiro tem o nome do cliente que aparece neste ticket."
+        : `${candidatos.length} jobs abertos deste parceiro casam com o texto: ${candidatos.map((c) => c.reference).join(", ")}.`,
+      "",
+      "Confirme o parceiro na mão no job certo.",
+    ].join("\n");
+    if (postar) await postarNotaInterna(ticketId, nota);
+    return { status: "sem_job", parceiro: parceiro.nome, nota };
+  }
+
+  const job = candidatos[0]!;
+  // Dry-run não escreve NADA, nem no OS: `postar=false` é para conferir o
+  // casamento antes de soltar o agente, e um "teste" que carimba o job no
+  // banco não é teste.
+  if (postar && !job.partner_confirmed_at) {
+    await supabase
+      .from("jobs")
+      .update({ partner_confirmed_at: new Date().toISOString() })
+      .eq("id", job.id);
+  }
+
+  if (postar) {
+    // Nota interna E solved na MESMA chamada: dois PUTs deixavam o ticket
+    // aberto quando o segundo falhava, e um ticket confirmado que continua na
+    // fila é ruído que ninguém sabe de onde veio.
+    await fetch(`${baseUrl()}/tickets/${ticketId}.json`, {
+      method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        ticket: {
+          status: "solved",
+          comment: {
+            public: false,
+            body: `🤖 HARVEY — ${parceiro.nome} confirmou o agendamento de ${job.reference} (${job.client_name}${job.scheduled_date ? `, ${job.scheduled_date}` : ""}). Marquei o parceiro como confirmado no OS e fechei este ticket.`,
+          },
+        },
+      }),
+    });
+  }
+  return { status: "confirmado", reference: job.reference, parceiro: parceiro.nome };
+}
+
 export async function subirJobBooked(ticketId: number, postar: boolean): Promise<ResultadoBooking> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
