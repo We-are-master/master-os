@@ -390,13 +390,25 @@ export async function syncWorkforceSelfBillsForBounds(
   if (error) throw error;
 
   const anchors = workforceSelfBillSyncMonthAnchors(anchorDate);
-  const byBillId = new Map<string, SelfBill>();
 
-  for (const monthAnchor of anchors) {
-    for (const row of data ?? []) {
-      const bill = await ensureWorkforceSelfBillForPeriod(row.id, monthAnchor, supabase);
-      if (bill) byBillId.set(bill.id, bill);
-    }
+  // Each (person, month) pair targets its own distinct self-bill — no two
+  // iterations of this flattened loop share a key, so there's nothing to
+  // race. Was nested sequential loops (month x person), one full
+  // ensureWorkforceSelfBillForPeriod round trip after another.
+  const pairs = anchors.flatMap((monthAnchor) => (data ?? []).map((row) => ({ row, monthAnchor })));
+  const WRITE_CONCURRENCY = 10;
+  const bills: (SelfBill | null)[] = [];
+  for (let i = 0; i < pairs.length; i += WRITE_CONCURRENCY) {
+    const batch = pairs.slice(i, i + WRITE_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(({ row, monthAnchor }) => ensureWorkforceSelfBillForPeriod(row.id, monthAnchor, supabase)),
+    );
+    bills.push(...batchResults);
+  }
+
+  const byBillId = new Map<string, SelfBill>();
+  for (const bill of bills) {
+    if (bill) byBillId.set(bill.id, bill);
   }
 
   return [...byBillId.values()];

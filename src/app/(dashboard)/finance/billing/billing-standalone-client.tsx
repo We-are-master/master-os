@@ -345,42 +345,48 @@ function BillingStandaloneInner() {
           .in("id", ids);
         if (error) throw error;
 
+        toast.success(ids.length === 1 ? "Marked ready to pay" : `${ids.length} marked ready to pay`);
+        setSelectedSbIds(new Set());
+        void loadData();
+
+        // Pre-creating next period's workforce draft is a nice-to-have that
+        // doesn't affect the "marked ready to pay" outcome — was awaited
+        // before the toast could show, blocking on N external round trips.
         const internalMarked = billingSelfBills.filter(
           (sb) =>
             ids.includes(sb.id) &&
             sb.bill_origin === "internal" &&
             sb.internal_cost_id?.trim(),
         );
-        await Promise.all(
-          internalMarked.map(async (sb) => {
-            const ws = sb.week_start?.trim().slice(0, 10) ?? "";
-            const nextAnchor = /^\d{4}-\d{2}-\d{2}$/.test(ws)
-              ? formatDateFns(startOfMonth(addMonths(parseISO(`${ws}T12:00:00`), 1)), "yyyy-MM-dd")
-              : formatDateFns(startOfMonth(addMonths(new Date(), 1)), "yyyy-MM-dd");
-            const res = await fetch("/api/workforce/sync-self-bills", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                personId: sb.internal_cost_id,
-                anchorDate: nextAnchor,
-              }),
+        if (internalMarked.length > 0) {
+          void Promise.all(
+            internalMarked.map(async (sb) => {
+              const ws = sb.week_start?.trim().slice(0, 10) ?? "";
+              const nextAnchor = /^\d{4}-\d{2}-\d{2}$/.test(ws)
+                ? formatDateFns(startOfMonth(addMonths(parseISO(`${ws}T12:00:00`), 1)), "yyyy-MM-dd")
+                : formatDateFns(startOfMonth(addMonths(new Date(), 1)), "yyyy-MM-dd");
+              const res = await fetch("/api/workforce/sync-self-bills", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  personId: sb.internal_cost_id,
+                  anchorDate: nextAnchor,
+                }),
+              });
+              if (!res.ok) {
+                const body = (await res.json().catch(() => ({}))) as { error?: string };
+                throw new Error(body.error ?? "Failed to create next workforce period");
+              }
+            }),
+          )
+            .then(() => {
+              toast.success(`${internalMarked.length} next-period workforce draft(s) created`);
+              void loadData();
+            })
+            .catch((e) => {
+              toast.error(e instanceof Error ? e.message : "Failed to create next workforce period");
             });
-            if (!res.ok) {
-              const body = (await res.json().catch(() => ({}))) as { error?: string };
-              throw new Error(body.error ?? "Failed to create next workforce period");
-            }
-          }),
-        );
-
-        const nextHint =
-          internalMarked.length > 0
-            ? ` · ${internalMarked.length} next-period workforce draft(s) created`
-            : "";
-        toast.success(
-          (ids.length === 1 ? "Marked ready to pay" : `${ids.length} marked ready to pay`) + nextHint,
-        );
-        setSelectedSbIds(new Set());
-        await loadData();
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to mark ready");
       } finally {
