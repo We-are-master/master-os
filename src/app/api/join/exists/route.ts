@@ -44,10 +44,15 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  // Case-insensitive: `partners.email` isn't guaranteed lowercase (manual
+  // dashboard entries, CRM imports, etc.), so an exact `eq` here silently
+  // missed real matches — e.g. "Jo3992581@gmail.com" vs "jo3992581@gmail.com"
+  // (incident 2026-08-19, RJ Cleaner Services: a partner self-registered
+  // ending up on a second, disconnected directory row with no jobs).
   const { data: existing } = await supabase
     .from("partners")
     .select("id, status")
-    .eq("email", email)
+    .ilike("email", email)
     .is("deleted_at", null)
     .maybeSingle();
 

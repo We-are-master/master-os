@@ -126,10 +126,12 @@ export async function POST(req: NextRequest) {
   // The client normally checks this at Step 0 (via /api/join/exists) and
   // never reaches here — but any older client hitting the endpoint gets a
   // graceful branch instead of a 409.
+  // Case-insensitive: `partners.email` isn't guaranteed lowercase — an exact
+  // `eq` here missed real matches (incident 2026-08-19, RJ Cleaner Services).
   const { data: existingPartner } = await supabase
     .from("partners")
     .select("id, status")
-    .eq("email", email)
+    .ilike("email", email)
     .is("deleted_at", null)
     .maybeSingle();
 
