@@ -131,9 +131,20 @@ async function accountInboxEmailForQuote(
  */
 export async function resolveNominalBillingParty(
   supabase: SupabaseClient,
-  options: { clientId: string; fallbackName?: string; fallbackEmail?: string | null },
+  options: {
+    clientId: string;
+    fallbackName?: string;
+    fallbackEmail?: string | null;
+    /**
+     * Pass the client row when the caller already fetched it (e.g. right
+     * before this call) to skip this function's own `clients` lookup —
+     * saves a redundant round trip. Must be the row for `clientId`; ignored
+     * (falls back to the normal query) if `id` doesn't match.
+     */
+    clientRow?: { id: string; full_name: string; email?: string | null; source_account_id?: string | null } | null;
+  },
 ): Promise<ResolvedNominalBilling> {
-  const { clientId, fallbackName, fallbackEmail } = options;
+  const { clientId, fallbackName, fallbackEmail, clientRow: providedClientRow } = options;
   const fbName = (fallbackName ?? "Client").trim() || "Client";
   const fbEmail = typeof fallbackEmail === "string" && fallbackEmail.trim() ? fallbackEmail.trim() : null;
 
@@ -146,16 +157,22 @@ export async function resolveNominalBillingParty(
     };
   }
 
-  const { data: clientRow, error: cErr } = await supabase
-    .from("clients")
-    .select("id, full_name, email, source_account_id")
-    .eq("id", clientId.trim())
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (cErr || !clientRow) {
-    return { displayName: fbName, documentEmail: fbEmail, sourceAccountId: null, mode: "end_client" };
+  type MinimalClientRow = { id: string; full_name: string; email?: string | null; source_account_id?: string | null };
+  let c: MinimalClientRow;
+  if (providedClientRow && providedClientRow.id === clientId.trim()) {
+    c = providedClientRow;
+  } else {
+    const { data, error: cErr } = await supabase
+      .from("clients")
+      .select("id, full_name, email, source_account_id")
+      .eq("id", clientId.trim())
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (cErr || !data) {
+      return { displayName: fbName, documentEmail: fbEmail, sourceAccountId: null, mode: "end_client" };
+    }
+    c = data as MinimalClientRow;
   }
-  const c = clientRow as { id: string; full_name: string; email?: string | null; source_account_id?: string | null };
   const sourceId = c.source_account_id?.trim() || null;
   if (!sourceId) {
     return {

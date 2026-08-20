@@ -305,11 +305,10 @@ export async function updateQuote(
   let payload: Record<string, unknown> = { ...row, updated_at: new Date().toISOString() };
 
   for (let attempt = 0; attempt < 32; attempt++) {
-    const { error } = await supabase.from("quotes").update(payload).eq("id", id);
+    const { data, error } = await supabase.from("quotes").update(payload).eq("id", id).select().single();
     if (!error) {
-      const full = await getQuote(id);
-      if (!full) throw new Error("Quote not found after update");
-      return full;
+      if (!data) throw new Error("Quote not found after update");
+      return data as Quote;
     }
 
     if (isSupabaseMissingColumnError(error)) {

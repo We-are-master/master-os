@@ -1818,9 +1818,7 @@ function AccountDetailDrawer({
             : null,
         catalog_service_ids: editCatalogServiceIds,
       });
-      const fresh = await getAccount(account.id);
-      const next = fresh ?? updated;
-      onAccountUpdated(next);
+      onAccountUpdated(updated);
       toast.success("Account updated");
     } catch (e) {
       const msg =
