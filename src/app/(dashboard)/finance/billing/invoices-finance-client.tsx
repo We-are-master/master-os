@@ -658,8 +658,23 @@ export function InvoicesFinanceClient() {
           userName: profile?.full_name,
         }).catch(() => {});
         toast.success(newStatus === "overdue" ? "Invoice reopened as overdue" : "Invoice reopened — linked job may return to Awaiting payment");
-        const { data: fresh } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
-        setSelectedInvoice((fresh as Invoice) ?? null);
+        // Optimistic merge instead of a re-SELECT round trip — same pattern
+        // as the "Mark paid" branch below (nextInv): reflects the primary
+        // write immediately; the trailing sync chain below (and the
+        // background loadPageData() at the end) settles any further
+        // adjustments shortly after, same acceptable-staleness window
+        // already used by every other status transition in this handler.
+        setSelectedInvoice({
+          ...invoice,
+          status: newStatus === "overdue" ? "overdue" : "pending",
+          paid_date: null,
+          last_payment_date: null,
+          amount_paid: 0,
+          stripe_payment_status: "none",
+          stripe_payment_link_id: undefined,
+          stripe_payment_link_url: undefined,
+          stripe_paid_at: undefined,
+        });
         if (invoice.job_reference?.trim()) {
           const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
           const jid = (jobRow as { id?: string } | null)?.id;
