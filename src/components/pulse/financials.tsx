@@ -18,6 +18,7 @@ import {
   resolvePulsePeriodRevenueGoal,
 } from "@/lib/pulse-revenue-goal";
 import { KpiCard, MicroLabel, Pill } from "@/components/fx/primitives";
+import { margemBruta, margemLiquida, type MargemDoPeriodo } from "@/lib/pulse-margins";
 import { Modal } from "@/components/ui/modal";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { BreakdownTable, type BreakdownColumn } from "./financials-detail-modal";
@@ -397,6 +398,28 @@ export function Financials() {
     };
   }, [loading, revenueGoal]);
 
+  /**
+   * As duas margens em porcentagem, contra a meta do Setup.
+   *
+   * Em libras não dá para saber se o período foi bom sem fazer a conta de
+   * cabeça, e é a porcentagem que se compara com a meta e com o mês passado.
+   */
+  const margens = useMemo(
+    () => ({
+      bruta: margemBruta({
+        receita: totals.revenue,
+        custoOperacional: totals.operatingCost,
+        alvoPct: setup.target_margin_pct,
+      }),
+      liquida: margemLiquida({
+        receita: totals.revenue,
+        margemLiquidaGbp: totals.netMargin,
+        alvoPct: setup.pulse_healthy_net_margin_pct,
+      }),
+    }),
+    [totals.revenue, totals.operatingCost, totals.netMargin, setup],
+  );
+
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -412,8 +435,9 @@ export function Financials() {
         />
         <KpiCard
           label="Operating Cost"
-          hint="Partner cost + materials + per-job expenses for the same pipeline."
+          hint="Partner cost + materials + per-job expenses for the same pipeline. The percentage below is gross margin: what is left of revenue after this cost, before fixed costs. Target comes from Setup."
           value={loading ? "—" : formatGbp(totals.operatingCost)}
+          sub={loading ? null : <MargemSub margem={margens.bruta} rotulo="gross margin" alvo="target" />}
           topRight={<StatusDot color="bg-fx-amber" />}
           onShowDetails={() => setOpenModal("operating")}
           detailsLabel="View operating cost breakdown"
@@ -437,6 +461,7 @@ export function Financials() {
                 : "default"
           }
           value={loading ? "—" : formatGbp(totals.netMargin)}
+          sub={loading ? null : <MargemSub margem={margens.liquida} rotulo="net margin" alvo="healthy" />}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
           onShowDetails={() => setOpenModal("net")}
           detailsLabel="View net margin breakdown"
@@ -869,6 +894,48 @@ function SummaryRow({
 
 function StatusDot({ color }: { color: string }) {
   return <span className={cn("h-1.5 w-1.5 rounded-full inline-block", color)} aria-hidden />;
+}
+
+/**
+ * A margem em porcentagem embaixo do valor em libras, com a meta ao lado.
+ *
+ * O rótulo é obrigatório e explícito por causa do card de custo: "38%" solto
+ * embaixo de £7.420 lê como "o custo é 38% da receita", que é o contrário do
+ * que o número diz. Escrever "gross margin" custa duas palavras e tira a
+ * ambiguidade.
+ *
+ * Mesma forma do card de Revenue: o número colorido, a meta em cinza.
+ */
+function MargemSub({
+  margem,
+  rotulo,
+  alvo,
+}: {
+  margem: MargemDoPeriodo;
+  rotulo: string;
+  /** Como o Setup chama a meta desta margem: "target" na bruta, "healthy" na líquida. */
+  alvo: string;
+}) {
+  if (margem.pct == null) {
+    return <span className="text-fx-mute">no revenue in this period</span>;
+  }
+  const cor =
+    margem.situacao === "acima"
+      ? "text-fx-green"
+      : margem.situacao === "no_alvo"
+        ? "text-fx-amber"
+        : "text-fx-red";
+  return (
+    <span className="leading-snug">
+      <span className={cn("font-semibold", cor)}>
+        {margem.pct}% {rotulo}
+      </span>
+      <span className="text-fx-mute">
+        {" · "}
+        {alvo} {margem.alvo}%
+      </span>
+    </span>
+  );
 }
 
 function ymd(d: Date): string {
