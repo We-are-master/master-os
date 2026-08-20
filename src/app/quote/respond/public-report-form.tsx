@@ -382,10 +382,12 @@ export default function PublicReportForm({
    * parceiro ainda está no imóvel com a câmera na mão.
    */
   const veredito = useMemo(() => {
-    const { finalFields } = splitReportFields(spec, data);
+    const { startFields, finalFields } = splitReportFields(spec, data);
     return validarSubmissaoDeReport({
       template,
       finalData: finalFields,
+      // A limpeza guarda escopo, dano e recomendação na seção de chegada.
+      startData: startFields,
       startPhotos: plannedPhotoShape(template, "start", photos, null),
       finalPhotos: plannedPhotoShape(template, "final", photos, null),
       // Presença basta: o item de horários não bloqueia a submissão.
