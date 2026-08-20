@@ -195,6 +195,7 @@ import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { notifyClientReschedule } from "@/lib/notify-client-reschedule";
 import {
   clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
@@ -1219,7 +1220,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [finalReviewBillingLoading, setFinalReviewBillingLoading] = useState(false);
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
-  const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
   const [approvalInvoiceDueYmd, setApprovalInvoiceDueYmd] = useState("");
   const [approvalPartnerDueYmd, setApprovalPartnerDueYmd] = useState("");
@@ -3083,6 +3083,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 newTimeLine: null,
                 skipPush: true, // notifyAssignedPartnerAboutJob already pushed
               });
+              // O cliente também é avisado. Trava e política da conta são
+              // decididas na rota, não aqui.
+              void notifyClientReschedule({
+                jobId,
+                oldDateLine: (current && formatJobScheduleLine(current)) || "Previously scheduled",
+                newDateLine: formatJobScheduleLine(updated) || "New schedule",
+              });
             }
           }
         }
@@ -3147,10 +3154,53 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job?.id, job?.partner_id, job?.status, handleJobUpdate]);
 
+  /**
+   * Pergunta antes de disparar o Auto assign, dizendo para QUANTOS parceiros
+   * vai. O push e o e-mail saem de verdade e não voltam, e até aqui o número
+   * do disparo só aparecia depois, no toast. O dry run (GET) roda o mesmo
+   * casamento sem escrever nada, então a pergunta pode ser feita antes de o
+   * job ser tocado. `false` = não segue.
+   */
+  const confirmAutoAssignBroadcast = useCallback(async (jobId: string, jobReference: string): Promise<boolean> => {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/dispatch-auto-assign-invites`);
+    const preview = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      partnerCount?: number;
+      partnerNames?: string[];
+      alreadyInvited?: boolean;
+      error?: string;
+    } | null;
+    if (!res.ok || !preview?.ok) {
+      toast.error(preview?.error ?? "Could not check which partners match this job");
+      return false;
+    }
+    const count = preview.partnerCount ?? 0;
+    if (count === 0) {
+      toast.error("No matching partners for this job. Assign one by hand, or widen the partner's trades and area.");
+      return false;
+    }
+    if (typeof window === "undefined") return true;
+    const names = (preview.partnerNames ?? []).filter(Boolean);
+    const shown = names.slice(0, 6).join(", ");
+    const rest = names.length > 6 ? ` and ${names.length - 6} more` : "";
+    return window.confirm(
+      [
+        preview.alreadyInvited
+          ? `Send the offer again to the ${count} partner${count === 1 ? "" : "s"} already invited to ${jobReference}?`
+          : `Send this job to ${count} partner${count === 1 ? "" : "s"}?`,
+        shown ? `${shown}${rest}.` : "",
+        `Each one gets a push and an email with an Accept link, and the first to accept takes ${jobReference}.`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+  }, []);
+
   const handleQuickAutoAssign = useCallback(async () => {
     if (!job || jobHasPartnerSet(job)) return;
     setDispatchingAutoAssign(true);
     try {
+      if (!(await confirmAutoAssignBroadcast(job.id, job.reference))) return;
       if (job.status !== "auto_assigning") {
         const updated = await handleJobUpdate(
           job.id,
@@ -3185,7 +3235,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setDispatchingAutoAssign(false);
     }
-  }, [job, handleJobUpdate]);
+  }, [job, handleJobUpdate, confirmAutoAssignBroadcast]);
 
   const handleCancelAutoAssign = useCallback(async () => {
     if (!job || job.status !== "auto_assigning" || jobHasPartnerSet(job)) return;
@@ -3248,6 +3298,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const deposit = Number(job.customer_deposit ?? 0);
     const prev = job;
     const assignmentChange = jobAssignmentModePatch(job, jobAssignmentEditMode);
+    // Escolher "Auto assign" aqui dentro dispara o mesmo broadcast do botão
+    // rápido, então faz a mesma pergunta — e antes de salvar qualquer campo,
+    // para que desistir do disparo não deixe o job já mexido.
+    if (assignmentChange?.dispatchAutoAssign && !(await confirmAutoAssignBroadcast(job.id, job.reference))) return;
 
     if (jobTypeEditTarget === "hourly") {
       const service = catalogServicesJobType.find((c) => c.id === jobTypeEditCatalogId);
@@ -3427,6 +3481,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     catalogServicesJobType,
     jobAssignmentEditMode,
     jobAssignmentModePatch,
+    confirmAutoAssignBroadcast,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
@@ -4284,6 +4339,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             newTimeLine: null,
             skipPush: true,
           });
+          void notifyClientReschedule({
+            jobId: updated.id,
+            oldDateLine:
+              formatJobScheduleLine({
+                scheduled_date: job.on_hold_snapshot_scheduled_date,
+                scheduled_start_at: job.on_hold_snapshot_scheduled_start_at,
+                scheduled_end_at: job.on_hold_snapshot_scheduled_end_at,
+                scheduled_finish_date: job.on_hold_snapshot_scheduled_finish_date,
+              }) || "Previously scheduled",
+            newDateLine: formatJobScheduleLine(updated) || "New schedule",
+          });
         }
       }
     } finally {
@@ -4313,7 +4379,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
    */
   const openFinalReview = useCallback(() => {
     setOwnerApprovalChecked(true);
-    setSentToAccountsChecked(false);
     setValidateCompleteOpen(true);
   }, []);
 
@@ -5380,10 +5445,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const handleValidateAndComplete = useCallback(async () => {
     const j = jobRef.current;
     if (!j) return;
-    if (!ownerApprovalChecked || !sentToAccountsChecked) {
-      toast.error(
-        "Confirm both attestations — including that the report was submitted to the customer — before finalising.",
-      );
+    /**
+     * Uma atestação, não duas. A segunda pedia que a pessoa jurasse que o
+     * relatório chegou ao cliente, um fato que a API da Housekeep prova: o
+     * modal agora mostra a hora vinda de `submitted_at` e o bloqueio de envio
+     * continua onde sempre esteve, no passo 3.
+     */
+    if (!ownerApprovalChecked) {
+      toast.error("Confirm the review attestation before finalising.");
       return;
     }
     setValidatingComplete(true);
@@ -5663,7 +5732,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       void refreshJobFinance().catch(() => {});
       setValidateCompleteOpen(false);
       setOwnerApprovalChecked(false);
-      setSentToAccountsChecked(false);
       setApprovalBilledHoursInput("");
       setCompletionDelivery(null);
       setIncludeInvoiceInEmail(true);
@@ -5684,7 +5752,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     customerPayments,
     partnerPayments,
     ownerApprovalChecked,
-    sentToAccountsChecked,
     approvalBilledHoursInput,
     profile?.id,
     profile?.full_name,
@@ -6821,7 +6888,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       // Validar um job em atenção começa sem atestado marcado:
                       // é o único caminho em que ninguém ainda revisou nada.
                       setOwnerApprovalChecked(false);
-                      setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
                     }
@@ -8200,6 +8266,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {/* A nota vem antes dos cards porque a conta é das duas metades
                   juntas, e antes do Approve porque é lá que ela serve. */}
               <ReportHealthCard
+                jobUuid={job.id}
                 jobTitle={job.title ?? null}
                 startReport={job.start_report}
                 finalReport={job.final_report}
@@ -8249,7 +8316,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       >
                         Edit report
                       </button>
-                      <JobReportV2DownloadButton jobId={job.id} reference={job.reference} />
+                      <JobReportV2DownloadButton jobId={job.id} reference={job.reference} rawFinalReport={job.final_report} />
                       {/*
                         O botao de finalizar saiu daqui (17/08). Ele chamava
                         `openFinalReview`, exatamente o mesmo handler do botao do
@@ -9703,7 +9770,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           if (validatingComplete) return;
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
-          setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
           setApprovalInvoiceDueYmd("");
           setApprovalPartnerDueYmd("");
@@ -9751,8 +9817,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ]}
         confirmed={ownerApprovalChecked}
         onConfirmedChange={setOwnerApprovalChecked}
-        sentToAccounts={sentToAccountsChecked}
-        onSentToAccountsChange={setSentToAccountsChecked}
         completionDelivery={completionDelivery}
         onCompletionDeliveryChange={setCompletionDelivery}
         includeInvoiceInEmail={includeInvoiceInEmail}
@@ -11668,6 +11732,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   newDateLine: formatJobScheduleLine(refreshed) || "New schedule",
                   newTimeLine: null,
                   skipPush: true,
+                });
+                void notifyClientReschedule({
+                  jobId: refreshed.id,
+                  oldDateLine: formatJobScheduleLine(before) || "Previously scheduled",
+                  newDateLine: formatJobScheduleLine(refreshed) || "New schedule",
                 });
               }
             }
