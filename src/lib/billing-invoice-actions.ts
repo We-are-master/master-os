@@ -51,15 +51,25 @@ export async function bulkUpdateInvoiceStatus(
 ): Promise<void> {
   const supabase = getSupabase();
   if (newStatus === "pending") {
-    for (const id of ids) {
-      const { data: inv } = await supabase.from("invoices").select("*").eq("id", id).maybeSingle();
-      if (!inv) continue;
-      const row = inv as Invoice;
-      if (row.status === "paid" || row.status === "partially_paid") {
-        await reopenInvoiceToPending(supabase, row);
-      } else {
-        await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
-      }
+    // Each invoice's reopen is independent, but reopenInvoiceToPending is
+    // itself a multi-round-trip operation — chunked concurrency (not
+    // unbounded Promise.all) so a large bulk selection doesn't fire dozens
+    // of these at once.
+    const CONCURRENCY = 5;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const batch = ids.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (id) => {
+          const { data: inv } = await supabase.from("invoices").select("*").eq("id", id).maybeSingle();
+          if (!inv) return;
+          const row = inv as Invoice;
+          if (row.status === "paid" || row.status === "partially_paid") {
+            await reopenInvoiceToPending(supabase, row);
+          } else {
+            await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
+          }
+        }),
+      );
     }
     void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name ?? undefined).catch(() => {});
     return;
@@ -71,18 +81,20 @@ export async function bulkUpdateInvoiceStatus(
 
 export async function syncInvoicesForJobIds(jobIds: string[]): Promise<number> {
   const supabase = getSupabase();
-  let n = 0;
-  for (const jobId of jobIds) {
-    const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
-    const job = jobRow as Job | null;
-    if (job) {
-      await bumpLinkedInvoiceAmountsToJobSchedule(job);
-    } else {
-      await syncInvoicesFromJobCustomerPayments(supabase, jobId);
-    }
-    n += 1;
-  }
-  return n;
+  // Each job's invoice sync is independent — was sequential, one job fully
+  // processed before the next started.
+  await Promise.all(
+    jobIds.map(async (jobId) => {
+      const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+      const job = jobRow as Job | null;
+      if (job) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(job);
+      } else {
+        await syncInvoicesFromJobCustomerPayments(supabase, jobId);
+      }
+    }),
+  );
+  return jobIds.length;
 }
 
 export async function updateInvoiceStatusOne(
