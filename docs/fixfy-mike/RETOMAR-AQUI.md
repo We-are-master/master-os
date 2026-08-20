@@ -169,12 +169,13 @@ E a trava para não depender de ninguém lembrar: **migration 250**, trigger que
 zera `partner_ids` sempre que `partner_id` fica nulo. **Falta aplicar** — não
 há `DATABASE_URL` no `.env.local`, então é colar no SQL editor como a 249.
 
-**Antes de religar o launchd:** rodar o dry-run e conferir a lista.
-
-```bash
-curl -s -H "X-API-Key: $MASTER_OS_JOB_WEBHOOK_API_KEY" \
-  "http://localhost:3000/api/cron/escalate-unconfirmed-jobs?dry-run=1" | jq
-```
+**Encerrado em 20/08/2026.** A escalada automática não existe mais: a rota
+`/api/cron/escalate-unconfirmed-jobs` e o launchd `com.fixfy.escalate` foram
+removidos depois que uma chamada manual ao vivo soltou o parceiro de 15 jobs de
+uma vez. O dry-run não protegia de nada, porque bastava alguém chamar a rota sem
+ele. Auto assign agora só sai do botão do job, ou de o job já nascer pedindo
+(`auto_assign` na criação, `assignment_mode=auto` na macro). Job atribuído e não
+confirmado é decisão de gente, não de cron.
 
 ### 4. Ligar o roteamento
 `PARTNER_ROUTING_ENABLED=1` e reiniciar o Next. Primeiro job que passar manda

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { payloadDoReport, payloadLimpeza } from "../src/lib/stefane/housekeep-report-form";
+import { resolverLinkHousekeep } from "../src/lib/stefane/housekeep-api";
 import { submeterRelatorioHousekeep } from "../src/lib/stefane/submit-housekeep-report";
 for (const f of [".env",".env.local"]) { try { for (const l of readFileSync(f,"utf8").split("\n")) { const m=l.match(/^([A-Z_0-9]+)=(.*)$/); if(m&&!process.env[m[1]]) process.env[m[1]]=m[2].replace(/^["']|["']$/g,"").trim(); } } catch{} }
 const ref = process.argv[2];
@@ -19,5 +20,5 @@ const r = limpeza
 console.log(`${ref} · ${j.title} · ${limpeza ? "limpeza" : "trade"}`);
 if (!r.ok) { console.log(`  NÃO ENVIÁVEL: ${r.motivo}`); process.exit(0); }
 console.log("  payload:", JSON.stringify(r.payload));
-const res = await submeterRelatorioHousekeep({ url: String(j.report_link).split("?")[0], payload: r.payload, simular: true });
+const res = await submeterRelatorioHousekeep({ url: await resolverLinkHousekeep(String(j.report_link)), payload: r.payload, simular: true });
 console.log(`  resultado: ${JSON.stringify(res)}`);

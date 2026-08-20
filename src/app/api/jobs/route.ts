@@ -9,6 +9,7 @@ import {
 } from "@/lib/uk-postcode";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
+import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
 import {
   createTicket,
   ZENDESK_REPLY_STATUS_FIELD_ID,
@@ -913,6 +914,19 @@ export async function POST(req: NextRequest) {
       console.error("[api/jobs] Zendesk dispatch failed:", err);
     });
   }
+
+  // ─── Confirmação de agendamento para o cliente final ─────────────────
+  // FORA do `if (ticketId)` de propósito: job direto do Fixfy pode nascer sem
+  // ticket, e o cliente dele quer o aviso do mesmo jeito. Quem decide se
+  // manda é a política da conta (mig 261); a Fantastic está desligada porque
+  // ela paga o call-out quando o cliente não está.
+  //
+  // Fire-and-forget: a checagem de entrega no WhatsApp leva segundos e quem
+  // criou o job não pode esperar por ela. O resultado, inclusive o motivo de
+  // não ter mandado, fica em `client_confirmation_sent_at` / `_skipped`.
+  void enviarConfirmacaoDoCliente(supabase, String(inserted.id)).catch((err) => {
+    console.error("[api/jobs] client confirmation failed:", err);
+  });
 
   // ─── Rota fixa: atribui o parceiro do serviço e avisa na hora ────────
   // Roda antes do leilão e o dispensa: onde há parceiro nomeado para o

@@ -13,10 +13,10 @@
  * trava em campo com sinal ruim manda relatório nenhum, e é esse o problema
  * que se está tentando resolver.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleAlert } from "lucide-react";
-import { reportHealth, faixaDaNota, type SaudeDoRelatorio } from "@/lib/report-health";
-import { pickReportTemplate } from "@/lib/public-report-templates";
+import { reportHealth, faixaDaNota, type ExigenciaDeFoto, type SaudeDoRelatorio } from "@/lib/report-health";
+import { pickReportTemplate, usesCleaningForm } from "@/lib/public-report-templates";
 
 const CORES = {
   bloqueado:  { fg: "#B4231C", bg: "#FDF2F1", bd: "#F3D2CF" },
@@ -33,6 +33,7 @@ const PALAVRA = {
 } as const;
 
 export function ReportHealthCard({
+  jobUuid,
   jobTitle,
   startReport,
   finalReport,
@@ -40,6 +41,8 @@ export function ReportHealthCard({
   timerStartedAt,
   timerEndedAt,
 }: {
+  /** Sem ele a nota mede contra o nosso piso, que é palpite. */
+  jobUuid?: string | null;
   jobTitle: string | null;
   startReport: unknown;
   finalReport: unknown;
@@ -47,6 +50,30 @@ export function ReportHealthCard({
   timerStartedAt: string | null;
   timerEndedAt: string | null;
 }) {
+  /**
+   * A exigência de foto lida da plataforma do cliente, campo a campo.
+   *
+   * Chega depois da primeira pintura de propósito: a nota aparece na hora com
+   * o que dá para saber sem rede, e aperta quando a resposta chega. Plataforma
+   * fora do ar deixa a nota como era antes, avisando sem bloquear, porque
+   * travar um relatório por causa da rede deles seria trocar um problema por
+   * outro pior.
+   */
+  const [exigencias, setExigencias] = useState<ExigenciaDeFoto[] | undefined>(undefined);
+  useEffect(() => {
+    if (!jobUuid) return;
+    let vivo = true;
+    fetch(`/api/jobs/${jobUuid}/platform-requirements`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { exigencias?: ExigenciaDeFoto[] } | null) => {
+        if (vivo && d?.exigencias?.length) setExigencias(d.exigencias);
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [jobUuid]);
+
   const saude: SaudeDoRelatorio = useMemo(() => {
     // O template gravado no relatório manda; o título só decide antes de
     // existir relatório. Mesma regra que a Stefane usa para escolher o
@@ -63,8 +90,30 @@ export function ReportHealthCard({
       finalReportSubmitted,
       timerStartedAt,
       timerEndedAt,
+      exigencias,
     });
-  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt]);
+  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt, exigencias]);
+
+  /**
+   * Relatório preenchido no formulário ERRADO para este cliente.
+   *
+   * Visto no JOB-9450 (19/08): um End of Tenancy da Housekeep foi preenchido no
+   * formulário geral — uma descrição e um monte de 20 fotos — e este cartão deu
+   * 100/100 "ready to send", porque media o relatório contra as regras do
+   * formulário que ele mesmo usou. Só que o destino pede cômodo a cômodo, com
+   * mínimo por cômodo, e nenhum monte achatado satisfaz isso: o envio foi
+   * recusado e o formulário deles ficou vazio.
+   *
+   * Só a limpeza entra nesta trava, e por assimetria real: um relatório geral
+   * NÃO tem como virar um de cômodos (ninguém sabe qual foto é do banheiro),
+   * enquanto os outros formulários pedem texto e foto solta, que qualquer
+   * template entrega.
+   */
+  const formaErrada = useMemo(() => {
+    const gravado = (finalReport as { template?: unknown } | null)?.template;
+    if (typeof gravado !== "string" || gravado === "cleaner") return null;
+    return usesCleaningForm(pickReportTemplate({ title: jobTitle })) ? gravado : null;
+  }, [finalReport, jobTitle]);
 
   const faixa = faixaDaNota(saude);
   const c = CORES[faixa];
@@ -90,6 +139,16 @@ export function ReportHealthCard({
           </p>
         </div>
       </div>
+
+      {formaErrada ? (
+        <p
+          className="mt-2.5 border-t pt-2 text-[11px] font-semibold"
+          style={{ borderColor: c.bd, color: CORES.bloqueado.fg }}
+        >
+          Filled with the {formaErrada} form, but this client needs the cleaning form, room by room.
+          Ask the partner to refill before approving: flat photo piles are refused on submit.
+        </p>
+      ) : null}
 
       {saude.pendencias.length > 0 ? (
         <ul className="mt-2.5 space-y-1 border-t pt-2" style={{ borderColor: c.bd }}>

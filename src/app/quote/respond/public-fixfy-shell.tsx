@@ -46,13 +46,29 @@ export function FixfyPublicShell({
     };
   }, []);
 
+  /**
+   * No CELULAR a página rola; no desktop o cartão é que rola.
+   *
+   * O cartão nasceu com `max-h-[min(100vh-2rem,920px)]` e rolagem interna, o
+   * que é certo para um cartão curto numa tela grande. Num telefone virou
+   * armadilha: o relatório de limpeza tem 1600px de altura e ficava preso numa
+   * janela de 780, com barra de rolagem dentro de barra de rolagem e um vazio
+   * morto embaixo do cartão — foi o "tá sobrando muito" do dono em 20/08.
+   *
+   * Quem preenche isso é o parceiro no telefone, de pé dentro da casa do
+   * cliente. Lá o gesto certo é arrastar a página inteira, que é o que todo
+   * formulário de celular faz.
+   *
+   * O teto e a rolagem interna voltam a partir de `sm`, onde o cartão
+   * centralizado é o que se quer.
+   */
   return (
     <div
-      className={`flex min-h-screen items-center justify-center p-4 sm:p-6 ${className}`}
+      className={`flex min-h-screen items-stretch justify-center p-0 sm:items-center sm:p-6 ${className}`}
       style={{ background: FIXFY_BG, colorScheme: "light" }}
     >
       <div
-        className={`flex w-full ${maxW} max-h-[min(100vh-2rem,920px)] flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_8px_30px_rgba(2,0,64,0.08)]`}
+        className={`flex w-full ${maxW} flex-col rounded-none border-0 bg-white sm:max-h-[min(100vh-3rem,920px)] sm:overflow-hidden sm:rounded-2xl sm:border sm:shadow-[0_8px_30px_rgba(2,0,64,0.08)]`}
         style={{ borderColor: FIXFY_BORDER }}
       >
         {children}
@@ -163,6 +179,14 @@ export function FixfyPublicLoading({ message = "Loading…" }: { message?: strin
 }
 
 /** Scrollable body below the shared header — used by report/bid forms. */
+/**
+ * O corpo que rola — mas só onde faz sentido rolar por dentro.
+ *
+ * `overflow-y-auto` no celular criava um segundo rolador dentro do primeiro:
+ * o dedo arrastava o formulário dentro da caixa e a página não ia junto, e
+ * embaixo da caixa sobrava fundo morto. A partir de `sm` ele volta, porque aí
+ * o cartão tem altura máxima e é ele que precisa rolar.
+ */
 export function FixfyPublicScrollBody({ children }: { children: ReactNode }) {
-  return <div className="flex-1 overflow-y-auto">{children}</div>;
+  return <div className="flex-1 sm:overflow-y-auto">{children}</div>;
 }

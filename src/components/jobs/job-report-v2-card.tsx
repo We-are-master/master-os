@@ -662,16 +662,88 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 export interface JobReportV2DownloadButtonProps {
   jobId:    string;
   reference: string;
+  /** `jobs.final_report` cru: é ele que diz se este job entrega certificado. */
+  rawFinalReport?: unknown;
 }
 
-export function JobReportV2DownloadButton({ jobId, reference }: JobReportV2DownloadButtonProps) {
+const DOWNLOAD_BTN_CLASS =
+  "inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-[#FAFAFB]";
+const DOWNLOAD_BTN_STYLE = { color: "#020040", border: "0.5px solid #D8D8DD" } as const;
+
+/**
+ * Job de certificado entrega o CERTIFICADO, não o relatório do Fixfy.
+ *
+ * O PDF que este botão gerava é o resumo da visita, e para um EICR ele é o
+ * documento errado: quem pede um EICR quer o EICR — é ele que o inquilino, o
+ * agente e o conselho aceitam. O papel que vale está anexado no relatório
+ * final, no bucket privado, então aqui ele é assinado na hora e aberto.
+ *
+ * Sem anexo o botão não cai de volta no PDF do Fixfy: entregar o documento
+ * errado é pior que dizer que ele falta, e a falta é o que o escritório
+ * precisa ver para cobrar o parceiro.
+ */
+export function JobReportV2DownloadButton({ jobId, reference, rawFinalReport }: JobReportV2DownloadButtonProps) {
+  const [abrindo, setAbrindo] = useState<number | null>(null);
+  const ehCertificado =
+    (rawFinalReport as { template?: unknown } | null)?.template === "certificate";
+  const anexos = useMemo(
+    () => (ehCertificado ? certificateAttachmentUrls(rawFinalReport) : []),
+    [ehCertificado, rawFinalReport],
+  );
+
+  const abrirCertificado = useCallback(async (rawUrl: string, i: number) => {
+    setAbrindo(i);
+    try {
+      const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
+      if (!signed) {
+        toast.error("Could not open the certificate file.");
+        return;
+      }
+      window.open(signed, "_blank", "noopener,noreferrer");
+    } finally {
+      setAbrindo(null);
+    }
+  }, []);
+
+  if (ehCertificado) {
+    if (anexos.length === 0) {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+          style={{ color: "#9A9AA0", border: "0.5px solid #E4E4E8" }}
+          title="The partner has not attached the certificate to the final report yet."
+        >
+          <AlertTriangle className="h-3 w-3" />
+          Certificate not attached
+        </span>
+      );
+    }
+    return (
+      <>
+        {anexos.map((url, i) => (
+          <button
+            key={url}
+            type="button"
+            onClick={() => void abrirCertificado(url, i)}
+            disabled={abrindo != null}
+            className={`${DOWNLOAD_BTN_CLASS} cursor-pointer disabled:opacity-40`}
+            style={DOWNLOAD_BTN_STYLE}
+          >
+            {abrindo === i ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+            Certificate{anexos.length > 1 ? ` ${i + 1}` : ""} · {reference}
+          </button>
+        ))}
+      </>
+    );
+  }
+
   return (
     <a
       href={`/api/jobs/${jobId}/reports/pdf`}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-[#FAFAFB]"
-      style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+      className={DOWNLOAD_BTN_CLASS}
+      style={DOWNLOAD_BTN_STYLE}
     >
       <ExternalLink className="h-3 w-3" />
       Download PDF · {reference}

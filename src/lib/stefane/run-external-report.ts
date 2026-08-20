@@ -12,6 +12,14 @@ import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
 import { submeterRelatorioHousekeep } from "./submit-housekeep-report";
 import {
+  buscarFormulario,
+  ehLinkHousekeep,
+  faltasDeFoto,
+  formaDoFormularioAPI,
+  slotsDeFoto,
+  confirmarSubmissao,
+} from "./housekeep-api";
+import {
   photoSlotsForTemplate,
   pickReportTemplate,
   usesCleaningForm,
@@ -49,8 +57,17 @@ function ehLimpeza(job: { title?: unknown; final_report?: unknown; start_report?
   return usesCleaningForm(pickReportTemplate({ title: String(job.title ?? "") }));
 }
 
+/**
+ * Aceita as duas formas de link da Housekeep, e não só a canônica.
+ *
+ * Seis jobs guardam `links.housekeep.com/ls/click?upn=...`, o rastreador de
+ * email deles, porque é isso que chega no ticket que o Harvey lê. A regex
+ * antiga só casava `housekeep.com/job-reports`, então esses seis eram
+ * reportados como "plataforma ainda não automatizada" e ninguém enviou nada.
+ * Quem resolve o redirect é `buscarFormulario`, na hora do envio.
+ */
 function ehHousekeep(link: string | null): boolean {
-  return /housekeep\.com\/job-reports/i.test(String(link ?? ""));
+  return ehLinkHousekeep(link);
 }
 
 /** Checkatrade/Express: quem completa lá é o robô do RPA, não este processo. */
@@ -74,6 +91,30 @@ export function urlsDeFoto(report: unknown): string[] {
   return [];
 }
 
+/**
+ * As fotos de um report AINDA separadas por cômodo.
+ *
+ * `urlsDeFoto` acima achata, e achatar é o certo para o formulário de trade,
+ * que tem dois campos. O de limpeza tem treze, um por cômodo, e para ele o
+ * mapa precisa chegar inteiro — foi exatamente essa perda que fazia o
+ * relatório de End of Tenancy chegar vazio do outro lado.
+ *
+ * Devolve null quando o envelope é lista plana (report antigo ou template de
+ * trade): quem chama volta para o caminho de dois blocos.
+ */
+export function fotosPorComodo(report: unknown): Record<string, string[]> | null {
+  const p = (report as { photos?: unknown } | null)?.photos;
+  if (!p || Array.isArray(p) || typeof p !== "object") return null;
+  const out: Record<string, string[]> = {};
+  for (const [chave, valor] of Object.entries(p as Record<string, unknown>)) {
+    const urls = Array.isArray(valor)
+      ? valor.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      : [];
+    if (urls.length > 0) out[chave] = urls;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 const BUCKET_FOTOS = "job-reports";
 
 /**
@@ -85,7 +126,7 @@ const BUCKET_FOTOS = "job-reports";
  *
  * Dez minutos bastam: o envio inteiro leva de 25 a 35 segundos.
  */
-async function assinarFotos(supabase: SupabaseClient, urls: string[]): Promise<string[]> {
+export async function assinarFotos(supabase: SupabaseClient, urls: string[]): Promise<string[]> {
   if (urls.length === 0) return [];
   const marcador = `/${BUCKET_FOTOS}/`;
   const caminhos = urls
@@ -192,6 +233,71 @@ export function motivoNaoElegivel(job: {
   return null;
 }
 
+/**
+ * Grava a falha e devolve em que tentativa estamos.
+ *
+ * Estava escrito em três lugares com três textos diferentes; um deles esquecia
+ * de incrementar o contador, e um job podia bater a cabeça sem nunca chegar no
+ * teto de três.
+ */
+async function marcarFalha(
+  supabase: SupabaseClient,
+  job: { id: string; external_report_attempts?: number | null },
+  motivo: string,
+): Promise<number> {
+  const tentativas = Number(job.external_report_attempts ?? 0) + 1;
+  await supabase
+    .from("jobs")
+    .update({
+      external_report_started_at: null,
+      external_report_error: motivo,
+      external_report_attempts: tentativas,
+    })
+    .eq("id", job.id);
+  return tentativas;
+}
+
+/**
+ * Escreve o motivo no card SEM gastar tentativa.
+ *
+ * A rota HTTP dispara o envio e devolve 202 na hora, porque preencher demora
+ * meio minuto. Só que os bloqueios descobertos DEPOIS desse 202 (foto faltando,
+ * relatório sem descrição) não tinham como voltar: o motivo era calculado,
+ * devolvido para ninguém, e o card continuava mostrando o erro da véspera. Do
+ * lado de quem clicou, o botão não fazia nada.
+ *
+ * Tentativa não conta porque não houve tentativa: ninguém abriu a Housekeep.
+ * O teto de três existe para o robô não bater a cabeça, e bater a cabeça é
+ * outra coisa: é chegar lá e ser recusado.
+ */
+async function gravarMotivo(supabase: SupabaseClient, jobId: string, motivo: string): Promise<void> {
+  await supabase
+    .from("jobs")
+    .update({ external_report_error: motivo, external_report_started_at: null })
+    .eq("id", jobId);
+}
+
+/**
+ * Quantas fotos temos, na mesma chave que a Housekeep usa para cobrar.
+ *
+ * No formulário de limpeza a conta é por cômodo, porque a exigência é por
+ * cômodo. No de trade existe um balde só por metade, e a chave é `all`.
+ *
+ * Relatório de limpeza com lista plana (o caso do JOB-9450, digitado no
+ * template chapado) cai em `all` de propósito: aí toda contagem por cômodo dá
+ * zero, e a mensagem de falta diz cômodo a cômodo o que precisa chegar. É
+ * exatamente o que se quer saber antes de mandar alguém voltar na casa.
+ */
+function contarPorChave(report: unknown, limpeza: boolean): Record<string, number> {
+  if (limpeza) {
+    const mapa = fotosPorComodo(report);
+    if (mapa) {
+      return Object.fromEntries(Object.entries(mapa).map(([chave, urls]) => [chave, urls.length]));
+    }
+  }
+  return { all: urlsDeFoto(report).length };
+}
+
 async function avisar(assunto: string, html: string): Promise<void> {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key) return;
@@ -224,16 +330,110 @@ export async function enviarRelatorioExterno(
   if (bloqueio) return { estado: "nao_elegivel", motivo: bloqueio };
 
   const j = job as unknown as Record<string, unknown>;
-  const limpeza = ehLimpeza(j);
+
+  /**
+   * O formulário DELES antes de qualquer coisa, e sem browser.
+   *
+   * Três perguntas se respondem aqui, e nenhuma delas a tela sabia responder:
+   * já foi submetido, qual dos dois formulários é, e quanta foto cada campo
+   * exige. Fazer isso antes de abrir o Playwright é o que impede gastar 35
+   * segundos e uma tentativa para descobrir no fim que faltava foto.
+   */
+  const busca = await buscarFormulario(String(j.report_link));
+  if (!busca.ok) {
+    // 404 é relatório que sumiu do lado deles: retentar não traz de volta.
+    if (busca.sumiu) {
+      await marcarFalha(supabase, job as never, busca.motivo);
+      return { estado: "falhou", motivo: busca.motivo };
+    }
+    // Rede ruim não gasta tentativa: o job continua na fila como estava.
+    return { estado: "nao_elegivel", motivo: busca.motivo };
+  }
+  const form = busca.form;
+
+  /**
+   * Já entrou lá: sucesso de verdade, com a data deles, sem submeter por cima.
+   *
+   * É o `jaEstava` que a tela tentava adivinhar por ausência de campo. A
+   * diferença é que agora vem do `submitted_at` da Housekeep.
+   */
+  if (form.submetidoEm) {
+    await supabase
+      .from("jobs")
+      .update({
+        external_report_submitted_at: form.submetidoEm,
+        external_report_started_at: null,
+        external_report_error: null,
+      })
+      .eq("id", jobId);
+    await avisar(
+      `${j.reference} · relatório já estava na Housekeep`,
+      `<p><strong>${j.reference}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
+       <p>A Housekeep já tinha este relatório desde ${form.submetidoEm}. Nada foi reenviado.</p>
+       <p><a href="${form.url}">Abrir o relatório na Housekeep</a></p>`,
+    );
+    return { estado: "enviado" };
+  }
+
+  /**
+   * A FORMA vem da página, não do template que alguém digitou.
+   *
+   * Esta linha é o conserto do JOB-9450. Antes, `ehLimpeza` lia o template do
+   * relatório para escolher o payload, enquanto o preenchimento escolhia o
+   * formulário pela página: relatório `general` num job de limpeza produzia um
+   * payload de trade entrando no formulário de limpeza com um `as`. Todo campo
+   * de limpeza virava `undefined`, ou seja "No", inclusive "Is the job
+   * complete?", e a Housekeep recusava o envio inteiro.
+   */
+  const forma = formaDoFormularioAPI(form);
+  if (!forma) {
+    const motivo = `the client platform form changed: ${form.perguntas.length} questions, none recognised`;
+    await marcarFalha(supabase, job as never, motivo);
+    return { estado: "falhou", motivo };
+  }
+  const limpeza = forma === "limpeza";
+  if (limpeza !== ehLimpeza(j)) {
+    console.warn(
+      `[stefane] ${j.reference}: relatório digitado como ${ehLimpeza(j) ? "limpeza" : "trade"} ` +
+        `mas o formulário da plataforma é ${forma}. Seguindo o formulário.`,
+    );
+  }
+
   const base = {
     inicio: (j.partner_timer_started_at as string | null) ?? null,
     fim: (j.partner_timer_ended_at as string | null) ?? null,
   };
   const montado = limpeza
     ? payloadLimpeza({ start: j.start_report as never, final: j.final_report as never, ...base })
-    : payloadDoReport({ final: j.final_report as never, ...base });
+    : payloadDoReport({ final: j.final_report as never, start: j.start_report as never, ...base });
 
-  if (!montado.ok) return { estado: "nao_elegivel", motivo: montado.motivo };
+  if (!montado.ok) {
+    await gravarMotivo(supabase, jobId, montado.motivo);
+    return { estado: "nao_elegivel", motivo: montado.motivo };
+  }
+
+  /**
+   * Foto conferida contra o mínimo DELES, campo a campo, antes de submeter.
+   *
+   * O formulário de limpeza pede 5 de sala, 3 de corredor, 5 de cozinha, 5 de
+   * banheiro e 5 de quarto. Um relatório com 20 fotos soltas não passa, e até
+   * aqui a gente só descobria isso depois do Submit, com uma recusa que não
+   * dizia qual campo. Bloquear antes devolve a lista exata do que falta, que é
+   * o que dá para pedir ao parceiro no mesmo dia.
+   */
+  const faltas = faltasDeFoto(form, {
+    antes: contarPorChave(j.start_report, limpeza),
+    depois: contarPorChave(j.final_report, limpeza),
+  });
+  if (faltas.length > 0) {
+    // Cinco linhas cabem no card. O resto vira contagem, porque a lista inteira
+    // de treze campos empurra o motivo para fora da tela e ninguém lê nenhum.
+    const mostrar = faltas.slice(0, 5).join("; ");
+    const resto = faltas.length > 5 ? ` and ${faltas.length - 5} more` : "";
+    const motivo = `the client platform requires more photos. ${mostrar}${resto}`;
+    await gravarMotivo(supabase, jobId, motivo);
+    return { estado: "nao_elegivel", motivo };
+  }
 
   // Trava de concorrência: só um envio por job por vez. `started_at` nulo é a
   // condição, então dois cliques seguidos não viram dois preenchimentos.
@@ -252,54 +452,96 @@ export async function enviarRelatorioExterno(
     assinarFotos(supabase, urlsDeFoto(j.final_report)),
   ]);
 
+  // Mapa por cômodo quando o report foi preenchido no formulário de limpeza:
+  // é ele que alimenta os treze campos da Housekeep. Assinar cada lista, e não
+  // a lista achatada, porque a URL assinada é por arquivo.
+  const assinarMapa = async (mapa: Record<string, string[]> | null) => {
+    if (!mapa) return undefined;
+    const out: Record<string, string[]> = {};
+    for (const [chave, urls] of Object.entries(mapa)) out[chave] = await assinarFotos(supabase, urls);
+    return out;
+  };
+  const [antesPorComodo, depoisPorComodo] = await Promise.all([
+    assinarMapa(fotosPorComodo(j.start_report)),
+    assinarMapa(fotosPorComodo(j.final_report)),
+  ]);
+
+  /**
+   * O teto de cada campo, tirado do formulário deles e não de um número nosso.
+   * "Cleaning equipment" aceita duas fotos; o teto global de 20 mandaria cinco
+   * e o campo voltaria recusado.
+   */
+  const maxPorChave: Record<string, number> = {};
+  for (const slot of slotsDeFoto(form)) {
+    maxPorChave[slot.chave] = Math.min(maxPorChave[slot.chave] ?? slot.max, slot.max);
+  }
+
   const res = await submeterRelatorioHousekeep({
-    url: String(j.report_link).split("?")[0],
+    url: form.url,
+    forma,
     payload: montado.payload,
-    fotos: { antes: fotosAntes, depois: fotosDepois },
+    fotos: { antes: fotosAntes, depois: fotosDepois, antesPorComodo, depoisPorComodo, maxPorChave },
     simular: opcoes?.simular,
   });
 
   const ref = String(j.reference);
-  const link = String(j.report_link).split("?")[0];
+  const link = form.url;
 
-  if (res.ok) {
+  /**
+   * O veredito é da Housekeep, não do Playwright.
+   *
+   * Mesmo quando o Submit parece ter dado certo, quem diz que entrou é o
+   * `submitted_at` da API deles. É a diferença entre carimbar um job como
+   * entregue e ter entregue: até 20/08/2026 a tela adivinhava pelo texto da
+   * página, e adivinhou errado pelo menos uma vez (JOB-9437).
+   */
+  const confirmado = opcoes?.simular ? null : await confirmarSubmissao(link);
+
+  if (confirmado) {
     await supabase
       .from("jobs")
       .update({
-        external_report_submitted_at: new Date().toISOString(),
+        external_report_submitted_at: confirmado,
         external_report_started_at: null,
         external_report_error: null,
       })
       .eq("id", jobId);
 
-    const jaEstava = "jaEstava" in res && res.jaEstava;
     await avisar(
-      `${ref} · relatório ${jaEstava ? "já estava" : "enviado"} na Housekeep`,
+      `${ref} · relatório enviado na Housekeep`,
       `<p><strong>${ref}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
-       <p>${jaEstava ? "A Housekeep já tinha este relatório. Nada foi reenviado." : `Enviado em ${res.segundos}s.`}</p>
+       <p>Confirmado pela Housekeep em ${confirmado}. Levou ${res.segundos}s.</p>
        <p><a href="${link}">Abrir o relatório na Housekeep</a></p>`,
     );
     return { estado: "enviado", segundos: res.segundos };
   }
 
-  const tentativas = Number(j.external_report_attempts ?? 0) + 1;
-  await supabase
-    .from("jobs")
-    .update({
-      external_report_started_at: null,
-      external_report_error: res.motivo,
-      external_report_attempts: tentativas,
-    })
-    .eq("id", jobId);
+  /**
+   * Playwright feliz e Housekeep sem `submitted_at` é FALHA, e é a falha mais
+   * cara que existe aqui: é exatamente o caso em que o job saía da fila com o
+   * relatório para trás. Vale a pena o falso negativo, porque retentar é
+   * barato e um relatório perdido não volta.
+   */
+  const motivo = res.ok
+    ? "the submit went through on screen but the client platform has no report: it did not land"
+    : res.motivo;
+
+  // Dry run não conta tentativa nem grava erro: ele não tocou na Housekeep.
+  if (opcoes?.simular) {
+    await supabase.from("jobs").update({ external_report_started_at: null }).eq("id", jobId);
+    return { estado: "falhou", motivo, segundos: res.segundos };
+  }
+
+  const tentativas = await marcarFalha(supabase, job as never, motivo);
 
   await avisar(
     `${ref} · relatório NÃO subiu na Housekeep`,
     `<p><strong>${ref}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
-     <p><strong>Motivo:</strong> ${res.motivo}</p>
+     <p><strong>Motivo:</strong> ${motivo}</p>
      <p>Tentativa ${tentativas} de ${MAX_TENTATIVAS}.</p>
      <p><a href="${link}">Abrir o formulário e enviar à mão</a></p>`,
   );
-  return { estado: "falhou", motivo: res.motivo, segundos: res.segundos };
+  return { estado: "falhou", motivo, segundos: res.segundos };
 }
 
 /**
@@ -330,7 +572,7 @@ export async function previewEnvio(
   };
   const montado = limpeza
     ? payloadLimpeza({ start: j.start_report as never, final: j.final_report as never, ...base })
-    : payloadDoReport({ final: j.final_report as never, ...base });
+    : payloadDoReport({ final: j.final_report as never, start: j.start_report as never, ...base });
   if (!montado.ok) return { ok: false, motivo: montado.motivo };
 
   const p = montado.payload as Record<string, unknown>;
