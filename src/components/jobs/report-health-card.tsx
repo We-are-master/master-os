@@ -13,9 +13,9 @@
  * trava em campo com sinal ruim manda relatório nenhum, e é esse o problema
  * que se está tentando resolver.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleAlert } from "lucide-react";
-import { reportHealth, faixaDaNota, type SaudeDoRelatorio } from "@/lib/report-health";
+import { reportHealth, faixaDaNota, type ExigenciaDeFoto, type SaudeDoRelatorio } from "@/lib/report-health";
 import { pickReportTemplate, usesCleaningForm } from "@/lib/public-report-templates";
 
 const CORES = {
@@ -33,6 +33,7 @@ const PALAVRA = {
 } as const;
 
 export function ReportHealthCard({
+  jobUuid,
   jobTitle,
   startReport,
   finalReport,
@@ -40,6 +41,8 @@ export function ReportHealthCard({
   timerStartedAt,
   timerEndedAt,
 }: {
+  /** Sem ele a nota mede contra o nosso piso, que é palpite. */
+  jobUuid?: string | null;
   jobTitle: string | null;
   startReport: unknown;
   finalReport: unknown;
@@ -47,6 +50,30 @@ export function ReportHealthCard({
   timerStartedAt: string | null;
   timerEndedAt: string | null;
 }) {
+  /**
+   * A exigência de foto lida da plataforma do cliente, campo a campo.
+   *
+   * Chega depois da primeira pintura de propósito: a nota aparece na hora com
+   * o que dá para saber sem rede, e aperta quando a resposta chega. Plataforma
+   * fora do ar deixa a nota como era antes, avisando sem bloquear, porque
+   * travar um relatório por causa da rede deles seria trocar um problema por
+   * outro pior.
+   */
+  const [exigencias, setExigencias] = useState<ExigenciaDeFoto[] | undefined>(undefined);
+  useEffect(() => {
+    if (!jobUuid) return;
+    let vivo = true;
+    fetch(`/api/jobs/${jobUuid}/platform-requirements`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { exigencias?: ExigenciaDeFoto[] } | null) => {
+        if (vivo && d?.exigencias?.length) setExigencias(d.exigencias);
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [jobUuid]);
+
   const saude: SaudeDoRelatorio = useMemo(() => {
     // O template gravado no relatório manda; o título só decide antes de
     // existir relatório. Mesma regra que a Stefane usa para escolher o
@@ -63,8 +90,9 @@ export function ReportHealthCard({
       finalReportSubmitted,
       timerStartedAt,
       timerEndedAt,
+      exigencias,
     });
-  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt]);
+  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt, exigencias]);
 
   /**
    * Relatório preenchido no formulário ERRADO para este cliente.

@@ -89,16 +89,33 @@ test("relatório que não chegou é o primeiro problema", () => {
   assert.ok(s.nota < 30);
 });
 
-test("certificado não tem seção de chegada, e não se cobra foto de antes", () => {
-  const s = reportHealth({
+test("certificado PASSOU a cobrar foto de chegada, porque a plataforma cobra", () => {
+  /**
+   * Regra invertida em 20/08/2026, contra o formulário real deles.
+   *
+   * Certificado cai no formulário de trade da Housekeep, e esse formulário
+   * exige no mínimo UMA foto em "Before photos". Enquanto o nosso template não
+   * tinha seção de chegada, todo EPC e CP12 passava daqui e travava lá, pedindo
+   * uma foto que nunca foi pedida ao parceiro.
+   */
+  const semAntes = reportHealth({
     template: "certificate",
     finalReportSubmitted: true,
     finalReport: { photos: ["cert.pdf"], inspection_summary: "EICR carried out, no C1 or C2 observed." },
     timerStartedAt: "x",
     timerEndedAt: "y",
   });
-  assert.ok(!s.itens.some((i) => i.chave === "fotos_antes"));
-  assert.equal(s.bloqueado, false);
+  assert.ok(semAntes.itens.some((i) => i.chave === "fotos_antes"));
+
+  const comAntes = reportHealth({
+    template: "certificate",
+    finalReportSubmitted: true,
+    startReport: { photos: ["arrival.jpg"] },
+    finalReport: { photos: ["cert.pdf"], inspection_summary: "EICR carried out, no C1 or C2 observed." },
+    timerStartedAt: "x",
+    timerEndedAt: "y",
+  });
+  assert.equal(comAntes.bloqueado, false);
 });
 
 test("nota alta nunca convive com item bloqueante", () => {
@@ -180,4 +197,65 @@ test("trade acima de 20 na metade é recusado: o excedente seria cortado em sil�
   });
   assert.equal(v.ok, false);
   assert.ok(v.motivos.some((m) => /After photos: 21/.test(m)));
+});
+
+test("JOB-9450: com a exigência real da plataforma, 20 fotos soltas param de dar 100", () => {
+  /**
+   * O relatório que tirou 100/100 e voltou recusado. Vinte fotos de cada lado,
+   * template chapado, num job cujo formulário pede cômodo a cômodo. Enquanto a
+   * nota mediu o nosso piso, ela dizia "pronto para enviar".
+   */
+  const exigencias = [
+    { metade: "antes" as const, chave: "kitchen", rotulo: "Kitchen", min: 5 },
+    { metade: "antes" as const, chave: "hallways", rotulo: "Hallways", min: 3 },
+    { metade: "depois" as const, chave: "kitchen", rotulo: "Kitchen", min: 5 },
+  ];
+  const s = reportHealth({
+    template: "general",
+    startReport: { photos: Array.from({ length: 20 }, (_, i) => `a${i}`) },
+    finalReport: { photos: Array.from({ length: 20 }, (_, i) => `d${i}`), description: "All good" },
+    finalReportSubmitted: true,
+    timerStartedAt: "2026-08-19T16:01:05Z",
+    timerEndedAt: "2026-08-19T16:03:29Z",
+    exigencias,
+  });
+  assert.equal(s.bloqueado, true);
+  assert.ok(s.nota < 100);
+  assert.ok(s.pendencias.some((p) => p.rotulo === "Before: Kitchen" && p.detalhe === "0 of 5"));
+});
+
+test("exigência atendida por cômodo libera a nota", () => {
+  const exigencias = [
+    { metade: "antes" as const, chave: "kitchen", rotulo: "Kitchen", min: 5 },
+    { metade: "depois" as const, chave: "kitchen", rotulo: "Kitchen", min: 5 },
+  ];
+  const cinco = Array.from({ length: 5 }, (_, i) => `f${i}`);
+  const s = reportHealth({
+    template: "cleaner",
+    startReport: { photos: { kitchen: cinco } },
+    finalReport: { photos: { kitchen: cinco } },
+    finalReportSubmitted: true,
+    timerStartedAt: "2026-08-19T09:00:00Z",
+    timerEndedAt: "2026-08-19T12:00:00Z",
+    exigencias,
+  });
+  assert.equal(s.bloqueado, false);
+  assert.equal(s.nota, 100);
+});
+
+test("balde único do formulário de trade conta a lista plana", () => {
+  // `all` é o formulário de trade: lá a foto não tem cômodo e nem precisa ter.
+  const s = reportHealth({
+    template: "general",
+    startReport: { photos: ["a"] },
+    finalReport: { photos: ["b"], description: "Replaced the tap and tested it" },
+    finalReportSubmitted: true,
+    timerStartedAt: "2026-08-19T09:00:00Z",
+    timerEndedAt: "2026-08-19T10:00:00Z",
+    exigencias: [
+      { metade: "antes", chave: "all", rotulo: "Before photos", min: 1 },
+      { metade: "depois", chave: "all", rotulo: "After photos", min: 1 },
+    ],
+  });
+  assert.equal(s.bloqueado, false);
 });
