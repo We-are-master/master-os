@@ -232,5 +232,20 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
     if ((inv as { status?: string } | null)?.status !== "paid") return;
   }
 
-  await client.from("jobs").update({ status: "completed", finance_status: "paid" }).eq("id", jobId);
+  /**
+   * `payment_status` vai JUNTO com `finance_status`, sempre.
+   *
+   * São duas colunas para o mesmo fato, e escrever só uma foi o suficiente para
+   * dezesseis jobs ficarem `finance=paid` com `payment=unpaid`, £3.379 parados.
+   * A checagem de coerência da Zia lê `payment_status`, então ela reportava
+   * "recebido mas job aberto" para job que estava fechado e pago.
+   *
+   * O certo seria uma coluna só. Enquanto as duas existirem, quem escreve uma
+   * escreve a outra na mesma chamada: duas escritas separadas é como elas
+   * divergem de novo.
+   */
+  await client
+    .from("jobs")
+    .update({ status: "completed", finance_status: "paid", payment_status: "paid" })
+    .eq("id", jobId);
 }

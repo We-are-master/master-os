@@ -110,7 +110,10 @@ export async function reopenInvoiceToPending(client: SupabaseClient, invoice: In
   if (job.status === "completed" && !isJobForcePaid(job.internal_notes)) {
     await client
       .from("jobs")
-      .update({ status: "awaiting_payment", finance_status: "unpaid" })
+      // As duas colunas voltam JUNTAS, pelo mesmo motivo que sobem juntas:
+      // deixar `payment_status` em "paid" com a fatura reaberta produziria a
+      // divergência inversa, e essa ninguém detecta (a Zia só olha um lado).
+      .update({ status: "awaiting_payment", finance_status: "unpaid", payment_status: "unpaid" })
       .eq("id", job.id);
   }
 }
