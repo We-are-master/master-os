@@ -185,8 +185,9 @@ function parseCycleHint(raw: unknown): PaymentRunCycleKind | "auto" {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth();
-  if (auth instanceof NextResponse) return auth;
+  const authResult = await requireAuth();
+  if (authResult instanceof NextResponse) return authResult;
+  const auth = authResult;
 
   let body: { selfBillIds?: unknown; paymentRunHint?: unknown };
   try {
@@ -209,10 +210,11 @@ export async function POST(req: NextRequest) {
   if (!resendKey) {
     return NextResponse.json({ error: "RESEND_API_KEY not configured" }, { status: 503 });
   }
-  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!fromEmail) {
+  const fromEmailRaw = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!fromEmailRaw) {
     return NextResponse.json({ error: "RESEND_FROM_EMAIL not configured" }, { status: 503 });
   }
+  const fromEmail: string = fromEmailRaw;
 
   const supabase = createServiceClient();
   const { data: company } = await supabase.from("company_settings").select("email, company_name").limit(1).maybeSingle();
@@ -262,44 +264,38 @@ export async function POST(req: NextRequest) {
   }
 
   const resend = new Resend(resendKey);
-  const sentIds: string[] = [];
-  const skipped: Skipped[] = [];
 
-  for (const id of selfBillIds) {
+  type ItemResult = { id: string; ok: true } | { id: string; ok: false; reference?: string; reason: string };
+
+  async function processSelfBill(id: string): Promise<ItemResult> {
     const sb = sbById.get(id);
     if (!sb) {
-      skipped.push({ id, reason: "Not found" });
-      continue;
+      return { id, ok: false, reason: "Not found" };
     }
     if (isSelfBillPayoutVoided(sb)) {
-      skipped.push({ id, reference: sb.reference, reason: "Void or cancelled" });
-      continue;
+      return { id, ok: false, reference: sb.reference, reason: "Void or cancelled" };
     }
     if (sb.bill_origin === "internal") {
-      skipped.push({ id, reference: sb.reference, reason: "Internal payroll bill" });
-      continue;
+      return { id, ok: false, reference: sb.reference, reason: "Internal payroll bill" };
     }
     if (!sb.partner_id?.trim()) {
-      skipped.push({ id, reference: sb.reference, reason: "No partner linked" });
-      continue;
+      return { id, ok: false, reference: sb.reference, reason: "No partner linked" };
     }
 
     const { data: partner } = await supabase
       .from("partners")
-      .select("email, name")
+      .select("email, contact_name")
       .eq("id", sb.partner_id)
       .maybeSingle();
     const partnerEmail = partner?.email?.trim().toLowerCase();
-    const partnerName = partner?.name?.trim() ?? null;
+    const partnerName = partner?.contact_name?.trim() ?? null;
     if (!partnerEmail) {
-      skipped.push({ id, reference: sb.reference, reason: "Partner has no email" });
-      continue;
+      return { id, ok: false, reference: sb.reference, reason: "Partner has no email" };
     }
 
     const pdfResult = await renderSelfBillPdfBuffer(supabase, id);
     if ("error" in pdfResult) {
-      skipped.push({ id, reference: sb.reference, reason: pdfResult.error });
-      continue;
+      return { id, ok: false, reference: sb.reference, reason: pdfResult.error };
     }
 
     const weekEndStr = sb.week_end?.trim() ?? "";
@@ -326,14 +322,14 @@ export async function POST(req: NextRequest) {
     });
 
     if (emailError) {
-      skipped.push({
+      return {
         id,
+        ok: false,
         reference: sb.reference,
         reason: typeof emailError === "object" && emailError && "message" in emailError
           ? String((emailError as { message: unknown }).message)
           : "Email delivery failed",
-      });
-      continue;
+      };
     }
 
     // Zendesk side conversation — recorded under the master payment-run ticket.
@@ -417,8 +413,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    sentIds.push(id);
+    return { id, ok: true };
   }
+
+  // Each self-bill is fully independent (own partner, own PDF, own email, own
+  // Zendesk side-conversation under the shared per-group ticket) — was a
+  // sequential for-loop, one self-bill fully processed after another, which
+  // is what made a 10-20 item bulk send lock the UI for minutes. Process in
+  // small concurrent batches instead of full unbounded Promise.all, so a
+  // large batch doesn't slam Resend/Zendesk with dozens of simultaneous
+  // requests at once.
+  const CONCURRENCY = 5;
+  const results: ItemResult[] = [];
+  for (let i = 0; i < selfBillIds.length; i += CONCURRENCY) {
+    const batch = selfBillIds.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(batch.map((id) => processSelfBill(id)));
+    results.push(...batchResults);
+  }
+
+  const sentIds = results.filter((r): r is Extract<ItemResult, { ok: true }> => r.ok).map((r) => r.id);
+  const skipped: Skipped[] = results
+    .filter((r): r is Extract<ItemResult, { ok: false }> => !r.ok)
+    .map((r) => ({ id: r.id, reference: r.reference, reason: r.reason }));
 
   return NextResponse.json({
     sent: sentIds.length,
