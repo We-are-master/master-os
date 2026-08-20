@@ -160,11 +160,13 @@ export async function putJobOnHoldFromZendesk(
     );
   }
 
-  try {
-    await holdLinkedInvoicesForJob(supabase, job.reference);
-  } catch (e) {
-    console.error("[zendesk-on-hold-webhook] hold linked invoices failed:", e);
-  }
+  // Best-effort, non-blocking — same treatment as job-created's webhook
+  // (src/app/api/webhooks/desk/job-created/route.ts): this handler responds
+  // to a Zendesk-originated webhook, and awaiting outbound Zendesk API calls
+  // here risks Zendesk's own retry/timeout firing on a slow response.
+  void holdLinkedInvoicesForJob(supabase, job.reference).catch((e) =>
+    console.error("[zendesk-on-hold-webhook] hold linked invoices failed:", e),
+  );
 
   await supabase.from("audit_logs").insert([
     {
@@ -192,20 +194,19 @@ export async function putJobOnHoldFromZendesk(
     },
   ]).then(() => {}, (e) => console.error("[zendesk-on-hold-webhook] audit failed:", e));
 
-  const notify = await notifyPartnerJobZendesk(supabase, job.id, {
+  void notifyPartnerJobZendesk(supabase, job.id, {
     kind: "on_hold",
     reason: notes || reasonText,
     newStatusLabel: "On Hold",
     actorUserId: null,
-  }).catch((err) => {
-    console.error("[zendesk-on-hold-webhook] partner notify:", err);
-    return null;
-  });
+  }).catch((err) => console.error("[zendesk-on-hold-webhook] partner notify:", err));
 
-  const [statusSync, fieldsSync] = await Promise.all([
-    syncJobZendeskStatus(job.id, supabase),
-    syncJobZendeskOnHoldFields(job.id, supabase, opts?.setup ?? null),
-  ]);
+  void syncJobZendeskStatus(job.id, supabase).catch((err) =>
+    console.error("[zendesk-on-hold-webhook] status sync:", err),
+  );
+  void syncJobZendeskOnHoldFields(job.id, supabase, opts?.setup ?? null).catch((err) =>
+    console.error("[zendesk-on-hold-webhook] fields sync:", err),
+  );
 
   return {
     ok: true,
@@ -216,8 +217,8 @@ export async function putJobOnHoldFromZendesk(
     previousStatus: job.status,
     onHoldReasonId: presetId,
     onHoldReasonLabel: jobOnHoldReasonLabel(presetId, presets),
-    zendeskStatusSync: statusSync,
-    zendeskFieldsSync: fieldsSync,
-    notify: notify?.body ?? null,
+    zendeskStatusSync: null,
+    zendeskFieldsSync: null,
+    notify: null,
   };
 }
