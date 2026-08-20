@@ -117,7 +117,7 @@ async function main() {
 
   // ─── Jobs ─────────────────────────────────────────────────────────────────
   const jobs = await (await fetch(
-    `${SB}/rest/v1/jobs?select=id,reference,client_name,property_address,scheduled_date,client_price,payment_status,invoice_id&deleted_at=is.null&limit=3000`,
+    `${SB}/rest/v1/jobs?select=id,reference,client_name,property_address,scheduled_date,client_price,payment_status,status,invoice_id&deleted_at=is.null&limit=3000`,
     { headers: SH },
   )).json();
 
@@ -169,9 +169,12 @@ async function main() {
       }
 
       if (APLICAR) {
+        // Mesma regra do Checkatrade: recebido fecha o job na hora. Só de
+        // `awaiting_payment`, nunca de `final_check`, que ainda deve relatório.
+        const fecha = job.status === "awaiting_payment" ? { status: "completed" } : {};
         await fetch(`${SB}/rest/v1/jobs?id=eq.${job.id}`, {
           method: "PATCH", headers: SHW,
-          body: JSON.stringify({ payment_status: "paid", finance_status: "paid", payment_amount: it.valor, paid_at: (e.pagoEm ?? new Date().toISOString().slice(0, 10)) + "T12:00:00Z" }),
+          body: JSON.stringify({ ...fecha, payment_status: "paid", finance_status: "paid", payment_amount: it.valor, paid_at: (e.pagoEm ?? new Date().toISOString().slice(0, 10)) + "T12:00:00Z" }),
         });
         // A invoice fecha junto, sempre. Fechar o job e deixar a invoice viva
         // é o que faz o "Ready to receive" cobrar quem ja pagou.
