@@ -1748,9 +1748,7 @@ function AccountDetailDrawer({
     try {
       const url = await uploadAccountLogo(account.id, file);
       const updated = await updateAccount(account.id, { logo_url: url });
-      const fresh = await getAccount(account.id);
-      const next = fresh ?? updated;
-      onAccountUpdated(next);
+      onAccountUpdated(updated);
       setEdit((p) => ({ ...p, logo_url: url }));
       toast.success("Logo uploaded and saved");
     } catch (err) {
@@ -1770,9 +1768,7 @@ function AccountDetailDrawer({
         /* folder may be empty or bucket missing */
       }
       const updated = await updateAccount(account.id, { logo_url: null });
-      const fresh = await getAccount(account.id);
-      const next = fresh ?? updated;
-      onAccountUpdated(next);
+      onAccountUpdated(updated);
       setEdit((p) => ({ ...p, logo_url: "" }));
       toast.success("Logo removed");
     } catch (err) {
@@ -2027,8 +2023,7 @@ function AccountDetailDrawer({
                       try {
                         const url = await uploadAccountContract(account.id, file);
                         const updated = await updateAccount(account.id, { contract_url: url });
-                        const fresh = await getAccount(account.id);
-                        onAccountUpdated(fresh ?? updated);
+                        onAccountUpdated(updated);
                         setEdit((p) => ({ ...p, contract_url: url }));
                         toast.success("Contract uploaded");
                       } catch (err) {
@@ -2063,8 +2058,7 @@ function AccountDetailDrawer({
                           try {
                             try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
                             const updated = await updateAccount(account.id, { contract_url: null });
-                            const fresh = await getAccount(account.id);
-                            onAccountUpdated(fresh ?? updated);
+                            onAccountUpdated(updated);
                             setEdit((p) => ({ ...p, contract_url: "" }));
                             toast.success("Contract removed");
                           } catch (err) {
