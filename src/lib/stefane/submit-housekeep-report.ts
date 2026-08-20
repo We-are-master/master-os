@@ -25,6 +25,7 @@ import {
   HOUSEKEEP_COMODOS,
   HOUSEKEEP_SECOES_FOTO,
 } from "./housekeep-report-form";
+import { confirmarSubmissao } from "./housekeep-api";
 
 /** Fotos de um envio: antes e depois, na ordem dos dois blocos do formulário. */
 export type FotosDoEnvio = {
@@ -37,6 +38,13 @@ export type FotosDoEnvio = {
    */
   antesPorComodo?: Record<string, string[]>;
   depoisPorComodo?: Record<string, string[]>;
+  /**
+   * O TETO de cada campo, como a Housekeep publica, na chave do nosso lado
+   * (`kitchen`, `equipment`...). Não é decorativo: "Cleaning equipment" aceita
+   * DUAS fotos, e mandar cinco é como um campo válido vira campo recusado.
+   * Sem este mapa, cai no teto global de 20, que só vale para o de trade.
+   */
+  maxPorChave?: Record<string, number>;
 };
 
 /** Anexo pronto para o `setInputFiles`, já em memória. */
@@ -52,9 +60,13 @@ const TIPOS_ACEITOS = /^image\//;
  * envio: relatório com foto a menos ainda é melhor que relatório nenhum, e o
  * que ficou de fora vai para o log.
  */
-async function baixarFotos(urls: string[], prefixo: string): Promise<Anexo[]> {
+async function baixarFotos(
+  urls: string[],
+  prefixo: string,
+  teto: number = HOUSEKEEP_FOTOS.maximoPorBloco,
+): Promise<Anexo[]> {
   const out: Anexo[] = [];
-  for (let i = 0; i < urls.length && out.length < HOUSEKEEP_FOTOS.maximoPorBloco; i++) {
+  for (let i = 0; i < urls.length && out.length < teto; i++) {
     const url = urls[i];
     try {
       const r = await fetch(url);
@@ -73,10 +85,10 @@ async function baixarFotos(urls: string[], prefixo: string): Promise<Anexo[]> {
       console.error(`[stefane] foto ${prefixo} ${i} não baixou:`, err);
     }
   }
-  if (urls.length > HOUSEKEEP_FOTOS.maximoPorBloco) {
+  if (urls.length > teto) {
     console.warn(
-      `[stefane] ${prefixo}: ${urls.length} fotos, a Housekeep aceita ${HOUSEKEEP_FOTOS.maximoPorBloco}. ` +
-        `${urls.length - HOUSEKEEP_FOTOS.maximoPorBloco} ficaram de fora.`,
+      `[stefane] ${prefixo}: ${urls.length} fotos, a Housekeep aceita ${teto}. ` +
+        `${urls.length - teto} ficaram de fora.`,
     );
   }
   return out;
@@ -127,6 +139,7 @@ async function anexarPorComodo(
   secaoAlvo: string,
   fotos: Record<string, string[]>,
   prefixoLog: string,
+  maxPorChave: Record<string, number> = {},
 ): Promise<string[]> {
   const blocos = await mapaDosBlocos(page);
   const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
@@ -141,7 +154,7 @@ async function anexarPorComodo(
       semLugar.push(chave);
       continue;
     }
-    const anexos = await baixarFotos(urls, `${prefixoLog}/${chave}`);
+    const anexos = await baixarFotos(urls, `${prefixoLog}/${chave}`, maxPorChave[chave]);
     if (anexos.length === 0) continue;
     await inputs.nth(alvo.indice).setInputFiles(anexos, { timeout: 60_000 });
     console.log(`[stefane] ${prefixoLog}: ${anexos.length} foto(s) em "${alvo.rotulo.slice(0, 40)}"`);
@@ -160,9 +173,13 @@ async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise
   await inputs.nth(indice).setInputFiles(anexos, { timeout: 60_000 });
 }
 
+/**
+ * `ok: true` quer dizer que a Housekeep confirmou por `submitted_at`, e nada
+ * menos que isso. Quem responde "já estava submetido" é o orquestrador, antes
+ * de abrir browser nenhum.
+ */
 export type ResultadoEnvio =
-  /** `jaEstava` = a plataforma já tinha o relatório; ninguém submeteu nada agora. */
-  | { ok: true; forma: "trade" | "limpeza"; segundos: number; jaEstava?: boolean }
+  | { ok: true; forma: "trade" | "limpeza"; segundos: number }
   | { ok: false; motivo: string; segundos: number };
 
 /**
@@ -226,14 +243,35 @@ async function marcarRadio(page: Page, prefixo: string, indice: number): Promise
   }
 }
 
+/**
+ * Escreve num campo que só nasce depois de o gatilho virar "Yes".
+ *
+ * `waitFor attached` e não `visible`: o campo pode estar dentro de uma sanfona
+ * recolhida, e `fill` não se importa com visibilidade — mas se importa com o
+ * elemento ainda não existir, que é o que acontece nos milissegundos entre o
+ * clique no radio e o Angular redesenhar.
+ */
+async function preencherCondicional(page: Page, seletor: string, texto: string | null): Promise<void> {
+  if (!texto) return;
+  const campo = page.locator(seletor);
+  await campo.waitFor({ state: "attached", timeout: 5000 });
+  await campo.fill(texto);
+}
+
 async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
   if (p.inicio) await page.fill(HOUSEKEEP_CAMPOS.inicio.seletor, p.inicio);
   if (p.fim) await page.fill(HOUSEKEEP_CAMPOS.fim.seletor, p.fim);
   await page.fill(HOUSEKEEP_CAMPOS.descricao.seletor, p.descricao);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.recomendaServicos.prefixo, p.recomendaServicos ? SIM : NAO);
+  // Depois do radio: o campo de texto não existe antes do "Yes".
+  await preencherCondicional(page, HOUSEKEEP_CAMPOS.servicosRecomendados.seletor, p.servicosRecomendados);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.cobrancaExtra.prefixo, p.cobrancaExtra ? SIM : NAO);
+  if (p.cobrancaExtra) {
+    await preencherCondicional(page, HOUSEKEEP_CAMPOS.trabalhoAdicionalCobranca.seletor, p.trabalhoAdicionalCobranca);
+    await marcarRadio(page, HOUSEKEEP_CAMPOS.clienteAprovouCobranca.prefixo, p.clienteAprovouCobranca ? SIM : NAO);
+  }
   await marcarRadio(page, HOUSEKEEP_CAMPOS.conclusao.prefixo, p.conclusao);
-  if (p.faltaFazer) await page.fill(HOUSEKEEP_CAMPOS.faltaFazer.seletor, p.faltaFazer);
+  if (p.faltaFazer) await preencherCondicional(page, HOUSEKEEP_CAMPOS.faltaFazer.seletor, p.faltaFazer);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.precisaRetorno.prefixo, p.precisaRetorno ? SIM : NAO);
   // Depois do radio, e não antes: "Describe additional work" só existe na
   // página depois que o retorno vira "Yes", e aí passa a ser obrigatório.
@@ -250,10 +288,28 @@ async function preencherLimpeza(page: Page, p: PayloadLimpeza): Promise<void> {
   if (p.inicio) await page.fill(HOUSEKEEP_CAMPOS.inicio.seletor, p.inicio);
   if (p.fim) await page.fill(HOUSEKEEP_CAMPOS.fim.seletor, p.fim);
   await marcarRadio(page, HOUSEKEEP_LIMPEZA.escopoMudou.prefixo, p.escopoMudou ? SIM : NAO);
+  if (p.escopoMudou) {
+    await preencherCondicional(page, HOUSEKEEP_LIMPEZA.detalhesDaMudanca.seletor, p.detalhesDaMudanca);
+    await marcarRadio(page, HOUSEKEEP_LIMPEZA.clienteAprovouMudanca.prefixo, p.clienteAprovouMudanca ? SIM : NAO);
+  }
   await marcarRadio(page, HOUSEKEEP_LIMPEZA.danoPrevio.prefixo, p.danoPrevio ? SIM : NAO);
+  if (p.danoPrevio) await preencherCondicional(page, HOUSEKEEP_LIMPEZA.descricaoDoDano.seletor, p.descricaoDoDano);
   await marcarRadio(page, HOUSEKEEP_LIMPEZA.recusouFotos.prefixo, p.recusouFotos ? SIM : NAO);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.recomendaServicos.prefixo, p.recomendaServicos ? SIM : NAO);
+  if (p.recomendaServicos) {
+    await preencherCondicional(page, HOUSEKEEP_LIMPEZA.servicosRecomendados.seletor, p.servicosRecomendados);
+  }
   await marcarRadio(page, HOUSEKEEP_LIMPEZA.jobCompleto.prefixo, p.jobCompleto ? SIM : NAO);
+  /**
+   * Os dois que o "não" revela, e que recusaram o JOB-9450 em 19/08.
+   *
+   * A limpeza tem ids PRÓPRIOS para estes dois; o mapa só conhecia os do
+   * formulário de trade, então eles ficavam em branco e obrigatórios.
+   */
+  if (!p.jobCompleto) {
+    await preencherCondicional(page, HOUSEKEEP_LIMPEZA.faltaFazer.seletor, p.faltaFazer);
+    await preencherCondicional(page, HOUSEKEEP_LIMPEZA.porqueIncompleto.seletor, p.porqueIncompleto);
+  }
   await marcarRadio(page, HOUSEKEEP_LIMPEZA.clienteInspecionou.prefixo, p.clienteInspecionou ? SIM : NAO);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.feedback.prefixo, p.feedback ?? FEEDBACK.bom);
 }
@@ -267,6 +323,16 @@ async function preencherLimpeza(page: Page, p: PayloadLimpeza): Promise<void> {
  */
 export async function submeterRelatorioHousekeep(args: {
   url: string;
+  /**
+   * Qual formulário quem chamou montou o payload PARA.
+   *
+   * Existe desde 20/08/2026 para que a discordância vire erro em vez de virar
+   * preenchimento errado. Antes, o payload era escolhido pelo template do
+   * relatório e o preenchimento pela página: quando os dois discordavam, um
+   * `as PayloadLimpeza` transformava campo ausente em `undefined`, `undefined`
+   * em "No", e "Is the job complete? No" em recusa. Foi o JOB-9450 inteiro.
+   */
+  forma?: "trade" | "limpeza";
   payload: PayloadHousekeep | PayloadLimpeza;
   fotos?: FotosDoEnvio;
   simular?: boolean;
@@ -277,10 +343,46 @@ export async function submeterRelatorioHousekeep(args: {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(args.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForTimeout(2500);
+    /**
+     * Remendo para `page.evaluate` rodar fora do Next.
+     *
+     * O esbuild que o `tsx` usa liga `keepNames`, e isso embrulha toda função
+     * nomeada em `__name(...)` — um ajudante que existe no bundle e NÃO existe
+     * dentro do navegador. As funções que passamos para `evaluate` viajam como
+     * texto, chegam do outro lado chamando `__name` e morrem com
+     * "ReferenceError: __name is not defined".
+     *
+     * Em produção não acontece (o Next compila sem isso), então o sintoma só
+     * aparecia ao chamar este módulo de um script — que é justamente como se
+     * testa o envio sem submeter. Uma linha aqui vale mais que um módulo que
+     * só funciona dentro do servidor.
+     */
+    await page.addInitScript(() => {
+      const g = globalThis as unknown as { __name?: (f: unknown) => unknown };
+      if (!g.__name) g.__name = (f: unknown) => f;
+    });
+    await page.goto(args.url, { waitUntil: "domcontentloaded", timeout: 45_000 });
 
-    const texto = await page.locator("body").innerText();
+    /**
+     * ESPERAR o formulário aparecer, em vez de amostrar depois de 2,5 segundos.
+     *
+     * Medido em 20/08/2026: a página é um Angular que leva uns 10 segundos para
+     * renderizar, e às vezes não renderiza em 35. O código antigo lia a página
+     * depois de 2,5s, encontrava zero campo, e devolvia `ok: true, jaEstava`.
+     * Ou seja: página lenta era carimbada como "a Housekeep já tinha este
+     * relatório", o job saía da fila para sempre e o relatório ficava para
+     * trás. Era o defeito mais caro do arquivo, porque falhava em silêncio.
+     *
+     * Agora ausência de campo é FALHA. Quem afirma que já foi submetido é o
+     * `submitted_at` da API deles, conferido por quem chama antes daqui.
+     */
+    await page
+      .locator("input,textarea,select")
+      .first()
+      .waitFor({ state: "attached", timeout: 60_000 })
+      .catch(() => {});
+    await page.waitForTimeout(1500);
+
     const ids = (
       await page.evaluate(() =>
         Array.from(document.querySelectorAll("input,textarea")).map(
@@ -289,12 +391,12 @@ export async function submeterRelatorioHousekeep(args: {
       )
     ).filter(Boolean);
 
-    // Já submetido do outro lado: não é erro, é trabalho que alguém já fez.
-    // Precisa vir antes da checagem de formulário, porque a página pós-envio
-    // não tem campo nenhum e senão seria reportada como "formulário mudou".
-    const semCampos = ids.length === 0;
-    if (/report submitted|already submitted|thank you|received your report/i.test(texto) || semCampos) {
-      return { ok: true, forma: "trade", segundos: seg(), jaEstava: true };
+    if (ids.length === 0) {
+      return {
+        ok: false,
+        motivo: "the client platform form never rendered: nothing was filled in",
+        segundos: seg(),
+      };
     }
 
     const forma = formaDoFormulario(ids);
@@ -303,6 +405,21 @@ export async function submeterRelatorioHousekeep(args: {
       return {
         ok: false,
         motivo: `the Housekeep form changed: ${ids.length} fields on the page, none recognised`,
+        segundos: seg(),
+      };
+    }
+
+    /**
+     * A página tem que ser o formulário para o qual o payload foi montado.
+     *
+     * Discordar aqui e seguir mesmo assim é o que produziu o JOB-9450. Parar
+     * dizendo o nome dos dois lados custa uma tentativa; seguir custa o
+     * relatório e o dia do parceiro.
+     */
+    if (args.forma && args.forma !== forma) {
+      return {
+        ok: false,
+        motivo: `form mismatch: the report was prepared for the ${args.forma} form but the page is the ${forma} one`,
         segundos: seg(),
       };
     }
@@ -327,13 +444,32 @@ export async function submeterRelatorioHousekeep(args: {
       const porComodo =
         forma === "limpeza" && (args.fotos.antesPorComodo || args.fotos.depoisPorComodo);
       if (porComodo) {
-        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before");
-        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after");
+        const teto = args.fotos.maxPorChave ?? {};
+        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before", teto);
+        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after", teto);
         const perdidos = [...new Set([...perdidosA, ...perdidosD])];
         if (perdidos.length) {
           console.warn(`[stefane] cômodo(s) sem bloco correspondente na página: ${perdidos.join(", ")}`);
         }
         await page.waitForTimeout(3000);
+      } else if (forma === "limpeza") {
+        /**
+         * Formulário de limpeza sem mapa por cômodo NÃO cai nos dois baldes.
+         *
+         * Os índices 0 e 1 são "antes" e "depois" no formulário de trade. No de
+         * limpeza são "Cleaning equipment" (que aceita 2 fotos) e "Living
+         * room". O JOB-9450 mandou 20 fotos para cada um desses dois e a
+         * Housekeep descartou as 40: os treze campos ficaram vazios num
+         * relatório que o nosso lado dava por enviado.
+         *
+         * Na prática o orquestrador já barra este caso antes, conferindo os
+         * mínimos por cômodo. Isto aqui é a rede embaixo da rede.
+         */
+        return {
+          ok: false,
+          motivo: "the cleaning form needs photos tagged by room and this report has a flat list",
+          segundos: seg(),
+        };
       } else {
         const [antes, depois] = await Promise.all([
           baixarFotos(args.fotos.antes, "before"),
@@ -485,25 +621,36 @@ export async function submeterRelatorioHousekeep(args: {
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
 
     /**
-     * A confirmação é ESPERADA, não amostrada.
+     * Quem confirma é a API da Housekeep, não o texto da página.
      *
-     * Os 4 segundos fixos de antes liam a página no meio do upload das fotos:
-     * a submissão ainda estava acontecendo, o corpo ainda era o formulário, e
-     * o filtro por "required" pescava RÓTULO de pergunta ("Is any follow up
-     * work required?") como se fosse recusa. Foi exatamente o veredito falso
-     * do JOB-9437. Agora espera até 30s, sondando a cada 2, e só desiste
-     * quando a página parou de mexer.
+     * O texto sempre foi palpite: "o botão sumiu" deu enviado falso no
+     * JOB-9437, e o filtro por "required" pescava o RÓTULO de uma pergunta
+     * ("Is any follow up work required?") como se fosse recusa. `submitted_at`
+     * não é interpretável: ou tem data, ou o relatório não entrou.
+     *
+     * A ESPERA é proporcional ao número de fotos, aprendido no JOB-9454
+     * (20/08/2026). Aquele relatório tinha 124 fotos: a Stefane apertou
+     * Submit, sondou por 30 segundos, não viu confirmação e gravou "no
+     * confirmation after 30s". O servidor deles finalizou às 18:00:26, CINCO
+     * MINUTOS depois — o upload ainda corria enquanto a gente desistia.
+     *
+     * O envio deu certo e o OS registrou falha. É o erro simétrico do falso
+     * "já estava enviado" e custa o mesmo: manda alguém refazer à mão um
+     * trabalho que já está feito, e some com a confiança na tela.
+     *
+     * 30s de base mais 2s por foto, com teto de 6 minutos. A página fica
+     * aberta o tempo todo, que é o que mantém o upload andando.
      */
-    let depois = "";
-    for (let i = 0; i < 15; i++) {
-      await page.waitForTimeout(2000);
-      depois = await page.locator("body").innerText();
-      // Só CONFIRMAÇÃO EXPLÍCITA vale. A heurística "o botão de submit sumiu"
-      // deu enviado falso no JOB-9437: o botão some um instante durante o
-      // processamento e o relatório não tinha ido. Melhor um falso "falhou"
-      // (que vira retry, e retry aqui é atualização) do que um falso
-      // "enviado" (que fecha o job com o relatório para trás).
-      if (/thank you|report submitted|already submitted|received your report|submitted successfully/i.test(depois)) {
+    const nFotos =
+      (args.fotos?.antes.length ?? 0) +
+      (args.fotos?.depois.length ?? 0) +
+      Object.values(args.fotos?.antesPorComodo ?? {}).reduce((a, l) => a + l.length, 0) +
+      Object.values(args.fotos?.depoisPorComodo ?? {}).reduce((a, l) => a + l.length, 0);
+    const tetoMs = Math.min(30_000 + nFotos * 2_000, 6 * 60_000);
+    const t1 = Date.now();
+    while (Date.now() - t1 < tetoMs) {
+      await page.waitForTimeout(5000);
+      if (await confirmarSubmissao(args.url).catch(() => null)) {
         return { ok: true, forma, segundos: seg() };
       }
     }
@@ -550,7 +697,7 @@ export async function submeterRelatorioHousekeep(args: {
       ok: false,
       motivo: partes.length
         ? `Housekeep did not confirm: ${partes.join(" — ")}`
-        : "no confirmation after 30s: the form is still on screen",
+        : `no confirmation after ${Math.round(tetoMs / 1000)}s: the client platform never stamped the report as submitted`,
       segundos: seg(),
     };
   } catch (err) {

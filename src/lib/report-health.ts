@@ -36,6 +36,25 @@ export type ItemDeSaude = {
   detalhe?: string;
 };
 
+/**
+ * Uma exigência de foto publicada pela plataforma do cliente.
+ *
+ * Estruturalmente igual ao `SlotDeFoto` da Stefane, e de propósito: aqui é uma
+ * função pura, sem rede e sem saber de Housekeep, e quem busca a exigência de
+ * verdade passa ela para dentro.
+ *
+ * Existe porque os nossos números não são os deles. O nosso piso é cinco em
+ * todo bloco; o deles é cinco de sala, TRÊS de corredor, cinco de cozinha,
+ * cinco de banheiro, cinco de quarto e UM A DOIS de equipamento. Medir contra
+ * o número errado é como um relatório tira 100/100 e volta recusado.
+ */
+export type ExigenciaDeFoto = {
+  metade: "antes" | "depois";
+  chave: string;
+  rotulo: string;
+  min: number;
+};
+
 export type SaudeDoRelatorio = {
   /** 0 a 100. 100 significa que não há nada conhecido para consertar. */
   nota: number;
@@ -74,6 +93,14 @@ export function reportHealth(input: {
   /** Horas de início e fim: viram os horários do outro lado. */
   timerStartedAt?: string | null;
   timerEndedAt?: string | null;
+  /**
+   * O que a plataforma do cliente exige DE VERDADE, quando já foi lido dela.
+   *
+   * Quando vem, manda: vira item BLOQUEANTE, campo a campo, com o número
+   * deles. Quando não vem, a nota volta a medir contra o nosso piso, que é um
+   * palpite bom mas continua palpite.
+   */
+  exigencias?: ExigenciaDeFoto[];
 }): SaudeDoRelatorio {
   const { template } = input;
   const slots = photoSlotsForTemplate(template);
@@ -127,10 +154,35 @@ export function reportHealth(input: {
     detalhe: `${total(depois)} photo(s)`,
   });
 
-  // ─── o que só piora o que chega ──────────────────────────────────────────
-  // Cobertura por cômodo, e só no formulário de limpeza: é o único que tem um
-  // bloco por cômodo do outro lado, então um cômodo vazio chega vazio.
-  if (usesCleaningForm(template)) {
+  /**
+   * Cobertura medida contra a exigência publicada pela plataforma.
+   *
+   * Bloqueia, e bloqueia com razão: o JOB-9450 tinha 20 fotos de cada lado,
+   * tirou 100/100 nesta nota, e a Housekeep recusou porque ela pede as fotos
+   * separadas por cômodo com mínimo em cada um. Enquanto a nota mediu o nosso
+   * número, ela dizia "pronto para enviar" sobre um relatório que não tinha
+   * como entrar.
+   */
+  if (input.exigencias && input.exigencias.length > 0) {
+    for (const e of input.exigencias) {
+      if (e.min <= 0) continue;
+      const mapa = e.metade === "antes" ? antes : depois;
+      // `_flat` é lista sem cômodo: não conta para exigência por cômodo, porque
+      // ninguém sabe qual foto é de qual lugar. Num formulário de balde único
+      // (`all`) ela conta, que é o caso do de trade.
+      const n = e.chave === "all" ? total(mapa) : (mapa[e.chave] ?? 0);
+      add({
+        chave: `${e.metade}:${e.chave}`,
+        rotulo: `${e.metade === "antes" ? "Before" : "After"}: ${e.rotulo}`,
+        ok: n >= e.min,
+        bloqueia: true,
+        peso: 6,
+        detalhe: `${n} of ${e.min}`,
+      });
+    }
+  } else if (usesCleaningForm(template)) {
+    // ─── o que só piora o que chega ────────────────────────────────────────
+    // Sem a exigência real em mãos, cai no nosso piso e volta a só avisar.
     for (const [metade, mapa, lista] of [
       ["Before", antes, slots.start],
       ["After", depois, slots.final],
@@ -236,6 +288,17 @@ export function validarSubmissaoDeReport(input: {
   /** Fotos que o relatório TERÁ depois de salvo (existentes + novas). */
   startPhotos: string[] | Record<string, string[]> | null;
   finalPhotos: string[] | Record<string, string[]> | null;
+  /** Respostas da seção de CHEGADA. A limpeza guarda ali metade dos gatilhos. */
+  startData?: Record<string, unknown>;
+  /**
+   * O cliente recusou ser fotografado.
+   *
+   * A Housekeep some com os treze campos de foto quando isto é marcado, e a
+   * exigência some junto. Repetir a regra deles aqui é o que evita o beco:
+   * o parceiro responde a verdade e a tela continua cobrando o que ele acabou
+   * de dizer que não existe.
+   */
+  photosRefused?: boolean;
   timerStartedAt?: string | null;
   timerEndedAt?: string | null;
 }): VereditoDaSubmissao {
@@ -248,13 +311,17 @@ export function validarSubmissaoDeReport(input: {
     timerEndedAt: input.timerEndedAt ?? null,
   });
 
+  const ehDeFoto = (chave: string) => /foto|photo/i.test(chave);
   const motivos = saude.pendencias
     .filter((i) => i.bloqueia)
+    .filter((i) => !(input.photosRefused && ehDeFoto(i.chave)))
     .map((i) => (i.detalhe ? `${i.rotulo} (${i.detalhe})` : i.rotulo));
 
   // Tetos por bloco: os da limpeza vêm dos slots (5), o resto usa o teto real
   // da plataforma por metade (20).
-  const slots = photoSlotsForTemplate(input.template);
+  const slots = input.photosRefused
+    ? { start: [], final: [] }
+    : photoSlotsForTemplate(input.template);
   for (const [rotuloMetade, fotos, lista] of [
     ["Before", input.startPhotos, slots.start],
     ["After", input.finalPhotos, slots.final],
@@ -273,6 +340,43 @@ export function validarSubmissaoDeReport(input: {
         motivos.push(`${rotuloMetade} photos: ${n} — the client platform takes ${HOUSEKEEP_MAX_FOTOS}`);
       }
     }
+  }
+
+  /**
+   * Sim que abre campo obrigatório do outro lado, conferido AQUI.
+   *
+   * A Housekeep transforma vários sim/não em pergunta aberta obrigatória. O
+   * transporte já bloqueia quando o texto falta, mas bloquear no envio é tarde:
+   * o parceiro foi embora, e quem descobre é o escritório num card que diz
+   * "não subiu". Perguntar no formulário, enquanto ele ainda está com o job na
+   * cabeça, é o mesmo aviso cinco horas antes.
+   *
+   * A dupla do jardim é a que mais dói: `materials_charges` sem
+   * `materials_charges_note` era um relatório que se contradizia sozinho, com
+   * "sem cobrança" no radio e o valor cobrado na descrição.
+   */
+  const f = input.finalData;
+  const st = input.startData ?? {};
+  const temTexto = (...vs: unknown[]) => vs.some((v) => String(v ?? "").trim().length > 0);
+  const exigir = (ligado: unknown, rotulo: string, ...textos: unknown[]) => {
+    if (ligado === true && !temTexto(...textos)) motivos.push(rotulo);
+  };
+
+  exigir(
+    f.additional_charges ?? f.materials_charges,
+    "What you charged extra for, and how much",
+    f.additional_charges_note, f.materials_charges_note, f.materials_used,
+  );
+  exigir(
+    st.recommend_additional_services ?? f.recommend_additional_services,
+    "What extra work you would recommend",
+    st.recommend_services_note, f.recommend_services_note, f.seasonal_maintenance,
+  );
+  exigir(st.scope_changes, "What changed in the job scope", st.scope_changes_note);
+  exigir(st.pre_existing_damage, "A description of the damage you found", st.pre_existing_damage_note);
+  // "Job complete? No" abre DOIS campos obrigatórios na limpeza.
+  if (f.job_complete === false) {
+    exigir(true, "What still needs to be completed", f.what_needs_completing);
   }
 
   return { ok: motivos.length === 0, nota: saude.nota, faixa: faixaDaNota(saude), motivos };
