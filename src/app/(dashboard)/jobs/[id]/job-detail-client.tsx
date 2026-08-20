@@ -3007,7 +3007,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setJob(updated);
       if (didAutoFinalCheck) {
         toast.success("All reports validated — job moved to Final check.");
-        await logAudit({
+        void logAudit({
           entityType: "job",
           entityId: jobId,
           entityRef: updated.reference,
@@ -3017,7 +3017,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           newValue: "final_check",
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         if (updated.partner_id) {
           const statusLabel = statusConfig.final_check?.label ?? "Final check";
           notifyAssignedPartnerAboutJob({
@@ -4003,7 +4003,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ),
         );
       }
-      await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       setJob(updated);
       if (!opts?.silent) {
         toast.success(
@@ -4094,7 +4094,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       };
       const updated = await handleStatusChange(job, "on_hold", { extraPatch });
       if (updated) {
-        await logAudit({
+        void logAudit({
           entityType: "job",
           entityId: job.id,
           entityRef: job.reference,
@@ -4104,7 +4104,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           userId: profile?.id,
           userName: profile?.full_name,
           metadata: { source: "put_on_hold_modal" },
-        });
+        }).catch(() => {});
         setPutOnHoldOpen(false);
         setPutOnHoldReason("");
         setPutOnHoldComplaintDescription("");
@@ -4236,7 +4236,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     try {
       const updated = await handleJobUpdate(job.id, patch, { silent: true, notifyPartner: false });
       if (updated) {
-        await logAudit({
+        void logAudit({
           entityType: "job",
           entityId: job.id,
           entityRef: job.reference,
@@ -4246,7 +4246,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           newValue: prev,
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         setResumeJobOpen(false);
         toast.success("Job resumed");
         try {
@@ -4844,7 +4844,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 : actionPayload.flow === "partner_pay"
                   ? "partner_payment"
                   : "partner_extra_payout";
-          await logAudit({
+          void logAudit({
             entityType: "job",
             entityId: job.id,
             entityRef: job.reference,
@@ -4868,7 +4868,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ? { client_pay_apply_as: actionPayload.clientPayApplyAs }
                 : {}),
             },
-          });
+          }).catch(() => {});
         }
         const toastMsg =
           payload.flow === "client_extra" && payload.linkedPartnerExtra
@@ -4910,14 +4910,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setDeletingPayment(true);
     try {
       await deleteJobPayment(deletePaymentTarget.id);
-      await logAudit({
+      void logAudit({
         entityType: "job", entityId: job.id, entityRef: job.reference,
         action: "deleted",
         fieldName: "payment",
         oldValue: formatCurrency(deletePaymentTarget.amount),
         userId: profile?.id, userName: profile?.full_name,
         metadata: { payment_type: deletePaymentTarget.type },
-      });
+      }).catch(() => {});
       await refreshJobFinance();
       toast.success("Payment removed");
     } catch {
@@ -5037,7 +5037,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           });
         }
 
-        await logAudit({
+        void logAudit({
           entityType: "job",
           entityId: job.id,
           entityRef: job.reference,
@@ -5053,7 +5053,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ...(entry.linkedGroupId ? { linked_group_id: entry.linkedGroupId } : {}),
             ...(deleteLinkedPartnerAlso && deleteExtraTarget.side === "client" ? { delete_linked_partner: true } : {}),
           },
-        });
+        }).catch(() => {});
       }
 
       setExtraHistory((prev) => prev.filter((row) => !targets.some((target) => target.idRaw === row.idRaw)));
@@ -5182,7 +5182,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ),
       );
 
-      await logAudit({
+      void logAudit({
         entityType: "job",
         entityId: job.id,
         entityRef: job.reference,
@@ -5197,7 +5197,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           extra_type: editExtraTarget.extraType,
           extra_reason: reasonTrim,
         },
-      });
+      }).catch(() => {});
 
       await refreshJobFinance();
       toast.success("Extra updated");
@@ -8297,7 +8297,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       try {
                         const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
                         if (updated) {
-                          await logAudit({
+                          void logAudit({
                             entityType: "job",
                             entityId: job.id,
                             entityRef: job.reference,
@@ -8307,7 +8307,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             userId: profile?.id,
                             userName: profile?.full_name,
                             metadata: { source: "job_notes_tab", at: stamp },
-                          });
+                          }).catch(() => {});
                           setInternalNoteDraft("");
                           toast.success("Note saved");
                         }

@@ -1545,14 +1545,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           await insertQuoteLineItemsResilient(supabase, rows);
         }
 
-        await logAudit({
+        void logAudit({
           entityType: "quote",
           entityId: result.id,
           entityRef: result.reference,
           action: "created",
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
 
         if (result.external_source === "zendesk" && result.external_ref?.trim()) {
           void fetch(`/api/quotes/${result.id}/sync-zendesk-status`, { method: "POST", keepalive: true })
@@ -1781,7 +1781,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         .update({ status: "rejected", updated_at: new Date().toISOString() })
         .in("id", Array.from(selectedIds));
       if (error) throw error;
-      await logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", "rejected", profile?.id, profile?.full_name);
+      void logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", "rejected", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${selectedIds.size} quotes updated`);
       setSelectedIds(new Set());
       refreshWithKpis();
@@ -2068,7 +2068,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       try {
         const perfStart = performance.now();
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
-        await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
+        void logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name }).catch(() => {});
         setSelectedQuote(updated);
         toast.success(opts?.successToast ?? `Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refreshWithKpis();
@@ -2118,7 +2118,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       try {
         const perfStart = performance.now();
         const updated = await updateQuote(q.id, { status: "awaiting_payment" });
-        await logAudit({
+        void logAudit({
           entityType: "quote",
           entityId: q.id,
           entityRef: q.reference,
@@ -2129,7 +2129,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           metadata: { operator_approved: true, awaiting_deposit: true },
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         setSelectedQuote(updated);
         toast.success("Approved — quote is Awaiting payment until the deposit is received.");
         refreshWithKpis();
@@ -4542,7 +4542,7 @@ function QuoteDetailDrawer({
       const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
       const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
       const updated = await persistProposalToQuote();
-      await logAudit({
+      void logAudit({
         entityType: "quote",
         entityId: quote.id,
         entityRef: quote.reference,
@@ -4553,7 +4553,7 @@ function QuoteDetailDrawer({
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
-      });
+      }).catch(() => {});
       onQuoteUpdate?.(updated);
       toast.success("Quote saved");
     } catch (e) {

@@ -1263,7 +1263,7 @@ function BillingStandaloneInner() {
   const handleCreate = async (form: CreateInvoiceInput) => {
     try {
       const result = await createInvoice(form);
-      await logAudit({ entityType: "invoice", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "invoice", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       setCreateOpen(false);
       toast.success("Invoice created");
       await loadData();

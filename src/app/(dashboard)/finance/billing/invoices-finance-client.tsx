@@ -646,7 +646,7 @@ export function InvoicesFinanceClient() {
         if (newStatus === "overdue") {
           await supabase.from("invoices").update({ status: "overdue" }).eq("id", invoice.id);
         }
-        await logAudit({
+        void logAudit({
           entityType: "invoice",
           entityId: invoice.id,
           entityRef: invoice.reference,
@@ -656,7 +656,7 @@ export function InvoicesFinanceClient() {
           newValue: newStatus === "overdue" ? "overdue" : "pending",
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         toast.success(newStatus === "overdue" ? "Invoice reopened as overdue" : "Invoice reopened — linked job may return to Awaiting payment");
         const { data: fresh } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
         setSelectedInvoice((fresh as Invoice) ?? null);
@@ -703,7 +703,7 @@ export function InvoicesFinanceClient() {
         updates.paid_date = null;
       }
       await updateInvoice(invoice.id, updates as Partial<Invoice>);
-      await logAudit({
+      void logAudit({
         entityType: "invoice",
         entityId: invoice.id,
         entityRef: invoice.reference,
@@ -713,7 +713,7 @@ export function InvoicesFinanceClient() {
         newValue: newStatus,
         userId: profile?.id,
         userName: profile?.full_name,
-      });
+      }).catch(() => {});
       toast.success(`Invoice marked as ${newStatus}`);
       let paidDate: string | null | undefined;
       if (newStatus === "paid") {
@@ -765,7 +765,7 @@ export function InvoicesFinanceClient() {
             await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
           }
         }
-        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
         toast.success(`${ids.length} invoice(s) set to pending`);
         setSelectedIds(new Set());
         void loadPageData();
@@ -794,7 +794,7 @@ export function InvoicesFinanceClient() {
           });
           await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
         }
-        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
         toast.success(`${ids.length} invoices marked paid`);
         setSelectedIds(new Set());
         void loadPageData();
@@ -803,7 +803,7 @@ export function InvoicesFinanceClient() {
       const updates: Record<string, unknown> = { status: newStatus };
       const { error } = await supabase.from("invoices").update(updates).in("id", ids);
       if (error) throw error;
-      await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} invoices updated to ${newStatus}`);
       setSelectedIds(new Set());
       void loadPageData();
@@ -815,14 +815,14 @@ export function InvoicesFinanceClient() {
   const handleCreate = useCallback(async (formData: CreateInvoiceInput) => {
     try {
       const result = await createInvoice(formData);
-      await logAudit({
+      void logAudit({
         entityType: "invoice",
         entityId: result.id,
         entityRef: result.reference,
         action: "created",
         userId: profile?.id,
         userName: profile?.full_name,
-      });
+      }).catch(() => {});
       setCreateOpen(false);
       toast.success("Invoice created successfully");
       void loadPageData();
@@ -888,7 +888,7 @@ export function InvoicesFinanceClient() {
       setSavingDueDateId(invoice.id);
       try {
         const updated = await updateInvoice(invoice.id, { due_date: trimmed });
-        await logAudit({
+        void logAudit({
           entityType: "invoice",
           entityId: invoice.id,
           entityRef: invoice.reference,
@@ -898,7 +898,7 @@ export function InvoicesFinanceClient() {
           newValue: trimmed,
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         toast.success("Due date updated");
         setSelectedInvoice((cur) => (cur?.id === invoice.id ? updated : cur));
         void loadPageData();
@@ -2317,7 +2317,7 @@ export function InvoiceDetailDrawer({
     setSavingField("amount");
     try {
       const updated = await updateInvoice(invoice.id, { amount: parsed } as Partial<Invoice>);
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       if (linkedJob?.id) {
         try {
           const updatedJob = await updateJob(linkedJob.id, { client_price: parsed } as Partial<Job>);
@@ -2341,7 +2341,7 @@ export function InvoiceDetailDrawer({
     try {
       const updatedJob = await updateJob(linkedJob.id, { partner_cost: parsed } as Partial<Job>);
       setLinkedJob((prev) => prev ? { ...prev, partner_cost: parsed, margin_percent: (updatedJob as unknown as LinkedJob).margin_percent } : prev);
-      await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "updated", fieldName: "partner_cost", oldValue: String(baselinePartnerCost), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "updated", fieldName: "partner_cost", oldValue: String(baselinePartnerCost), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       toast.success("Partner cost updated");
       setEditingBreakdown(false);
     } catch { toast.error("Failed to update partner cost"); }
@@ -2477,7 +2477,7 @@ export function InvoiceDetailDrawer({
     setSavingReopen(true);
     try {
       await onStatusChange(invoice, "pending");
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: "paid", newValue: "pending", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: "paid", newValue: "pending", userId: profile?.id, userName: profile?.full_name, metadata: { reason } }).catch(() => {});
       setReopenModalOpen(false);
       setReopenReason("");
       toast.success("Invoice reopened — awaiting payment");
@@ -2492,14 +2492,14 @@ export function InvoiceDetailDrawer({
     setSavingCancel(true);
     try {
       await updateInvoice(invoice.id, { status: "cancelled", cancellation_reason: reason } as Partial<Invoice>);
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } }).catch(() => {});
       if (cancelWithJob && linkedJob?.id && invoice.job_reference?.trim()) {
         await updateJob(linkedJob.id, {
           status: "cancelled",
           cancellation_reason: reason,
         } as Partial<Job>);
         await cancelOpenSelfBillsForJobCancellation({ jobReference: invoice.job_reference.trim(), primarySelfBillId: linkedJob.self_bill_id });
-        await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } });
+        void logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } }).catch(() => {});
         if (linkedJob.partner_id?.trim()) {
           void notifyPartnerJobChange({
             jobId: linkedJob.id,
