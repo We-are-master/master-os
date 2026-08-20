@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { FinanceCards } from "./components/FinanceCards";
 import { MarginHero } from "./components/MarginHero";
-import { EnvioHero } from "./components/EnvioHero";
 import { ModalFooter } from "./components/ModalFooter";
 import { ModalHeader } from "./components/ModalHeader";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
@@ -107,8 +106,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     reports,
     confirmed,
     onConfirmedChange,
-    sentToAccounts,
-    onSentToAccountsChange,
     onApprove,
     submitting,
     hourlySlot,
@@ -177,17 +174,78 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
       .catch((err) => console.error("[final-review] envio externo falhou:", err));
   };
 
-  // Rede de segurança: job sem relatório pula a etapa de conferência, então o
-  // envio nunca foi disparado. Aqui ele ainda sai, se puder.
-  const aprovarEEnviar = () => {
-    dispararEnvio();
+  /**
+   * UM clique: manda o relatório, espera a plataforma confirmar, e finaliza.
+   *
+   * Antes eram três movimentos e um beco. O envio saía ao aprovar o relatório,
+   * o Finalise ficava DESABILITADO enquanto ele não chegasse, e a tela pedia
+   * "Send the report first" com o botão que faria isso apagado. Quem estava
+   * fechando o job via um aviso, um botão morto e nenhuma saída óbvia — a
+   * reclamação do dono em 20/08 foi exatamente essa.
+   *
+   * Agora o botão assume o trabalho. Só espera quando há o que esperar: com
+   * bloqueio de verdade (foto faltando) nada disso roda, porque aí o caminho é
+   * consertar o relatório, e é o passo 3 que diz como.
+   */
+  const [enviandoAgora, setEnviandoAgora] = useState(false);
+
+  const aprovarEEnviar = async () => {
+    const precisaEnviar =
+      !!jobUuid && !!envioExterno && !envioExterno.bloqueio && envioExterno.estado !== "enviado";
+
+    if (!precisaEnviar) {
+      dispararEnvio();
+      onApprove();
+      return;
+    }
+
+    setEnviandoAgora(true);
+    try {
+      if (envioExterno?.estado !== "enviando") {
+        await fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" });
+      }
+      /**
+       * Espera até 6 minutos, do mesmo tamanho do teto do lado do servidor.
+       *
+       * Um relatório de limpeza com 124 fotos leva minutos para subir, e foi
+       * por desistir cedo que o JOB-9454 entrou na Housekeep e ficou marcado
+       * como falha aqui dentro. Quem manda no relógio é o número de fotos.
+       */
+      const limite = Date.now() + 6 * 60_000;
+      while (Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report`).catch(() => null);
+        if (!r?.ok) continue;
+        const d = (await r.json()) as { estado?: string };
+        if (d.estado === "enviando") continue;
+        break;
+      }
+    } finally {
+      setEnviandoAgora(false);
+      recarregar();
+    }
+    /**
+     * Finaliza de todo jeito depois da espera.
+     *
+     * Se o envio falhou, o passo 3 já está mostrando o motivo e o bloqueio
+     * volta a valer no próximo render: quem decide entre consertar e forçar é
+     * a pessoa, com o motivo na tela. Segurar o clique aqui em silêncio seria
+     * o beco de novo.
+     */
     onApprove();
   };
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
   const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
-  const attestationsOk = confirmed && sentToAccounts;
+  /**
+   * Só resta UMA atestação humana: a de responsabilidade.
+   *
+   * A outra ("confirmo que o relatório foi submetido ao cliente") pedia à
+   * pessoa um fato que a API da Housekeep prova. Ela saiu em 20/08/2026 e o
+   * seu lugar é o `envioResolvido` abaixo, que lê `submitted_at` da fonte.
+   */
+  const attestationsOk = confirmed;
 
   /**
    * Finalizar com o relatório pendente é o que faz ele sumir.
@@ -203,12 +261,29 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * a Housekeep estiver fora do ar ou alguém já tiver mandado à mão.
    */
   const [forcarSemEnvio, setForcarSemEnvio] = useState(false);
+  /** Dá para mandar e ainda não foi: é o que o botão faz sozinho. */
   const envioPendente =
     !!envioExterno &&
     !envioExterno.bloqueio &&
     envioExterno.estado !== "enviado";
+  /**
+   * NÃO dá para mandar, e nenhum clique aqui muda isso: relatório sem foto,
+   * sem descrição, horário impossível. É o único caso que ainda trava o
+   * Finalise, e o passo 3 mostra o que consertar.
+   */
+  const envioBloqueado =
+    !!envioExterno?.bloqueio &&
+    !/queued for the Express robot|already been sent|marked as sent manually/i.test(
+      envioExterno.bloqueio,
+    );
+  /**
+   * Envio PENDENTE não desabilita mais o botão: ele vira o trabalho do botão.
+   *
+   * O que ainda bloqueia é envio IMPOSSÍVEL — foto faltando, relatório sem
+   * descrição —, porque aí nenhum clique resolve e o caminho é o passo 3.
+   */
   const canApprove =
-    attestationsOk && docsReady && !submitting && (!envioPendente || forcarSemEnvio);
+    attestationsOk && docsReady && !submitting && !enviandoAgora && (!envioBloqueado || forcarSemEnvio);
 
   /**
    * O botão diz o que está acontecendo: "Finalise & approve" quando o
@@ -305,14 +380,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               </>
             ) : (
             <div className="min-h-0 overflow-y-auto overscroll-contain">
-              {/* O destino do relatório em primeiro: é a pergunta que decide
-                  se este job pode fechar, e ela agora abre o resumo. */}
-              <EnvioHero
-                jobUuid={jobUuid}
-                envio={envioExterno}
-                onRecarregar={recarregar}
-                onEditReport={onEditReport}
-              />
+              {/* A faixa do envio saiu daqui (19/08). Ela dizia a mesma frase
+                  do passo 3 com botões diferentes, e o passo 3 é onde a
+                  pergunta mora: o relatório existe onde precisa existir? */}
               <MarginHero
                 margin={margin}
                 marginPct={marginPct}
@@ -371,10 +441,17 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 <ResponsibilityCheck
                   confirmed={confirmed}
                   onChange={onConfirmedChange}
-                  sentToAccounts={sentToAccounts}
-                  onSentToAccountsChange={onSentToAccountsChange}
+                  envioResolvido={envioResolvido}
+                  envioQuando={envioExterno?.submittedAt ?? envioExterno?.manualAt ?? null}
+                  envioNota={
+                    envioExterno?.manualAt
+                      ? "marked as sent by hand"
+                      : /queued for the Express robot/i.test(envioExterno?.bloqueio ?? "")
+                        ? "the Express robot completes it on its next pass"
+                        : null
+                  }
                   currentUserName={currentUserName}
-                  bloqueadoPeloEnvio={envioPendente && !forcarSemEnvio}
+                  bloqueadoPeloEnvio={envioBloqueado && !forcarSemEnvio}
                   onForcar={() => setForcarSemEnvio(true)}
                 />
                 <ModalFooter
@@ -383,6 +460,15 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   onCancel={fechar}
                   onApprove={aprovarEEnviar}
                   forcado={aprovandoForcado}
+                  rotulo={
+                    enviandoAgora
+                      ? "Sending report…"
+                      : aprovandoForcado
+                        ? "Force approve"
+                        : envioPendente
+                          ? "Send report & finalise"
+                          : "Finalise & approve"
+                  }
                 />
               </>
             ) : null}

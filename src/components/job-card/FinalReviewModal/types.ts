@@ -100,8 +100,6 @@ export type FinalReviewModalProps = {
   /** UI state lifted to parent so the existing handler can read attestations. */
   confirmed: boolean;
   onConfirmedChange: (v: boolean) => void;
-  sentToAccounts: boolean;
-  onSentToAccountsChange: (v: boolean) => void;
 
   /** Optional slot for hourly-job billed-hours input (rendered before the attestation section). */
   hourlySlot?: React.ReactNode;
