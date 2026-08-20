@@ -229,6 +229,7 @@ export function CreateInvoiceModal({
         clientId: clientPick.client_id,
         fallbackName: clientPick.client_name,
         fallbackEmail: clientPick.client_email ?? null,
+        clientRow: row,
       });
       await onCreate({
         client_name: billing.displayName,
