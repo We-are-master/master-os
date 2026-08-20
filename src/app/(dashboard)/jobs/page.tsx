@@ -1274,63 +1274,77 @@ function JobsPageContent() {
     try {
       const countOpts = scheduleRange ? { scheduleRange } : undefined;
       const supabase = getSupabase();
-      try {
-        const [counts, deletedHead] = await Promise.all([
-          getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
-          supabase
-            .from("jobs")
-            .select("*", { count: "exact", head: true })
-            .eq("status", "deleted")
-            .not("deleted_at", "is", null),
-        ]);
-        const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
-        const archivedOverlap =
-          countOpts?.scheduleRange != null
-            ? await getArchivedDeletedJobsOverlappingScheduleCount(countOpts.scheduleRange)
-            : 0;
-        const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
-        setTabCounts({
-          ...counts,
-          all: allTabCount,
-          deleted: deletedCount,
-          archived_overlap_window: archivedOverlap,
-        });
-      } catch {
-        /* tab badges — keep prior counts */
-      }
-      try {
-        const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
-        /** Same “All jobs” bucket as the first tab badge — not the currently selected tab. */
-        const allWindowRows = rows.filter((r) =>
-          jobRowMatchesJobsManagementTab(
-            {
-              status: r.status,
-              partner_id: r.partner_id,
-              partner_ids: r.partner_ids,
-            } as Job,
-            "all",
-          ),
-        );
-        const revenueBasis = allWindowRows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
-        const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
-        setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
 
-        const kpiRowIds = allWindowRows.map((r) => r.id).filter(Boolean);
-        const enteredFinalChecksMap = await fetchFirstEnteredFinalChecksAtByJobIds(kpiRowIds);
-        const avgPipeSec = computeAvgScheduleToFinalChecksPipelineSeconds(allWindowRows, enteredFinalChecksMap);
-        setKpiAvgWorkTimeLabel(
-          avgPipeSec != null && avgPipeSec > 0 ? formatKpiAvgWorkSeconds(avgPipeSec) : "—",
-        );
+      /**
+       * Tab badge counts and the financial KPI strip are fully independent
+       * data (different tables/queries, separate loading concerns) but were
+       * previously awaited sequentially — one full round-trip chain before
+       * the other started. Each keeps its own try/catch so a failure in one
+       * doesn't affect the other, same as before.
+       */
+      await Promise.all([
+        (async () => {
+          try {
+            const [counts, deletedHead] = await Promise.all([
+              getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
+              supabase
+                .from("jobs")
+                .select("*", { count: "exact", head: true })
+                .eq("status", "deleted")
+                .not("deleted_at", "is", null),
+            ]);
+            const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
+            const archivedOverlap =
+              countOpts?.scheduleRange != null
+                ? await getArchivedDeletedJobsOverlappingScheduleCount(countOpts.scheduleRange)
+                : 0;
+            const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+            setTabCounts({
+              ...counts,
+              all: allTabCount,
+              deleted: deletedCount,
+              archived_overlap_window: archivedOverlap,
+            });
+          } catch {
+            /* tab badges — keep prior counts */
+          }
+        })(),
+        (async () => {
+          try {
+            const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
+            /** Same “All jobs” bucket as the first tab badge — not the currently selected tab. */
+            const allWindowRows = rows.filter((r) =>
+              jobRowMatchesJobsManagementTab(
+                {
+                  status: r.status,
+                  partner_id: r.partner_id,
+                  partner_ids: r.partner_ids,
+                } as Job,
+                "all",
+              ),
+            );
+            const revenueBasis = allWindowRows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+            const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
+            setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
 
-        const marginRows = allWindowRows.filter(
-          (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
-        );
-        const margins = marginRows.map((r) => jobMarginPercent(r));
-        const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
-        setAvgMarginPct(Math.round(avgM * 10) / 10);
-      } catch {
-        /* KPI strip — cosmetic */
-      }
+            const kpiRowIds = allWindowRows.map((r) => r.id).filter(Boolean);
+            const enteredFinalChecksMap = await fetchFirstEnteredFinalChecksAtByJobIds(kpiRowIds);
+            const avgPipeSec = computeAvgScheduleToFinalChecksPipelineSeconds(allWindowRows, enteredFinalChecksMap);
+            setKpiAvgWorkTimeLabel(
+              avgPipeSec != null && avgPipeSec > 0 ? formatKpiAvgWorkSeconds(avgPipeSec) : "—",
+            );
+
+            const marginRows = allWindowRows.filter(
+              (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
+            );
+            const margins = marginRows.map((r) => jobMarginPercent(r));
+            const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
+            setAvgMarginPct(Math.round(avgM * 10) / 10);
+          } catch {
+            /* KPI strip — cosmetic */
+          }
+        })(),
+      ]);
     } finally {
       setKpiFinancialLoading(false);
     }
@@ -1864,7 +1878,7 @@ function JobsPageContent() {
         ...statusChangePartnerTimerPatch(job, newStatus),
       };
       const updated = await updateJob(job.id, statusPatch);
-      await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh(); loadDashboardStats();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
@@ -1972,7 +1986,7 @@ function JobsPageContent() {
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
 
-      await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} jobs updated`);
       setSelectedIds(new Set());
       refresh();
@@ -2025,7 +2039,7 @@ function JobsPageContent() {
         refreshSelfBillPayoutStatesForJobIds(ids),
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
-      await logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} job(s) moved to In progress`);
       setSelectedIds(new Set());
       refresh();
@@ -2126,7 +2140,7 @@ function JobsPageContent() {
         refreshSelfBillPayoutStatesForJobIds(ids),
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
-      await logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${updatedCount} job(s) cancelled`);
       setSelectedIds(new Set());
       refresh();
@@ -2190,7 +2204,7 @@ function JobsPageContent() {
         ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
         refreshWorkforceSelfBillsForJobIds(eligible.map((j) => j.id)),
       ]);
-      await logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name);
+      void logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${eligible.length} job(s) moved to Deleted`);
       setSelectedIds(new Set());
       refresh();
@@ -2242,7 +2256,7 @@ function JobsPageContent() {
         ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
         refreshWorkforceSelfBillsForJobIds(rows.map((j) => j.id)),
       ]);
-      await logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name);
+      void logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${rows.length} job(s) recovered`, {
         description: "Linked invoices stay cancelled—adjust in Finance if needed.",
       });
@@ -2308,7 +2322,7 @@ function JobsPageContent() {
         toast.error("Failed to unassign partner");
         return false;
       }
-      await logBulkAction("job", doneIds, "status_changed", "partner_id", "unassigned", profile?.id, profile?.full_name);
+      void logBulkAction("job", doneIds, "status_changed", "partner_id", "unassigned", profile?.id, profile?.full_name).catch(() => {});
       const skipped = withPartner.length - eligible.length;
       const notes = [
         skipped > 0 ? `${skipped} skipped: too far along to unassign.` : null,

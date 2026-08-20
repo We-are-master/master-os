@@ -327,14 +327,14 @@ function ClientsPageInner() {
           is_default: true,
         });
       }
-      await logAudit({
+      void logAudit({
         entityType: "account",
         entityId: result.id,
         action: "created",
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: { type: "client" },
-      });
+      }).catch(() => {});
       setCreateOpen(false);
       toast.success("Client created");
       loadSourceAccounts();
@@ -350,7 +350,7 @@ function ClientsPageInner() {
     try {
       const { error } = await supabase.from("clients").update({ status: newStatus }).in("id", Array.from(selectedIds));
       if (error) throw error;
-      await logBulkAction("account", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("account", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${selectedIds.size} clients updated`);
       setSelectedIds(new Set());
       refresh(); loadCounts();
@@ -986,14 +986,14 @@ function ClientDetailDrawer({
     setSaving(true);
     try {
       const updated = await updateClient(client.id, form);
-      await logAudit({
+      void logAudit({
         entityType: "account",
         entityId: client.id,
         action: "updated",
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: { type: "client" },
-      });
+      }).catch(() => {});
       toast.success("Client updated");
       setEditing(false);
       onUpdate(updated);

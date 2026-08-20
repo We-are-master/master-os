@@ -1813,21 +1813,21 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         body: JSON.stringify({ partnerId: created.id }),
       }).catch(() => { /* non-blocking */ });
 
-      let onboardingInviteNote: string | null = null;
-      try {
-        const invite = await requestPartnerOnboardingLink(created.id, { sendEmail: true });
-        if (invite.emailSent && invite.sentTo) {
-          onboardingInviteNote = `Onboarding invite sent to ${invite.sentTo}.`;
-        } else if (invite.emailError) {
-          onboardingInviteNote = `Onboarding email failed: ${invite.emailError}`;
-        } else if (invite.warning) {
-          onboardingInviteNote = invite.warning;
-        } else {
-          onboardingInviteNote = "Partner saved; onboarding email was not sent.";
-        }
-      } catch {
-        onboardingInviteNote = "Partner saved; could not send onboarding invite.";
-      }
+      // Sending the onboarding email is an external call (Resend/SMTP) that
+      // isn't needed to know the partner was created — was previously
+      // awaited before the success toast could even show. Fire it in the
+      // background and report its outcome in its own follow-up toast.
+      void requestPartnerOnboardingLink(created.id, { sendEmail: true })
+        .then((invite) => {
+          if (invite.emailSent && invite.sentTo) {
+            toast.success(`Onboarding invite sent to ${invite.sentTo}.`);
+          } else if (invite.emailError) {
+            toast.error(`Onboarding email failed: ${invite.emailError}`);
+          } else if (invite.warning) {
+            toast.message(invite.warning);
+          }
+        })
+        .catch(() => toast.error("Could not send onboarding invite."));
 
       let partnerToShow: Partner = created;
       if (createAvatarFile) {
@@ -1838,35 +1838,44 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           toast.error(err instanceof Error ? err.message : "Photo upload failed");
         }
       }
-      let rateSaveFailed = 0;
-      let rateSaveCount = 0;
-      for (const [serviceId, draft] of Object.entries(pendingCreateRateDrafts)) {
-        const payload = buildPartnerServicePriceInputFromDraft(created.id, serviceId, draft);
-        if (!payload) continue;
-        try {
-          await upsertPartnerServicePrice(payload);
-          rateSaveCount += 1;
-        } catch {
-          rateSaveFailed += 1;
-        }
-      }
-      let docUploadFailed = 0;
-      for (const d of pendingCreateDocs) {
-        try {
-          await insertAndUploadPartnerDocument({
-            partnerId: created.id,
-            uploadedByName: profile?.full_name,
-            docType: d.docType,
-            name: d.name,
-            file: d.file,
-            previewFile: d.previewFile,
-            expiresAt: d.expiresAt,
-            certificateNumber: d.certificateNumber,
-          });
-        } catch {
-          docUploadFailed += 1;
-        }
-      }
+      // Each rate draft / document is independent — was a sequential for-loop
+      // (one round trip after another) with per-item failure tolerance;
+      // Promise.all keeps that same per-item tolerance but fires them together.
+      const rateSaveResults = await Promise.all(
+        Object.entries(pendingCreateRateDrafts).map(async ([serviceId, draft]) => {
+          const payload = buildPartnerServicePriceInputFromDraft(created.id, serviceId, draft);
+          if (!payload) return "skipped" as const;
+          try {
+            await upsertPartnerServicePrice(payload);
+            return "ok" as const;
+          } catch {
+            return "failed" as const;
+          }
+        }),
+      );
+      const rateSaveCount = rateSaveResults.filter((r) => r === "ok").length;
+      const rateSaveFailed = rateSaveResults.filter((r) => r === "failed").length;
+
+      const docUploadResults = await Promise.all(
+        pendingCreateDocs.map(async (d) => {
+          try {
+            await insertAndUploadPartnerDocument({
+              partnerId: created.id,
+              uploadedByName: profile?.full_name,
+              docType: d.docType,
+              name: d.name,
+              file: d.file,
+              previewFile: d.previewFile,
+              expiresAt: d.expiresAt,
+              certificateNumber: d.certificateNumber,
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      const docUploadFailed = docUploadResults.filter((ok) => !ok).length;
       setPartnerDrawerInitialTab(undefined);
       setSelectedPartner(partnerToShow);
       setCreateOpen(false);
@@ -1874,7 +1883,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setPendingCreateDocs([]);
       setPendingCreateRateDrafts({});
       refresh();
-      await loadCounts();
+      void loadCounts(); // sidebar/tab badge counts — doesn't need to block the success toast
       if (viewMode === "team") loadTeam();
       const parts: string[] = ["Partner created."];
       if (pendingCreateDocs.length > 0) {
@@ -1891,7 +1900,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             : `${rateSaveCount} custom rate(s) saved.`,
         );
       }
-      if (onboardingInviteNote) parts.push(onboardingInviteNote);
       toast.success(parts.join(" "));
     } catch (err) {
       toast.error(formatPartnerCreateError(err));
@@ -4630,10 +4638,19 @@ function PartnerDetailDrawer({
       }
     }
     try {
-      const homeAddressPatch = await partnerHomeAddressGeocodePatch(
-        overviewForm.partner_address,
-        resolveJobGeocode,
-      );
+      // Geocoding hits an external API (500-2000ms, unpredictable) — only
+      // worth it when the address text actually changed. Editing any other
+      // field (phone, VAT, etc.) shouldn't re-trigger a geocode lookup for
+      // an address that's staying the same.
+      const addressChanged =
+        (overviewForm.partner_address ?? "").trim() !== (partner.partner_address ?? "").trim();
+      const homeAddressPatch = addressChanged
+        ? await partnerHomeAddressGeocodePatch(overviewForm.partner_address, resolveJobGeocode)
+        : {
+            partner_address: (partner.partner_address ?? "").trim() || null,
+            partner_address_latitude: partner.partner_address_latitude ?? null,
+            partner_address_longitude: partner.partner_address_longitude ?? null,
+          };
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number:

@@ -88,7 +88,6 @@ import {
   invoiceFinanceListTodayYmd,
   invoiceIsDerivedOverdue,
   invoiceMatchesFinanceTab,
-  isAwaitingPaymentTabStatus,
   type InvoiceFinanceTab,
 } from "@/lib/invoice-finance-tab";
 import { weekPeriodHelpText } from "@/lib/self-bill-period";
@@ -305,6 +304,27 @@ function displayDateYmdForInvoiceRow(inv: Invoice, job: InvoiceListJobSnapshot |
   return null;
 }
 
+/**
+ * DB statuses relevant to a finance tab's row fetch. "overdue" is derived
+ * (due_date vs today), not a separate status set — awaiting_payment and
+ * overdue both need the same underlying statuses fetched, then split
+ * client-side exactly as `invoiceMatchesFinanceTab` already does. Returning
+ * `null` means "no status filter" (used for the 'all' tab, which excludes
+ * cancelled/paid via `.not(...)` instead of an allowlist).
+ */
+function financeTabDbStatuses(tab: InvoiceFinanceTab): InvoiceStatus[] | null {
+  switch (tab) {
+    case "draft": return ["draft"];
+    case "paid": return ["paid"];
+    case "cancelled": return ["cancelled"];
+    case "awaiting_payment":
+    case "overdue":
+      return ["pending", "partially_paid", "audit_required", "overdue"];
+    default:
+      return null;
+  }
+}
+
 /** Badge labels aligned with Jobs management (short list view). */
 const jobStatusColumnConfig: Record<
   string,
@@ -322,35 +342,6 @@ const jobStatusColumnConfig: Record<
   cancelled: { label: "Lost & cancelled", variant: "danger" },
   deleted: { label: "Deleted", variant: "default" },
 };
-
-function computeInvoiceKpis(
-  all: Invoice[],
-  jobsByRef: Record<string, InvoiceListJobSnapshot>,
-  customerPaidByJobId: Record<string, number>,
-  todayYmd: string,
-) {
-  const overdue = all.filter(
-    (r) => r.status !== "cancelled" && r.status !== "paid" && invoiceIsDerivedOverdue(r, todayYmd),
-  );
-  const overdueAmount = overdue.reduce((sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId), 0);
-  // Collected = partial payments received on still-outstanding invoices (awaiting + overdue only)
-  const outstandingForCollected = all.filter(
-    (r) => r.status !== "cancelled" && r.status !== "paid" && r.status !== "draft",
-  );
-  const collectedTotal = outstandingForCollected.reduce(
-    (sum, r) => sum + invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId),
-    0,
-  );
-  const collectedInvoiceCount = outstandingForCollected.filter(
-    (r) => invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId) > 0.02,
-  ).length;
-  return {
-    overdueAmount,
-    overdueCount: overdue.length,
-    collectedTotal,
-    collectedInvoiceCount,
-  };
-}
 
 /** Issued / created timestamp for display (period filter uses `created_at` only). */
 function invoiceEffectiveDateValue(inv: Pick<Invoice, "created_at">): string {
@@ -449,6 +440,24 @@ export function InvoicesFinanceClient() {
   /** Grouped by account (default) or flat list of all invoices. */
   const [listGroupMode, setListGroupMode] = useState<"grouped" | "flat">("flat");
 
+  type InvoiceFinanceKpis = {
+    overdueAmount: number;
+    overdueCount: number;
+    collectedTotal: number;
+    collectedInvoiceCount: number;
+    awaitingPaymentSum: number;
+    awaitingPaymentCount: number;
+  };
+  const ZERO_KPIS: InvoiceFinanceKpis = {
+    overdueAmount: 0, overdueCount: 0, collectedTotal: 0, collectedInvoiceCount: 0,
+    awaitingPaymentSum: 0, awaitingPaymentCount: 0,
+  };
+  const ZERO_TAB_COUNTS: Record<InvoiceFinanceTab, number> & { auditRequired: number } = {
+    all: 0, draft: 0, awaiting_payment: 0, overdue: 0, paid: 0, cancelled: 0, auditRequired: 0,
+  };
+  const [tabCounts, setTabCounts] = useState(ZERO_TAB_COUNTS);
+  const [kpis, setKpis] = useState<InvoiceFinanceKpis>(ZERO_KPIS);
+
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
@@ -473,12 +482,22 @@ export function InvoicesFinanceClient() {
       const supabase = getSupabase();
       const chunkSize = 500;
 
+      /**
+       * Row fetch is scoped to the active tab's relevant statuses (not the
+       * whole table) — a mature account's Paid/Cancelled history no longer
+       * gets pulled into memory just to render e.g. the Overdue tab. The
+       * "Deleted" tab (onlyDeleted) is intentionally left unscoped for now —
+       * lower volume, separate follow-up.
+       */
       async function fetchInvoicePages(onlyDeleted: boolean): Promise<Invoice[]> {
         const acc: Invoice[] = [];
+        const statuses = onlyDeleted ? null : financeTabDbStatuses(financeTab);
         for (let from = 0; from < 100_000; from += chunkSize) {
           let q = supabase.from("invoices").select("*");
           if (onlyDeleted) q = q.not("deleted_at", "is", null);
           else q = q.is("deleted_at", null);
+          if (statuses) q = q.in("status", statuses);
+          else if (!onlyDeleted) q = q.not("status", "in", '("cancelled","paid")');
           if (bounds) {
             const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
             q = q.gte("created_at", startIso).lte("created_at", endIso);
@@ -493,7 +512,17 @@ export function InvoicesFinanceClient() {
         return acc;
       }
 
-      const [active, deleted] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
+      const kpiPeriodStart = bounds ? bounds.from : null;
+      const kpiPeriodEnd = bounds ? bounds.to : null;
+
+      const [active, deleted, kpiRes] = await Promise.all([
+        fetchInvoicePages(false),
+        fetchInvoicePages(true),
+        supabase.rpc("get_invoices_finance_kpis", {
+          p_period_start: kpiPeriodStart,
+          p_period_end: kpiPeriodEnd,
+        }),
+      ]);
       const refs = [
         ...new Set(
           [...active, ...deleted].map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
@@ -506,15 +535,25 @@ export function InvoicesFinanceClient() {
       setDeletedInvoices(deleted);
       setJobsByRef(jobMap);
       setCustomerPaidByJobId(paidMap);
+      if (!kpiRes.error && kpiRes.data) {
+        const payload = kpiRes.data as { tabCounts?: Partial<typeof ZERO_TAB_COUNTS>; kpis?: Partial<InvoiceFinanceKpis> };
+        setTabCounts({ ...ZERO_TAB_COUNTS, ...(payload.tabCounts ?? {}) });
+        setKpis({ ...ZERO_KPIS, ...(payload.kpis ?? {}) });
+      } else {
+        setTabCounts(ZERO_TAB_COUNTS);
+        setKpis(ZERO_KPIS);
+      }
     } catch {
       setAllInvoices([]);
       setDeletedInvoices([]);
       setJobsByRef({});
       setCustomerPaidByJobId({});
+      setTabCounts(ZERO_TAB_COUNTS);
+      setKpis(ZERO_KPIS);
     } finally {
       setLoading(false);
     }
-  }, [createdAtFilter]);
+  }, [createdAtFilter, financeTab]);
 
   useEffect(() => {
     void loadPageData();
@@ -539,45 +578,19 @@ export function InvoicesFinanceClient() {
     };
   }, [loadPageData]);
 
-  const kpis = useMemo(
-    () => computeInvoiceKpis(allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd),
-    [allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd],
+  /**
+   * `kpis`/`tabCounts` are no longer derived from `allInvoices` — that array
+   * is now scoped to the active tab's statuses only (see `loadPageData`), so
+   * it can't be used to compute cross-tab badge counts / KPI totals. Both
+   * come from `get_invoices_finance_kpis` (set in `loadPageData`), computed
+   * server-side across the full date-bounded set.
+   */
+  const auditQueueCount = tabCounts.auditRequired;
+
+  const awaitingPaymentKpi = useMemo(
+    () => ({ sum: kpis.awaitingPaymentSum, count: kpis.awaitingPaymentCount }),
+    [kpis.awaitingPaymentSum, kpis.awaitingPaymentCount],
   );
-
-  const tabCounts = useMemo(() => {
-    const counts: Record<InvoiceFinanceTab, number> = {
-      all: allInvoices.filter((inv) => inv.status !== "cancelled").length,
-      draft: 0,
-      awaiting_payment: 0,
-      overdue: 0,
-      paid: 0,
-      cancelled: 0,
-    };
-    for (const inv of allInvoices) {
-      if (inv.status === "draft") counts.draft += 1;
-      else if (inv.status === "paid") counts.paid += 1;
-      else if (inv.status === "cancelled") counts.cancelled += 1;
-      else if (invoiceIsDerivedOverdue(inv, listTodayYmd)) counts.overdue += 1;
-      else if (isAwaitingPaymentTabStatus(inv.status)) counts.awaiting_payment += 1;
-    }
-    return counts;
-  }, [allInvoices, listTodayYmd]);
-
-  const auditQueueCount = useMemo(
-    () => allInvoices.filter((inv) => inv.status === "audit_required").length,
-    [allInvoices],
-  );
-
-  const awaitingPaymentKpi = useMemo(() => {
-    let sum = 0;
-    let n = 0;
-    for (const inv of allInvoices) {
-      if (!invoiceMatchesFinanceTab(inv, "awaiting_payment")) continue;
-      sum += invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
-      n += 1;
-    }
-    return { sum, count: n };
-  }, [allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd]);
 
   /** Open balance = total balance-due across awaiting + overdue (already nets out partial payments). */
   const openBalanceKpi = useMemo(() => {
@@ -633,7 +646,7 @@ export function InvoicesFinanceClient() {
         if (newStatus === "overdue") {
           await supabase.from("invoices").update({ status: "overdue" }).eq("id", invoice.id);
         }
-        await logAudit({
+        void logAudit({
           entityType: "invoice",
           entityId: invoice.id,
           entityRef: invoice.reference,
@@ -643,10 +656,25 @@ export function InvoicesFinanceClient() {
           newValue: newStatus === "overdue" ? "overdue" : "pending",
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         toast.success(newStatus === "overdue" ? "Invoice reopened as overdue" : "Invoice reopened — linked job may return to Awaiting payment");
-        const { data: fresh } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
-        setSelectedInvoice((fresh as Invoice) ?? null);
+        // Optimistic merge instead of a re-SELECT round trip — same pattern
+        // as the "Mark paid" branch below (nextInv): reflects the primary
+        // write immediately; the trailing sync chain below (and the
+        // background loadPageData() at the end) settles any further
+        // adjustments shortly after, same acceptable-staleness window
+        // already used by every other status transition in this handler.
+        setSelectedInvoice({
+          ...invoice,
+          status: newStatus === "overdue" ? "overdue" : "pending",
+          paid_date: null,
+          last_payment_date: null,
+          amount_paid: 0,
+          stripe_payment_status: "none",
+          stripe_payment_link_id: undefined,
+          stripe_payment_link_url: undefined,
+          stripe_paid_at: undefined,
+        });
         if (invoice.job_reference?.trim()) {
           const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
           const jid = (jobRow as { id?: string } | null)?.id;
@@ -690,7 +718,7 @@ export function InvoicesFinanceClient() {
         updates.paid_date = null;
       }
       await updateInvoice(invoice.id, updates as Partial<Invoice>);
-      await logAudit({
+      void logAudit({
         entityType: "invoice",
         entityId: invoice.id,
         entityRef: invoice.reference,
@@ -700,7 +728,7 @@ export function InvoicesFinanceClient() {
         newValue: newStatus,
         userId: profile?.id,
         userName: profile?.full_name,
-      });
+      }).catch(() => {});
       toast.success(`Invoice marked as ${newStatus}`);
       let paidDate: string | null | undefined;
       if (newStatus === "paid") {
@@ -752,7 +780,7 @@ export function InvoicesFinanceClient() {
             await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
           }
         }
-        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
         toast.success(`${ids.length} invoice(s) set to pending`);
         setSelectedIds(new Set());
         void loadPageData();
@@ -781,7 +809,7 @@ export function InvoicesFinanceClient() {
           });
           await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
         }
-        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
         toast.success(`${ids.length} invoices marked paid`);
         setSelectedIds(new Set());
         void loadPageData();
@@ -790,7 +818,7 @@ export function InvoicesFinanceClient() {
       const updates: Record<string, unknown> = { status: newStatus };
       const { error } = await supabase.from("invoices").update(updates).in("id", ids);
       if (error) throw error;
-      await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} invoices updated to ${newStatus}`);
       setSelectedIds(new Set());
       void loadPageData();
@@ -802,14 +830,14 @@ export function InvoicesFinanceClient() {
   const handleCreate = useCallback(async (formData: CreateInvoiceInput) => {
     try {
       const result = await createInvoice(formData);
-      await logAudit({
+      void logAudit({
         entityType: "invoice",
         entityId: result.id,
         entityRef: result.reference,
         action: "created",
         userId: profile?.id,
         userName: profile?.full_name,
-      });
+      }).catch(() => {});
       setCreateOpen(false);
       toast.success("Invoice created successfully");
       void loadPageData();
@@ -875,7 +903,7 @@ export function InvoicesFinanceClient() {
       setSavingDueDateId(invoice.id);
       try {
         const updated = await updateInvoice(invoice.id, { due_date: trimmed });
-        await logAudit({
+        void logAudit({
           entityType: "invoice",
           entityId: invoice.id,
           entityRef: invoice.reference,
@@ -885,7 +913,7 @@ export function InvoicesFinanceClient() {
           newValue: trimmed,
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
         toast.success("Due date updated");
         setSelectedInvoice((cur) => (cur?.id === invoice.id ? updated : cur));
         void loadPageData();
@@ -2304,7 +2332,7 @@ export function InvoiceDetailDrawer({
     setSavingField("amount");
     try {
       const updated = await updateInvoice(invoice.id, { amount: parsed } as Partial<Invoice>);
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       if (linkedJob?.id) {
         try {
           const updatedJob = await updateJob(linkedJob.id, { client_price: parsed } as Partial<Job>);
@@ -2328,7 +2356,7 @@ export function InvoiceDetailDrawer({
     try {
       const updatedJob = await updateJob(linkedJob.id, { partner_cost: parsed } as Partial<Job>);
       setLinkedJob((prev) => prev ? { ...prev, partner_cost: parsed, margin_percent: (updatedJob as unknown as LinkedJob).margin_percent } : prev);
-      await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "updated", fieldName: "partner_cost", oldValue: String(baselinePartnerCost), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "updated", fieldName: "partner_cost", oldValue: String(baselinePartnerCost), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       toast.success("Partner cost updated");
       setEditingBreakdown(false);
     } catch { toast.error("Failed to update partner cost"); }
@@ -2464,7 +2492,7 @@ export function InvoiceDetailDrawer({
     setSavingReopen(true);
     try {
       await onStatusChange(invoice, "pending");
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: "paid", newValue: "pending", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: "paid", newValue: "pending", userId: profile?.id, userName: profile?.full_name, metadata: { reason } }).catch(() => {});
       setReopenModalOpen(false);
       setReopenReason("");
       toast.success("Invoice reopened — awaiting payment");
@@ -2479,14 +2507,14 @@ export function InvoiceDetailDrawer({
     setSavingCancel(true);
     try {
       await updateInvoice(invoice.id, { status: "cancelled", cancellation_reason: reason } as Partial<Invoice>);
-      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      void logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } }).catch(() => {});
       if (cancelWithJob && linkedJob?.id && invoice.job_reference?.trim()) {
         await updateJob(linkedJob.id, {
           status: "cancelled",
           cancellation_reason: reason,
         } as Partial<Job>);
         await cancelOpenSelfBillsForJobCancellation({ jobReference: invoice.job_reference.trim(), primarySelfBillId: linkedJob.self_bill_id });
-        await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } });
+        void logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } }).catch(() => {});
         if (linkedJob.partner_id?.trim()) {
           void notifyPartnerJobChange({
             jobId: linkedJob.id,

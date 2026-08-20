@@ -41,7 +41,7 @@ export async function bulkMarkInvoicesPaid(
   );
 
   await syncJobsAfterBulkInvoicesMarkedPaid(supabase, payableIds, "Manual");
-  await logBulkAction("invoice", payableIds, "status_changed", "status", "paid", profile?.id, profile?.full_name ?? undefined);
+  void logBulkAction("invoice", payableIds, "status_changed", "status", "paid", profile?.id, profile?.full_name ?? undefined).catch(() => {});
 }
 
 export async function bulkUpdateInvoiceStatus(
@@ -61,12 +61,12 @@ export async function bulkUpdateInvoiceStatus(
         await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
       }
     }
-    await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name ?? undefined);
+    void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name ?? undefined).catch(() => {});
     return;
   }
   const { error } = await supabase.from("invoices").update({ status: newStatus }).in("id", ids);
   if (error) throw error;
-  await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name ?? undefined);
+  void logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name ?? undefined).catch(() => {});
 }
 
 export async function syncInvoicesForJobIds(jobIds: string[]): Promise<number> {
