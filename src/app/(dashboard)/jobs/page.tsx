@@ -2673,19 +2673,24 @@ function JobsPageContent() {
   const handleExportFullCsv = useCallback(async (fields: string[], _rowScope?: string) => {
     try {
       const allRows: Job[] = [];
-      let p = 1;
       const pageSize = 500;
-      while (true) {
-        const res = await fetchJobsManagementList({
-          page: p,
+      const fetchPage = (page: number) =>
+        fetchJobsManagementList({
+          page,
           pageSize,
           search: search.trim() ? search : undefined,
           status: status !== "all" ? status : undefined,
           ...(listParams ?? {}),
         });
-        allRows.push(...res.data);
-        if (p >= res.totalPages) break;
-        p += 1;
+      // Page 1 tells us totalPages; the rest are independent and fetched
+      // together instead of one page at a time.
+      const first = await fetchPage(1);
+      allRows.push(...first.data);
+      if (first.totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: first.totalPages - 1 }, (_, i) => fetchPage(i + 2)),
+        );
+        for (const res of rest) allRows.push(...res.data);
       }
       const filtered = allRows.filter((j) => {
         if (filterPartner === "__none__") {
