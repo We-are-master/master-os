@@ -73,17 +73,35 @@ async function resolveJobTypeOfWorkLabel(
   return title?.trim() || "Maintenance";
 }
 
-function partnerFromJobEmbed(job: unknown): {
-  email: string;
-  name: string;
-  zendeskUserId?: string;
-} {
-  const partnerRow = (job as { partners?: PartnerEmbed | PartnerEmbed[] | null }).partners;
-  const p = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
+/**
+ * Carrega o parceiro do job numa consulta própria.
+ *
+ * Era um embed `partners ( … )` dentro do select do job, e o embed nunca
+ * funcionou: não existe relação declarada entre `jobs` e `partners` no schema
+ * cache, então o PostgREST devolvia "Could not find a relationship" e a função
+ * inteira saía por `if (error || !job) return { ok: false }`. Em silêncio, e
+ * desde sempre: nenhuma confirmação de job chegou ao cliente por causa disto.
+ */
+async function carregarParceiro(
+  supabase: SupabaseClient,
+  partnerId: string | null | undefined,
+): Promise<{ email: string; name: string; zendeskUserId?: string }> {
+  const vazio = { email: "", name: "" };
+  const id = partnerId?.trim();
+  if (!id) return vazio;
+
+  const { data } = await supabase
+    .from("partners")
+    .select("company_name, contact_name, email, zendesk_user_id")
+    .eq("id", id)
+    .maybeSingle();
+  const p = data as PartnerEmbed | null;
+  if (!p) return vazio;
+
   return {
-    email: p?.email?.trim() ?? "",
-    name: p?.company_name?.trim() || p?.contact_name?.trim() || "",
-    zendeskUserId: p?.zendesk_user_id != null ? String(p.zendesk_user_id) : undefined,
+    email: p.email?.trim() ?? "",
+    name: p.company_name?.trim() || p.contact_name?.trim() || "",
+    zendeskUserId: p.zendesk_user_id != null ? String(p.zendesk_user_id) : undefined,
   };
 }
 
@@ -104,13 +122,12 @@ export async function dispatchJobCreatedZendesk(args: {
     .from("jobs")
     .select(`
       id, reference, title, property_address, scope, status,
-      scheduled_date, scheduled_start_at, scheduled_end_at, total_value,
+      scheduled_date, scheduled_start_at, scheduled_end_at,
       catalog_service_id,
       external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
       job_creation_notice_sent_at,
-      clients ( name ),
-      partners ( company_name, contact_name, email, zendesk_user_id )
+      clients ( full_name )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -145,10 +162,13 @@ export async function dispatchJobCreatedZendesk(args: {
     .maybeSingle();
   if (!claimed) return { ok: true };
 
-  type ClientRel = { name?: string | null };
+  // `full_name`, não `name`: nenhuma tabela deste banco chama a coluna de nome
+  // de `name` (é `full_name` em clients, `company_name` em accounts e
+  // partners). O `clients ( name )` que estava aqui derrubava a query inteira.
+  type ClientRel = { full_name?: string | null };
   const clientRowRaw = (job as unknown as { clients?: ClientRel | ClientRel[] | null }).clients;
   const clientRow: ClientRel | null = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
-  const clientNameFallback = clientRow?.name ?? "";
+  const clientNameFallback = clientRow?.full_name ?? "";
 
   // Resolve the customer-facing recipient the same way quotes/invoices do — the
   // account's billing_type decides between the account email (B2B) and the end
@@ -259,7 +279,10 @@ export async function dispatchJobCreatedZendesk(args: {
   let sideConvId: string | null =
     (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
 
-  const { email: partnerEmail, name: partnerName, zendeskUserId } = partnerFromJobEmbed(job);
+  const { email: partnerEmail, name: partnerName, zendeskUserId } = await carregarParceiro(
+    supabase,
+    (job as { partner_id?: string | null }).partner_id,
+  );
   const partnerConfirmed = Boolean(
     (job as { partner_confirmed_at?: string | null }).partner_confirmed_at,
   );
@@ -343,8 +366,7 @@ async function dispatchJobTerminalNotice(args: {
       id, reference, title, status,
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
-      clients ( name ),
-      partners ( company_name, contact_name, email, zendesk_user_id )
+      clients ( full_name )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -358,9 +380,9 @@ async function dispatchJobTerminalNotice(args: {
   if (job.status !== args.status) return { ok: true }; // status drifted — skip
   if ((job as Record<string, unknown>)[sentColumn]) return { ok: true };
 
-  const clientRow = (job as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
+  const clientRow = (job as unknown as { clients?: { full_name?: string | null } | { full_name?: string | null }[] | null }).clients;
   const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+    Array.isArray(clientRow) ? (clientRow[0]?.full_name ?? "") : (clientRow?.full_name ?? "");
 
   const html =
     args.status === "completed"
@@ -412,7 +434,7 @@ export async function dispatchQuoteRejectedZendesk(
       id, reference, status,
       external_source, external_ref,
       rejection_reason, rejection_notice_sent_at,
-      clients ( name )
+      clients ( full_name )
     `)
     .eq("id", quoteId)
     .maybeSingle();
@@ -428,9 +450,9 @@ export async function dispatchQuoteRejectedZendesk(
     return { ok: true };
   }
 
-  const clientRow = (quote as unknown as { clients?: { name?: string | null } | { name?: string | null }[] | null }).clients;
+  const clientRow = (quote as unknown as { clients?: { full_name?: string | null } | { full_name?: string | null }[] | null }).clients;
   const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.name ?? "") : (clientRow?.name ?? "");
+    Array.isArray(clientRow) ? (clientRow[0]?.full_name ?? "") : (clientRow?.full_name ?? "");
 
   const html = buildQuoteRejectedHtml({
     customerName: clientName,

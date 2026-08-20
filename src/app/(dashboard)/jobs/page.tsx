@@ -97,6 +97,7 @@ import {
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
+  JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
@@ -208,7 +209,7 @@ const LEGACY_JOBS_MANAGEMENT_TAB: Partial<
 > = {
   unassigned: { tab: "action_required" },
   on_hold: { tab: "action_required" },
-  awaiting_payment: { tab: "closed", closedFilter: "awaiting_payment" },
+  awaiting_payment: { tab: "awaiting_payment" },
   completed: { tab: "closed", closedFilter: "paid" },
   cancelled: { tab: "closed", closedFilter: "lost" },
   deleted: { tab: "closed", closedFilter: "archived" },
@@ -376,6 +377,7 @@ const JOBS_DEFAULT_TAB_IDS = [
   "scheduled",
   "in_progress",
   "final_check",
+  "awaiting_payment",
   "closed",
 ] as const;
 type JobsDefaultTabId = (typeof JOBS_DEFAULT_TAB_IDS)[number];
@@ -385,6 +387,7 @@ const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
   scheduled: "Scheduled",
   in_progress: "In Progress",
   final_check: "Final Checks",
+  awaiting_payment: "Awaiting Payment",
   closed: "Closed",
 };
 
@@ -810,7 +813,7 @@ function JobsPageContent() {
   const [jobsListSortKey, setJobsListSortKey] = useState<string | null>(null);
   const [jobsListSortDir, setJobsListSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
+  const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover" | "unassign">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkCancelPresetId, setBulkCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [bulkCancelDetail, setBulkCancelDetail] = useState("");
@@ -1236,6 +1239,16 @@ function JobsPageContent() {
         items: scheduleSortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
       },
       {
+        // Entre a entrega e o encerramento: o trabalho acabou, o dinheiro não
+        // entrou. Antes vivia dentro de Closed, o que escondia 65 jobs com
+        // dinheiro a receber atrás de um rótulo que diz "acabou".
+        id: "awaiting_payment",
+        title: "Awaiting payment",
+        color: "bg-amber-500",
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "awaiting_payment")),
+      },
+      {
+        // Terminal de verdade: pago ou cancelado, nada que ainda espere algo.
         id: "closed",
         title: "Closed",
         color: "bg-slate-500",
@@ -1357,8 +1370,11 @@ function JobsPageContent() {
 
   const actionRequiredTabCount = unassignedTabCount + onHoldTabCount;
 
+  const awaitingPaymentTabCount = tabCounts.awaiting_payment ?? 0;
+
+  /** Closed é terminal: pago ou cancelado. `awaiting_payment` saiu daqui e tem
+   *  aba própria, porque job esperando dinheiro é trabalho vivo. */
   const closedTabCount =
-    (tabCounts.awaiting_payment ?? 0) +
     (tabCounts.completed ?? 0) +
     (tabCounts.cancelled ?? 0) +
     (scheduleRange ? (tabCounts.archived_overlap_window ?? 0) : (tabCounts.deleted ?? 0));
@@ -1367,9 +1383,9 @@ function JobsPageContent() {
   const kpiActiveJobsCount =
     actionRequiredTabCount + scheduledTabCount + inProgressTabCount + finalChecksTabCount;
 
-  /** First tab badge = Active jobs (Action Required → Final Checks). Closed
-   *  buckets (awaiting_payment / completed / cancelled / deleted) live under
-   *  the Closed tab and are intentionally excluded here. */
+  /** First tab badge = Active jobs (Action Required → Final Checks).
+   *  `awaiting_payment` tem aba própria e Closed guarda completed / cancelled /
+   *  deleted; nenhum dos dois entra aqui, de propósito. */
   const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
@@ -1378,6 +1394,7 @@ function JobsPageContent() {
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting Payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
@@ -2239,6 +2256,75 @@ function JobsPageContent() {
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
 
+  /**
+   * Tira o parceiro dos jobs selecionados. Mesma regra do botão do detalhe
+   * (handleQuickUnassignPartner): só sai parceiro de job que ainda não passou
+   * da visita (scheduled, late, auto_assigning, in_progress e on_hold). Job
+   * mais adiante pede volta de fase antes, então é PULADO com o motivo em vez
+   * de derrubar o lote inteiro. Quem devolve o job para Unassigned e zera o
+   * timer do parceiro é o updateJob; aqui só se cuida da lista, do aviso ao
+   * parceiro que perdeu o job, e do log.
+   */
+  const handleBulkUnassignPartner = useCallback(async (): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
+    try {
+      const ids = Array.from(selectedIds);
+      const supabase = getSupabase();
+      const { data: jobRows, error: jobErr } = await supabase
+        .from("jobs")
+        .select("*")
+        .in("id", ids)
+        .is("deleted_at", null);
+      if (jobErr) throw jobErr;
+      const rows = (jobRows ?? []) as Job[];
+      const withPartner = rows.filter((j) => jobHasPartnerSet(j));
+      const eligible = withPartner.filter(
+        (j) => JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(j.status) || j.status === "on_hold",
+      );
+      if (eligible.length === 0) {
+        toast.message(
+          withPartner.length === 0
+            ? "No selected job has a partner assigned."
+            : "These jobs are too far along to unassign. Move them back a step first, or swap the partner on the job.",
+        );
+        return false;
+      }
+      const doneIds: string[] = [];
+      let failed = 0;
+      for (const j of eligible) {
+        const prevPartnerId = j.partner_id?.trim() || null;
+        try {
+          const updated = await updateJob(j.id, { partner_id: null, partner_name: null, partner_ids: [] });
+          doneIds.push(updated.id);
+          if (prevPartnerId) {
+            notifyAssignedPartnerAboutJob({ partnerId: prevPartnerId, job: updated, kind: "job_unassigned" });
+          }
+        } catch (e) {
+          failed += 1;
+          console.error("bulk unassign", j.reference, e);
+        }
+      }
+      if (doneIds.length === 0) {
+        toast.error("Failed to unassign partner");
+        return false;
+      }
+      await logBulkAction("job", doneIds, "status_changed", "partner_id", "unassigned", profile?.id, profile?.full_name);
+      const skipped = withPartner.length - eligible.length;
+      const notes = [
+        skipped > 0 ? `${skipped} skipped: too far along to unassign.` : null,
+        failed > 0 ? `${failed} failed.` : null,
+      ].filter(Boolean).join(" ");
+      toast.success(`${doneIds.length} job(s) back to Unassigned`, notes ? { description: notes } : undefined);
+      setSelectedIds(new Set());
+      refresh();
+      loadDashboardStats();
+      return true;
+    } catch {
+      toast.error("Failed to unassign partner");
+      return false;
+    }
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
+
   const columns: Column<Job>[] = [
     {
       key: "reference",
@@ -2267,17 +2353,33 @@ function JobsPageContent() {
             ? clientAccountLogoByClientId[item.client_id]?.trim() || undefined
             : undefined;
         const scopeText = item.scope?.trim();
+        // O endereço na célula é cortado em duas linhas, então o hover é o
+        // único lugar da lista onde ele aparece inteiro: mostra sempre, mesmo
+        // quando o job ainda não tem scope.
+        const addressText = item.property_address?.trim();
         return (
           <HoverPreview
             content={
-              scopeText ? (
+              scopeText || addressText ? (
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    Scope of work · {item.reference}
+                    {item.reference}
                   </p>
-                  <p className="mt-1.5 max-h-64 overflow-hidden whitespace-pre-line text-xs leading-relaxed text-text-primary">
-                    {scopeText}
-                  </p>
+                  {addressText ? (
+                    <p className="mt-1.5 whitespace-pre-line break-words text-xs font-medium leading-relaxed text-text-primary">
+                      {addressText}
+                    </p>
+                  ) : null}
+                  {scopeText ? (
+                    <>
+                      <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Scope of work
+                      </p>
+                      <p className="mt-1.5 max-h-64 overflow-hidden whitespace-pre-line text-xs leading-relaxed text-text-primary">
+                        {scopeText}
+                      </p>
+                    </>
+                  ) : null}
                 </div>
               ) : null
             }
@@ -2824,9 +2926,10 @@ function JobsPageContent() {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Closed</span>
               {(
                 [
+                  // "Awaiting Payment" saiu daqui junto com os jobs: eles têm
+                  // aba própria agora, e o botão filtraria por um balde vazio.
                   ["all", "All"],
                   ["paid", "Paid"],
-                  ["awaiting_payment", "Awaiting Payment"],
                   ["archived", "Archived"],
                   ["lost", "Lost"],
                 ] as const
@@ -2884,6 +2987,7 @@ function JobsPageContent() {
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
+                    <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
                     <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
@@ -3004,7 +3108,9 @@ function JobsPageContent() {
                   ? "Archive jobs?"
                   : bulkActionModal === "recover"
                     ? "Recover selected jobs?"
-                    : ""
+                    : bulkActionModal === "unassign"
+                      ? "Remove the partner from these jobs?"
+                      : ""
         }
         size="md"
       >
@@ -3044,6 +3150,14 @@ function JobsPageContent() {
               <>
                 Restore <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to their status before deletion (or
                 Unassigned if unknown)? Self-bill totals refresh after recover.
+              </>
+            )}
+            {bulkActionModal === "unassign" && (
+              <>
+                Remove the partner from <strong className="text-text-primary">{selectedIds.size}</strong> selected job(s)? They go back to{" "}
+                <strong className="text-text-primary">Unassigned</strong>, the on-site timer resets, and each partner is notified they lost
+                the job. The schedule and the scope stay as they are. Jobs past the visit (final checks, awaiting payment, completed) are
+                skipped.
               </>
             )}
           </p>
@@ -3105,6 +3219,7 @@ function JobsPageContent() {
                     else if (bulkActionModal === "mark_paid") ok = await handleBulkStatusChange("completed");
                     else if (bulkActionModal === "archive") ok = await handleBulkArchive();
                     else if (bulkActionModal === "recover") ok = await handleBulkRecoverJobs();
+                    else if (bulkActionModal === "unassign") ok = await handleBulkUnassignPartner();
                     if (ok) setBulkActionModal(null);
                   } finally {
                     setBulkRunning(false);
@@ -3122,7 +3237,9 @@ function JobsPageContent() {
                       ? "Yes, archive"
                       : bulkActionModal === "recover"
                         ? "Yes, recover"
-                        : "Confirm"}
+                        : bulkActionModal === "unassign"
+                          ? "Yes, unassign"
+                          : "Confirm"}
             </Button>
           </div>
         </div>

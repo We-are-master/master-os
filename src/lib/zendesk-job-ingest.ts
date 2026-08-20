@@ -321,9 +321,12 @@ export async function repairJobIngestFromZendeskTicket(
   if (reconciled.catalogServiceId && !job.catalog_service_id) {
     patch.catalog_service_id = reconciled.catalogServiceId;
   }
-  if (reconciled.autoAssign && job.status === "unassigned" && !jobHasPartnerSet(job)) {
-    patch.status = "auto_assigning";
-  }
+  // Job Unassigned não vira Auto assign sozinho, nem quando o checkbox do
+  // ticket pede. Este reparo roda ao abrir a tela do job e dentro do dispatch,
+  // longe de quem decide, e promover aqui abria leilão que ninguém pediu: o
+  // job aparecia em Auto assign sem nenhum clique. Auto assign passa a sair de
+  // um lugar só, o botão, ou de o job já nascer pedindo (auto_assign na
+  // criação / assignment_mode=auto na macro).
 
   const clientId = job.client_id?.trim() || null;
   const ticketClientName = reconciled.clientName?.trim() || job.client_name?.trim() || "";
