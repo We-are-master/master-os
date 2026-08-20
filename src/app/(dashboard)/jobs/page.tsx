@@ -1862,7 +1862,7 @@ function JobsPageContent() {
         ...statusChangePartnerTimerPatch(job, newStatus),
       };
       const updated = await updateJob(job.id, statusPatch);
-      await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
+      void logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name }).catch(() => {});
       toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh(); loadDashboardStats();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
@@ -1970,7 +1970,7 @@ function JobsPageContent() {
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
 
-      await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} jobs updated`);
       setSelectedIds(new Set());
       refresh();
@@ -2023,7 +2023,7 @@ function JobsPageContent() {
         refreshSelfBillPayoutStatesForJobIds(ids),
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
-      await logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${ids.length} job(s) moved to In progress`);
       setSelectedIds(new Set());
       refresh();
@@ -2124,7 +2124,7 @@ function JobsPageContent() {
         refreshSelfBillPayoutStatesForJobIds(ids),
         refreshWorkforceSelfBillsForJobIds(ids),
       ]);
-      await logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name);
+      void logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${updatedCount} job(s) cancelled`);
       setSelectedIds(new Set());
       refresh();
@@ -2188,7 +2188,7 @@ function JobsPageContent() {
         ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
         refreshWorkforceSelfBillsForJobIds(eligible.map((j) => j.id)),
       ]);
-      await logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name);
+      void logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${eligible.length} job(s) moved to Deleted`);
       setSelectedIds(new Set());
       refresh();
@@ -2240,7 +2240,7 @@ function JobsPageContent() {
         ...selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)),
         refreshWorkforceSelfBillsForJobIds(rows.map((j) => j.id)),
       ]);
-      await logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name);
+      void logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${rows.length} job(s) recovered`, {
         description: "Linked invoices stay cancelled—adjust in Finance if needed.",
       });
@@ -2306,7 +2306,7 @@ function JobsPageContent() {
         toast.error("Failed to unassign partner");
         return false;
       }
-      await logBulkAction("job", doneIds, "status_changed", "partner_id", "unassigned", profile?.id, profile?.full_name);
+      void logBulkAction("job", doneIds, "status_changed", "partner_id", "unassigned", profile?.id, profile?.full_name).catch(() => {});
       const skipped = withPartner.length - eligible.length;
       const notes = [
         skipped > 0 ? `${skipped} skipped: too far along to unassign.` : null,

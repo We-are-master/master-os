@@ -136,7 +136,7 @@ export function useCancelJob() {
           method: "POST",
         }).catch((err) => console.error("[use-cancel-job] auto-assign cleanup:", err));
 
-        await logAudit({
+        void logAudit({
           entityType: "job",
           entityId: updated.id,
           entityRef: updated.reference,
@@ -146,8 +146,8 @@ export function useCancelJob() {
           newValue: "cancelled",
           userId: profile?.id,
           userName: profile?.full_name,
-        });
-        await logAudit({
+        }).catch(() => {});
+        void logAudit({
           entityType: "job",
           entityId: updated.id,
           entityRef: updated.reference,
@@ -156,7 +156,7 @@ export function useCancelJob() {
           newValue: feeAuditSummary(input.fees),
           userId: profile?.id,
           userName: profile?.full_name,
-        });
+        }).catch(() => {});
 
         if (updated.partner_id) {
           notifyAssignedPartnerAboutJob({

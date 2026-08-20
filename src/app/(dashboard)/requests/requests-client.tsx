@@ -401,7 +401,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
     try {
       const { error } = await supabase.from("service_requests").update({ status: newStatus }).in("id", Array.from(selectedIds));
       if (error) throw error;
-      await logBulkAction("request", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      void logBulkAction("request", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name).catch(() => {});
       toast.success(`${selectedIds.size} requests updated to ${newStatus}`);
       setSelectedIds(new Set());
       refreshSilent();
@@ -426,11 +426,11 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
         const updated = await updateRequestStatus(id, newStatus);
-        await logAudit({
+        void logAudit({
           entityType: "request", entityId: id, action: "status_changed",
           fieldName: "status", oldValue: oldStatus, newValue: newStatus,
           userId: profile?.id, userName: profile?.full_name,
-        });
+        }).catch(() => {});
         setSelectedRequest((prev) => (prev?.id === id ? updated : prev));
         refreshSilent();
         await loadCounts();

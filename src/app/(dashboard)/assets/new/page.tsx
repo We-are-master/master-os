@@ -67,7 +67,7 @@ export default function NewAssetPage() {
         phone: phone.trim() || null,
         notes: notes.trim() || null,
       });
-      await logAudit({
+      void logAudit({
         entityType: "property",
         entityId: row.id,
         entityRef: row.name,
@@ -75,7 +75,7 @@ export default function NewAssetPage() {
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: { account_id: row.account_id },
-      });
+      }).catch(() => {});
       toast.success("Property created");
       router.push(`/assets/${row.id}`);
     } catch (err) {
