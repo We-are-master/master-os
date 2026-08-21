@@ -1,5 +1,5 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import {
   FIXFY_PDF_FOOTER_HEIGHT,
@@ -135,10 +135,14 @@ const styles = StyleSheet.create({
   tableHead: { flexDirection: "row", backgroundColor: NAVY, borderTopLeftRadius: 6, borderTopRightRadius: 6, paddingHorizontal: 10, paddingVertical: 7 },
   th: { fontFamily: "Helvetica-Bold", fontSize: 8, color: "#FFFFFF", letterSpacing: 0.4, textTransform: "uppercase" },
   tableRow: { flexDirection: "row", paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: HAIRLINE, borderLeftWidth: 1, borderRightWidth: 1, borderLeftColor: BORDER, borderRightColor: BORDER },
-  cellRef: { width: "16%" },
-  cellDate: { width: "13%" },
-  cellTitle: { width: "26%" },
-  cellAddr: { width: "31%" },
+  cellRef: { width: "15%" },
+  cellDate: { width: "15%" },
+  /* Serviço e endereço dividem UMA coluna larga, empilhados.
+     Com quatro colunas de texto disputando a largura, "Furniture Assembly" e
+     "Croydon" quebravam no meio da palavra e cada linha tinha uma altura
+     diferente. Numa coluna de 56% o serviço cabe inteiro numa linha e o
+     endereço vem embaixo, então toda linha tem a mesma forma. */
+  cellDesc: { width: "56%", paddingRight: 8 },
   cellNum: { width: "14%", textAlign: "right" },
   tableFoot: {
     flexDirection: "row",
@@ -162,8 +166,9 @@ const styles = StyleSheet.create({
      os dois não cabiam e o "inc VAT" caía para a linha de baixo. */
   tfValRow: { flexDirection: "row" as const, alignItems: "baseline" as const },
   tfVat: { fontFamily: "Helvetica", fontSize: 7, color: LABEL, marginLeft: 4 },
-  cellText: { fontSize: 9, color: TEXT },
-  cellNumText: { fontSize: 9, color: NAVY },
+  cellText: { fontSize: 8.5, color: TEXT, lineHeight: 1.35 },
+  cellAddrText: { fontSize: 7.5, color: MUTED, lineHeight: 1.35, marginTop: 1.5 },
+  cellNumText: { fontSize: 8.5, color: NAVY },
   lineNote: { fontSize: 7, color: ORANGE, marginTop: 2 },
   lineId: { fontSize: 6, color: LABEL, marginTop: 1 },
 
@@ -193,6 +198,16 @@ const styles = StyleSheet.create({
   footerLogo: { height: 16, objectFit: "contain" as const, marginBottom: 6 },
   footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
+
+/**
+ * Desliga a hifenização do react-pdf.
+ *
+ * Por padrão ele quebra palavra no meio quando não cabe, e num documento
+ * financeiro isso vira "Furniture Assem-bly" e "Croy-don": parece erro de
+ * impressão. Devolvendo a palavra inteira, ela desce inteira para a linha
+ * seguinte, que é como qualquer fatura se comporta.
+ */
+Font.registerHyphenationCallback((palavra) => [palavra]);
 
 /** Valor com "inc VAT". Só no total: repetir em cada linha da tabela era
  *  ruído que ocupava a largura de uma coluna inteira. */
@@ -316,11 +331,14 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
             <>
               <Text style={styles.sectionLabel}>Job-by-job breakdown</Text>
               <View style={{ marginBottom: 14 }}>
-                <View style={styles.tableHead} wrap={false}>
+                {/* `fixed` repete o cabeçalho quando a tabela vira a página.
+                    Sem ele, o parceiro com muitos jobs recebia uma página 2 com
+                    quatro colunas de números e nenhum título dizendo o que é
+                    cada uma. */}
+                <View style={styles.tableHead} wrap={false} fixed>
                   <Text style={[styles.th, styles.cellRef]}>Job</Text>
                   <Text style={[styles.th, styles.cellDate]}>Date</Text>
-                  <Text style={[styles.th, styles.cellTitle]}>Type of work</Text>
-                  <Text style={[styles.th, styles.cellAddr]}>Property</Text>
+                  <Text style={[styles.th, styles.cellDesc]}>Type of work</Text>
                   <Text style={[styles.th, styles.cellNum]}>Amount</Text>
                 </View>
                 {/* Uma linha por job, tudo na mesma altura.
@@ -335,8 +353,12 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
                       {line.payoutStateNote ? <Text style={styles.lineNote}>{line.payoutStateNote}</Text> : null}
                     </View>
                     <Text style={[styles.cellText, styles.cellDate]}>{fmtDate(line.doneOn)}</Text>
-                    <Text style={[styles.cellText, styles.cellTitle]}>{line.title}</Text>
-                    <Text style={[styles.cellText, styles.cellAddr]}>{line.property_address ?? "—"}</Text>
+                    <View style={styles.cellDesc}>
+                      <Text style={styles.cellText}>{line.title}</Text>
+                      {line.property_address ? (
+                        <Text style={styles.cellAddrText}>{line.property_address}</Text>
+                      ) : null}
+                    </View>
                     <Text style={[styles.cellNumText, styles.cellNum]}>{fmtPlain(line.partner_cost)}</Text>
                   </View>
                 ))}

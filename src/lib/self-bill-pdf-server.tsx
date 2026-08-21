@@ -111,17 +111,25 @@ export async function renderSelfBillPdfBuffer(
     >;
     const note = selfBillJobPayoutStateLabel(row);
     const feeLine = selfBillJobCancellationFeeLine(row);
-    const linhaDeTaxa = feeLine
-      ? {
-          reference: String(j.reference ?? ""),
-          title: feeLine.label,
-          partner_cost: feeLine.signedAmount,
-          materials_cost: 0,
-          property_address: undefined,
-          doneOn: undefined,
-          payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
-        }
-      : null;
+    /**
+     * `sozinha` = o job não aparece por si só, então esta linha é tudo o que o
+     * parceiro vai ver dele, e precisa carregar o endereço e a data. Quando
+     * vem embaixo da linha do job, os dois ficam vazios para não repetir.
+     */
+    const montarLinhaDeTaxa = (sozinha: boolean) =>
+      feeLine
+        ? {
+            reference: String(j.reference ?? ""),
+            title: feeLine.label,
+            partner_cost: feeLine.signedAmount,
+            materials_cost: 0,
+            property_address:
+              sozinha && j.property_address ? String(j.property_address) : undefined,
+            doneOn:
+              sozinha && j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
+            payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
+          }
+        : null;
 
     /**
      * A tabela lista EXATAMENTE o que forma o total do rodapé.
@@ -143,7 +151,8 @@ export async function renderSelfBillPdfBuffer(
      * que já traz o motivo no rótulo ("(Cancelled - Compensation)").
      */
     if (!isJobApprovedForSelfBillPayout(row)) {
-      return linhaDeTaxa ? [linhaDeTaxa] : [];
+      const sozinha = montarLinhaDeTaxa(true);
+      return sozinha ? [sozinha] : [];
     }
 
     /**
@@ -165,7 +174,8 @@ export async function renderSelfBillPdfBuffer(
       payoutStateNote: note ?? undefined,
     };
 
-    return linhaDeTaxa ? [base, linhaDeTaxa] : [base];
+    const embaixo = montarLinhaDeTaxa(false);
+    return embaixo ? [base, embaixo] : [base];
   });
 
   const voided = isSelfBillPayoutVoided({ status: sb.status });
