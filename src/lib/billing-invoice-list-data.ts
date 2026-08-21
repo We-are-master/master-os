@@ -21,6 +21,8 @@ export type InvoiceListJobSnapshot = {
   property_address?: string | null;
   title?: string | null;
   billed_hours?: number | null;
+  /** Nome vivo do cliente. A invoice guarda uma cópia do dia em que nasceu. */
+  client_name?: string | null;
 };
 
 export async function fetchAllActiveInvoices(): Promise<Invoice[]> {
@@ -53,7 +55,7 @@ export async function fetchJobsByReferences(refs: string[]): Promise<Record<stri
     const { data, error } = await supabase
       .from("jobs")
       .select(
-        "id, reference, status, scheduled_date, scheduled_start_at, completed_date, scheduled_finish_date, scheduled_end_at, property_address, title, billed_hours",
+        "id, reference, status, scheduled_date, scheduled_start_at, completed_date, scheduled_finish_date, scheduled_end_at, property_address, title, billed_hours, client_name",
       )
       .in("reference", chunk);
     if (error) throw error;
