@@ -2010,6 +2010,14 @@ function BillingStandaloneInner() {
         {selectedInvoiceIds.size > 0 ? (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
+            /* Saldo em aberto, não o valor cheio da fatura: é o que entra se a
+               pessoa apertar, e fatura parcialmente paga tem os dois números. */
+            totalAmount={[...selectedInvoiceIds].reduce((acc, id) => {
+              const inv = data.invoices.find((x: Invoice) => x.id === id);
+              if (!inv) return acc;
+              const saldo = Number(inv.amount ?? 0) - Number(inv.amount_paid ?? 0);
+              return acc + Math.max(0, saldo);
+            }, 0)}
             saving={bulkSaving}
             variant="invoice"
             markPaidLabel={moneyInTab === "ready" ? "Mark as received" : "Mark as paid"}
@@ -2029,6 +2037,10 @@ function BillingStandaloneInner() {
         ) : moneyOutSelectedIds.size > 0 ? (
           <BillingBulkBar
             count={moneyOutSelectedIds.size}
+            totalAmount={[...moneyOutSelectedIds].reduce(
+              (acc, id) => acc + Number(data.selfBills.find((sb: SelfBill) => sb.id === id)?.net_payout ?? 0),
+              0,
+            )}
             saving={bulkSaving}
             variant="selfbill"
             selfbillMode="approved"
@@ -2075,6 +2087,10 @@ function BillingStandaloneInner() {
         ) : selectedSbIds.size > 0 ? (
           <BillingBulkBar
             count={selectedSbIds.size}
+            totalAmount={[...selectedSbIds].reduce(
+              (acc, id) => acc + Number(data.selfBills.find((sb: SelfBill) => sb.id === id)?.net_payout ?? 0),
+              0,
+            )}
             saving={bulkSaving}
             emailSending={emailSending}
             variant="selfbill"
