@@ -77,19 +77,18 @@ export async function POST() {
     groups.set(key, list);
   }
 
-  // Pre-fetch payment_terms for all involved partners
-  const partnerIds = [...new Set(toProcess.map((j) => j.partner_id).filter(Boolean))];
+  /**
+   * Parceiro não tem termo próprio: todos seguem o padrão da organização.
+   *
+   * Isto lia `partners.payment_terms`, coluna que **não existe neste banco** (a
+   * migração 145 nunca foi aplicada), então toda chamada desta rota morria com
+   * 42703 antes de fazer qualquer coisa. E o dono decidiu em 20/08/2026 que a
+   * cadência é uma só para todos, o que dispensa o override por parceiro.
+   *
+   * O mapa fica vazio de propósito: quem consome trata "sem termo" como "usa o
+   * padrão do Setup", que é exatamente o comportamento desejado.
+   */
   const partnerTermsMap = new Map<string, string | null>();
-  if (partnerIds.length > 0) {
-    const { data: partnerRows } = await supabase
-      .from("partners")
-      .select("id, payment_terms")
-      .in("id", partnerIds);
-    for (const p of partnerRows ?? []) {
-      const pr = p as { id: string; payment_terms?: string | null };
-      partnerTermsMap.set(pr.id, pr.payment_terms ?? null);
-    }
-  }
 
   let billsCreated = 0;
   let jobsLinked = 0;

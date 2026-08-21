@@ -1205,6 +1205,33 @@ function JobsPageContent() {
       {formatCurrency(jobsListFinancialTotals.cost)}
     </span>
   ) : null;
+  /**
+   * Total da coluna "Amount due": o que ainda falta ENTRAR, não o que o job vale.
+   *
+   * A célula já calculava isto linha a linha e o rodapé não somava, então a
+   * única leitura de dinheiro da aba era o valor do trabalho. Em 20/08/2026 a
+   * aba Awaiting Payment mostrava £16.818,04 enquanto o Billing pedia £7.209,69
+   * para cobrar, e a diferença fazia parecer erro de sistema quando eram duas
+   * perguntas diferentes na mesma linha.
+   *
+   * Mesma fórmula da célula, de propósito: um número que discorda da coluna que
+   * ele soma é pior que número nenhum.
+   */
+  const amountDueTotal = useMemo(() => {
+    if (!customerPaidSumsReady) return null;
+    let total = 0;
+    for (const j of sortedDataForTable) {
+      total += Math.max(0, jobCustomerBillableRevenueForCollections(j) - (customerPaidByJobId[j.id] ?? 0));
+    }
+    return Math.round(total * 100) / 100;
+  }, [sortedDataForTable, customerPaidByJobId, customerPaidSumsReady]);
+
+  const amountDueFooter = hasJobsListTotals && amountDueTotal !== null ? (
+    <span className="text-sm font-semibold text-text-primary tabular-nums">
+      {formatCurrency(amountDueTotal)}
+    </span>
+  ) : null;
+
   const jobMarginFooter = hasJobsListTotals ? (
     <JobMarginStack
       margin={jobsListFinancialTotals.profit}
@@ -2587,6 +2614,7 @@ function JobsPageContent() {
         const due = Math.max(0, billable - paid);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
+      footer: amountDueFooter,
     },
     {
       key: "finance_status",
