@@ -30,8 +30,19 @@ describe("resolvePartnerPay", () => {
   it("returns lower override", () => {
     assert.equal(resolvePartnerPay(45, 40), 40);
   });
-  it("clamps above ceiling to ceiling", () => {
-    assert.equal(resolvePartnerPay(45, 50), 45);
+  /**
+   * Deixou de cortar em 21/08/2026. O preço combinado com o parceiro vale mesmo
+   * acima do padrão: o London Safety Certificate cobra £98,99 no EICR de studio
+   * contra £69 do padrão, e o corte fazia o número verdadeiro sumir calado.
+   */
+  it("keeps an override above the standard instead of clamping it", () => {
+    assert.equal(resolvePartnerPay(45, 50), 50);
+  });
+
+  /** Passar do padrão continua sendo detectável — vira aviso, não corte. */
+  it("still reports an above-standard rate as invalid", () => {
+    assert.equal(isPartnerPayValid(45, 50), false);
+    assert.equal(isPartnerPayValid(45, 40), true);
   });
 });
 
