@@ -28,6 +28,7 @@ import {
   isAccountOrgBiweeklyGridTerms,
   type AccountPaymentOrgContext,
 } from "@/lib/account-payment-due-date";
+import { accountScheduleColumns, blockingScheduleError } from "@/lib/account-payment-schedule";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { toast } from "sonner";
 import type { Account, AccountLegacyYearlyStat, CatalogService, Client, Job, Invoice } from "@/types/database";
@@ -499,6 +500,19 @@ export default function AccountsPage() {
       return;
     }
 
+    /**
+     * Conta não nasce sem cut-off, a pedido do dono.
+     *
+     * O cut-off é o que decide em qual pagamento o trabalho cai. Sem ele o
+     * vencimento é chute com cara de número, e o parser antigo devolvia "Net 30"
+     * em silêncio para o que não reconhecia. Aqui a pessoa vê o que falta.
+     */
+    const scheduleErro = blockingScheduleError(form.payment_terms);
+    if (scheduleErro) {
+      toast.error(scheduleErro);
+      return;
+    }
+
     const accHints = await findDuplicateAccountHints({
       companyName: form.company_name.trim(),
       email: form.email.trim(),
@@ -520,7 +534,7 @@ export default function AccountsPage() {
         industry: form.industry,
         status: "onboarding",
         credit_limit: Number(form.credit_limit) || 0,
-        payment_terms: form.payment_terms,
+        ...accountScheduleColumns(form.payment_terms),
         bu_id: form.bu_id || null,
         contract_url: null,
         default_client_cancel_fee_gbp:
@@ -1794,6 +1808,12 @@ function AccountDetailDrawer({
     }
     setSaving(true);
     try {
+      const scheduleErro = blockingScheduleError(edit.payment_terms);
+      if (scheduleErro) {
+        toast.error(scheduleErro);
+        return;
+      }
+
       const updated = await updateAccount(account.id, {
         company_name: edit.company_name.trim(),
         contact_name: edit.contact_name.trim(),
@@ -1806,7 +1826,7 @@ function AccountDetailDrawer({
         industry: edit.industry,
         status: edit.status,
         credit_limit: Number(edit.credit_limit) || 0,
-        payment_terms: edit.payment_terms,
+        ...accountScheduleColumns(edit.payment_terms),
         logo_url: edit.logo_url.trim() || null,
         contract_url: edit.contract_url.trim() || null,
         billing_type: billingType,

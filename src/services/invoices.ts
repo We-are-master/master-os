@@ -81,8 +81,44 @@ export async function createInvoice(
   const collection_stage: InvoiceCollectionStage =
     input.collection_stage ??
     (input.invoice_kind === "deposit" ? "awaiting_deposit" : "awaiting_final");
+  /**
+   * A conta dona da fatura é herdada do cliente, aqui, e não deixada para quem
+   * chama preencher.
+   *
+   * Nenhum dos chamadores passava `source_account_id`, e o resultado é que 38
+   * das últimas 40 invoices nasceram órfãs. Órfã não é detalhe de tela: o
+   * Financeiro agrupa por conta e joga todas em "Unlinked account", e a
+   * checagem de coerência da Zia lê o mesmo campo direto, então o relatório
+   * dela também some com a conta. Em 20/08/2026 havia 93 assim, £9.008 de
+   * Checkatrade, Housekeep e Fantastic sem dono.
+   *
+   * Derivar aqui, e não em cada chamador, porque cada chamador esquecido é uma
+   * safra nova de órfãs.
+   */
+  let sourceAccountId = input.source_account_id ?? null;
+  const jobRef = input.job_reference?.trim();
+  if (!sourceAccountId && jobRef) {
+    // Pelo JOB e não pelo nome do cliente: nome repete entre contas, e casar
+    // por texto é como uma fatura da Housekeep acabaria na Checkatrade.
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("client_id")
+      .eq("reference", jobRef)
+      .maybeSingle();
+    const clientId = (job as { client_id?: string | null } | null)?.client_id?.trim();
+    if (clientId) {
+      const { data: cli } = await supabase
+        .from("clients")
+        .select("source_account_id")
+        .eq("id", clientId)
+        .maybeSingle();
+      sourceAccountId = (cli as { source_account_id?: string | null } | null)?.source_account_id ?? null;
+    }
+  }
+
   const row = {
     ...input,
+    ...(sourceAccountId ? { source_account_id: sourceAccountId } : {}),
     amount_paid: input.amount_paid ?? 0,
     collection_stage,
     collection_stage_locked: input.collection_stage_locked ?? false,

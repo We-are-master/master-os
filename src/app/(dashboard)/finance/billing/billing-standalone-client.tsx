@@ -2033,9 +2033,21 @@ function BillingStandaloneInner() {
             variant="selfbill"
             selfbillMode="approved"
             markPaidLabel="Mark as paid"
+            /* "Resend" em vez de "Send" quando TODOS os selecionados já foram
+               ao parceiro. Só quando todos: numa seleção mista, o rótulo tem
+               que ser o da ação que ainda falta fazer. */
+            emailAlreadySent={
+              moneyOutSelectedIds.size > 0 &&
+              [...moneyOutSelectedIds].every((id) =>
+                Boolean(data.selfBills.find((sb: SelfBill) => sb.id === id)?.email_sent_at),
+              )
+            }
             onClear={() => setMoneyOutSelectedIds(new Set())}
             onMarkPaid={async () => {
               await handleBulkMarkSelfBillsPaid([...moneyOutSelectedIds]);
+            }}
+            onEmail={async () => {
+              await handleSendSelfBills([...moneyOutSelectedIds], "row");
             }}
             onBackToDraft={async () => {
               await handleMoveSelfBillsBackToDraft([...moneyOutSelectedIds]);
@@ -2068,6 +2080,19 @@ function BillingStandaloneInner() {
             variant="selfbill"
             selfbillMode={moneyOutBulkMode}
             markPaidLabel="Mark as paid"
+            emailAlreadySent={
+              selectedSbIds.size > 0 &&
+              [...selectedSbIds].every((id) =>
+                Boolean(data.selfBills.find((sb: SelfBill) => sb.id === id)?.email_sent_at),
+              )
+            }
+            onEmail={
+              moneyOutBulkMode === "approved"
+                ? async () => {
+                    await handleSendSelfBills([...selectedSbIds], "row");
+                  }
+                : undefined
+            }
             onClear={() => setSelectedSbIds(new Set())}
             onMarkPaid={
               moneyOutBulkMode === "approved"

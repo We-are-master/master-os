@@ -70,19 +70,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ updated: 0, noPartner: 0, sameDate: 0, changes: [] });
   }
 
-  // ── 2. Partners → payment_terms ──────────────────────────────────────────
-  const partnerIds = [...new Set(bills.map((b) => b.partner_id as string))];
+  // ── 2. Termos do parceiro ────────────────────────────────────────────────
+  /**
+   * Parceiro não tem termo próprio: todos seguem o padrão da organização.
+   *
+   * Lia `partners.payment_terms`, coluna que não existe neste banco (migração
+   * 145 nunca aplicada), então esta rota morria com 42703 antes de recalcular
+   * qualquer coisa. Mapa vazio = todos no padrão do Setup, que é a decisão.
+   */
   const partnerTermsMap = new Map<string, string | null>();
-  for (let i = 0; i < partnerIds.length; i += CHUNK) {
-    const { data: chunk } = await admin
-      .from("partners")
-      .select("id, payment_terms")
-      .in("id", partnerIds.slice(i, i + CHUNK));
-    for (const p of chunk ?? []) {
-      const pr = p as { id: string; payment_terms?: string | null };
-      partnerTermsMap.set(pr.id, pr.payment_terms ?? null);
-    }
-  }
 
   // ── 3. Compute new due dates ─────────────────────────────────────────────
   type Change = { id: string; reference: string; old_due_date: string | null; new_due_date: string };
