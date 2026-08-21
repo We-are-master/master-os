@@ -14,10 +14,14 @@ import { parseFrontendSetup, resolveInvoiceStatementLogoUrl } from "@/lib/fronte
 import { appBaseUrl } from "@/lib/app-base-url";
 import {
   DEFAULT_INVOICE_PDF_LOGO_URL,
+  readPublicLogoDataUri,
   resolveLogoDataUri,
 } from "@/lib/pdf/resolve-logo-data-uri";
 import type { Job, SelfBill } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+/** A wordmark branca em `public/`, usada quando a busca remota não responde. */
+const SELF_BILL_LOCAL_LOGO = "logos/fixfy-wordmark-white-trim.png";
 
 async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<string | undefined> {
   const { data: company } = await supabase
@@ -29,7 +33,17 @@ async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<stri
   const setup = parseFrontendSetup(companyRow?.frontend_setup);
   const logoSource =
     resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
-  return (await resolveLogoDataUri(logoSource)) ?? undefined;
+  /**
+   * Falha de rede não pode custar o logo do documento.
+   *
+   * `resolveLogoDataUri` busca a imagem remota com 4s de timeout e devolve
+   * `undefined` quando não consegue. Sem o `??`, o self-bill saía com a marca
+   * escrita em texto no lugar do logo, e foi o que aconteceu num render aqui.
+   * A fatura já cai no arquivo de `public/` nesse caso; o self-bill não caía.
+   */
+  return (
+    (await resolveLogoDataUri(logoSource)) ?? readPublicLogoDataUri(SELF_BILL_LOCAL_LOGO) ?? undefined
+  );
 }
 
 /**
@@ -40,7 +54,11 @@ async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<stri
  * versão oficial para fundo escuro.
  */
 async function resolveSelfBillFooterLogo(): Promise<string | undefined> {
-  return (await resolveLogoDataUri(`${appBaseUrl()}/logos/fixfy-wordmark-white-trim.png`)) ?? undefined;
+  return (
+    (await resolveLogoDataUri(`${appBaseUrl()}/logos/${SELF_BILL_LOCAL_LOGO.split("/").pop()}`)) ??
+    readPublicLogoDataUri(SELF_BILL_LOCAL_LOGO) ??
+    undefined
+  );
 }
 
 export async function renderSelfBillPdfBuffer(

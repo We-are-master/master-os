@@ -158,6 +158,10 @@ const styles = StyleSheet.create({
   },
   tfLabel: { fontFamily: "Helvetica-Bold", fontSize: 8, color: NAVY, letterSpacing: 0.6, textTransform: "uppercase" as const },
   tfVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY, textAlign: "right" as const },
+  /* O valor e o "inc VAT" numa linha só: presos na coluna de 14% da tabela,
+     os dois não cabiam e o "inc VAT" caía para a linha de baixo. */
+  tfValRow: { flexDirection: "row" as const, alignItems: "baseline" as const },
+  tfVat: { fontFamily: "Helvetica", fontSize: 7, color: LABEL, marginLeft: 4 },
   cellText: { fontSize: 9, color: TEXT },
   cellNumText: { fontSize: 9, color: NAVY },
   lineNote: { fontSize: 7, color: ORANGE, marginTop: 2 },
@@ -339,7 +343,10 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
                 {/* Rodapé da tabela: o total, e o único lugar onde "inc VAT" aparece. */}
                 <View style={styles.tableFoot} wrap={false}>
                   <Text style={[styles.tfLabel]}>Total payout</Text>
-                  <Text style={[styles.tfVal, styles.cellNum]}>{fmt(data.netPayout)}</Text>
+                  <View style={styles.tfValRow}>
+                    <Text style={styles.tfVal}>{fmtPlain(data.netPayout)}</Text>
+                    <Text style={styles.tfVat}>inc VAT</Text>
+                  </View>
                 </View>
               </View>
             </>
