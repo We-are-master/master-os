@@ -152,13 +152,29 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const { data: partner } = await supabase
+    /**
+     * `partners.name` NÃO EXISTE. As colunas são `company_name` e `contact_name`.
+     *
+     * Pedir uma coluna inexistente faz o PostgREST devolver erro e `data` nulo.
+     * O erro era descartado, então `partner` ficava nulo e TODO parceiro caía em
+     * "Partner has no email" — inclusive os quatro do pagamento de 21/08/2026,
+     * que têm email cadastrado. Nenhum self-bill conseguia sair.
+     *
+     * O erro agora é lido e vira um motivo diferente: banco que recusa a
+     * consulta e parceiro sem email são problemas distintos, e chamar os dois
+     * de "sem email" manda procurar no lugar errado.
+     */
+    const { data: partner, error: partnerErr } = await supabase
       .from("partners")
-      .select("email, name")
+      .select("email, company_name, contact_name")
       .eq("id", sb.partner_id)
       .maybeSingle();
+    if (partnerErr) {
+      skipped.push({ id, reference: sb.reference, reason: `Could not read partner: ${partnerErr.message}` });
+      continue;
+    }
     const partnerEmail = partner?.email?.trim().toLowerCase();
-    const partnerName = partner?.name?.trim() ?? null;
+    const partnerName = partner?.company_name?.trim() || partner?.contact_name?.trim() || null;
     if (!partnerEmail) {
       skipped.push({ id, reference: sb.reference, reason: "Partner has no email" });
       continue;
