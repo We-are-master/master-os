@@ -12,7 +12,6 @@ import {
 export const dynamic = "force-dynamic";
 
 const ADMIN_ROLES = new Set(["admin", "manager"]);
-const CHUNK = 200;
 
 /**
  * POST /api/admin/partners/sync-payout-standard
@@ -52,33 +51,27 @@ export async function POST(req: NextRequest) {
     body.previousStandard ?? setup.partner_payout_standard_terms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS,
   );
 
-  const presetSet = new Set(PARTNER_PAYOUT_PRESET_VALUES);
-  const matchTerms = new Set([previousStandard, newStandard, ...PARTNER_PAYOUT_PRESET_VALUES]);
 
-  const { data: partners, error: listErr } = await admin.from("partners").select("id, payment_terms");
-  if (listErr) return NextResponse.json({ error: listErr.message }, { status: 400 });
-
-  const toClear = (partners ?? []).filter((p) => {
-    const terms = (p as { payment_terms?: string | null }).payment_terms?.trim() ?? "";
-    if (!terms) return false;
-    return matchTerms.has(terms) || presetSet.has(terms);
-  });
-
-  const ids = toClear.map((p) => (p as { id: string }).id).filter(Boolean);
-  let updated = 0;
-
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const { error } = await admin.from("partners").update({ payment_terms: null }).in("id", chunk);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    updated += chunk.length;
-  }
+  /**
+   * Nada a limpar: parceiro não tem mais termo próprio.
+   *
+   * Esta rota existia para zerar `partners.payment_terms` em quem estivesse num
+   * preset, de forma a herdar o padrão do Setup. Duas coisas a tornaram vazia:
+   * a coluna **nunca existiu neste banco** (migração 145 não aplicada), então
+   * toda chamada morria com 42703; e em 20/08/2026 o dono decidiu que a cadência
+   * é uma só para todos, o que apaga o próprio conceito de override.
+   *
+   * Fica respondendo `ok` em vez de sumir porque Settings → Setup ainda a chama
+   * ao salvar o padrão, e uma rota 404 ali viraria um erro na tela por um
+   * trabalho que não precisa mais ser feito.
+   */
+  const updated = 0;
 
   return NextResponse.json({
     ok: true,
     standardTerms: newStandard,
     previousStandard,
     cleared: updated,
-    totalPartners: partners?.length ?? 0,
+    totalPartners: 0,
   });
 }

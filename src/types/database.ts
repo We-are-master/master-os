@@ -910,7 +910,24 @@ export interface Account {
   industry: string;
   status: "active" | "onboarding" | "inactive";
   credit_limit: number;
+  /**
+   * Frase legada, e ainda a que o motor de vencimento lê. Passou a ser DERIVADA
+   * dos campos estruturados abaixo (mig 266): quem escreve usa
+   * `accountScheduleColumns`, que grava os dois lados de uma vez.
+   */
   payment_terms: string;
+  /** on_receipt | net_days | every_n_days | weekly | biweekly | monthly. */
+  payment_cadence?: string | null;
+  /** Dias até o vencimento em `net_days`, e o N de `every_n_days`. */
+  payment_net_days?: number | null;
+  /** Dia da semana do corte em biweekly próprio. 0=domingo … 6=sábado. */
+  payment_cutoff_dow?: number | null;
+  /** Dia do mês do corte em `monthly`, 1 a 28. */
+  payment_cutoff_dom?: number | null;
+  /** Dia da semana em que o dinheiro entra. 0=domingo … 6=sábado. */
+  payment_pay_dow?: number | null;
+  /** Âncora da quinzena própria. Sem ela o cálculo erra uma semana inteira. */
+  payment_reference_ymd?: string | null;
   /** Optional logo image URL (HTTPS) for account header / listings */
   logo_url?: string | null;
   /** Optional URL/path for the signed client contract document */

@@ -187,6 +187,13 @@ export function isInvoiceOpen(inv: Invoice, todayYmd = invoiceFinanceListTodayYm
 }
 
 /** Ready for Money In — issued, not draft/on_hold, linked job not on hold. */
+/**
+ * Status de job em que o trabalho já foi entregue e portanto pode ser cobrado.
+ * `final_check` NÃO está aqui de propósito: o relatório ainda não foi aprovado,
+ * e é ele que o cliente compra.
+ */
+const DELIVERED_JOB_STATUSES = new Set<string>(["awaiting_payment", "completed"]);
+
 export function isInvoiceCollectible(
   inv: Invoice,
   jobsByRef?: Record<string, InvoiceListJobSnapshot>,
@@ -195,7 +202,29 @@ export function isInvoiceCollectible(
   if (inv.status === "draft" || inv.status === "on_hold") return false;
   if (!isInvoiceOpen(inv, todayYmd)) return false;
   const ref = inv.job_reference?.trim();
-  if (ref && jobsByRef?.[ref]?.status === "on_hold") return false;
+  const job = ref ? jobsByRef?.[ref] : undefined;
+  if (job?.status === "on_hold") return false;
+
+  /**
+   * Trabalho não entregue não é dinheiro a receber.
+   *
+   * O RCP-2026-646 (JOB-9412, um EPC) estava vencido há quatro dias no "Ready
+   * to receive" com o job em `final_check` e o certificado nunca entregue: nós
+   * faturamos antes de o parceiro provar o serviço. Contar isso como cobrável
+   * é a mesma regra que o `finance-promover` já recusa do outro lado, onde
+   * rascunho de job que não aconteceu continua rascunho.
+   *
+   * DEPÓSITO é a exceção, e é o motivo de esta condição olhar o `invoice_kind`:
+   * depósito existe justamente para ser cobrado ANTES do trabalho. Hoje não há
+   * nenhum nesta situação, mas a regra tem que nascer certa, senão o primeiro
+   * depósito futuro some do a receber sem ninguém entender por quê.
+   *
+   * Fatura sem job (avulsa) não entra nesta regra: não há entrega para esperar.
+   */
+  if (job && !DELIVERED_JOB_STATUSES.has(job.status) && inv.invoice_kind !== "deposit") {
+    return false;
+  }
+
   return true;
 }
 

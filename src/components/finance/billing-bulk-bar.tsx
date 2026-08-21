@@ -21,6 +21,14 @@ type Props = {
   onUnapprove?: () => void;
   /** Ready-tab escape hatch: send the selected self-bills back to Draft. */
   onBackToDraft?: () => void;
+  /**
+   * Todos os self-bills selecionados já foram enviados ao parceiro?
+   *
+   * Muda o rótulo de "Send self-bill" para "Resend": sem isso não há como saber,
+   * olhando a barra, se o parceiro já recebeu, e reenviar por engano é mandar
+   * duas vezes o mesmo documento financeiro.
+   */
+  emailAlreadySent?: boolean;
 };
 
 export function BillingBulkBar({
@@ -39,6 +47,7 @@ export function BillingBulkBar({
   onMarkReadyToPay,
   onUnapprove,
   onBackToDraft,
+  emailAlreadySent,
 }: Props) {
   if (count <= 0) return null;
   const busy = saving || emailSending;
@@ -95,15 +104,24 @@ export function BillingBulkBar({
       ) : null}
       {variant === "selfbill" && selfbillMode === "approved" ? (
         <>
-          {onMarkPaid ? (
+          {/* "Mark as paid" saiu daqui: já existe o botão acima da lista, e ter
+              a mesma ação em dois lugares a dois centímetros um do outro é como
+              se marca pago sem querer. O que falta fazer com a seleção é
+              ENVIAR ao parceiro, então é isso que ocupa o lugar principal. */}
+          {onEmail ? (
             <button
               type="button"
               disabled={busy}
-              onClick={onMarkPaid}
+              onClick={onEmail}
+              title={
+                emailAlreadySent
+                  ? "Já enviado ao parceiro. Enviar de novo manda o mesmo documento outra vez."
+                  : "Envia o self-bill ao parceiro, com o PDF anexado."
+              }
               className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
             >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
-              {markPaidLabel}
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" strokeWidth={2.5} />}
+              {emailSending ? "Sending…" : emailAlreadySent ? "Resend self-bill" : "Send self-bill"}
             </button>
           ) : null}
           {onBackToDraft ? (
@@ -127,17 +145,6 @@ export function BillingBulkBar({
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
               Unapprove
-            </button>
-          ) : null}
-          {onEmail ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onEmail}
-              className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-60"
-            >
-              <Mail className="h-3.5 w-3.5" />
-              Email
             </button>
           ) : null}
         </>

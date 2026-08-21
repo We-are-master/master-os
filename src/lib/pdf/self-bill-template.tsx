@@ -20,8 +20,9 @@ export interface SelfBillPdfLine {
   partner_cost: number;
   materials_cost: number;
   property_address?: string;
-  /** Job UUID for audit / partner transparency. */
-  jobId?: string;
+  /** Data de execução (YYYY-MM-DD). Substituiu o UUID: o parceiro reconhece o
+   *  job pelo dia em que o fez, nunca por um identificador de 36 caracteres. */
+  doneOn?: string;
   /** Archived / Lost / Cancelled — shown for audit when job no longer pays out. */
   payoutStateNote?: string | null;
 }
@@ -53,6 +54,8 @@ export interface SelfBillPdfData {
   billOrigin?: "partner" | "internal";
   /** Data URI or https URL for header logo (white wordmark on navy). */
   logoUrl?: string;
+  /** Wordmark branca oficial para o rodapé navy. */
+  footerLogoUrl?: string;
   internalBreakdown?: {
     fixedPay: number;
     commissionAmount: number;
@@ -132,10 +135,29 @@ const styles = StyleSheet.create({
   tableHead: { flexDirection: "row", backgroundColor: NAVY, borderTopLeftRadius: 6, borderTopRightRadius: 6, paddingHorizontal: 10, paddingVertical: 7 },
   th: { fontFamily: "Helvetica-Bold", fontSize: 8, color: "#FFFFFF", letterSpacing: 0.4, textTransform: "uppercase" },
   tableRow: { flexDirection: "row", paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: HAIRLINE, borderLeftWidth: 1, borderRightWidth: 1, borderLeftColor: BORDER, borderRightColor: BORDER },
-  cellRef: { width: "20%" },
-  cellTitle: { width: "30%" },
-  cellAddr: { width: "30%" },
-  cellNum: { width: "10%", textAlign: "right" },
+  cellRef: { width: "16%" },
+  cellDate: { width: "13%" },
+  cellTitle: { width: "26%" },
+  cellAddr: { width: "31%" },
+  cellNum: { width: "14%", textAlign: "right" },
+  tableFoot: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#F2F0FA",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 6,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderLeftColor: BORDER,
+    borderRightColor: BORDER,
+    borderBottomColor: BORDER,
+  },
+  tfLabel: { fontFamily: "Helvetica-Bold", fontSize: 8, color: NAVY, letterSpacing: 0.6, textTransform: "uppercase" as const },
+  tfVal: { fontFamily: "Helvetica-Bold", fontSize: 11, color: NAVY, textAlign: "right" as const },
   cellText: { fontSize: 9, color: TEXT },
   cellNumText: { fontSize: 9, color: NAVY },
   lineNote: { fontSize: 7, color: ORANGE, marginTop: 2 },
@@ -164,11 +186,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   footerWordmark: { fontFamily: "Helvetica-Bold", fontSize: 13, color: "#FFFFFF", marginBottom: 6 },
+  footerLogo: { height: 16, objectFit: "contain" as const, marginBottom: 6 },
   footerText: { fontSize: 7, lineHeight: 1.4, color: FOOTER_INFO, textAlign: "center" as const },
 });
 
+/** Valor com "inc VAT". Só no total: repetir em cada linha da tabela era
+ *  ruído que ocupava a largura de uma coluna inteira. */
 function fmt(n: number): string {
   return formatGbpIncVat(n);
+}
+
+/** Valor puro, para as células da tabela. */
+function fmtPlain(n: number): string {
+  return `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Data como se lê em Londres: 3 Aug 2026.
+ *
+ * O PDF mostrava `2026-08-03` cru, que é ISO e o parceiro lê como americano.
+ * Este documento é lido por gente no Reino Unido.
+ */
+function fmtDate(ymd?: string | null): string {
+  const raw = (ymd ?? "").trim();
+  if (!raw) return "—";
+  const d = new Date(raw.length === 10 ? `${raw}T12:00:00Z` : raw);
+  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 function firstNameOf(name: string): string {
@@ -202,7 +246,9 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
         : data.jobValue + data.materials - data.commission;
 
   const periodText =
-    data.weekStart && data.weekEnd ? `${data.weekStart} — ${data.weekEnd}` : data.period;
+    data.weekStart && data.weekEnd
+      ? `${fmtDate(data.weekStart)} — ${fmtDate(data.weekEnd)}`
+      : data.period;
   const showPayoutBanner = !isVoided && data.netPayout > 0.01;
 
   return (
@@ -256,36 +302,9 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
             {data.paymentDueDate ? (
               <View style={styles.refRowLast}>
                 <Text style={styles.refKey}>Payment due</Text>
-                <Text style={styles.refVal}>{data.paymentDueDate}</Text>
+                <Text style={styles.refVal}>{fmtDate(data.paymentDueDate)}</Text>
               </View>
             ) : null}
-          </View>
-
-          {/* Summary */}
-          <Text style={styles.sectionLabel}>Summary</Text>
-          <View style={styles.card} wrap={false}>
-            <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Jobs completed</Text>
-              <Text style={styles.lineVal}>{data.jobsCount}</Text>
-            </View>
-            <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Labour</Text>
-              <Text style={styles.lineVal}>{fmt(data.jobValue)}</Text>
-            </View>
-            <View style={styles.lineRow}>
-              <Text style={styles.lineLabel}>Materials reimbursed</Text>
-              <Text style={styles.lineVal}>{fmt(data.materials)}</Text>
-            </View>
-            {data.commission > 0.01 ? (
-              <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Commission</Text>
-                <Text style={styles.lineVal}>-{fmt(data.commission)}</Text>
-              </View>
-            ) : null}
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total payout</Text>
-              <Text style={styles.totalVal}>{fmt(data.netPayout)}</Text>
-            </View>
           </View>
 
           {/* Per-job breakdown */}
@@ -295,24 +314,33 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
               <View style={{ marginBottom: 14 }}>
                 <View style={styles.tableHead} wrap={false}>
                   <Text style={[styles.th, styles.cellRef]}>Job</Text>
-                  <Text style={[styles.th, styles.cellTitle]}>Title</Text>
+                  <Text style={[styles.th, styles.cellDate]}>Date</Text>
+                  <Text style={[styles.th, styles.cellTitle]}>Type of work</Text>
                   <Text style={[styles.th, styles.cellAddr]}>Property</Text>
-                  <Text style={[styles.th, styles.cellNum]}>Labour</Text>
-                  <Text style={[styles.th, styles.cellNum]}>Mat.</Text>
+                  <Text style={[styles.th, styles.cellNum]}>Amount</Text>
                 </View>
-                {data.lines.map((line) => (
-                  <View key={line.reference} style={styles.tableRow} wrap={false}>
+                {/* Uma linha por job, tudo na mesma altura.
+                    Saíram: o UUID (36 caracteres que empurravam a linha para
+                    duas alturas), a coluna de material (não se usa mais, tudo é
+                    repassado ao parceiro) e o "inc VAT" repetido em toda célula.
+                    O "inc VAT" vive uma vez só, no rodapé. */}
+                {data.lines.map((line, i) => (
+                  <View key={`${line.reference}-${i}`} style={styles.tableRow} wrap={false}>
                     <View style={styles.cellRef}>
                       <Text style={styles.cellText}>{line.reference}</Text>
-                      {line.jobId ? <Text style={styles.lineId}>Job ID: {line.jobId}</Text> : null}
                       {line.payoutStateNote ? <Text style={styles.lineNote}>{line.payoutStateNote}</Text> : null}
                     </View>
+                    <Text style={[styles.cellText, styles.cellDate]}>{fmtDate(line.doneOn)}</Text>
                     <Text style={[styles.cellText, styles.cellTitle]}>{line.title}</Text>
                     <Text style={[styles.cellText, styles.cellAddr]}>{line.property_address ?? "—"}</Text>
-                    <Text style={[styles.cellNumText, styles.cellNum]}>{fmt(line.partner_cost)}</Text>
-                    <Text style={[styles.cellNumText, styles.cellNum]}>{fmt(line.materials_cost)}</Text>
+                    <Text style={[styles.cellNumText, styles.cellNum]}>{fmtPlain(line.partner_cost)}</Text>
                   </View>
                 ))}
+                {/* Rodapé da tabela: o total, e o único lugar onde "inc VAT" aparece. */}
+                <View style={styles.tableFoot} wrap={false}>
+                  <Text style={[styles.tfLabel]}>Total payout</Text>
+                  <Text style={[styles.tfVal, styles.cellNum]}>{fmt(data.netPayout)}</Text>
+                </View>
               </View>
             </>
           ) : null}
@@ -333,7 +361,15 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
         <FixfyPdfFooterGuard />
         {/* Footer (navy, pinned) */}
         <View style={styles.footer} fixed>
-          <Text style={styles.footerWordmark}>Fixfy</Text>
+          {/* Logo branca oficial. Era a palavra "Fixfy" em Helvetica-Bold, que
+              não é a marca: é o nome escrito com a fonte que o gerador de PDF
+              tinha à mão. Cai de volta no texto se a imagem não resolver, para
+              o rodapé nunca sair vazio. */}
+          {data.footerLogoUrl ? (
+            <Image src={data.footerLogoUrl} style={styles.footerLogo} />
+          ) : (
+            <Text style={styles.footerWordmark}>Fixfy</Text>
+          )}
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
             124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com

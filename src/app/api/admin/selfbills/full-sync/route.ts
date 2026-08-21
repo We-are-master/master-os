@@ -259,19 +259,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 5. Load partner payment_terms ─────────────────────────────────────────
-  const partnerIds = [...new Set(selfBills.map((s) => s.partner_id).filter(Boolean) as string[])];
+  // ── 5. Termos do parceiro ─────────────────────────────────────────────────
+  /**
+   * Parceiro não tem termo próprio: todos seguem o padrão da organização.
+   *
+   * Isto lia `partners.payment_terms`, coluna que **não existe neste banco** (a
+   * migração 145 nunca foi aplicada), então toda chamada desta rota morria com
+   * 42703 antes de fazer qualquer coisa. E o dono decidiu em 20/08/2026 que a
+   * cadência é uma só para todos, o que dispensa o override por parceiro.
+   *
+   * O mapa fica vazio de propósito: quem consome trata "sem termo" como "usa o
+   * padrão do Setup", que é exatamente o comportamento desejado.
+   */
   const partnerTermsMap = new Map<string, string | null>();
-  for (let i = 0; i < partnerIds.length; i += CHUNK) {
-    const { data: partners } = await admin
-      .from("partners")
-      .select("id, payment_terms")
-      .in("id", partnerIds.slice(i, i + CHUNK));
-    for (const p of partners ?? []) {
-      const pr = p as { id: string; payment_terms?: string | null };
-      partnerTermsMap.set(pr.id, pr.payment_terms ?? null);
-    }
-  }
 
   // ── 6. Update each self-bill ───────────────────────────────────────────────
   const BATCH = 50;

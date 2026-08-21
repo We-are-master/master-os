@@ -7,6 +7,7 @@ import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
 import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
 import { parseFrontendSetup, resolveInvoiceStatementLogoUrl } from "@/lib/frontend-setup";
+import { appBaseUrl } from "@/lib/app-base-url";
 import {
   DEFAULT_INVOICE_PDF_LOGO_URL,
   resolveLogoDataUri,
@@ -27,6 +28,17 @@ async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<stri
   return (await resolveLogoDataUri(logoSource)) ?? undefined;
 }
 
+/**
+ * A wordmark BRANCA para o rodapé navy.
+ *
+ * A do cabeçalho não serve: ela é a marca sobre fundo claro, e sobre o navy do
+ * rodapé sairia invisível ou com halo. `fixfy-wordmark-white-trim.png` é a
+ * versão oficial para fundo escuro.
+ */
+async function resolveSelfBillFooterLogo(): Promise<string | undefined> {
+  return (await resolveLogoDataUri(`${appBaseUrl()}/logos/fixfy-wordmark-white-trim.png`)) ?? undefined;
+}
+
 export async function renderSelfBillPdfBuffer(
   supabase: SupabaseClient,
   selfBillId: string,
@@ -40,7 +52,7 @@ export async function renderSelfBillPdfBuffer(
   const jobsFull = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at, partner_cancelled_at, cancellation_fee_partner_gbp, partner_cancellation_fee, partner_cancellation_compensation_gbp",
+      "id, reference, title, partner_cost, materials_cost, property_address, scheduled_date, status, deleted_at, partner_cancelled_at, cancellation_fee_partner_gbp, partner_cancellation_fee, partner_cancellation_compensation_gbp",
     )
     .eq("self_bill_id", selfBillId)
     .order("reference", { ascending: true });
@@ -82,7 +94,9 @@ export async function renderSelfBillPdfBuffer(
       partner_cost: Number(j.partner_cost) || 0,
       materials_cost: Number(j.materials_cost) || 0,
       property_address: j.property_address ? String(j.property_address) : undefined,
-      jobId: row.id ? String(row.id) : undefined,
+      // A data em que o trabalho foi feito, no lugar do UUID: o parceiro
+      // reconhece o job pelo dia, nunca por um identificador de 36 caracteres.
+      doneOn: j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
       payoutStateNote: note ?? undefined,
     };
     const feeLine = selfBillJobCancellationFeeLine(row);
@@ -95,7 +109,7 @@ export async function renderSelfBillPdfBuffer(
         partner_cost: feeLine.signedAmount,
         materials_cost: 0,
         property_address: undefined,
-        jobId: undefined,
+        doneOn: undefined,
         payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
       },
     ];
@@ -139,6 +153,7 @@ export async function renderSelfBillPdfBuffer(
       : lines;
 
   const logoUrl = await resolveSelfBillPdfLogoUrl(supabase);
+  const footerLogoUrl = await resolveSelfBillFooterLogo();
 
   const buffer = await renderToBuffer(
     <SelfBillPDF
@@ -165,6 +180,7 @@ export async function renderSelfBillPdfBuffer(
         billOrigin: billOrigin ?? undefined,
         internalBreakdown,
         logoUrl,
+        footerLogoUrl,
       }}
     />,
   );

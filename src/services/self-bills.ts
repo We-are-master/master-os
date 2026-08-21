@@ -12,6 +12,7 @@ import {
   nextPartnerPayoutCycleAfterCurrent,
   partnerPayoutCadenceFromTerms,
   resolveSelfBillDueYmd,
+  workPeriodForJobStartYmd,
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -116,7 +117,27 @@ export function isSelfBillClosed(sb: Pick<SelfBill, "status">): boolean {
   return sb.status === "paid" || sb.status === "rejected" || isSelfBillPayoutVoided(sb);
 }
 
-function uniqueRef(weekLabel: string, jobRef: string): string {
+/**
+ * A referência do self-bill, pela sequência do banco.
+ *
+ * Era `SB-${weekLabel}-${jobRef}`, o que produzia `SB-2026-W32-JOB-9380`: uma
+ * semana ISO num documento que cobre quinzena, mais o número de UM job entre
+ * treze, escolhido por acaso (o primeiro vinculado). E podia colidir.
+ *
+ * `next_self_bill_ref` (mig 271) devolve uma sequência simples e curta:
+ * `SB-14445`, `SB-14446`. Começa alta de propósito, para a referência não
+ * contar ao parceiro quantos documentos a empresa já emitiu.
+ *
+ * Cai de volta no formato antigo se a função ainda não existir no ambiente, em
+ * vez de deixar o self-bill sem nascer.
+ */
+async function nextSelfBillRef(
+  supabase: SupabaseClient,
+  weekLabel: string,
+  jobRef: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc("next_self_bill_ref");
+  if (!error && typeof data === "string" && data.trim()) return data.trim();
   const short = jobRef.replace(/\s/g, "").slice(0, 8);
   return `SB-${weekLabel}-${short}`;
 }
@@ -202,16 +223,39 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
   }
   const commission = 0;
   const netPayout = jobValue + materials - commission;
-  const { error: uErr } = await supabase
-    .from("self_bills")
-    .update({
-      jobs_count: jobsCount,
-      job_value: jobValue,
-      materials,
-      commission,
-      net_payout: netPayout,
-    })
-    .eq("id", selfBillId);
+  /**
+   * `approved_at` sai do JOB, não de um clique separado.
+   *
+   * O dono decidiu em 20/08/2026: relatório final aprovado já libera o valor, e
+   * ninguém aprova o self-bill de novo. `isJobApprovedForSelfBillPayout` acima
+   * já é esse filtro, então quando `jobsCount` passa de zero existe trabalho
+   * aprovado dentro deste documento e a data pode ser carimbada.
+   *
+   * Antes disto o campo existia e estava vazio nos 20 self-bills abertos,
+   * inclusive nos que já estavam `ready_to_pay`: um conceito que ninguém
+   * preenchia e por isso não significava nada.
+   *
+   * Só carimba uma vez: o primeiro job aprovado é o que datou o documento.
+   */
+  const patch: Record<string, unknown> = {
+    jobs_count: jobsCount,
+    job_value: jobValue,
+    materials,
+    commission,
+    net_payout: netPayout,
+  };
+  if (jobsCount > 0) {
+    const { data: atual } = await supabase
+      .from("self_bills")
+      .select("approved_at")
+      .eq("id", selfBillId)
+      .maybeSingle();
+    if (!(atual as { approved_at?: string | null } | null)?.approved_at) {
+      patch.approved_at = new Date().toISOString();
+    }
+  }
+
+  const { error: uErr } = await supabase.from("self_bills").update(patch).eq("id", selfBillId);
   if (uErr) throw uErr;
 }
 
@@ -569,9 +613,32 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   }
   const anchor = options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(job);
   if (!anchor) return null;
-  const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
   const orgTerms = options?.dueCtx?.orgStandardTerms ?? null;
   const cadence = partnerPayoutCadenceFromTerms(orgTerms);
+
+  /**
+   * O balde é o PERÍODO DE PAGAMENTO, não a semana ISO.
+   *
+   * Até 20/08/2026 isto era `getWeekBoundsForDate`, e o resultado é que um
+   * parceiro pago a cada quinze dias recebia um self-bill por semana: o
+   * Fernando tinha QUATRO documentos vencendo todos em 21/08. Um parceiro, um
+   * pagamento, um documento.
+   *
+   * `workPeriodForJobStartYmd` já existia e devolve exatamente a quinzena que o
+   * dono descreve: cut-off no domingo, pagamento na sexta seguinte. Trabalho
+   * feito entre 03 e 16/08 vira o pagamento de 21/08.
+   *
+   * Cai de volta na semana ISO quando o helper não sabe responder (cadência
+   * fora do padrão), para nenhum job ficar sem self-bill por causa disto.
+   */
+  const anchorYmd = anchor.toISOString().slice(0, 10);
+  const periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, options?.dueCtx?.orgReferenceYmd ?? null);
+  const semana = getWeekBoundsForDate(anchor);
+  const weekStart = periodo?.periodStartYmd ?? semana.weekStart;
+  const weekEnd = periodo?.periodEndYmd ?? semana.weekEnd;
+  // O rótulo passa a ser o intervalo do período. `2026-W33` mentia: dizia
+  // semana num documento que cobre duas.
+  const weekLabel = periodo ? `${periodo.periodStartYmd} a ${periodo.periodEndYmd}` : semana.weekLabel;
   const dueDate =
     options?.dueCtx && weekEnd
       ? computePartnerSelfBillDueIso(
@@ -601,7 +668,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   let sbId = existingRow && !isTerminal ? (existingRow.id as string) : undefined;
 
   if (!sbId) {
-    const ref = uniqueRef(weekLabel, job.reference);
+    const ref = await nextSelfBillRef(supabase, weekLabel, job.reference);
     const row = {
       reference: ref,
       partner_id: partnerId,
@@ -616,7 +683,16 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       materials: 0,
       commission: 0,
       net_payout: 0,
-      status: "draft" as const,
+      /**
+       * `accumulating`, não `draft`.
+       *
+       * A constraint do banco nunca aceitou `draft` (migração 081), então este
+       * insert falhava com 23514 e o bloco de recuperação abaixo reinseria como
+       * `accumulating`. Dois round-trips e um erro no log em TODA criação de
+       * self-bill, para chegar no mesmo lugar. `accumulating` é o estado real:
+       * o self-bill do período existe e está juntando jobs.
+       */
+      status: "accumulating" as const,
       payment_cadence: cadence,
       ...(dueDate ? { due_date: dueDate } : {}),
     };
