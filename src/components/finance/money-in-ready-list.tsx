@@ -197,12 +197,18 @@ function MoneyInReadyListInner({
                         )}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-[#020040]">{row.clientName}</p>
+                        {/* Quem e o que foi feito em cima; documento e datas embaixo.
+                            Saiu do rodape a referencia do job (o RCP ja identifica
+                            a cobranca) e a data de emissao (quem cobra quer saber
+                            quando o trabalho foi feito e quando o dinheiro entra,
+                            nao quando o papel foi gerado). */}
+                        <p className="text-sm font-semibold text-[#020040]">
+                          {row.clientName}
+                          {job?.title?.trim() ? ` - ${job.title.trim()}` : ""}
+                        </p>
                         <p className="text-xs text-text-secondary">
                           {displayBillingReference(row.invoice.reference)}
-                          {row.invoice.job_reference ? ` · ${row.invoice.job_reference}` : ""}
                           {jobDateYmd ? ` · Job ${formatDate(jobDateYmd)}` : ""}
-                          {" · "}Issued {formatDate(row.invoice.created_at.slice(0, 10))}
                           {row.expectedPayYmd
                             ? ` · Due ${formatDate(row.expectedPayYmd)}`
                             : ""}
