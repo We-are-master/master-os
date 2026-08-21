@@ -5,7 +5,11 @@ import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
-import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
+import {
+  isJobApprovedForSelfBillPayout,
+  isSelfBillPayoutVoided,
+  selfBillJobPayoutStateLabel,
+} from "@/services/self-bills";
 import { parseFrontendSetup, resolveInvoiceStatementLogoUrl } from "@/lib/frontend-setup";
 import { appBaseUrl } from "@/lib/app-base-url";
 import {
@@ -88,31 +92,62 @@ export async function renderSelfBillPdfBuffer(
       | "partner_cancellation_compensation_gbp"
     >;
     const note = selfBillJobPayoutStateLabel(row);
+    const feeLine = selfBillJobCancellationFeeLine(row);
+    const linhaDeTaxa = feeLine
+      ? {
+          reference: String(j.reference ?? ""),
+          title: feeLine.label,
+          partner_cost: feeLine.signedAmount,
+          materials_cost: 0,
+          property_address: undefined,
+          doneOn: undefined,
+          payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
+        }
+      : null;
+
+    /**
+     * A tabela lista EXATAMENTE o que forma o total do rodapé.
+     *
+     * `isJobApprovedForSelfBillPayout` é o mesmo filtro que
+     * `recomputeSelfBillTotals` usa para somar `net_payout`. Usar outro critério
+     * aqui é o que produzia documentos onde a coluna não fecha com o "Total
+     * payout": medido em 20/08/2026, 6 dos 10 self-bills abertos. Os piores:
+     *
+     *   G&M Services     linhas £1.055  ·  rodapé £430
+     *   TM Handyman      linhas £1.075  ·  rodapé £372
+     *
+     * Entravam duas coisas que o total (com razão) não paga: job cancelado sem
+     * dinheiro nenhum, e job ainda não entregue (`final_check`, `in_progress`),
+     * que passa para a quinzena seguinte. Num documento fiscal, uma coluna que
+     * não soma o próprio rodapé é a primeira coisa que o parceiro contesta.
+     *
+     * Cancelamento COM dinheiro continua aparecendo: entra pela linha da taxa,
+     * que já traz o motivo no rótulo ("(Cancelled - Compensation)").
+     */
+    if (!isJobApprovedForSelfBillPayout(row)) {
+      return linhaDeTaxa ? [linhaDeTaxa] : [];
+    }
+
+    /**
+     * Material entra no valor da linha em vez de ficar numa coluna própria.
+     *
+     * `net_payout` é `job_value + materials`, então material fora da coluna é
+     * dinheiro que o rodapé cobra e a tabela não mostra: o JOB-9368 tem £65 de
+     * mão de obra e £40 de material, e o parceiro via £65 numa fatura de £105.
+     */
     const base = {
       reference: String(j.reference ?? ""),
       title: String(j.title ?? ""),
-      partner_cost: Number(j.partner_cost) || 0,
-      materials_cost: Number(j.materials_cost) || 0,
+      partner_cost: (Number(j.partner_cost) || 0) + (Number(j.materials_cost) || 0),
+      materials_cost: 0,
       property_address: j.property_address ? String(j.property_address) : undefined,
       // A data em que o trabalho foi feito, no lugar do UUID: o parceiro
       // reconhece o job pelo dia, nunca por um identificador de 36 caracteres.
       doneOn: j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
       payoutStateNote: note ?? undefined,
     };
-    const feeLine = selfBillJobCancellationFeeLine(row);
-    if (!feeLine) return [base];
-    return [
-      base,
-      {
-        reference: base.reference,
-        title: feeLine.label,
-        partner_cost: feeLine.signedAmount,
-        materials_cost: 0,
-        property_address: undefined,
-        doneOn: undefined,
-        payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
-      },
-    ];
+
+    return linhaDeTaxa ? [base, linhaDeTaxa] : [base];
   });
 
   const voided = isSelfBillPayoutVoided({ status: sb.status });

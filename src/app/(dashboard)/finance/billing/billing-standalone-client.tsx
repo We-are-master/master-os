@@ -2317,7 +2317,23 @@ function buildSelfBillWeekPartnerGroups(
         }))
         .sort((a, b) => a.partnerName.localeCompare(b.partnerName)),
     }))
-    .sort((a, b) => b.weekKey.localeCompare(a.weekKey));
+    .sort((a, b) => selfBillWeekOrder(a.weekKey).localeCompare(selfBillWeekOrder(b.weekKey)));
+}
+
+/**
+ * A data de pagamento mais PRÓXIMA fica em cima.
+ *
+ * Estava decrescente, e o efeito era ver 21 de agosto acima de 7 de agosto:
+ * a lista abria pelo pagamento mais distante e escondia embaixo o que já
+ * venceu. Numa tela onde a pergunta é "o que eu pago agora", o mais antigo
+ * é o que precisa estar no topo.
+ *
+ * `weekKey` nem sempre é data: pode ser um rótulo de semana antigo
+ * (`2026-W33`) ou `unknown`. Esses vão para o fim, com o prefixo `z`, para
+ * não se intercalarem entre as datas e quebrarem a leitura do calendário.
+ */
+function selfBillWeekOrder(weekKey: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(weekKey) ? `a${weekKey}` : `z${weekKey}`;
 }
 
 function openInvoicePdf(invoiceId: string) {
@@ -3235,6 +3251,17 @@ function SelfBillGroupedLedger({
                               ) : null}
                             </div>
                             <div className="bl-sb-row__open">
+                              {/* Conferir o PDF antes de mandar para o parceiro,
+                                  sem precisar abrir o documento nem baixar nada. */}
+                              <a
+                                href={`/api/self-bills/${encodeURIComponent(sb.id)}/pdf?inline=1`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Preview self-bill PDF"
+                                className="rounded border border-border-light p-1 hover:bg-surface-hover/50"
+                              >
+                                <FileText className="h-3.5 w-3.5 text-text-secondary" />
+                              </a>
                               {sb.zendesk_ticket_url ? (
                                 <a
                                   href={sb.zendesk_ticket_url}
