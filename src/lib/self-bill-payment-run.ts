@@ -38,12 +38,26 @@ export type ResolvedPaymentRun = {
   created: boolean;
 };
 
+/**
+ * `2026-08-03` a `2026-08-16` → `3 Aug – 16 Aug 2026`.
+ *
+ * `timeZone: "UTC"` não é detalhe: `new Date("2026-08-03")` é meia-noite UTC, e
+ * sem fixar o fuso o `toLocaleDateString` renderiza no fuso da máquina. Rodando
+ * em São Paulo (−3) o assunto do ticket saía "2 Aug – 15 Aug", um dia atrás do
+ * período real, e o ticket é justamente o rastro de qual quinzena foi paga.
+ */
 function fmtPeriod(start: string, end: string): string {
-  const s = new Date(start);
-  const e = new Date(end);
-  const sStr = isNaN(s.getTime()) ? start : s.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-  const eStr = isNaN(e.getTime()) ? end : e.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  return `${sStr} – ${eStr}`;
+  const dia = (ymd: string, comAno: boolean): string => {
+    const d = new Date(ymd.length === 10 ? `${ymd}T12:00:00Z` : ymd);
+    if (isNaN(d.getTime())) return ymd;
+    return d.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      ...(comAno ? { year: "numeric" as const } : {}),
+      timeZone: "UTC",
+    });
+  };
+  return `${dia(start, false)} – ${dia(end, true)}`;
 }
 
 function ticketUrlFromId(id: number | string | null): string | null {
@@ -197,10 +211,18 @@ async function openZendeskTicketForRun(args: {
   requesterName: string | null;
 }): Promise<{ ok: true; id: number } | { ok: false; error?: string }> {
   const periodLabel = fmtPeriod(args.period_start, args.period_end);
+  /**
+   * O assunto diz o que o ticket é e qual quinzena cobre.
+   *
+   * Era "Payment week 3 Aug – 16 Aug 2026": "week" ficou errado quando o
+   * self-bill passou a ser quinzenal, e não dizia que se trata de self-billing.
+   * Este ticket é o rastro de que os documentos saíram, então precisa ser
+   * achável por quem procura "Selfbilling" meses depois.
+   */
   const subject =
     args.cycleKind === "standard"
-      ? `Payment week ${periodLabel}`
-      : `Off-cycle payment — ${periodLabel}`;
+      ? `Selfbilling · ${periodLabel}`
+      : `Selfbilling off-cycle · ${periodLabel}`;
 
   const total = formatCurrency(args.totalAmount);
   const htmlBody = `
@@ -209,7 +231,8 @@ async function openZendeskTicketForRun(args: {
   <p style="margin:0 0 12px;">Total: <strong>${total}</strong></p>
   <p style="margin:0 0 12px;">Period: ${periodLabel}</p>
   <p style="margin:0;color:#6B6B85;font-size:13px;">
-    Partner self-bill sends will appear as side conversations under this ticket.
+    One side conversation per partner appears below as each self-bill is sent.
+    This ticket is the record that they went out.
   </p>
 </div>`.trim();
 

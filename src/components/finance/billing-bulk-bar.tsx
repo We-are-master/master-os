@@ -115,8 +115,8 @@ export function BillingBulkBar({
               onClick={onEmail}
               title={
                 emailAlreadySent
-                  ? "Já enviado ao parceiro. Enviar de novo manda o mesmo documento outra vez."
-                  : "Envia o self-bill ao parceiro, com o PDF anexado."
+                  ? "Already sent. Sending again delivers the same document twice."
+                  : "Sends the self-bill to the partner with the PDF attached, and logs it as a side conversation on the payment-run ticket."
               }
               className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-emerald-600 disabled:opacity-60"
             >
