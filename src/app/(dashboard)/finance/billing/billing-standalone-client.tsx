@@ -798,6 +798,48 @@ function BillingStandaloneInner() {
     [draftPeriodInvoices, data.jobsByRef],
   );
 
+  /**
+   * Uma seleção por vez, entre as três listas da tela.
+   *
+   * São três marcações independentes (faturas, self-bills a enviar, self-bills
+   * a pagar) e UMA barra de ação, que mostrava a primeira não vazia. Dava para
+   * ter quatro parceiros marcados à direita e a barra dizendo "15 selected ·
+   * Mark as received", que é a ação das FATURAS: o número não descrevia o que
+   * estava marcado na tela, e o botão agiria sobre outra coisa.
+   *
+   * As três ações são exclusivas de qualquer forma (não se recebe uma fatura e
+   * envia um self-bill no mesmo clique), então marcar numa lista limpa as
+   * outras e a barra volta a falar do que está marcado.
+   */
+  const limparSelecoesDeSelfBill = useCallback(() => {
+    setSelectedSbIds(new Set());
+    setMoneyOutSelectedIds(new Set());
+  }, []);
+
+  const selecionarSelfBillsParaEnvio = useCallback((ids: Set<string>) => {
+    setSelectedSbIds(ids);
+    if (ids.size > 0) {
+      setSelectedInvoiceIds(new Set());
+      setMoneyOutSelectedIds(new Set());
+    }
+  }, []);
+
+  const selecionarSelfBillsParaPagamento = useCallback((ids: Set<string>) => {
+    setMoneyOutSelectedIds(ids);
+    if (ids.size > 0) {
+      setSelectedInvoiceIds(new Set());
+      setSelectedSbIds(new Set());
+    }
+  }, []);
+
+  const selecionarFaturas = useCallback((ids: Set<string>) => {
+    setSelectedInvoiceIds(ids);
+    if (ids.size > 0) {
+      setSelectedSbIds(new Set());
+      setMoneyOutSelectedIds(new Set());
+    }
+  }, []);
+
   const toggleInvoiceSelection = useCallback((ids: string[], selected: boolean) => {
     setSelectedInvoiceIds((prev) => {
       const next = new Set(prev);
@@ -807,14 +849,41 @@ function BillingStandaloneInner() {
       }
       return next;
     });
-  }, []);
+    if (selected) limparSelecoesDeSelfBill();
+  }, [limparSelecoesDeSelfBill]);
 
   const toggleSelectAllInvoices = useCallback((allIds: string[]) => {
     setSelectedInvoiceIds((prev) => {
       const allSelected = allIds.length > 0 && allIds.every((id) => prev.has(id));
       return allSelected ? new Set() : new Set(allIds);
     });
-  }, []);
+    limparSelecoesDeSelfBill();
+  }, [limparSelecoesDeSelfBill]);
+
+  /**
+   * A barra soma o MESMO número que a linha mostra.
+   *
+   * Ela somava `net_payout`, o valor cheio do documento, enquanto a linha e o
+   * cabeçalho do grupo mostram o saldo em aberto. O G&M aparece como £300 na
+   * tela (£500 de total, £200 já pagos) e entrava na barra como £500.
+   */
+  const somarSelfBillsSelecionados = useCallback(
+    (ids: Set<string>) =>
+      [...ids].reduce((acc, id) => {
+        const sb = data.selfBills.find((x: SelfBill) => x.id === id);
+        if (!sb) return acc;
+        return (
+          acc +
+          computeSelfBillAmountDue(
+            sb,
+            data.jobsBySelfBillId[sb.id],
+            data.partnerPaidByJobId,
+            data.installmentsBySelfBillId[sb.id],
+          )
+        );
+      }, 0),
+    [data.selfBills, data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
+  );
 
   const handleMarkInvoiceReceived = useCallback(
     (id: string) => void handleMarkInvoicePaid(id, { received: true }),
@@ -1613,7 +1682,7 @@ function BillingStandaloneInner() {
                         groups={inactiveInvoiceLedgerGroups}
                         todayYmd={todayYmd}
                         selectedIds={selectedInvoiceIds}
-                        onSelectionChange={setSelectedInvoiceIds}
+                        onSelectionChange={selecionarFaturas}
                         jobsByRef={data.jobsByRef}
                         customerPaidByJobId={data.customerPaidByJobId}
                         installmentsByInvoiceId={data.installmentsByInvoiceId}
@@ -1653,7 +1722,7 @@ function BillingStandaloneInner() {
                         groups={draftInvoiceLedgerGroups}
                         todayYmd={todayYmd}
                         selectedIds={selectedInvoiceIds}
-                        onSelectionChange={setSelectedInvoiceIds}
+                        onSelectionChange={selecionarFaturas}
                         jobsByRef={data.jobsByRef}
                         customerPaidByJobId={data.customerPaidByJobId}
                         installmentsByInvoiceId={data.installmentsByInvoiceId}
@@ -1741,7 +1810,7 @@ function BillingStandaloneInner() {
                         partnerGroups={ledgerSbDraftSections.partners}
                         todayYmd={todayYmd}
                         selectedIds={selectedSbIds}
-                        onSelectionChange={setSelectedSbIds}
+                        onSelectionChange={selecionarSelfBillsParaEnvio}
                         partnerDueCtx={data.partnerDueCtx}
                         partnerAvatarById={data.partnerAvatarById}
                         jobsBySelfBillId={data.jobsBySelfBillId}
@@ -1786,7 +1855,7 @@ function BillingStandaloneInner() {
                             partnerGroups={inactiveSelfBillLedgerSections.partners}
                             todayYmd={todayYmd}
                             selectedIds={selectedSbIds}
-                            onSelectionChange={setSelectedSbIds}
+                            onSelectionChange={selecionarSelfBillsParaEnvio}
                             partnerDueCtx={data.partnerDueCtx}
                             partnerAvatarById={data.partnerAvatarById}
                             jobsBySelfBillId={data.jobsBySelfBillId}
@@ -1881,7 +1950,7 @@ function BillingStandaloneInner() {
                             partnerGroups={goingOutApprovedSections.partners}
                             todayYmd={todayYmd}
                             selectedIds={moneyOutSelectedIds}
-                            onSelectionChange={setMoneyOutSelectedIds}
+                            onSelectionChange={selecionarSelfBillsParaPagamento}
                             partnerDueCtx={data.partnerDueCtx}
                             partnerAvatarById={data.partnerAvatarById}
                             jobsBySelfBillId={data.jobsBySelfBillId}
@@ -2043,10 +2112,7 @@ function BillingStandaloneInner() {
         ) : moneyOutSelectedIds.size > 0 ? (
           <BillingBulkBar
             count={moneyOutSelectedIds.size}
-            totalAmount={[...moneyOutSelectedIds].reduce(
-              (acc, id) => acc + Number(data.selfBills.find((sb: SelfBill) => sb.id === id)?.net_payout ?? 0),
-              0,
-            )}
+            totalAmount={somarSelfBillsSelecionados(moneyOutSelectedIds)}
             saving={bulkSaving}
             variant="selfbill"
             selfbillMode="approved"
@@ -2093,10 +2159,7 @@ function BillingStandaloneInner() {
         ) : selectedSbIds.size > 0 ? (
           <BillingBulkBar
             count={selectedSbIds.size}
-            totalAmount={[...selectedSbIds].reduce(
-              (acc, id) => acc + Number(data.selfBills.find((sb: SelfBill) => sb.id === id)?.net_payout ?? 0),
-              0,
-            )}
+            totalAmount={somarSelfBillsSelecionados(selectedSbIds)}
             saving={bulkSaving}
             emailSending={emailSending}
             variant="selfbill"
