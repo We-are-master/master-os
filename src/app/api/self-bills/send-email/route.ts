@@ -84,10 +84,22 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient();
   const { data: company } = await supabase.from("company_settings").select("email, company_name").limit(1).maybeSingle();
-  const ccEmail =
-    process.env.SELF_BILL_CC_EMAIL?.trim() ||
-    (company?.email && String(company.email).trim()) ||
-    null;
+  /**
+   * SEM cópia para o endereço de suporte.
+   *
+   * O padrão caía em `company_settings.email`, que é `support@getfixfy.com`, o
+   * endereço do Zendesk. Cada self-bill enviado virava um TICKET NOVO lá, o
+   * autoresponder respondia "Your request has been received" para todos do
+   * thread — inclusive o parceiro — e o Harvey ainda lia o ticket como
+   * confirmação de agendamento e comentava sem entender. Aconteceu em
+   * 21/08/2026 com o Fernando, ticket #49129.
+   *
+   * O registro interno do envio é o ticket do payment run com uma side
+   * conversation por parceiro, não uma cópia de email. `SELF_BILL_CC_EMAIL`
+   * continua valendo para quem quiser um arquivo de verdade, mas nunca mais um
+   * fallback que aponta para a própria caixa de entrada do suporte.
+   */
+  const ccEmail = process.env.SELF_BILL_CC_EMAIL?.trim() || null;
   const companyEmail = (company?.email && String(company.email).trim()) || null;
   const companyName = (company?.company_name && String(company.company_name).trim()) || null;
 
@@ -110,7 +122,20 @@ export async function POST(req: NextRequest) {
   const sbById = new Map(sbList.map((sb) => [sb.id, sb]));
 
   const cycleKind: PaymentRunCycleKind = cycleHint === "off_cycle" ? "off_cycle" : "standard";
-  const requesterEmail = companyEmail || auth.user.email || "no-reply@example.com";
+  /**
+   * O requester do ticket interno é a PESSOA, não o endereço de suporte.
+   *
+   * Com `support@getfixfy.com` o Zendesk recusa a criação inteira:
+   *
+   *   "Requester: Email: support@getfixfy.com cannot be used;
+   *    it is in use as a support address"
+   *
+   * Foi por isso que os quatro payment runs existiam no banco com
+   * `zendesk_ticket_id` nulo: o ticket nunca nascia, e sem ticket não há onde
+   * pendurar a side conversation de cada parceiro. O envio saía por email e
+   * não deixava rastro nenhum.
+   */
+  const requesterEmail = auth.user.email || companyEmail || "no-reply@example.com";
   const requesterName = companyName || userName;
 
   const groups = groupSelfBillsByPeriod(sbList);
