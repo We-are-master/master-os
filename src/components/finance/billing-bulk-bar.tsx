@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Loader2, Mail, RotateCcw, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 
 type Props = {
   count: number;
@@ -29,6 +29,14 @@ type Props = {
    * duas vezes o mesmo documento financeiro.
    */
   emailAlreadySent?: boolean;
+  /**
+   * Soma do que está selecionado. Aparece ao lado da contagem.
+   *
+   * "6 selected" não diz se o clique vale £180 ou £4.000, e esta barra dispara
+   * ação em dinheiro de verdade. O valor ao lado é o que deixa a pessoa
+   * perceber que selecionou demais antes de apertar.
+   */
+  totalAmount?: number;
 };
 
 export function BillingBulkBar({
@@ -48,12 +56,18 @@ export function BillingBulkBar({
   onUnapprove,
   onBackToDraft,
   emailAlreadySent,
+  totalAmount,
 }: Props) {
   if (count <= 0) return null;
   const busy = saving || emailSending;
   return (
     <div className="fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-2xl border border-border-light bg-[#020040] px-3 py-2.5 shadow-xl sm:bottom-6 sm:max-w-[calc(100vw-2rem)] sm:gap-3 sm:px-5 sm:py-3">
-      <span className="text-xs font-semibold tabular-nums text-white/80 sm:text-sm">{count} selected</span>
+      <span className="text-xs font-semibold tabular-nums text-white/80 sm:text-sm">
+        {count} selected
+        {typeof totalAmount === "number" && totalAmount > 0 ? (
+          <span className="ml-1.5 font-bold text-white">{formatCurrency(totalAmount)}</span>
+        ) : null}
+      </span>
       <div className="hidden h-4 w-px bg-white/20 sm:block" />
       {variant === "invoice" && onMarkPaid ? (
         <button
