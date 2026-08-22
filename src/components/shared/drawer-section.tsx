@@ -70,3 +70,55 @@ export function DrawerField({
     </div>
   );
 }
+
+/**
+ * The action bar every drawer ends with.
+ *
+ * Before this, one drawer had a footer, another left "Deactivate" floating in
+ * the middle of the profile, and a third scattered Edit buttons across three
+ * rows. Same shape everywhere now: what destroys sits far left, what saves sits
+ * far right, and neither ever moves.
+ */
+export function DrawerFooter({
+  destructive,
+  children,
+  className,
+}: {
+  /** Archive / deactivate / delete — kept away from the confirming hand. */
+  destructive?: ReactNode;
+  /** Cancel and the primary action, in that order. */
+  children?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-center justify-between gap-3 px-5 py-3", className)}>
+      <div className="min-w-0">{destructive}</div>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The numbers row at the top of a drawer: same tile, same order of weight
+ * (value first, label under it), whatever the drawer is about.
+ */
+export function DrawerStats({
+  items,
+  className,
+}: {
+  items: { label: string; value: ReactNode; hint?: string }[];
+  className?: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className={cn("grid gap-2", items.length >= 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3", className)}>
+      {items.map((it) => (
+        <div key={it.label} className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-2.5">
+          <p className="text-[15px] font-semibold leading-tight tabular-nums text-text-primary">{it.value}</p>
+          <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">{it.label}</p>
+          {it.hint ? <p className="mt-0.5 truncate text-[10px] text-text-tertiary">{it.hint}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
