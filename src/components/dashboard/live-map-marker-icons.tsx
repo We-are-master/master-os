@@ -320,6 +320,7 @@ export function liveMapJobPinImageIds(): string[] {
     "scheduled",
     "in_progress",
     "attention",
+    "completed",
   ];
   const states: JobPinVisualState[] = ["default", "selected", "recent"];
   return categories.flatMap((c) => states.map((s) => liveMapJobPinImageId(c, s)));
@@ -332,18 +333,21 @@ export function liveMapJobPinImageIds(): string[] {
  *   scheduled   → dark green (#0F6E56)  — assigned & planned
  *   in_progress → blue       (#378ADD)  — partner actively working
  *   attention   → orange     (#ED4B00)  — late / on_hold / final_check / etc.
+ *   completed   → slate      (#64748B)  — done / awaiting payment, nothing to dispatch
  */
 export type LiveMapJobStatusCategory =
   | "unassigned"
   | "scheduled"
   | "in_progress"
-  | "attention";
+  | "attention"
+  | "completed";
 
 const JOB_STATUS_STYLE: Record<LiveMapJobStatusCategory, { color: string }> = {
   unassigned: { color: "#A32D2D" },
   scheduled:  { color: "#0F6E56" },
   in_progress:{ color: "#378ADD" },
   attention:  { color: "#ED4B00" },
+  completed:  { color: "#64748B" },
 };
 
 export function liveMapJobStatusColor(category: LiveMapJobStatusCategory): string {
@@ -360,6 +364,7 @@ export function liveMapJobStatusLegend(): Array<{
     { key: "scheduled",   color: JOB_STATUS_STYLE.scheduled.color,   label: "Scheduled" },
     { key: "in_progress", color: JOB_STATUS_STYLE.in_progress.color, label: "In progress" },
     { key: "attention",   color: JOB_STATUS_STYLE.attention.color,   label: "Needs attention" },
+    { key: "completed",   color: JOB_STATUS_STYLE.completed.color,   label: "Completed" },
   ];
 }
 
