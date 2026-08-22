@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -10,6 +11,7 @@ import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
+import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { marginColorClass, type MarginThresholds } from "@/lib/frontend-setup";
 import type { JobStatus } from "@/types/database";
@@ -41,17 +43,16 @@ type KanbanJob = {
   extras_amount: number | null;
   /** Drives the margin % chip on each card (gross margin on labour). */
   partner_cost: number | null;
-  /** Snapshot fields populated when a cancel happens — used to show "lost revenue" on cards already in the Cancelled column. */
-  cancelled_client_price: number | null;
-  cancelled_extras_amount: number | null;
+  /** Shown in the card hover so the office can read the work without opening the job. */
+  scope: string | null;
 };
 
-type StageId = "unassigned" | "scheduled" | "in_progress" | "final_checks" | "completed" | "cancelled";
+type StageId = "unassigned" | "scheduled" | "in_progress" | "final_checks" | "completed";
 
 type Stage = {
   id: StageId;
   title: string;
-  tone: "red" | "green" | "coral" | "violet" | "emerald" | "danger";
+  tone: "red" | "green" | "coral" | "violet" | "emerald";
   /** Statuses that visually belong to this column. */
   matches: (s: JobStatus) => boolean;
   /** Status to set on a job when it's dropped INTO this column. */
@@ -62,7 +63,7 @@ type Stage = {
    * required side-effects, validations, and audit trail) instead of
    * updating the status directly.
    */
-  dropAction?: "approve" | "cancel";
+  dropAction?: "approve";
 };
 
 const STAGES: Stage[] = [
@@ -104,14 +105,6 @@ const STAGES: Stage[] = [
     dropStatus: "completed",
     dropAction: "approve",
   },
-  {
-    id: "cancelled",
-    title: "Cancelled",
-    tone: "danger",
-    matches: (s) => s === "cancelled",
-    dropStatus: "cancelled",
-    dropAction: "cancel",
-  },
 ];
 
 const STAGE_DOT: Record<Stage["tone"], string> = {
@@ -120,7 +113,6 @@ const STAGE_DOT: Record<Stage["tone"], string> = {
   coral: "bg-fx-coral",
   violet: "bg-[#7C3AED]",
   emerald: "bg-fx-green",
-  danger: "bg-fx-red",
 };
 
 const COLLAPSE_STORAGE_KEY = "beacon_kanban_collapsed_v1";
@@ -139,6 +131,8 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
   /** Cancel modal target — when set, renders <CancelJobModal /> in-place. */
   const [cancelTarget, setCancelTarget] = useState<{ id: string; reference: string } | null>(null);
+  /** Assign modal target — opened from the partner chip on an unassigned card. */
+  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string } | null>(null);
   /** Stages the user has collapsed (persisted to localStorage). */
   const [collapsedStages, setCollapsedStages] = useState<Set<StageId>>(() => {
     if (typeof window === "undefined") return new Set();
@@ -170,6 +164,10 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     setCancelTarget({ id: job.id, reference: job.reference });
   }, []);
 
+  const openAssignModal = useCallback((job: Pick<KanbanJob, "id" | "reference">) => {
+    setAssignTarget({ id: job.id, reference: job.reference });
+  }, []);
+
   const handleDropOnStage = async (stage: Stage, jobId: string) => {
     setDragOverStageId(null);
     const job = jobs.find((j) => j.id === jobId);
@@ -177,13 +175,9 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     // No-op if dropped on its own column.
     if (stage.matches(effectiveJobStatusForDisplay(job))) return;
 
-    // Cancel: open the in-place modal with the same validation + side effects
-    // as the Jobs detail flow. Approve still navigates because FinalReviewModal
-    // pre-fetches invoice/self-bill/reports/etc. that are too heavy to mount here.
-    if (stage.dropAction === "cancel") {
-      openCancelModal(job);
-      return;
-    }
+    // Approve navigates because FinalReviewModal pre-fetches invoice /
+    // self-bill / reports, too heavy to mount here. Cancelling is the X on the
+    // card, which opens the same modal the Jobs detail flow uses.
     if (stage.dropAction === "approve") {
       toast.message(`${job.reference} → review & approve`);
       window.location.assign(`/jobs/${jobId}?action=approve`);
@@ -216,28 +210,27 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   const loadJobs = useCallback(
     async (signal?: { cancelled: boolean }) => {
       const baseCols =
-        "id, reference, title, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
-      const snapshotCols = "cancelled_client_price, cancelled_extras_amount";
+        "id, reference, title, scope, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
 
       const load = async (cols: string) =>
-        fetchBeaconBoardJobs(filters, cols, { includeCancelled: true });
+        fetchBeaconBoardJobs(filters, cols, { includeCancelled: false });
 
       try {
-        let rows = await load(`${baseCols}, ${snapshotCols}`);
+        const rows = await load(baseCols);
         if (signal?.cancelled) return;
         setJobs(rows as unknown as KanbanJob[]);
       } catch (e) {
         const msg = e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : "";
         const isMissingColumn =
           (e && typeof e === "object" && "code" in e && (e as { code: string }).code === "42703") ||
-          /cancelled_client_price|cancelled_extras_amount|partner_ids/i.test(msg);
+          /partner_ids/i.test(msg);
         if (!isMissingColumn) {
           if (!signal?.cancelled) setJobs([]);
           return;
         }
         try {
           const slimCols =
-            "id, reference, title, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
+            "id, reference, title, scope, status, partner_id, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
           const rows = await load(slimCols);
           if (signal?.cancelled) return;
           setJobs(rows as unknown as KanbanJob[]);
@@ -317,30 +310,24 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   }, "beacon_kanban_jobs");
 
   const grouped = useMemo(() => {
-    const out = new Map<StageId, { items: KanbanJob[]; revenue: number; lostRevenue: number }>(
-      STAGES.map((s) => [s.id, { items: [], revenue: 0, lostRevenue: 0 }]),
+    const out = new Map<StageId, { items: KanbanJob[]; revenue: number }>(
+      STAGES.map((s) => [s.id, { items: [], revenue: 0 }]),
     );
     for (const j of jobs) {
       const stage = STAGES.find((s) => s.matches(effectiveJobStatusForDisplay(j)));
       if (!stage) continue;
       const bucket = out.get(stage.id)!;
       bucket.items.push(j);
-      if (stage.id === "cancelled") {
-        // Cancel zeroes live financials — pull the snapshot fields for "lost revenue".
-        bucket.lostRevenue +=
-          (Number(j.cancelled_client_price) || 0) + (Number(j.cancelled_extras_amount) || 0);
-      } else {
-        bucket.revenue += (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0);
-      }
+      bucket.revenue += (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0);
     }
     return out;
   }, [jobs]);
 
   if (loading) {
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <div className="flex min-h-0 flex-1 gap-3">
         {STAGES.map((s) => (
-          <div key={s.id} className="rounded-xl bg-fx-paper-2/40 h-64 animate-pulse" />
+          <div key={s.id} className="flex-1 rounded-xl bg-fx-paper-2/40 animate-pulse" />
         ))}
       </div>
     );
@@ -348,16 +335,14 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
 
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pb-2 items-start">
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto pb-1 lg:overflow-x-visible">
         {STAGES.map((stage) => {
-          const bucket = grouped.get(stage.id) ?? { items: [], revenue: 0, lostRevenue: 0 };
+          const bucket = grouped.get(stage.id) ?? { items: [], revenue: 0 };
           const items = bucket.items;
           const stageRevenue = bucket.revenue;
-          const stageLostRevenue = bucket.lostRevenue;
           const isDragTarget = dragOverStageId === stage.id;
           const isCollapsed = collapsedStages.has(stage.id);
-          const isCancelStage = stage.id === "cancelled";
-          // Cancel button on cards is hidden for completed/cancelled (terminal) stages.
+          // Cancel button on cards is hidden for Completed (terminal stage).
           const showCardCancelButton = !stage.dropAction;
           return (
             <div
@@ -393,7 +378,11 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                 if (jobId) void handleDropOnStage(stage, jobId);
               }}
               className={cn(
-                "flex flex-col gap-2.5 min-w-0 rounded-xl bg-fx-paper-2 transition-colors",
+                "flex min-h-0 flex-col gap-2.5 rounded-xl bg-fx-paper-2 transition-colors",
+                // Below lg the board scrolls sideways with fixed-width columns.
+                // From lg up the columns split the width evenly, so the board
+                // itself never scrolls: each column scrolls its own cards.
+                "w-[264px] shrink-0 lg:w-auto lg:min-w-0 lg:flex-1",
                 isCollapsed ? "p-2" : "p-3",
                 isDragTarget && "ring-2 ring-fx-coral/50 bg-fx-coral/5",
               )}
@@ -403,7 +392,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                 onClick={() => toggleCollapse(stage.id)}
                 title={isCollapsed ? `Expand ${stage.title}` : `Collapse ${stage.title}`}
                 className={cn(
-                  "flex items-center justify-between gap-1.5 px-0.5 pb-1 w-full text-left rounded-md hover:bg-card/40 transition-colors",
+                  "flex shrink-0 items-center justify-between gap-1.5 px-0.5 pb-1 w-full text-left rounded-md hover:bg-card/40 transition-colors",
                   isCollapsed && "pb-0",
                 )}
               >
@@ -420,15 +409,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                   <span className="font-mono text-[10px] text-fx-mute bg-card border border-fx-line rounded-sm px-1 py-0.5">
                     {items.length}
                   </span>
-                  {isCancelStage && stageLostRevenue > 0 && (
-                    <span
-                      className="font-mono text-[10px] text-fx-red bg-fx-red/10 border border-fx-red/20 rounded-sm px-1 py-0.5 tabular-nums"
-                      title="Lost revenue (sum of cancelled jobs)"
-                    >
-                      {formatGbp(stageLostRevenue)}
-                    </span>
-                  )}
-                  {!isCancelStage && stageRevenue > 0 && (
+                  {stageRevenue > 0 && (
                     <span
                       className="font-mono text-[10px] text-text-primary bg-card border border-fx-line rounded-sm px-1 py-0.5 tabular-nums"
                       title="Total revenue in this stage"
@@ -438,34 +419,49 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                   )}
                 </div>
               </button>
-              {!isCollapsed &&
-                (items.length === 0 ? (
-                  <div className="text-center py-6 text-[12px] text-fx-mute">
-                    {isDragTarget ? "Drop here" : `No jobs in ${stage.title.toLowerCase()}.`}
-                  </div>
-                ) : (
-                  items.map((j) => (
-                    <KanbanCard
-                      key={j.id}
-                      job={j}
-                      pending={pendingIds.has(j.id)}
-                      showCancelButton={showCardCancelButton}
-                      onCancelClick={openCancelModal}
-                      isCancelledStage={isCancelStage}
-                      partnerAvatarUrl={j.partner_id ? partnerAvatars[j.partner_id] ?? null : null}
-                      accountLogoUrl={
-                        j.client_id
-                          ? accountLogoByClientId[j.client_id]?.trim() || null
-                          : null
-                      }
-                      marginThresholds={marginThresholds}
-                    />
-                  ))
-                ))}
+              {!isCollapsed && (
+                <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain pr-0.5">
+                  {items.length === 0 ? (
+                    <div className="text-center py-6 text-[12px] text-fx-mute">
+                      {isDragTarget ? "Drop here" : `No jobs in ${stage.title.toLowerCase()}.`}
+                    </div>
+                  ) : (
+                    items.map((j) => (
+                      <KanbanCard
+                        key={j.id}
+                        job={j}
+                        pending={pendingIds.has(j.id)}
+                        showCancelButton={showCardCancelButton}
+                        onCancelClick={openCancelModal}
+                        onAssignClick={stage.id === "unassigned" ? openAssignModal : undefined}
+                        partnerAvatarUrl={j.partner_id ? partnerAvatars[j.partner_id] ?? null : null}
+                        accountLogoUrl={
+                          j.client_id
+                            ? accountLogoByClientId[j.client_id]?.trim() || null
+                            : null
+                        }
+                        marginThresholds={marginThresholds}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+      {assignTarget && (
+        <AssignPartnerModal
+          jobId={assignTarget.id}
+          jobReference={assignTarget.reference}
+          isOpen={assignTarget !== null}
+          onClose={() => setAssignTarget(null)}
+          onAssigned={() => {
+            setAssignTarget(null);
+            void loadJobs();
+          }}
+        />
+      )}
       {cancelTarget && (
         <CancelJobModal
           jobId={cancelTarget.id}
@@ -487,7 +483,7 @@ function KanbanCard({
   pending = false,
   showCancelButton = false,
   onCancelClick,
-  isCancelledStage = false,
+  onAssignClick,
   partnerAvatarUrl,
   accountLogoUrl,
   marginThresholds,
@@ -496,28 +492,28 @@ function KanbanCard({
   pending?: boolean;
   showCancelButton?: boolean;
   onCancelClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
-  isCancelledStage?: boolean;
+  /** Set on the Unassigned column: turns the partner chip into "assign a partner". */
+  onAssignClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
   partnerAvatarUrl?: string | null;
   accountLogoUrl?: string | null;
   marginThresholds: MarginThresholds;
 }) {
   const typeOfWorkLabel = normalizeTypeOfWork(job.title) || job.title;
   const [nowMs] = useState(() => Date.now());
+  /** Anchor rect of the hovered card — drives the detail panel next to it. */
+  const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
   // "Live" = work actually started. `late` here means "scheduled but past
   // arrival time, partner hasn't started yet" — that's NOT live, it's overdue.
   // Only `in_progress` zeroes the arrival SLA.
   const isLive = job.status === "in_progress";
-  const lostValue =
-    (Number(job.cancelled_client_price) || 0) + (Number(job.cancelled_extras_amount) || 0);
-  const liveValue = Number(job.client_price) + (Number(job.extras_amount) || 0);
-  const value = isCancelledStage ? lostValue : liveValue;
+  const value = Number(job.client_price) + (Number(job.extras_amount) || 0);
   const partnerInitials = job.partner_name ? initials(job.partner_name) : "?";
   /** Gross margin: (price − partner cost) / price. Hidden when price is 0 or
    * we don't have a partner cost yet (avoids 100% / NaN noise on draft rows).
    * Colour comes from the configured thresholds (Settings → Setup → Margin Targets). */
   const partnerCost = Number(job.partner_cost) || 0;
-  const marginPct = liveValue > 0 && partnerCost > 0
-    ? Math.round(((liveValue - partnerCost) / liveValue) * 100)
+  const marginPct = value > 0 && partnerCost > 0
+    ? Math.round(((value - partnerCost) / value) * 100)
     : null;
   const marginTone = marginPct == null ? "" : marginColorClass(marginPct, marginThresholds);
   // Arrival overdue: end of arrival window has passed AND the job hasn't started
@@ -535,10 +531,15 @@ function KanbanCard({
   return (
     <Link
       href={`/jobs/${job.id}`}
+      target="_blank"
+      rel="noopener noreferrer"
       draggable={!pending}
+      onMouseEnter={(e) => setHoverRect(e.currentTarget.getBoundingClientRect())}
+      onMouseLeave={() => setHoverRect(null)}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/job-id", job.id);
+        setHoverRect(null);
       }}
       onClick={(e) => {
         // Block navigation while a status update is mid-flight to avoid a
@@ -620,42 +621,120 @@ function KanbanCard({
         </span>
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-dashed border-fx-line">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <FxAvatar
-            initials={partnerInitials}
-            tone={job.partner_name ? "coral" : "neutral"}
-            size="sm"
-            src={partnerAvatarUrl}
-            alt={job.partner_name ?? undefined}
-          />
-          <span className={cn("fx-kk truncate", !job.partner_name && "italic")}>
-            {job.partner_name || "Unassigned"}
-          </span>
-        </div>
-        {isCancelledStage ? (
-          <span
-            className="font-medium text-fx-red text-[13px] tabular-nums shrink-0"
-            title="Lost revenue at cancel"
+        {onAssignClick && !pending ? (
+          <button
+            type="button"
+            title="Assign a partner"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAssignClick({ id: job.id, reference: job.reference });
+            }}
+            className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-fx-coral/10"
           >
-            {value > 0 ? `Lost ${formatGbp(value)}` : "Lost £0"}
-          </span>
-        ) : (
-          <div className="flex items-baseline gap-1.5 shrink-0">
-            <span className="font-medium text-fx-coral-p text-[13px] tabular-nums">
-              {formatGbp(value)}
+            <FxAvatar
+              initials={partnerInitials}
+              tone={job.partner_name ? "coral" : "neutral"}
+              size="sm"
+              src={partnerAvatarUrl}
+              alt={job.partner_name ?? undefined}
+            />
+            <span className={cn("fx-kk truncate", !job.partner_name && "italic")}>
+              {job.partner_name || "Assign partner"}
             </span>
-            {marginPct != null ? (
-              <span
-                className={cn("font-mono text-[10.5px] tabular-nums", marginTone)}
-                title={`Gross margin · target ≥${marginThresholds.targetPct}% · low <${marginThresholds.lowPct}%`}
-              >
-                {marginPct}%
-              </span>
-            ) : null}
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FxAvatar
+              initials={partnerInitials}
+              tone={job.partner_name ? "coral" : "neutral"}
+              size="sm"
+              src={partnerAvatarUrl}
+              alt={job.partner_name ?? undefined}
+            />
+            <span className={cn("fx-kk truncate", !job.partner_name && "italic")}>
+              {job.partner_name || "Unassigned"}
+            </span>
           </div>
         )}
+        <div className="flex items-baseline gap-1.5 shrink-0">
+          <span className="font-medium text-fx-coral-p text-[13px] tabular-nums">
+            {formatGbp(value)}
+          </span>
+          {marginPct != null ? (
+            <span
+              className={cn("font-mono text-[10.5px] tabular-nums", marginTone)}
+              title={`Gross margin · target ≥${marginThresholds.targetPct}% · low <${marginThresholds.lowPct}%`}
+            >
+              {marginPct}%
+            </span>
+          ) : null}
+        </div>
       </div>
+      {hoverRect ? <JobHoverPanel job={job} anchor={hoverRect} /> : null}
     </Link>
+  );
+}
+
+/**
+ * Hover detail next to the card: full address and scope of work, so the office
+ * can read a job without leaving the board. Rendered in a portal because the
+ * column clips its own overflow, and `pointer-events-none` so it can never
+ * steal the hover that spawned it.
+ */
+function JobHoverPanel({ job, anchor }: { job: KanbanJob; anchor: DOMRect }) {
+  if (typeof document === "undefined") return null;
+
+  const WIDTH = 320;
+  const GAP = 10;
+  const spillsRight = anchor.right + GAP + WIDTH > window.innerWidth;
+  const left = spillsRight ? Math.max(8, anchor.left - GAP - WIDTH) : anchor.right + GAP;
+  const top = Math.min(Math.max(8, anchor.top), Math.max(8, window.innerHeight - 300));
+
+  const scope = (job.scope ?? "").trim();
+  const address = (job.property_address ?? "").trim();
+  const window_ = formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at);
+  const day = job.scheduled_date
+    ? new Date(`${job.scheduled_date}T12:00:00`).toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+      })
+    : "";
+
+  return createPortal(
+    <div
+      style={{ left, top, width: WIDTH }}
+      className="pointer-events-none fixed z-[70] rounded-xl border border-fx-line bg-card p-3 shadow-fx-2"
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10.5px] tracking-[0.04em] text-fx-mute">{job.reference}</span>
+        <StatusPill status={job.status} />
+      </div>
+      <p className="mb-2 text-[13px] font-semibold leading-tight text-text-primary">{normalizeTypeOfWork(job.title) || job.title}</p>
+      <dl className="space-y-1.5 text-[11.5px] leading-snug">
+        <HoverRow label="Client" value={job.client_name} />
+        <HoverRow label="Address" value={address || "—"} />
+        <HoverRow label="When" value={[day, window_].filter(Boolean).join(" · ") || "Not scheduled"} />
+        <HoverRow label="Partner" value={job.partner_name || "Unassigned"} />
+      </dl>
+      <div className="mt-2 border-t border-dashed border-fx-line pt-2">
+        <p className="mb-1 font-mono text-[9.5px] uppercase tracking-[0.14em] text-fx-mute">Scope of work</p>
+        <p className="max-h-[168px] overflow-hidden whitespace-pre-wrap text-[11.5px] leading-snug text-text-secondary">
+          {scope || "No scope recorded on this job."}
+        </p>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function HoverRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="w-[52px] shrink-0 font-mono text-[9.5px] uppercase tracking-[0.14em] text-fx-mute">{label}</dt>
+      <dd className="min-w-0 flex-1 text-text-primary">{value}</dd>
+    </div>
   );
 }
 

@@ -952,10 +952,11 @@ function FinSetupFieldLabel({
   hint?: string;
   htmlFor?: string;
 }) {
+  // The hint rides in the label's own tooltip. A row of "!" badges next to
+  // every field read as a row of warnings on a form where nothing was wrong.
   return (
-    <div className="mb-1.5 flex items-center gap-1.5">
-      {hint ? <JobCardHint title={hint} ariaLabel={`${label}: ${hint}`} /> : null}
-      <label htmlFor={htmlFor} className="text-xs font-medium text-text-secondary">
+    <div className="mb-1.5">
+      <label htmlFor={htmlFor} className="text-xs font-medium text-text-secondary" title={hint}>
         {label}
       </label>
     </div>
@@ -3729,7 +3730,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const extras_amount = r2(finForm.extras_amount);
       let partner_cost = r2(finForm.partner_cost);
       const materials_cost = r2(finForm.materials_cost);
-      const partner_agreed_value = r2(finForm.partner_agreed_value);
+      // One number for what the partner gets. The old "Agreed partner payout"
+      // field was a second place to say the same thing, and the two drifted:
+      // the self-bill reads this one, so a stale value paid the wrong amount.
+      const partner_agreed_value = Math.round((r2(finForm.partner_cost) + r2(finForm.materials_cost)) * 100) / 100;
       const customer_deposit = r2(finForm.customer_deposit);
       let customer_final_payment = r2(finForm.customer_final_payment);
       let billed_hours: number | undefined;
@@ -6239,15 +6243,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return (
       <div className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <p className="text-xs text-text-tertiary leading-snug min-w-0">
-            Tap edit or remove on any listed extra. Add new lines with the button on the right.
-          </p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
           <Button
             size="sm"
             variant="outline"
             className="w-full sm:w-auto shrink-0 whitespace-nowrap !flex-nowrap"
             icon={<Plus className="h-3.5 w-3.5" />}
-            disabled={job.status === "cancelled" || job.status === "deleted" || (!clientSide && !job.partner_id?.trim())}
+            disabled={job.status === "cancelled" || job.status === "deleted"}
             onClick={() => openMoneyFlowFromHub(clientSide ? "client_extra" : "partner_extra")}
           >
             {clientSide ? "Charge or discount" : "Extra & deduction"}
@@ -6371,9 +6373,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     editSourceAmount: number,
   ) => {
     const editing = financeHubBaseEditSide === side;
-    const jobLocked = job.status === "cancelled" || job.status === "deleted";
-    const partnerLocked = side === "partner" && !job.partner_id?.trim();
-    const canEdit = !jobLocked && !partnerLocked;
+    // Editable before anyone is assigned too: on an unassigned job this number
+    // is the budget for whoever takes it, and needing to leave for Setup to type
+    // it is why this panel felt read-only.
+    const canEdit = job.status !== "cancelled" && job.status !== "deleted";
 
     return (
       <div className="rounded-md border border-border-light/70 bg-background/60 px-2.5 py-2 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
@@ -6445,13 +6448,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             Labour cap stored on job: {formatCurrency(Math.max(0, editSourceAmount))}
           </p>
         ) : null}
-        {editing ? (
-          <p className="mt-1.5 text-[10px] text-text-tertiary leading-snug">
-            {side === "client"
-              ? "Updates the base client price. Extras and payment history are unchanged."
-              : "Updates the agreed subcontract labour cap. Extras and payouts are unchanged."}
-          </p>
-        ) : null}
+
       </div>
     );
   };
@@ -8607,19 +8604,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))}
                       />
                     </div>
-                  </div>
-                  <div className="border-t border-rose-200/60 pt-3 dark:border-rose-500/20">
-                    <FinSetupFieldLabel
-                      label="Agreed partner payout (optional)"
-                      hint="Leave at 0 to use Partner payout above. Set only if you agreed a different fixed amount with the partner."
-                    />
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={finForm.partner_agreed_value}
-                      onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))}
-                    />
                   </div>
                 </div>
 

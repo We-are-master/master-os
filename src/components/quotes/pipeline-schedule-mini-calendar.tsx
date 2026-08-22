@@ -1,13 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, ChevronDown, Repeat as RepeatIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Tabs } from "@/components/ui/tabs";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
 import {
@@ -33,6 +31,8 @@ import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
 import { WeekView } from "@/app/(dashboard)/schedule/calendar-time-grid";
+import { SegmentedControl } from "@/components/shared/segmented-control";
+import { JobQuickModal } from "@/components/jobs/job-quick-modal";
 import {
   PartnerDayTimelineView,
   UNASSIGNED_ROW_ID,
@@ -171,10 +171,9 @@ function jobCalendarSortKey(job: Job): string {
   return `${prefix}\0${job.title}\0${job.id}`;
 }
 
-function navigateJobRoute(job: Job, router: ReturnType<typeof useRouter>): void {
-  const visitParentId = (job as Job & { __visit_parent_id?: string }).__visit_parent_id?.trim();
-  if (visitParentId) router.push(`/jobs/${visitParentId}`);
-  else router.push(`/jobs/${job.id}`);
+/** A visit card stands for its parent job — that is the row to open. */
+function jobVisitParentId(job: Job): string | null {
+  return (job as Job & { __visit_parent_id?: string }).__visit_parent_id?.trim() || null;
 }
 
 function mondayStamp(d: Date): string {
@@ -194,7 +193,6 @@ export function PipelineScheduleMiniCalendar({
   hideCardTitle = false,
   className,
 }: PipelineScheduleMiniCalendarProps) {
-  const router = useRouter();
   const [calendarView, setCalendarView] = useState<PipelineCalendarView>("month");
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [month, setMonth] = useState(() => new Date().getMonth());
@@ -302,7 +300,12 @@ export function PipelineScheduleMiniCalendar({
     };
   }, [pipelineJobs]);
 
-  const onSelectJob = useCallback((j: Job) => navigateJobRoute(j, router), [router]);
+  /** Clicking a job opens the quick modal; the calendar stays where it is. */
+  const [quickJobId, setQuickJobId] = useState<string | null>(null);
+  const onSelectJob = useCallback((j: Job) => {
+    // A visit belongs to its parent job — open the job that owns the visit.
+    setQuickJobId(jobVisitParentId(j) ?? j.id);
+  }, []);
 
   /** Header label centre */
   const rangeLabel = useMemo(() => {
@@ -486,30 +489,28 @@ export function PipelineScheduleMiniCalendar({
                 <h2 className="text-sm font-semibold text-text-primary sm:text-base">Schedule</h2>
                 <span className="text-[11px] text-text-tertiary hidden sm:inline">Pipeline · action required → final checks</span>
               </div>
-              <Tabs
-                tabs={[
+              <SegmentedControl
+                options={[
                   { id: "year", label: "Year" },
                   { id: "month", label: "Month" },
                   { id: "week", label: "Week" },
                   { id: "day", label: "Day" },
                 ]}
-                activeTab={calendarView}
+                value={calendarView}
                 onChange={(id) => setCalendarView(id as PipelineCalendarView)}
-                variant="pills"
               />
             </div>
           ) : (
             <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <Tabs
-                tabs={[
+              <SegmentedControl
+                options={[
                   { id: "year", label: "Year" },
                   { id: "month", label: "Month" },
                   { id: "week", label: "Week" },
                   { id: "day", label: "Day" },
                 ]}
-                activeTab={calendarView}
+                value={calendarView}
                 onChange={(id) => setCalendarView(id as PipelineCalendarView)}
-                variant="pills"
               />
             </div>
           )}
@@ -719,9 +720,7 @@ export function PipelineScheduleMiniCalendar({
                                 key={`${job.id}-${day}-${segment}-${idx}`}
                                 whileHover={{ scale: 1.01 }}
                                 whileTap={{ scale: 0.99 }}
-                                onClick={() =>
-                                  isVisit ? router.push(`/jobs/${visitParentId}`) : router.push(`/jobs/${job.id}`)
-                                }
+                                onClick={() => setQuickJobId(isVisit ? visitParentId! : job.id)}
                                 title={formatScheduleCalendarBarTooltip(job)}
                                 className={cn(
                                   scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status)),
@@ -794,6 +793,15 @@ export function PipelineScheduleMiniCalendar({
           )}
         </div>
       )}
+      <JobQuickModal
+        jobId={quickJobId}
+        isOpen={quickJobId !== null}
+        onClose={() => setQuickJobId(null)}
+        onChanged={() => {
+          // A move or an assignment changes what the grid should draw.
+          void loadJobs();
+        }}
+      />
     </Card>
   );
 }
