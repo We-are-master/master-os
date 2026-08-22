@@ -31,7 +31,7 @@ import {
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
 import { SegmentedControl } from "@/components/shared/segmented-control";
-import { DrawerSection } from "@/components/shared/drawer-section";
+import { DrawerSection, DrawerSectionList } from "@/components/shared/drawer-section";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -131,7 +131,6 @@ import {
   getPartnerPortalAllowlistOptions,
 } from "@/lib/partner-portal-allowlist";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
-import { PARTNER_PAYOUT_TERM_OPTIONS } from "@/lib/partner-payout-schedule";
 import type { PartnerDocRuleRow } from "@/lib/partner-required-docs";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -4111,11 +4110,6 @@ function PartnerDetailDrawer({
   onPartnerUpdate?: (updated: Partner) => void;
   onTeamChanged?: () => void;
 }) {
-  const { partnerPayoutStandardTerms } = useFrontendSetup();
-  const orgPayoutStandardLabel =
-    PARTNER_PAYOUT_TERM_OPTIONS.find((o) => o.value === partnerPayoutStandardTerms)?.label ??
-    partnerPayoutStandardTerms;
-
   const [tab, setTab] = useState("overview");
   const [documentsSubTab, setDocumentsSubTab] = useState<PartnerDocumentsSubTab>("files");
 
@@ -4156,10 +4150,8 @@ function PartnerDetailDrawer({
   const [bankAccountHolder, setBankAccountHolder] = useState("");
   const [bankName, setBankName] = useState("");
   const [bankSaving, setBankSaving] = useState(false);
-  const [partnerPaymentTerms, setPartnerPaymentTerms] = useState("");
   const [partnerDefaultCancelFee, setPartnerDefaultCancelFee] = useState("");
   const [defaultFeeSaving, setDefaultFeeSaving] = useState(false);
-  const [paymentTermsSaving, setPaymentTermsSaving] = useState(false);
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
@@ -4377,7 +4369,6 @@ function PartnerDetailDrawer({
     setBankAccountNumberInput(partner.bank_account_number ?? "");
     setBankAccountHolder(partner.bank_account_holder ?? "");
     setBankName(partner.bank_name ?? "");
-    setPartnerPaymentTerms(partner.payment_terms ?? "");
     setPartnerDefaultCancelFee(
       partner.default_partner_cancel_fee_gbp != null && Number(partner.default_partner_cancel_fee_gbp) > 0
         ? String(partner.default_partner_cancel_fee_gbp)
@@ -4439,17 +4430,6 @@ function PartnerDetailDrawer({
       setBankSaving(false);
     }
   }, [partner, bankSortCodeInput, bankAccountNumberInput, bankAccountHolder, bankName, onPartnerPatch]);
-
-  const handleSavePaymentTerms = useCallback(async () => {
-    if (!partner) return;
-    setPaymentTermsSaving(true);
-    try {
-      await onPartnerPatch({ payment_terms: partnerPaymentTerms.trim() || null });
-      toast.success("Payment terms saved.");
-    } finally {
-      setPaymentTermsSaving(false);
-    }
-  }, [partner, partnerPaymentTerms, onPartnerPatch]);
 
   const partnerDefaultFeeDirty =
     !!partner &&
@@ -5327,21 +5307,10 @@ function PartnerDetailDrawer({
       text: `${expiringSoonDocs.length} document(s) will expire in the next 30 days.`,
     });
   }
-  const shownRating = displayPartnerRating(partner.rating);
-  if (shownRating > 0 && shownRating < 3) {
-    overviewAlerts.push({
-      key: "low-rating",
-      level: "warning",
-      text: `Low rating (${shownRating}/${PARTNER_RATING_MAX}). Review complaints and service quality.`,
-    });
-  }
-  if (computedCompliance < 70) {
-    overviewAlerts.push({
-      key: "low-compliance",
-      level: "warning",
-      text: `Compliance score is ${computedCompliance}%. Follow up on missing or expired requirements.`,
-    });
-  }
+  // No alert for low rating or low compliance: the rating tile already shows
+  // "2 /5.0" and the compliance card already shows "0/3" with the missing
+  // documents named. Saying it twice, once as a number and once as a yellow
+  // sentence, made the panel look like it was raising two problems.
   if (overduePendingBills.length > 0) {
     overviewAlerts.push({
       key: "overdue-payments",
@@ -5389,11 +5358,45 @@ function PartnerDetailDrawer({
       title={partner.company_name}
       subtitle={formatPartnerCoverageSummary(partner) || "Coverage TBC"}
       headerExtra={
-        <PartnerTradesIconStrip
-          trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
-          catalogServices={partnerCatalogForIds}
-          className="max-w-full min-w-0"
-        />
+        // Trades on the left, the status action on the right. Activating and
+        // deactivating used to sit halfway down the profile, below the numbers,
+        // which is nowhere: it is neither with the identity it changes nor with
+        // the close button every drawer already has in the corner.
+        <div className="flex w-full items-center justify-between gap-3">
+          <PartnerTradesIconStrip
+            trades={partnerTradesForDisplay(partner, partnerCatalogForIds)}
+            catalogServices={partnerCatalogForIds}
+            className="min-w-0"
+          />
+          {isAdmin ? (
+            partner.status !== "active" ? (
+              <Button
+                size="sm"
+                variant="primary"
+                className="h-7 shrink-0 text-[11px]"
+                icon={<Play className="h-3 w-3" />}
+                onClick={() => void runActivate(true, { accountType: activateAccountType || "free" })}
+              >
+                Activate
+              </Button>
+            ) : !isPartnerInactiveStage(partner) ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 text-[11px]"
+                icon={<XCircle className="h-3 w-3" />}
+                onClick={() => {
+                  setDeactivatePreset("");
+                  setDeactivateOtherText("");
+                  setDeactivateOtherStage("inactive");
+                  setDeactivateOpen(true);
+                }}
+              >
+                Deactivate
+              </Button>
+            ) : null
+          ) : null}
+        </div>
       }
       width="w-[min(100vw-1rem,40rem)]"
     >
@@ -5649,7 +5652,7 @@ function PartnerDetailDrawer({
             </div>
 
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-text-secondary">
-              <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+              <div className="flex items-start gap-1.5 min-w-0 col-span-2 sm:col-span-1">
                 <Mail className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                 {editingOverview ? (
                   <Input
@@ -5826,7 +5829,7 @@ function PartnerDetailDrawer({
                   </label>
                 </div>
               ) : partner.whatsapp?.trim() ? (
-                <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                <div className="flex items-start gap-1.5 min-w-0 col-span-2 sm:col-span-1">
                   <MessageCircle className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                   <span className="truncate">{partner.whatsapp}</span>
                   {partner.whatsapp_job_alerts ? null : (
@@ -5835,7 +5838,7 @@ function PartnerDetailDrawer({
                 </div>
               ) : null}
               {(editingOverview || partner.phone?.trim()) && (
-                <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                <div className="flex items-start gap-1.5 min-w-0 col-span-2 sm:col-span-1">
                   <Phone className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
                   {editingOverview ? (
                     <Input
@@ -5881,17 +5884,17 @@ function PartnerDetailDrawer({
               ) : (
                 <>
                   {(formatPartnerCoverageSummary(partner) || "").trim() ? (
-                    <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
-                      <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                    <div className="flex items-start gap-1.5 min-w-0 col-span-2 sm:col-span-1">
+                      <MapPin className="mt-0.5 h-3.5 w-3.5 text-text-tertiary shrink-0" />
                       {/* Coverage is a section further down this same tab now,
                           so there is nowhere to send the reader. */}
-                      <span className="truncate min-w-0">{formatPartnerCoverageSummary(partner)}</span>
+                      <span className="min-w-0 break-words leading-snug">{formatPartnerCoverageSummary(partner)}</span>
                     </div>
                   ) : null}
                   {partner.partner_address?.trim() ? (
-                    <div className="flex items-center gap-1.5 min-w-0 col-span-2">
-                      <Home className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-                      <span className="truncate">{partner.partner_address}</span>
+                    <div className="flex items-start gap-1.5 min-w-0 col-span-2">
+                      <Home className="mt-0.5 h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      <span className="min-w-0 break-words leading-snug">{partner.partner_address}</span>
                     </div>
                   ) : null}
                 </>
@@ -5968,40 +5971,11 @@ function PartnerDetailDrawer({
             )}
 
 
-            {isAdmin && (partner.status !== "active" || !isPartnerInactiveStage(partner)) ? (
-              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border-light/60">
-                {partner.status !== "active" && (
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    className="h-7 text-[11px]"
-                    icon={<Play className="h-3 w-3" />}
-                    onClick={() => void runActivate(true, { accountType: activateAccountType || "free" })}
-                  >
-                    Activate
-                  </Button>
-                )}
-                {!isPartnerInactiveStage(partner) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[11px]"
-                    icon={<XCircle className="h-3 w-3" />}
-                    onClick={() => {
-                      setDeactivatePreset("");
-                      setDeactivateOtherText("");
-                      setDeactivateOtherStage("inactive");
-                      setDeactivateOpen(true);
-                    }}
-                  >
-                    Deactivate
-                  </Button>
-                )}
-              </div>
-            ) : null}
+
 
             {onPartnerUpdate ? (
-              <div className="space-y-3 px-4 pb-4 sm:px-6">
+              <div className="pb-4">
+                <DrawerSectionList className="rounded-none border-x-0">
                 <DrawerSection title="Trades & skill" summary={(partner.trades ?? []).length > 0 ? (partner.trades ?? []).join(" · ") : partner.trade || "No trades set"}>
                   <CatalogTradesSkillsTab
                     kind="partner"
@@ -6259,6 +6233,7 @@ function PartnerDetailDrawer({
 
         </div>
                 </DrawerSection>
+                </DrawerSectionList>
               </div>
             ) : null}
           </div>
@@ -6656,103 +6631,57 @@ function PartnerDetailDrawer({
               </div>
             </div>
 
-            {/* Payout terms */}
-            <div className="rounded-xl border border-border-light bg-card p-4 sm:p-5 space-y-4">
+            {/* Payout date comes from Settings → Setup for every partner, so the
+                per-partner override is gone. What stays is the one number that
+                really is per partner: what they owe when they cancel. */}
+            <div className="rounded-xl border border-border-light bg-card p-4 sm:p-5">
               <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-surface-hover p-2 shrink-0" aria-hidden>
+                <div className="shrink-0 rounded-lg bg-surface-hover p-2" aria-hidden>
                   <DollarSign className="h-5 w-5 text-text-secondary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-text-primary">Payout terms</p>
-                  <p className="text-xs text-text-tertiary mt-0.5">
-                    Controls the due date on self-bills. Leave blank to use the default (Friday after week close).
+                  <p className="text-sm font-semibold text-text-primary">Cancellation fee</p>
+                  <p className="mt-0.5 text-xs text-text-tertiary">
+                    What this partner owes when they drop a job. Blank uses the company fee from Settings.
                   </p>
+                  <div className="mt-3 flex flex-wrap items-end gap-2">
+                    <Input
+                      id="partner-default-cancel-fee"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerDefaultCancelFee}
+                      onChange={(e) => setPartnerDefaultCancelFee(e.target.value)}
+                      placeholder="Optional"
+                      className="w-32"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
+                      onClick={() =>
+                        setPartnerDefaultCancelFee(
+                          partner?.default_partner_cancel_fee_gbp != null &&
+                            Number(partner.default_partner_cancel_fee_gbp) > 0
+                            ? String(partner.default_partner_cancel_fee_gbp)
+                            : "",
+                        )
+                      }
+                    >
+                      Reset
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
+                      loading={defaultFeeSaving}
+                      onClick={() => void handleSaveDefaultPartnerCancelFee()}
+                    >
+                      Save
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label htmlFor="partner-payment-terms" className="block text-xs font-medium text-text-secondary mb-1">
-                  Payment terms
-                </label>
-                <select
-                  id="partner-payment-terms"
-                  value={partnerPaymentTerms}
-                  onChange={(e) => setPartnerPaymentTerms(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="">{`Standard — ${orgPayoutStandardLabel}`}</option>
-                  {PARTNER_PAYOUT_TERM_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-text-tertiary mt-1">
-                  Blank uses the org standard from Settings → Setup (same Standard chip as Final review).
-                </p>
-              </div>
-              <div>
-                <label htmlFor="partner-default-cancel-fee" className="block text-xs font-medium text-text-secondary mb-1">
-                  Default cancellation fee (£) — partner owes
-                </label>
-                <Input
-                  id="partner-default-cancel-fee"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={partnerDefaultCancelFee}
-                  onChange={(e) => setPartnerDefaultCancelFee(e.target.value)}
-                  placeholder="Optional — suggested in dashboard Cancel job"
-                />
-                <p className="text-[10px] text-text-tertiary mt-1">
-                  Falls back to company partner cancellation fee in Settings if empty.
-                </p>
-                <div className="flex justify-end gap-2 mt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
-                    onClick={() =>
-                      setPartnerDefaultCancelFee(
-                        partner?.default_partner_cancel_fee_gbp != null &&
-                          Number(partner.default_partner_cancel_fee_gbp) > 0
-                          ? String(partner.default_partner_cancel_fee_gbp)
-                          : "",
-                      )
-                    }
-                  >
-                    Reset
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={!partnerDefaultFeeDirty || defaultFeeSaving}
-                    loading={defaultFeeSaving}
-                    onClick={() => void handleSaveDefaultPartnerCancelFee()}
-                  >
-                    Save fee default
-                  </Button>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={partnerPaymentTerms === (partner?.payment_terms ?? "") || paymentTermsSaving}
-                  onClick={() => setPartnerPaymentTerms(partner?.payment_terms ?? "")}
-                >
-                  Reset
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={partnerPaymentTerms === (partner?.payment_terms ?? "") || paymentTermsSaving}
-                  loading={paymentTermsSaving}
-                  onClick={() => void handleSavePaymentTerms()}
-                >
-                  Save terms
-                </Button>
               </div>
             </div>
 

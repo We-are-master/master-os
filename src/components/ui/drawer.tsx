@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { responsiveDrawerWidthClass } from "@/lib/responsive-drawer-width";
+import { drawerWidth } from "@/lib/responsive-drawer-width";
 import { motion, AnimatePresence } from "framer-motion";
 import { drawerTransition, overlayTransition } from "@/lib/motion";
 import { X } from "lucide-react";
@@ -46,6 +46,7 @@ export function Drawer({
   width = "w-[440px]",
   className,
 }: DrawerProps) {
+  const panelWidth = drawerWidth(width);
   return (
     <AnimatePresence>
       {open && (
@@ -65,9 +66,10 @@ export function Drawer({
             exit="exit"
             className={cn(
               "fixed right-0 top-0 bottom-0 max-h-[100dvh] bg-surface border-l border-fx-line shadow-modal z-50 flex flex-col",
-              responsiveDrawerWidthClass(width),
+              panelWidth.className,
               className
             )}
+            style={panelWidth.style}
           >
             {title && (
               <div className="shrink-0 border-b border-fx-line sticky top-0 bg-surface z-[2]">

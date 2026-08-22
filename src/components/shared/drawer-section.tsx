@@ -13,6 +13,21 @@ import { cn } from "@/lib/utils";
  * heading carries its own summary ("2 custom prices", "No portal users yet"),
  * so the answer is usually there without opening anything.
  */
+/**
+ * Sections stack into one list, not a stack of floating cards.
+ *
+ * Four rounded cards with gaps between them read as four unrelated objects and
+ * waste a strip of drawer width on each side. As one bordered list with hairline
+ * dividers, they read as what they are: the rest of this record, in order.
+ */
+export function DrawerSectionList({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("divide-y divide-border-light overflow-hidden rounded-xl border border-border-light bg-card", className)}>
+      {children}
+    </div>
+  );
+}
+
 export function DrawerSection({
   title,
   summary,
@@ -29,23 +44,25 @@ export function DrawerSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={cn("rounded-2xl border border-border-light bg-card overflow-hidden", className)}>
+    <div className={className}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors hover:bg-surface-hover"
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-hover"
       >
-        <span className="min-w-0">
-          <span className="block text-xs font-bold uppercase tracking-wider text-text-primary">{title}</span>
-          {summary ? <span className="mt-0.5 block truncate text-[12px] text-text-tertiary">{summary}</span> : null}
+        <span className="min-w-0 flex-1">
+          <span className="block text-[11px] font-semibold uppercase tracking-wider text-text-primary">{title}</span>
+          {summary ? (
+            <span className="mt-0.5 block truncate text-[12px] leading-snug text-text-tertiary">{summary}</span>
+          ) : null}
         </span>
         <ChevronDown
           className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", open && "rotate-180")}
           aria-hidden
         />
       </button>
-      {open ? <div className="border-t border-border-light px-5 py-4">{children}</div> : null}
+      {open ? <div className="border-t border-border-light bg-surface-hover/30 px-4 py-3.5">{children}</div> : null}
     </div>
   );
 }

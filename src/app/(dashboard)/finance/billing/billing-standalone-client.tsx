@@ -1,10 +1,14 @@
 "use client";
 
+import Link from "next/link";
+
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, Briefcase, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink } from "lucide-react";
+import { Plus, Download, RefreshCw, BarChart3, Briefcase, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink , History } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
+import { ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -179,6 +183,7 @@ function BillingStandaloneInner() {
   const { profile } = useProfile();
   const { setup: frontendSetup, refetch: refetchFrontendSetup } = useFrontendSetup();
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(defaultBillingStandaloneFilter);
+  const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("billing_kpis_visible_v1");
   const data = useBillingStandaloneData();
   const { loadData, hasLoadedOnce, selfBills: billingSelfBills, patchInvoicesPaid, ensureSelfBillJobsEnriched } = data;
 
@@ -1376,18 +1381,23 @@ function BillingStandaloneInner() {
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <BillingStandalonePeriodFilter value={periodFilter} onChange={setPeriodFilter} />
-            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
-              Export
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              loading={syncing}
-              icon={<RefreshCw className="h-3.5 w-3.5" />}
-              onClick={() => void handleSync()}
+            <ToolbarIconButton
+              icon={BarChart3}
+              label={kpisVisible ? "Hide KPIs" : "Show KPIs"}
+              active={kpisVisible}
+              onClick={toggleKpis}
+            />
+            {/* Settled self-bills live on their own page — Billing keeps what is
+                still in flight, so paid ones used to leave the OS entirely. */}
+            <Link
+              href="/finance/billing/history"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
             >
-              Sync
-            </Button>
+              <History className="h-3.5 w-3.5" />
+              Self-bill history
+            </Link>
+            <ToolbarIconButton icon={Download} label="Export" onClick={handleExport} />
+            <ToolbarIconButton icon={RefreshCw} label="Sync" spinning={syncing} onClick={() => void handleSync()} />
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>
               New invoice
             </Button>
@@ -1403,13 +1413,15 @@ function BillingStandaloneInner() {
               data.loading || data.refreshing ? "opacity-70 transition-opacity" : undefined,
             )}
           >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
+            {kpisVisible ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
               <KpiCard label="To collect · receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
               <KpiCard label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
               <KpiCard label="To pay · self-bills" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
               <KpiCard label={`Net · ${kpiMonthLabel}`} value={`${kpiRow.netWeek >= 0 ? "+" : ""}${formatCurrency(kpiRow.netWeek)}`} sub={`in ${formatCurrency(kpiRow.weekIn)} · out ${formatCurrency(kpiRow.weekOut)}`} green={kpiRow.netWeek >= 0} />
               <KpiCard label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
             </div>
+            ) : null}
 
             <div className="rounded-xl border border-border-light bg-white p-3 shadow-sm sm:p-4">
               <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2702,20 +2714,7 @@ function InvoiceGroupedLedger({
             )}
             {groupOpen ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="border-b border-border-light bg-surface-hover/20 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                    <tr>
-                      <th className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} />
-                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Invoice</th>
-                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Status</th>
-                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Total</th>
-                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Paid</th>
-                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Outstanding</th>
-                      <th className={cn("text-right", compact ? "px-4 py-2" : "px-3 py-2")}>Next due</th>
-                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")} />
-                      <th className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>Open</th>
-                    </tr>
-                  </thead>
+                <table className="w-full text-left text-sm">
                   <tbody className="divide-y divide-border-light">
                     {group.invoices.map((inv, idx) => (
                       <InvoiceLedgerRow
@@ -3053,22 +3052,6 @@ function SelfBillGroupedLedger({
               )}
               {partnerOpen ? (
               <div className="bl-sb-table">
-                    <div className="bl-sb-row__colhead hidden px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-tertiary sm:grid">
-                      <span className="sm:col-start-2">Status</span>
-                      <span className="text-right">Total</span>
-                      <span className="text-right">Outstanding</span>
-                      <span className="text-right">Next due</span>
-                      <span className="text-center">
-                        {approveQueue
-                          ? "Approve & Send"
-                          : draftQueue
-                            ? "Ready"
-                            : payQueue
-                              ? "Pay"
-                              : "Action"}
-                      </span>
-                      <span className="text-right">Open</span>
-                    </div>
                     {partner.rows.map((sb) => {
                       const canSelect = payQueue
                         ? sb.status !== "paid" && !sb.wise_paid_at && !isSelfBillPayoutVoided(sb)

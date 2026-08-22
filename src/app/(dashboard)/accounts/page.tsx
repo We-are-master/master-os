@@ -8,7 +8,7 @@ import { PageTransition, StaggerContainer } from "@/components/layout/page-trans
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DrawerSection } from "@/components/shared/drawer-section";
+import { DrawerFooter, DrawerSection, DrawerSectionList } from "@/components/shared/drawer-section";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { Avatar } from "@/components/ui/avatar";
@@ -1439,27 +1439,28 @@ function AccountDetailDrawer({
       width="w-[min(580px,calc(100vw-1rem))]"
       footer={
         isAdmin && (tab === "overview" || tab === "finance") ? (
-          <div className="flex items-center justify-between px-5 py-4">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
-              onClick={() => toast.info("Archive not yet implemented")}
-            >
-              <Archive className="h-3.5 w-3.5" />
-              Archive account
-            </button>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button
-                size="sm"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          <DrawerFooter
+            destructive={
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-[13px] font-medium text-text-tertiary transition-colors hover:text-fx-red"
+                onClick={() => toast.info("Archive not yet implemented")}
               >
-                {saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
-          </div>
+                <Archive className="h-3.5 w-3.5" />
+                Archive account
+              </button>
+            }
+          >
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => void handleSave()}
+              icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
+          </DrawerFooter>
         ) : undefined
       }
     >
@@ -1711,7 +1712,7 @@ function AccountDetailDrawer({
             </div>
 
             {account ? (
-              <div className="space-y-3">
+              <DrawerSectionList>
                 <DrawerSection
                   title="Services"
                   summary={
@@ -1757,7 +1758,7 @@ function AccountDetailDrawer({
                     </div>
                   </div>
                 </DrawerSection>
-              </div>
+              </DrawerSectionList>
             ) : null}
           </>
         )}

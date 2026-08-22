@@ -2975,6 +2975,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     (JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status) ||
       job.status === "on_hold" ||
       job.status === "unassigned");
+  /**
+   * Picking the partner is enough on a fixed-price job. Zero is a real answer:
+   * a return visit to finish work already paid for is worth nothing new to
+   * either side, and the old gate refused to assign anyone until someone typed
+   * a price that would then have to be corrected back to zero.
+   *
+   * Hourly still needs its service and rate, because those are what the totals
+   * are computed from — without them there is no number at all, not a zero.
+   */
   const partnerAssignCanConfirm =
     partnerAssignIsUnassign ||
     (!!selectedPartnerId &&
@@ -2982,7 +2991,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? !!partnerAssignServiceId &&
           Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
           Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0
-        : partnerAssignBaseCost >= 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0));
+        : true));
 
   useEffect(() => {
     if (!job) return;

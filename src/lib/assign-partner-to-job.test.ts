@@ -83,3 +83,31 @@ test("job já em andamento não é jogado de volta pra scheduled", () => {
   const patch = buildPartnerAssignPatch(job, INPUT);
   assert.equal(patch.status, undefined);
 });
+
+test("assign com valor zero grava zero, nao ignora o campo", () => {
+  // Visita de retorno: o trabalho já foi pago, nada novo entra nem sai. O board
+  // precisa conseguir escalar alguém assim mesmo.
+  const patch = buildPartnerAssignPatch(baseJob, {
+    partnerId: "p-1",
+    partnerName: "G&M Services",
+    partnerCost: 0,
+    clientPrice: 0,
+  });
+  assert.equal(patch.partner_id, "p-1");
+  assert.equal(patch.client_price, 0);
+  assert.equal(patch.partner_cost, 0);
+  assert.equal(patch.customer_final_payment, 0);
+  assert.equal(patch.status, "scheduled");
+});
+
+test("retorno com zero nao apaga extras ja acordados", () => {
+  const job = { ...baseJob, partner_extras_amount: 40, materials_cost: 25 } as Job;
+  const patch = buildPartnerAssignPatch(job, {
+    partnerId: "p-1",
+    partnerName: "G&M Services",
+    partnerCost: 0,
+    clientPrice: 0,
+  });
+  assert.equal(patch.partner_cost, 40);
+  assert.equal(patch.partner_agreed_value, 65);
+});
