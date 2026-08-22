@@ -19,6 +19,8 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   onAssigned?: (updated: Job) => void;
+  /** When given, the modal offers auto-assign as the alternative to picking. */
+  onAutoAssign?: () => void;
 };
 
 const gbp = (n: number) =>
@@ -29,7 +31,7 @@ const gbp = (n: number) =>
  * modal (it calls the shared `assignPartnerToJob`), narrowed to what the office
  * decides at this point: who goes, what we pay, what the client pays.
  */
-export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned }: Props) {
+export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign }: Props) {
   const [job, setJob] = useState<Job | null>(null);
   const [partners, setPartners] = useState<AssignablePartner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,8 +194,15 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            <div className="flex items-center gap-2 pt-1">
+              {/* Two ways out of an unassigned job: pick someone, or let the
+                  invite go to everyone who matches. */}
+              {onAutoAssign ? (
+                <Button variant="outline" size="sm" onClick={onAutoAssign} disabled={saving}>
+                  Auto-assign
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose} disabled={saving}>
                 Cancel
               </Button>
               <Button size="sm" variant="primary" loading={saving} disabled={!canConfirm} onClick={() => void confirm()}>
