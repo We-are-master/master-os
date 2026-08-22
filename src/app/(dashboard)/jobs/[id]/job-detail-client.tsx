@@ -1233,14 +1233,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerAccountPrice, setMoneyDrawerAccountPrice] = useState<AccountServicePrice | null>(null);
   const [financeHubOpen, setFinanceHubOpen] = useState(false);
   const [financeHubTab, setFinanceHubTab] = useState<"client" | "partner">("client");
-  const [financeHubBaseEditSide, setFinanceHubBaseEditSide] = useState<"client" | "partner" | null>(null);
-  const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState("");
-  const [savingFinanceHubBase, setSavingFinanceHubBase] = useState(false);
-  const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
-  const [editExtraAmount, setEditExtraAmount] = useState("");
-  const [editExtraReason, setEditExtraReason] = useState("");
-  const [editExtraClientConfirmed, setEditExtraClientConfirmed] = useState(true);
-  const [savingExtraEdit, setSavingExtraEdit] = useState(false);
+  const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState<string | null>(null);
+  const [financeHubExtraDrafts, setFinanceHubExtraDrafts] = useState<Record<string, { amount?: string; reason?: string }>>({});
+  const [savingFinanceHub, setSavingFinanceHub] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Reports tab: office types the partner's report when he never sends one. */
   const [fillReportOpen, setFillReportOpen] = useState(false);
@@ -3706,53 +3701,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job, fixedInlineClientRate, fixedInlinePartnerCost, handleJobUpdate, refreshJobFinance]);
 
-  const saveFinanceHubInitialBalance = useCallback(
-    async (side: "client" | "partner") => {
-      if (!job) return;
-      const amount = Math.max(0, Math.round((Number(financeHubBaseDraft) || 0) * 100) / 100);
+  /** Writes the base amount for one side and hands back the updated job, so a
+   *  single Save can chain base + extras without any of them reading a stale job. */
+  const persistFinanceHubBase = useCallback(
+    async (baseJob: Job, side: "client" | "partner", amount: number): Promise<Job> => {
       const patch: Partial<Job> =
         side === "client"
           ? {
               client_price: amount,
               customer_final_payment:
                 Math.round(
-                  Math.max(0, amount + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+                  Math.max(0, amount + Number(baseJob.extras_amount ?? 0) - Number(baseJob.customer_deposit ?? 0)) * 100,
                 ) / 100,
             }
           : { partner_cost: amount };
-      setSavingFinanceHubBase(true);
+      const updated = await handleJobUpdate(baseJob.id, patch, { silent: true });
+      if (!updated) return baseJob;
+      await logFieldChanges(
+        "job",
+        baseJob.id,
+        baseJob.reference,
+        baseJob as unknown as Record<string, unknown>,
+        patch as Record<string, unknown>,
+        profile?.id,
+        profile?.full_name,
+      );
+      await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      await syncSelfBillAfterJobChange(updated);
       try {
-        const updated = await handleJobUpdate(job.id, patch, { silent: true });
-        if (!updated) return;
-        await logFieldChanges(
-          "job",
-          job.id,
-          job.reference,
-          job as unknown as Record<string, unknown>,
-          patch as Record<string, unknown>,
-          profile?.id,
-          profile?.full_name,
-        );
-        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-        await syncSelfBillAfterJobChange(updated);
-        try {
-          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
-        } catch {
-          /* non-blocking */
-        }
-        await refreshJobFinance();
-        setFinanceHubBaseEditSide(null);
-        setFinanceHubBaseDraft("");
-        toast.success(
-          side === "client" ? "Client initial balance updated" : "Partner initial balance updated",
-        );
+        await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
       } catch {
-        toast.error("Could not update initial balance");
-      } finally {
-        setSavingFinanceHubBase(false);
+        /* non-blocking */
       }
+      return updated;
     },
-    [job, financeHubBaseDraft, handleJobUpdate, profile?.id, profile?.full_name, refreshJobFinance],
+    [handleJobUpdate, profile?.id, profile?.full_name],
   );
 
   const saveAccessFeeFlags = useCallback(
@@ -5152,14 +5135,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [extraHistory],
   );
 
-  const handleOpenEditExtra = useCallback((entry: ExtraHistoryEntry) => {
-    if (isFallbackExtraEntry(entry)) return;
-    setEditExtraTarget(entry);
-    setEditExtraAmount(String(Math.round(Math.abs(Number(entry.amount)) * 100) / 100));
-    setEditExtraReason(entry.reason);
-    setEditExtraClientConfirmed(entry.clientConfirmed ?? true);
-  }, []);
-
   const handleDeleteExtraEntry = useCallback(
     (entry: ExtraHistoryEntry) => {
       if (isFallbackExtraEntry(entry)) return;
@@ -5283,43 +5258,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     refreshJobFinance,
   ]);
 
-  const confirmEditExtraEntry = useCallback(async () => {
-    if (!editExtraTarget || !job) return;
-    const newMag = Math.round((parseFloat(editExtraAmount) || 0) * 100) / 100;
-    if (newMag <= 0) {
-      toast.error("Enter an amount greater than zero, or remove the extra instead.");
-      return;
-    }
-    const reasonTrim = editExtraReason.trim();
-    if (!reasonTrim) {
-      toast.error("Add a reason for this extra.");
-      return;
-    }
-    const oldMag = Math.round(Math.abs(Number(editExtraTarget.amount)) * 100) / 100;
-    const reasonChanged =
-      editExtraTarget.side === "client"
-        ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed) !==
-          encodeClientExtraReason(editExtraTarget.reason, editExtraTarget.clientConfirmed ?? true)
-        : reasonTrim !== editExtraTarget.reason.trim();
-    if (Math.abs(newMag - oldMag) < 0.009 && !reasonChanged) {
-      setEditExtraTarget(null);
-      return;
-    }
-
-    setSavingExtraEdit(true);
-    setDeletingExtraId(editExtraTarget.idRaw);
-    try {
-      let workingJob: Job = job;
-      const discount = isJobExtraDiscountExtraType(editExtraTarget.extraType);
+  /** One extra, written on top of the job it is given and returned updated, so
+   *  saving three edited extras in a row never reverses the previous one. */
+  const persistExtraEntryEdit = useCallback(
+    async (
+      baseJob: Job,
+      entry: ExtraHistoryEntry,
+      newMag: number,
+      reasonTrim: string,
+      clientConfirmed: boolean,
+    ): Promise<Job> => {
+      const oldMag = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      let workingJob: Job = baseJob;
+      const discount = isJobExtraDiscountExtraType(entry.extraType);
 
       if (Math.abs(newMag - oldMag) >= 0.009) {
-        if (editExtraTarget.side === "client") {
+        if (entry.side === "client") {
           const allocation =
-            editExtraTarget.allocation === "materials"
+            entry.allocation === "materials"
               ? "materials"
-              : editExtraTarget.allocation === "labour"
+              : entry.allocation === "labour"
                 ? "labour"
-                : customerExtraLedgerAllocation(editExtraTarget.extraType);
+                : customerExtraLedgerAllocation(entry.extraType);
           const reversePatch = discount
             ? applyCustomerExtraPatch(workingJob, oldMag, allocation)
             : reverseCustomerExtraPatch(workingJob, oldMag, allocation);
@@ -5337,10 +5297,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         } else {
           const allocation =
-            editExtraTarget.allocation === "materials"
+            entry.allocation === "materials"
               ? "materials"
-              : isJobExtraDiscountExtraType(editExtraTarget.extraType)
-                ? partnerDiscountAllocationFromExtraType(editExtraTarget.extraType)
+              : discount
+                ? partnerDiscountAllocationFromExtraType(entry.extraType)
                 : "partner_cost";
           const reversePatch = discount
             ? applyPartnerExtraPatch(workingJob, oldMag, allocation)
@@ -5356,29 +5316,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             await syncSelfBillAfterJobChange(workingJob);
           }
         }
-        setJob(workingJob);
       }
 
-      if (!editExtraTarget.idRaw.startsWith("local-")) {
+      if (!entry.idRaw.startsWith("local-")) {
         const storedReason =
-          editExtraTarget.side === "client"
-            ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed)
-            : reasonTrim;
-        await updateJobExtraEntry({
-          id: editExtraTarget.idRaw,
-          amount: newMag,
-          reason: storedReason,
-        });
+          entry.side === "client" ? encodeClientExtraReason(reasonTrim, clientConfirmed) : reasonTrim;
+        await updateJobExtraEntry({ id: entry.idRaw, amount: newMag, reason: storedReason });
       }
 
       setExtraHistory((prev) =>
         prev.map((row) =>
-          row.idRaw === editExtraTarget.idRaw
+          row.idRaw === entry.idRaw
             ? {
                 ...row,
                 amount: newMag,
                 reason: reasonTrim,
-                clientConfirmed: editExtraTarget.side === "client" ? editExtraClientConfirmed : row.clientConfirmed,
+                clientConfirmed: entry.side === "client" ? clientConfirmed : row.clientConfirmed,
               }
             : row,
         ),
@@ -5386,40 +5339,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       void logAudit({
         entityType: "job",
-        entityId: job.id,
-        entityRef: job.reference,
+        entityId: workingJob.id,
+        entityRef: workingJob.reference,
         action: "updated",
-        fieldName: editExtraTarget.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
+        fieldName: entry.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
         oldValue: formatCurrency(oldMag),
         newValue: formatCurrency(newMag),
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: {
-          extra_entry_id: editExtraTarget.idRaw,
-          extra_type: editExtraTarget.extraType,
+          extra_entry_id: entry.idRaw,
+          extra_type: entry.extraType,
           extra_reason: reasonTrim,
         },
       }).catch(() => {});
 
-      await refreshJobFinance();
-      toast.success("Extra updated");
-      setEditExtraTarget(null);
-    } catch {
-      toast.error("Could not update extra");
-    } finally {
-      setSavingExtraEdit(false);
-      setDeletingExtraId(null);
-    }
-  }, [
-    editExtraTarget,
-    editExtraAmount,
-    editExtraReason,
-    editExtraClientConfirmed,
-    job,
-    profile?.id,
-    profile?.full_name,
-    refreshJobFinance,
-  ]);
+      return workingJob;
+    },
+    [profile?.id, profile?.full_name],
+  );
 
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
@@ -6108,7 +6046,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /**
    * Split using the ORIGINAL (un-bumped) cap so the base stays anchored to the
    * subcontract labour; ledger-excess extras are layered on top of the resulting
-   * extra line so Initial balance + Extras still equal the (bumped) cap.
+   * extra line so Base pay + Extras still equal the (bumped) cap.
    */
   const { base: partnerCashOutBase, extra: partnerCashOutExtraRaw } = partnerCashOutDisplaySplit(
     job,
@@ -6276,11 +6214,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       );
   const partnerExtraTotalDisplay = partnerExtrasAddsTotal;
   /**
-   * Locked partner "Initial balance" — defensive against legacy schemas.
+   * Locked partner "Base pay" — defensive against legacy schemas.
    *
    * `partnerCashOutBase` relies solely on `partner_extras_amount`. If that column is missing or
    * the `job_extra_entries` ledger hasn't been migrated, the recorded extras stay at 0 while
-   * `partner_cost` grows, which would make Initial balance drift upward on refresh.
+   * `partner_cost` grows, which would make Base pay drift upward on refresh.
    *
    * We subtract the MAX of every available "extras against partner_cost" source so the base
    * stays anchored to the original subcontract labour regardless of which source lags.
@@ -6368,250 +6306,176 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   // Extras, one row at a time: the pencil turns the row itself into the editor,
   // so fixing an amount never means opening a second modal on top of this one.
-  const renderExtraManagerPanel = (side: "client" | "partner") => {
-    const { entries, emptyText } = getExtraManagerData(side);
-    const clientSide = side === "client";
-    const extrasTotal = entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
-    const amountClass = clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300";
+  const clientBaseAmount = Math.max(0, Math.round(Number(job.client_price ?? 0) * 100) / 100);
+  const financeHubEntries = getExtraManagerData(financeHubTab).entries;
+  const financeHubLiveBase = financeHubTab === "client" ? clientBaseAmount : partnerInitialBalance;
+  const financeHubBaseValue = financeHubBaseDraft ?? String(financeHubLiveBase);
+  const financeHubExtraValue = (entry: ExtraHistoryEntry) => {
+    const draft = financeHubExtraDrafts[entry.idRaw];
+    return {
+      amount: draft?.amount ?? String(Math.round(Math.abs(Number(entry.amount)) * 100) / 100),
+      reason: draft?.reason ?? entry.reason,
+    };
+  };
+  /** Total the user is looking at right now: it follows the fields, not the saved job. */
+  const financeHubTotal =
+    (Number(financeHubBaseValue) || 0) +
+    financeHubEntries.reduce((sum, entry) => {
+      const typed = Number(financeHubExtraValue(entry).amount) || 0;
+      const sign = extraHistorySignedAmount(entry) < 0 ? -1 : 1;
+      return sum + sign * Math.abs(typed);
+    }, 0);
+  const financeHubDirty =
+    (financeHubBaseDraft != null &&
+      Math.abs((Number(financeHubBaseDraft) || 0) - financeHubLiveBase) >= 0.009) ||
+    financeHubEntries.some((entry) => {
+      const draft = financeHubExtraDrafts[entry.idRaw];
+      if (!draft || isFallbackExtraEntry(entry)) return false;
+      const liveAmount = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      const amountChanged =
+        draft.amount != null && Math.abs((parseFloat(draft.amount) || 0) - liveAmount) >= 0.009;
+      const reasonChanged = draft.reason != null && draft.reason.trim() !== entry.reason.trim();
+      return amountChanged || reasonChanged;
+    });
+  const setFinanceHubExtraDraft = (entry: ExtraHistoryEntry, patch: { amount?: string; reason?: string }) =>
+    setFinanceHubExtraDrafts((prev) => ({ ...prev, [entry.idRaw]: { ...prev[entry.idRaw], ...patch } }));
+  const resetFinanceHubDrafts = () => {
+    setFinanceHubBaseDraft(null);
+    setFinanceHubExtraDrafts({});
+  };
+
+  /** Extras as plain fields: no pencil, no edit mode, no second modal. Type it, hit Save. */
+  const renderFinanceHubExtras = () => {
     const canEdit = job.status !== "cancelled" && job.status !== "deleted";
+    if (financeHubEntries.length === 0) {
+      return <p className="text-xs text-text-tertiary">No extras on this side.</p>;
+    }
     return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
-          {entries.length > 0 ? (
-            <span className={cn("text-[11px] font-semibold tabular-nums", amountClass)}>
-              {formatSignedCurrency(extrasTotal)}
-            </span>
-          ) : null}
-        </div>
-        {entries.length === 0 ? <p className="text-xs text-text-tertiary">{emptyText}</p> : null}
-        {entries.length > 0 ? (
-          <div className="max-h-[42vh] space-y-1.5 overflow-y-auto pr-1">
-            {entries.map((entry) => {
-              const locked = isFallbackExtraEntry(entry);
-              const discount = isJobExtraDiscountExtraType(entry.extraType);
-              const busy = savingExtraEdit || deletingExtraId === entry.idRaw;
-
-              if (editExtraTarget?.idRaw === entry.idRaw) {
-                return (
-                  <div
-                    key={entry.id}
-                    className="space-y-2 rounded-md border border-primary/40 bg-background/70 px-2.5 py-2 dark:bg-[#101621]"
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                      {discount ? (
-                        <Badge variant="outline" size="sm" className="h-4 text-[9px]">Discount</Badge>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-[7.5rem_1fr]">
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={editExtraAmount}
-                        onChange={(e) => setEditExtraAmount(e.target.value)}
-                        className="h-8 text-xs tabular-nums"
-                        aria-label="Amount"
-                        autoFocus
-                        disabled={savingExtraEdit}
-                      />
-                      <Input
-                        value={editExtraReason}
-                        onChange={(e) => setEditExtraReason(e.target.value)}
-                        className="h-8 text-xs"
-                        placeholder="Reason"
-                        aria-label="Reason"
-                        disabled={savingExtraEdit}
-                      />
-                    </div>
-                    {clientSide && !discount ? (
-                      <label className="inline-flex items-center gap-2 text-[11px] text-text-secondary">
-                        <input
-                          type="checkbox"
-                          checked={editExtraClientConfirmed}
-                          onChange={(e) => setEditExtraClientConfirmed(e.target.checked)}
-                          disabled={savingExtraEdit}
-                        />
-                        Client confirmed this extra
-                      </label>
-                    ) : null}
-                    <div className="flex justify-end gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        disabled={savingExtraEdit}
-                        onClick={() => setEditExtraTarget(null)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="h-7 px-2.5 text-xs"
-                        loading={savingExtraEdit}
-                        onClick={() => void confirmEditExtraEntry()}
-                      >
-                        Save
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                      {locked ? (
-                        <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
-                      ) : null}
-                      {clientSide && !discount && !locked ? (
-                        <Badge
-                          variant={
-                            entry.clientConfirmed == null ? "outline" : entry.clientConfirmed ? "success" : "warning"
-                          }
-                          size="sm"
-                        >
-                          {entry.clientConfirmed == null
-                            ? "Confirmation unknown"
-                            : entry.clientConfirmed
-                              ? "Client confirmed"
-                              : "Not confirmed"}
-                        </Badge>
-                      ) : null}
-                      {entry.createdAt ? (
-                        <span className="text-[10px] text-text-tertiary">
-                          · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                        </span>
-                      ) : null}
-                      {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
-                    </div>
-                    {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
-                  </div>
-                  <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
-                    <span className={cn("text-xs font-semibold tabular-nums", amountClass)}>
-                      {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                    </span>
-                    {!locked && canEdit ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditExtra(entry)}
-                          disabled={busy}
-                          className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
-                          title="Edit amount or reason"
-                          aria-label="Edit extra"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteExtraEntry(entry)}
-                          disabled={busy}
-                          className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
-                          title="Remove this extra"
-                          aria-label="Remove extra"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
+      <div className="max-h-[38vh] space-y-2 overflow-y-auto pr-1">
+        {financeHubEntries.map((entry) => {
+          const locked = isFallbackExtraEntry(entry) || !canEdit;
+          const value = financeHubExtraValue(entry);
+          return (
+            <div key={entry.id} className="flex flex-wrap items-center gap-2">
+              <span className="w-20 shrink-0 truncate text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                {entry.extraType}
+              </span>
+              {locked ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-text-tertiary">
+                  {isFallbackExtraEntry(entry) ? "From job totals, not itemized" : value.reason}
+                </span>
+              ) : (
+                <Input
+                  value={value.reason}
+                  onChange={(e) => setFinanceHubExtraDraft(entry, { reason: e.target.value })}
+                  className="h-9 min-w-[8rem] flex-1 text-xs"
+                  placeholder="Reason"
+                  aria-label={`${entry.extraType} reason`}
+                  disabled={savingFinanceHub}
+                />
+              )}
+              {locked ? (
+                <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums">
+                  {formatCurrency(Math.abs(Number(entry.amount)))}
+                </span>
+              ) : (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={value.amount}
+                  onChange={(e) => setFinanceHubExtraDraft(entry, { amount: e.target.value })}
+                  className="h-9 w-24 shrink-0 text-sm tabular-nums"
+                  aria-label={`${entry.extraType} amount`}
+                  disabled={savingFinanceHub}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => handleDeleteExtraEntry(entry)}
+                disabled={locked || savingFinanceHub || deletingExtraId === entry.idRaw}
+                className="shrink-0 text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-30"
+                title="Remove this extra"
+                aria-label="Remove extra"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     );
   };
 
-  const renderFinanceHubInitialBalanceRow = (
-    side: "client" | "partner",
-    displayAmount: number,
-    editSourceAmount: number,
-  ) => {
-    const editing = financeHubBaseEditSide === side;
-    // Editable before anyone is assigned too: on an unassigned job this number
-    // is the budget for whoever takes it, and needing to leave for Setup to type
-    // it is why this panel felt read-only.
-    const canEdit = job.status !== "cancelled" && job.status !== "deleted";
+  /** The whole modal saves at once: base first, then every extra the user touched. */
+  const saveFinanceHub = async () => {
+    if (!job) return;
+    const side = financeHubTab;
+    const entries = financeHubEntries;
+    const liveBase = side === "client" ? clientBaseAmount : partnerInitialBalance;
 
-    return (
-      <div className="rounded-md border border-border-light/70 bg-background/60 px-2.5 py-2 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-text-primary">Initial balance</span>
-            <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
-          </div>
-          {editing ? (
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={financeHubBaseDraft}
-                onChange={(e) => setFinanceHubBaseDraft(e.target.value)}
-                className="h-8 w-[7.5rem] text-xs tabular-nums"
-                autoFocus
-                disabled={savingFinanceHubBase}
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 px-2 text-xs"
-                disabled={savingFinanceHubBase}
-                onClick={() => {
-                  setFinanceHubBaseEditSide(null);
-                  setFinanceHubBaseDraft("");
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-8 px-2 text-xs"
-                loading={savingFinanceHubBase}
-                onClick={() => void saveFinanceHubInitialBalance(side)}
-              >
-                Save
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="font-semibold tabular-nums text-text-primary">
-                {formatCurrency(Math.max(0, displayAmount))}
-              </span>
-              {canEdit ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 shrink-0 whitespace-nowrap !flex-nowrap px-2.5 text-[11px] font-medium"
-                  icon={<Pencil className="h-3 w-3" />}
-                  title="Edit initial balance"
-                  aria-label="Edit initial balance"
-                  onClick={() => {
-                    setFinanceHubBaseEditSide(side);
-                    setFinanceHubBaseDraft(String(Math.max(0, Math.round(editSourceAmount * 100) / 100)));
-                  }}
-                >
-                  Edit balance
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </div>
-        {side === "partner" && Math.abs(displayAmount - editSourceAmount) > 0.02 ? (
-          <p className="mt-1 text-[10px] text-text-tertiary leading-snug">
-            Labour cap stored on job: {formatCurrency(Math.max(0, editSourceAmount))}
-          </p>
-        ) : null}
+    const baseAmount =
+      financeHubBaseDraft == null ? liveBase : Math.max(0, Math.round((Number(financeHubBaseDraft) || 0) * 100) / 100);
+    if (financeHubBaseDraft != null && !Number.isFinite(Number(financeHubBaseDraft))) {
+      toast.error(side === "client" ? "Base price must be a number." : "Base pay must be a number.");
+      return;
+    }
+    const baseDirty = Math.abs(baseAmount - liveBase) >= 0.009;
 
-      </div>
-    );
+    const dirtyExtras: { entry: ExtraHistoryEntry; amount: number; reason: string }[] = [];
+    for (const entry of entries) {
+      const draft = financeHubExtraDrafts[entry.idRaw];
+      if (!draft || isFallbackExtraEntry(entry)) continue;
+      const liveAmount = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      const amount =
+        draft.amount == null ? liveAmount : Math.round((parseFloat(draft.amount) || 0) * 100) / 100;
+      const reason = (draft.reason ?? entry.reason).trim();
+      const reasonChanged =
+        entry.side === "client"
+          ? encodeClientExtraReason(reason, entry.clientConfirmed ?? true) !==
+            encodeClientExtraReason(entry.reason, entry.clientConfirmed ?? true)
+          : reason !== entry.reason.trim();
+      if (Math.abs(amount - liveAmount) < 0.009 && !reasonChanged) continue;
+      if (amount <= 0) {
+        toast.error(`${entry.extraType}: enter an amount above zero, or remove the line.`);
+        return;
+      }
+      if (!reason) {
+        toast.error(`${entry.extraType}: add a reason.`);
+        return;
+      }
+      dirtyExtras.push({ entry, amount, reason });
+    }
+
+    if (!baseDirty && dirtyExtras.length === 0) {
+      setFinanceHubOpen(false);
+      return;
+    }
+
+    setSavingFinanceHub(true);
+    try {
+      let current: Job = job;
+      if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
+      for (const row of dirtyExtras) {
+        current = await persistExtraEntryEdit(
+          current,
+          row.entry,
+          row.amount,
+          row.reason,
+          row.entry.clientConfirmed ?? true,
+        );
+      }
+      setJob(current);
+      await refreshJobFinance();
+      setFinanceHubBaseDraft(null);
+      setFinanceHubExtraDrafts({});
+      setFinanceHubOpen(false);
+      toast.success("Finances updated");
+    } catch {
+      toast.error("Could not save the finances");
+    } finally {
+      setSavingFinanceHub(false);
+    }
   };
 
   let finalSplitRemain = finalBalanceTotal;
@@ -8668,7 +8532,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div>
                       <FinSetupFieldLabel
                         label="Job price"
-                        hint="Main price for the job before any add-ons (same as Initial balance in Finance summary)."
+                        hint="Main price for the job before any add-ons (same as Base price in Finance summary)."
                       />
                       <Input
                         type="number"
@@ -9016,8 +8880,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     title="Base client price at the start of this job (field client_price). Extras are tracked below."
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Initial balance</span>
-                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                      <span className="text-text-primary">Base price</span>
                     </div>
                     <span className="font-semibold tabular-nums text-text-primary shrink-0">
                       {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
@@ -9257,8 +9120,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     title="Subcontract labour agreed at the start of this job. Stays locked — extras and materials are tracked below."
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Initial balance</span>
-                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                      <span className="text-text-primary">Base pay</span>
                     </div>
                     <span className="font-semibold tabular-nums text-text-primary shrink-0">
                       {formatCurrency(partnerInitialBalance)}
@@ -10598,29 +10460,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       <Modal
         open={financeHubOpen}
         onClose={() => {
-          if (savingExtraEdit || savingFinanceHubBase) return;
+          if (savingFinanceHub) return;
           setFinanceHubOpen(false);
-          setFinanceHubBaseEditSide(null);
-          setFinanceHubBaseDraft("");
-          setEditExtraTarget(null);
+          resetFinanceHubDrafts();
         }}
         title="Edit job finances"
-        size="lg"
+        size="md"
       >
-        <div className="space-y-3 p-4">
+        <div className="space-y-4 p-4">
           <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]">
             {(["client", "partner"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
+                disabled={savingFinanceHub}
                 onClick={() => {
                   setFinanceHubTab(tab);
-                  setFinanceHubBaseEditSide(null);
-                  setFinanceHubBaseDraft("");
-                  setEditExtraTarget(null);
+                  resetFinanceHubDrafts();
                 }}
                 className={cn(
-                  "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
+                  "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-60",
                   financeHubTab !== tab
                     ? "text-text-secondary hover:text-text-primary"
                     : tab === "client"
@@ -10633,49 +10492,56 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ))}
           </div>
 
-          {(() => {
-            const clientTab = financeHubTab === "client";
-            const pending = clientTab
-              ? amountDue > 0.02
-              : partnerUsesClawbackUi
-                ? partnerClawbackOwed > 0.02
-                : partnerPayRemaining > 0.02;
-            const clientBase = Math.max(0, Number(job.client_price ?? 0));
-            return (
-              <div
-                className={cn(
-                  "space-y-3 rounded-lg border p-3",
-                  clientTab
-                    ? "border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-500/25 dark:bg-emerald-950/15"
-                    : "border-rose-200/80 bg-rose-50/40 dark:border-rose-500/25 dark:bg-rose-950/15",
-                )}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                      {clientTab ? "Client total" : "Partner total"}
-                    </span>
-                    <Badge variant={pending ? "warning" : "success"} size="sm">
-                      {pending ? "Pending" : "Settled"}
-                    </Badge>
-                  </div>
-                  <span className="text-base font-bold tabular-nums">
-                    {clientTab ? formatCurrency(billableRevenue) : formatCurrencyPrecise(partnerCashOutSummaryAmount)}
-                  </span>
-                </div>
-                {renderFinanceHubInitialBalanceRow(
-                  financeHubTab,
-                  clientTab ? clientBase : partnerInitialBalance,
-                  clientTab ? clientBase : Math.max(0, Number(job.partner_cost ?? 0)),
-                )}
-                {renderExtraManagerPanel(financeHubTab)}
-              </div>
-            );
-          })()}
+          <div className="flex flex-wrap items-center gap-2">
+            <JobCardTitleWithHint
+              className="min-w-0 flex-1"
+              title={financeHubTab === "client" ? "Base price" : "Base pay"}
+              hint={
+                financeHubTab === "client"
+                  ? "Agreed with the client, before extras"
+                  : "Agreed with the partner, before extras"
+              }
+              titleClassName="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary"
+            />
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={financeHubBaseValue}
+              onChange={(e) => setFinanceHubBaseDraft(e.target.value)}
+              className="h-9 w-24 shrink-0 text-sm tabular-nums"
+              aria-label={financeHubTab === "client" ? "Base price" : "Base pay"}
+              disabled={savingFinanceHub || job.status === "cancelled" || job.status === "deleted"}
+            />
+            <span className="w-3.5 shrink-0" aria-hidden />
+          </div>
 
-          <p className="text-[10px] leading-snug text-text-tertiary">
-            Payments and new extras stay on the finance card: this modal only edits what is already there.
-          </p>
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+            {renderFinanceHubExtras()}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Total</span>
+            <span className="text-lg font-bold tabular-nums">{formatCurrency(Math.max(0, financeHubTotal))}</span>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={savingFinanceHub}
+              onClick={() => {
+                setFinanceHubOpen(false);
+                resetFinanceHubDrafts();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" loading={savingFinanceHub} disabled={!financeHubDirty} onClick={() => void saveFinanceHub()}>
+              Save
+            </Button>
+          </div>
         </div>
       </Modal>
 
