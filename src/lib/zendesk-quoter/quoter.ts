@@ -83,7 +83,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     partes.push(`[${autor}${c.public ? "" : " — internal note"}]\n${corpo}`);
     for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]*housekeep\.com[^"]*)"/g)) {
       const url = m[1]!.replace(/&amp;/g, "&");
-      if (!linksHousekeep.includes(url)) linksHousekeep.push(url);
+      if (podeSerCard(url) && !linksHousekeep.includes(url)) linksHousekeep.push(url);
     }
     for (const a of c.attachments ?? []) {
       totalAnexos++;
@@ -368,6 +368,28 @@ async function acharConta(pistas: Array<string | null>): Promise<{ id: string; n
  * endereço; o card sempre. Playwright porque a página é app renderizado no
  * cliente: fetch puro devolve casca vazia.
  */
+/**
+ * O que pode ser o card do job, e o que é só assinatura de e-mail.
+ *
+ * O e-mail da plataforma termina com logo, redes e links de marketing, todos
+ * no mesmo domínio do card. Pegar "qualquer link housekeep.com" fez o JOB-9493
+ * nascer com `report_link: https://housekeep.com` em 22/08/2026: o parceiro
+ * clicou para abrir o relatório e caiu no site deles.
+ *
+ * Card é uma de duas formas: o endereço direto `/job-reports/<id>`, ou o link
+ * rastreado da newsletter, que só se sabe para onde vai depois de seguir. As
+ * duas entram; o resto do domínio não.
+ */
+export function podeSerCard(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (/\/job-reports\//i.test(u.pathname)) return true;
+    return u.hostname.toLowerCase().startsWith("links.") && /\/ls\/click/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial<ExtracaoBooking>> {
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
@@ -375,6 +397,18 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+
+    /**
+     * Onde o link foi parar decide se é card, e não o que a página escreve.
+     *
+     * O link rastreado da newsletter pode levar a qualquer lugar, e uma página
+     * de marketing tem texto de sobra para o modelo "extrair" um job inteiro de
+     * nada. `/job-reports/` no endereço final é a única prova barata, e sai
+     * antes da chamada ao modelo: página que não é card não custa nem um token.
+     */
+    const urlFinal = page.url();
+    if (!/\/job-reports\//i.test(urlFinal)) return {};
+
     const texto = (await page.evaluate("document.body.innerText")) as string;
     if (!texto || texto.trim().length < 40) return {};
 
@@ -426,7 +460,9 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
       serviceSummary: (j.service_summary as string) || null,
       jobNome: (j.job as string) || null,
       detalhesJob: detalhes.length > 0 ? ["Job details", "", ...detalhes].join("\n") : null,
-      cardUrl: url,
+      // O endereço resolvido, não o rastreado: o token da newsletter expira, e
+      // no backfill de 22/08 vários links antigos já não resolviam mais.
+      cardUrl: urlFinal,
     };
   } finally {
     await browser.close();
@@ -711,7 +747,9 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       description: [ex.serviceSummary, ex.detalhesJob].filter(Boolean).join("\n\n") || undefined,
       client_price: ex.priceGbp ?? undefined,
       // O link tokenizado do card é onde a Stefane submete o report.
-      report_link: ex.cardUrl ?? ticket.linksHousekeep[0] ?? undefined,
+      // Só card confirmado. Cair para "qualquer link da plataforma" é como o
+      // JOB-9493 saiu apontando para a home deles.
+      report_link: ex.cardUrl ?? undefined,
       /**
        * Booking sem card no e-mail nasce INCOMPLETO, e isso fica escrito no
        * job em vez de virar surpresa: o e-mail da Express não traz link do
@@ -721,7 +759,7 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
        */
       internal_notes: [
         `Created by Harvey from Zendesk booking #${ticketId}.`,
-        ex.cardUrl || ticket.linksHousekeep[0]
+        ex.cardUrl
           ? null
           : "No card link in this email: report link and the customer's brief are still missing. Ruben fills them from the board on his next full sweep.",
       ]
