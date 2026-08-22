@@ -18,6 +18,7 @@
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { soOqueENovo } from "./sem-citacao";
 
 const MAX_IMAGENS = 6;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
@@ -37,6 +38,15 @@ export type TicketLido = {
   organizationId: number | null;
   /** O thread em texto, na ordem, com quem falou. */
   thread: string;
+  /**
+   * Só o que é novo, sem a conversa de ontem que o e-mail cola embaixo.
+   *
+   * O bloco antigo quase sempre é mais rico que a mensagem nova (tem endereço,
+   * escopo, preço), e para um modelo que lê a thread toda o mais rico ganha.
+   * Foi assim que o JOB-9493 nasceu em 22/08/2026 com os dados de um job de
+   * ontem que já tinha sido recusado.
+   */
+  threadNova: string;
   /** Imagens baixadas como data URL, prontas para o modelo com visão. */
   imagens: Array<{ filename: string; dataUrl: string }>;
   totalAnexos: number;
@@ -69,6 +79,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
 
   const quem = new Map((cJson.users ?? []).map((u) => [u.id, `${u.name} (${u.role})`]));
   const partes: string[] = [];
+  const partesNovas: string[] = [];
   const linksHousekeep: string[] = [];
   const anexosDeImagem: Array<{ file_name: string; content_url: string; content_type: string; size: number }> = [];
   let totalAnexos = 0;
@@ -81,6 +92,10 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     if (!c.public && /^(🤖|✅|⚠️)|AI QUOTE DRAFT|HARVEY —/.test(corpo)) continue;
     const autor = quem.get(c.author_id) ?? `user ${c.author_id}`;
     partes.push(`[${autor}${c.public ? "" : " — internal note"}]\n${corpo}`);
+    // A mesma thread sem o histórico colado embaixo. Só o booking usa: cotar
+    // às vezes precisa do que o cliente escreveu antes, criar job nunca.
+    const novo = soOqueENovo(corpo);
+    if (novo) partesNovas.push(`[${autor}${c.public ? "" : " — internal note"}]\n${novo}`);
     for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]*housekeep\.com[^"]*)"/g)) {
       const url = m[1]!.replace(/&amp;/g, "&");
       if (podeSerCard(url) && !linksHousekeep.includes(url)) linksHousekeep.push(url);
@@ -113,6 +128,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     requesterName: requester?.name ?? null,
     organizationId: tJson.ticket.organization_id,
     thread: partes.join("\n\n---\n\n"),
+    threadNova: partesNovas.join("\n\n---\n\n"),
     imagens,
     totalAnexos,
     linksHousekeep,
