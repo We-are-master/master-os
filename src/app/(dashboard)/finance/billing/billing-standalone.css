@@ -233,16 +233,14 @@
 }
 
 /**
- * One grid for the whole partner block. Header and rows are `display: contents`,
- * so every cell is a child of the SAME grid: a header can never sit in a
- * different column than its values.
+ * One grid for the whole partner block. Rows are `display: contents`, so every
+ * cell is a child of the SAME grid and the columns stay aligned down the block.
  *
- * Sizing rule that matters: the seven right-hand columns are `max-content`
- * (each as wide as its widest header or value, never wider) and the name column
- * takes the rest, truncating with an ellipsis when the panel is narrow. Sizing
- * the name column with a plain `1fr` is what broke this before — the numeric
- * columns ate the width and the reference collapsed under the status pill.
- * `overflow-x` is the last resort, only if even the minimums do not fit.
+ * The column labels used to sit above this as a header row. They are gone: each
+ * cell already says what it is (a status pill, a currency, a date), and the
+ * labels cost a row of height on every partner group. Without them the
+ * `max-content` columns size purely from the values, so the block gets narrower
+ * on its own and fits without sideways scrolling.
  */
 @media (min-width: 640px) {
   .bl-standalone .bl-sb-table {
@@ -252,13 +250,9 @@
     align-items: center;
     overflow-x: auto;
   }
-  .bl-standalone .bl-sb-table .bl-sb-row__colhead,
   .bl-standalone .bl-sb-table .bl-sb-row,
   .bl-standalone .bl-sb-table .bl-sb-row .bl-sb-row__cols {
     display: contents;
-  }
-  .bl-standalone .bl-sb-table .bl-sb-row__colhead > span {
-    padding: 0.375rem 0;
   }
   .bl-standalone .bl-sb-table .bl-sb-row > *:not(.bl-sb-row__cols),
   .bl-standalone .bl-sb-table .bl-sb-row .bl-sb-row__cols > * {
@@ -296,10 +290,6 @@
 
 .bl-standalone .bl-sb-row__identity {
   min-width: 0;
-}
-
-.bl-standalone .bl-sb-row__colhead {
-  align-items: center;
 }
 
 .bl-standalone .bl-sb-row__cols {

@@ -5,16 +5,14 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus,
-  FileCheck,
-  DollarSign,
   Loader2,
   Pencil,
-  Layers,
   ChevronDown,
   ChevronRight,
   Archive,
@@ -49,9 +47,7 @@ import {
   RECURRENCE_GENERATION_COUNTS,
   generateRecurringDueDates,
   recurrenceLabel,
-  recurringScheduleHintText,
 } from "@/lib/bill-recurrence";
-import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
 type BillsPreset = "all" | "one_off" | "recurring" | "unpaid" | "paid" | "archived";
@@ -528,39 +524,6 @@ export default function BillsPage() {
             Add bill
           </Button>
         </PageHeader>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Due this month</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
-              <p className="text-[11px] text-text-secondary">{headlineKpis.dueMonthCount} bill{headlineKpis.dueMonthCount === 1 ? "" : "s"}</p>
-            </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
-              <FileCheck className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next 30 days</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.next30Amount)}</p>
-              <p className="text-[11px] text-text-secondary">{headlineKpis.next30Count} bill{headlineKpis.next30Count === 1 ? "" : "s"} · cashflow</p>
-            </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
-              <DollarSign className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Recurring / mo</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
-              <p className="text-[11px] text-text-secondary">{headlineKpis.recurringSeriesCount} series · base burn</p>
-            </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
-              <Layers className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-        </div>
 
         {/* Burn-rate strip: all recurring bills normalised to monthly, then derived weekly & daily averages. */}
         <div className="rounded-xl border border-border-light bg-gradient-to-br from-[#020040]/[0.03] via-card to-emerald-50/30 dark:from-[#020040]/20 dark:via-card dark:to-emerald-950/10 px-3 py-3 sm:px-4">
@@ -1067,6 +1030,37 @@ function BillModal({
     });
   };
 
+  /**
+   * What will actually be created, computed with the same function `createBill`
+   * uses to expand the series. Reading it from the same source is the point: a
+   * preview built from its own arithmetic is a preview that can disagree with
+   * the rows, and these rows are money that lands in Billing and in Pulse.
+   */
+  const schedulePreview = (() => {
+    const value = parseFloat(amount);
+    if (!Number.isFinite(value) || value < 0 || !due_date) return null;
+    if (!is_recurring) {
+      return { count: 1, total: value, first: due_date, last: due_date, ongoing: false };
+    }
+    const cap =
+      billType === "debit"
+        ? Math.min(120, Math.max(1, parseInt(String(debitInstallments).trim(), 10) || 0))
+        : RECURRENCE_GENERATION_COUNTS[recurrence_interval] ?? 12;
+    const end = hasRecurringEnd ? recurringEndDate.trim() || null : null;
+    if (hasRecurringEnd && (!end || end < due_date)) return null;
+    const dates = generateRecurringDueDates(due_date, recurrence_interval, cap, end);
+    if (dates.length === 0) return null;
+    return {
+      count: dates.length,
+      total: Math.round(value * dates.length * 100) / 100,
+      first: dates[0],
+      last: dates[dates.length - 1],
+      // No end date means the series keeps going; we schedule a horizon now and
+      // the last line below is where the forecast currently stops, not the end.
+      ongoing: !hasRecurringEnd,
+    };
+  })();
+
   const archived = Boolean(initial?.archived_at);
   const archivedLabel = initial?.archived_at
     ? formatDate(initial.archived_at.slice(0, 10))
@@ -1180,28 +1174,23 @@ function BillModal({
             <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
           </div>
         ) : null}
-        <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="recurring"
-              checked={is_recurring}
-              disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
-              onChange={(e) => {
-                const on = e.target.checked;
-                setIsRecurring(on);
-                if (!on) {
-                  setHasRecurringEnd(false);
-                  setRecurringEndDate("");
-                }
-              }}
-              className="rounded border-border"
-            />
-            <label htmlFor="recurring" className="text-sm text-text-primary font-medium inline-flex items-center gap-1.5">
-              Recurring schedule
-              <FixfyHintIcon text={recurringScheduleHintText()} placement="bottom-end" />
-            </label>
-          </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-text-secondary">How it repeats</label>
+          <SegmentedControl
+            value={is_recurring ? "recurring" : "one_off"}
+            onChange={(v: string) => {
+              const on = v === "recurring";
+              setIsRecurring(on);
+              if (!on) {
+                setHasRecurringEnd(false);
+                setRecurringEndDate("");
+              }
+            }}
+            options={[
+              { id: "one_off", label: "One-off" },
+              { id: "recurring", label: "Recurring" },
+            ]}
+          />
         </div>
         {is_recurring && (
           <Select
@@ -1221,38 +1210,51 @@ function BillModal({
         )}
         {is_recurring && !initial ? (
           <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="recurring-end"
-                checked={hasRecurringEnd}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setHasRecurringEnd(on);
-                  if (!on) setRecurringEndDate("");
-                }}
-                className="rounded border-border"
-              />
-              <label htmlFor="recurring-end" className="text-sm text-text-primary font-medium">
-                Series has an end date
-              </label>
-            </div>
+            <SegmentedControl
+              value={hasRecurringEnd ? "until" : "ongoing"}
+              onChange={(v: string) => {
+                const on = v === "until";
+                setHasRecurringEnd(on);
+                if (!on) setRecurringEndDate("");
+              }}
+              options={[
+                { id: "ongoing", label: "Ongoing" },
+                { id: "until", label: "Until a date" },
+              ]}
+            />
             {hasRecurringEnd ? (
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">End date (last due)</label>
-                <Input
-                  type="date"
-                  value={recurringEndDate}
-                  min={due_date || undefined}
-                  onChange={(e) => setRecurringEndDate(e.target.value)}
-                  required
-                />
-                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                  No occurrences are scheduled after this date. Once the end date has passed, any remaining future lines in this
-                  series are archived automatically.
-                </p>
-              </div>
+              <Input
+                type="date"
+                aria-label="Last due date"
+                value={recurringEndDate}
+                min={due_date || undefined}
+                onChange={(e) => setRecurringEndDate(e.target.value)}
+                required
+              />
             ) : null}
+          </div>
+        ) : null}
+        {schedulePreview && !initial ? (
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3.5 py-3">
+            <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Review</p>
+            <p className="mt-1 text-[15px] font-semibold tabular-nums text-text-primary">
+              {formatCurrency(schedulePreview.total)}
+              {schedulePreview.count > 1 ? (
+                <span className="ml-1.5 text-[12px] font-medium text-text-tertiary">
+                  {schedulePreview.count} × {formatCurrency(parseFloat(amount) || 0)}
+                </span>
+              ) : null}
+            </p>
+            <p className="mt-0.5 text-[11.5px] leading-snug text-text-secondary">
+              {schedulePreview.count === 1
+                ? `Due ${formatDate(schedulePreview.first)}`
+                : schedulePreview.ongoing
+                  ? `${recurrenceLabel(recurrence_interval)} from ${formatDate(schedulePreview.first)} · ongoing, scheduled to ${formatDate(schedulePreview.last)} for now`
+                  : `${recurrenceLabel(recurrence_interval)} from ${formatDate(schedulePreview.first)} to ${formatDate(schedulePreview.last)}`}
+            </p>
+            <p className="mt-1 text-[10.5px] leading-snug text-text-tertiary">
+              Each of these lands in Cash-Flow on its own due date.
+            </p>
           </div>
         ) : null}
         {billType === "debit" && is_recurring && !initial ? (
