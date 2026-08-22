@@ -27,7 +27,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3,
+  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3, UserPlus,
   Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
@@ -760,6 +760,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Assign modal opened from the Partner column of the list. */
+  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -2473,9 +2475,19 @@ function JobsPageContent() {
                 Auto assign
               </Badge>
             ) : (
-              <span className="text-[11px] text-text-tertiary italic block">
+              <button
+                type="button"
+                title="Assign a partner"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setAssignTarget({ id: item.id, reference: item.reference });
+                }}
+                className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] italic text-text-tertiary transition-colors hover:bg-primary/10 hover:not-italic hover:text-primary"
+              >
+                <UserPlus className="h-3 w-3 shrink-0" aria-hidden />
                 Unassigned
-              </span>
+              </button>
             )}
           </div>
         );
@@ -3309,6 +3321,26 @@ function JobsPageContent() {
           </div>
         </div>
       </Modal>
+      {assignTarget && (
+        <AssignPartnerModal
+          jobId={assignTarget.id}
+          jobReference={assignTarget.reference}
+          isOpen={assignTarget !== null}
+          onClose={() => setAssignTarget(null)}
+          onAssigned={() => {
+            setAssignTarget(null);
+            refresh();
+            void loadDashboardStats();
+          }}
+          onAutoAssign={() => {
+            const id = assignTarget.id;
+            setAssignTarget(null);
+            void fetch(`/api/jobs/${id}/dispatch-auto-assign-invites`, { method: "POST" })
+              .then(() => { toast.success("Invites sent to matching partners"); refresh(); })
+              .catch(() => toast.error("Could not send the invites"));
+          }}
+        />
+      )}
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
