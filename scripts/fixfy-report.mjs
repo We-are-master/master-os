@@ -82,23 +82,26 @@ const vivo = (j) => j.status !== "cancelled" && j.status !== "deleted";
 const criados = (await q("jobs", `select=${CAMPOS}&created_at=gte.${ini}T00:00:00Z&created_at=lt.${proximo}T00:00:00Z&deleted_at=is.null`)).filter(vivo);
 // Faturamento: o que foi entregue. É o dinheiro que já aconteceu.
 const feitos = (await q("jobs", `select=${CAMPOS}&completed_date=gte.${ini}&completed_date=lte.${fim}&deleted_at=is.null`)).filter(vivo);
-// Na rua: trabalho que de fato começou. `late` é o contrário disso — a janela
-// de chegada passou e ninguém começou —, e contá-lo aqui fazia um no-show
-// aparecer como equipe trabalhando.
-const agenda = (await q("jobs", `select=${CAMPOS}&scheduled_date=gte.${ini}&scheduled_date=lte.${fim}&deleted_at=is.null`)).filter(vivo);
-const naRua = agenda.filter((j) => j.status === "in_progress");
-// O que estava marcado para o período e não saiu. É o número que pede ação.
-const naoSaiu = agenda.filter((j) => ["late", "unassigned", "auto_assigning", "on_hold"].includes(j.status));
 
 const vendas = soma(criados, "client_price", "extras_amount");
 const faturado = soma(feitos, "client_price", "extras_amount");
 const pago = soma(feitos, "partner_cost", "materials_cost");
 const sobrou = Math.round((faturado - pago) * 100) / 100;
 const margem = faturado > 0 ? (sobrou / faturado) * 100 : null;
-const naRuaValor = soma(naRua, "client_price", "extras_amount");
-const naoSaiuValor = soma(naoSaiu, "client_price", "extras_amount");
 
 const lb0 = (v) => "£" + Math.round(n(v)).toLocaleString("en-GB");
+
+// ── O mes ────────────────────────────────────────────────────────────────
+// Vendido no mes e quanto disso ja saiu. Sao os MESMOS jobs em dois momentos,
+// nao dois conjuntos diferentes: por isso "falta entregar" e uma conta que
+// fecha, e nao a subtracao de duas colunas que nao se falam.
+const mesIni = `${fim.slice(0, 7)}-01`;
+const mesJobs = (await q("jobs", `select=${CAMPOS}&created_at=gte.${mesIni}T00:00:00Z&created_at=lt.${proximo}T00:00:00Z&deleted_at=is.null`)).filter(vivo);
+const mesVendido = soma(mesJobs, "client_price", "extras_amount");
+const mesEntregue = soma(mesJobs.filter((j) => !!j.completed_date), "client_price", "extras_amount");
+const mesFalta = Math.round((mesVendido - mesEntregue) * 100) / 100;
+const mesPct = mesVendido > 0 ? Math.min(100, Math.round((mesEntregue / mesVendido) * 100)) : 0;
+const mesNome = emLondres(new Date(fim + "T12:00:00Z"), { month: "long" });
 
 const LOGO = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 const LOGO_ESCURO = "https://www.getfixfy.com/logos/fixfy-wordmark-navy-trim.png";
@@ -116,9 +119,9 @@ const farol = margem == null ? { cor: "#8A8AA0", bola: "⚪️" }
   : margem >= 25 ? { cor: "#B45309", bola: "🟡" }
   : { cor: "#A32D2D", bola: "🔴" };
 const pct = margem == null ? "--" : Math.round(margem) + "%";
-const assunto = SEMANA
-  ? `${farol.bola} Fixfy week · ${periodo} · ${pct} margin · ${lb0(sobrou)} gross`
-  : `${farol.bola} Fixfy · ${periodo} · ${pct} margin · ${lb0(sobrou)} gross`;
+// Assunto sem sinal nem numero: o nome do relatorio e a data. O resultado mora
+// dentro do e-mail, nao na lista de mensagens.
+const assunto = `Fixfy Report - ${periodo}`;
 
 const linha = (rot, valor, sub, forte) => `
   <tr>
@@ -152,6 +155,34 @@ const html = `<!doctype html><html><body style="margin:0;background:#F2F2F6;padd
       </td></tr>
     </table>
   </td></tr>
+  <tr><td style="background:#FBFBFD;border-top:1px solid #ECECF2;padding:18px 26px 20px">
+    <div style="font:600 10px/1 -apple-system,Segoe UI,Helvetica,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#8A8AA0">${esc(mesNome)} so far</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border-radius:6px;overflow:hidden">
+      <tr>
+        <td width="${mesPct}%" style="height:22px;background:#0F6E56;font:700 11px/22px -apple-system,Segoe UI,Helvetica,sans-serif;color:#fff;text-align:center">${mesPct >= 12 ? mesPct + "%" : ""}</td>
+        <td style="height:22px;background:#C0392B;font:700 11px/22px -apple-system,Segoe UI,Helvetica,sans-serif;color:#fff;text-align:center">${100 - mesPct >= 12 ? 100 - mesPct + "%" : ""}</td>
+      </tr>
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:11px">
+      <tr>
+        <td style="font:400 12px/1.5 -apple-system,Segoe UI,Helvetica,sans-serif;color:#5A5A72">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#0F6E56"></span>
+          Delivered <b style="color:#020040">${esc(money(mesEntregue))}</b>
+        </td>
+      </tr>
+      <tr>
+        <td style="font:400 12px/1.5 -apple-system,Segoe UI,Helvetica,sans-serif;color:#5A5A72;padding-top:3px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#C0392B"></span>
+          Still to deliver <b style="color:#020040">${esc(money(mesFalta))}</b>
+        </td>
+      </tr>
+      <tr>
+        <td style="font:400 12px/1.5 -apple-system,Segoe UI,Helvetica,sans-serif;color:#8A8AA0;padding-top:7px;border-top:1px solid #ECECF2;margin-top:6px">
+          Sold this month <b style="color:#020040">${esc(money(mesVendido))}</b>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
   <tr><td style="background:#FAFAFC;border-top:1px solid #ECECF2;padding:18px 26px;text-align:center">
     <img src="${LOGO_ESCURO}" alt="Fixfy" width="58" style="display:inline-block;width:58px;height:auto;border:0;opacity:.75">
     <div style="font:400 11px/1.5 -apple-system,Segoe UI,Helvetica,sans-serif;color:#9A9AAF;margin-top:9px">
@@ -163,11 +194,10 @@ const html = `<!doctype html><html><body style="margin:0;background:#F2F2F6;padd
 console.log(`\n${assunto}`);
 console.log(`  vendas       ${money(vendas)}  · ${criados.length} job(s)`);
 console.log(`  delivered    ${money(faturado)}  · ${feitos.length} job(s)`);
-console.log(`  na rua       ${money(naRuaValor)}  · ${naRua.length} job(s) em execucao`);
-if (naoSaiu.length) console.log(`  nao saiu     ${money(naoSaiuValor)}  · ${naoSaiu.length} job(s): ${naoSaiu.map((j) => j.reference).join(", ")}`);
 console.log(`  pago         ${money(pago)}`);
 console.log(`  sobrou bruto ${money(sobrou)}`);
-console.log(`  margem       ${margem == null ? "--" : Math.round(margem) + "%"}\n`);
+console.log(`  margem       ${margem == null ? "--" : Math.round(margem) + "%"}`);
+console.log(`  ${mesNome}: vendido ${money(mesVendido)} · entregue ${money(mesEntregue)} (${mesPct}%) · falta ${money(mesFalta)}\n`);
 
 const iHtml = process.argv.indexOf("--html");
 if (iHtml > -1 && process.argv[iHtml + 1]) {
