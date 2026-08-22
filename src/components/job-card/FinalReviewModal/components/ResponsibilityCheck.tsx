@@ -122,8 +122,8 @@ export function ResponsibilityCheck({
               style={{ color: "#7A3D00", border: "0.5px solid #E8C6A8" }}
             >
               {/* O nome que a decisão merece: isto é forçar. Se o relatório já
-                  foi mandado à mão, o certo é o "Already sent it? Mark it" do
-                  passo 3, que deixa rastro. */}
+                  foi mandado à mão, o certo é o "Sent Manually" do passo 3,
+                  que deixa rastro. */}
               Force approve without sending
             </button>
           ) : null}

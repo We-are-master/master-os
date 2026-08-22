@@ -69,7 +69,7 @@ function MarkSentManually({ jobUuid, onMarcado }: { jobUuid: string; onMarcado: 
         disabled={salvando}
         className="rounded-[6px] border border-[#D8D8DD] bg-white px-2.5 py-[3px] text-[11px] font-semibold text-[#020040] transition-colors hover:bg-[#F4F4F6] disabled:opacity-50"
       >
-        {salvando ? "Marking…" : "Already sent it? Mark it"}
+        {salvando ? "Marking…" : "Sent Manually"}
       </button>
       {erro ? (
         <span className="w-full text-[11px]" style={{ color: "#A32D2D" }}>
@@ -262,7 +262,7 @@ export function StepsTimeline({
               lá embaixo, dentro do envio externo, e só em dois dos seus
               estados: com o relatório faltando apareciam as duas ao mesmo
               tempo, com nomes diferentes, fazendo a mesma coisa. */}
-          {!entregueAMao && jobUuid && envioExterno && !envioExterno.indisponivel && envioExterno.estado !== "enviado" ? (
+          {!allUploaded && !entregueAMao && jobUuid && envioExterno && !envioExterno.indisponivel && envioExterno.estado !== "enviado" ? (
             <MarkSentManually jobUuid={jobUuid} onMarcado={onEnvioDisparado} />
           ) : null}
           {/* Todo o envio externo — estado, conferência e ação — mora aqui.
