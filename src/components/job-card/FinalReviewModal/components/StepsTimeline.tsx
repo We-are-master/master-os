@@ -192,7 +192,7 @@ export function StepsTimeline({
               calado justamente quando havia algo a fazer. */}
           {jobUuid && envioExterno ? (
             <div className="w-full">
-              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} />
+              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} relatorioEnviado={allUploaded} />
             </div>
           ) : null}
         </div>

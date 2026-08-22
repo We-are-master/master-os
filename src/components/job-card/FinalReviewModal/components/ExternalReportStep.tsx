@@ -56,6 +56,7 @@ export function ExternalReportStep({
   envio,
   onEnviado,
   onEditReport,
+  relatorioEnviado = false,
 }: {
   jobUuid: string;
   envio?: EstadoEnvioExterno;
@@ -66,6 +67,8 @@ export function ExternalReportStep({
    * faltando, e insistir sem mudar nada só repete a recusa.
    */
   onEditReport?: () => void;
+  /** Há relatório no job. Sem isso não existe o que editar. */
+  relatorioEnviado?: boolean;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -151,16 +154,20 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
    */
   const acoes = (semTentativas: boolean, motivo: string) => {
     const conserto = PEDE_CONSERTO.test(motivo);
+    // Sem relatório não há o que editar, e o botão levava a um formulário vazio
+    // no lugar da correção que o motivo pedia. Quando falta relatório, quem
+    // resolve é "Fill the report", no próprio passo acima.
+    const podeEditar = !!onEditReport && relatorioEnviado;
     return (
       <div className="flex flex-wrap items-center gap-2">
-        {conserto && onEditReport
-          ? botao("Edit report", onEditReport, true)
+        {conserto && podeEditar
+          ? botao("Edit report", onEditReport!, true)
           : botao(
               semTentativas ? "Reset attempts and try again" : "Try again",
               () => void enviar({ reiniciar: semTentativas }),
               true,
             )}
-        {!conserto && onEditReport ? botao("Edit report", onEditReport) : null}
+        {!conserto && podeEditar ? botao("Edit report", onEditReport!) : null}
         {botao("Sent manually? Mark it", () => void enviar({ manual: true }))}
         {botao("Check what will be sent", () => void conferir())}
       </div>
