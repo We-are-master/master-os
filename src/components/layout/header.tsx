@@ -250,7 +250,7 @@ function GlobalSearch() {
         onFocus={() => {
           if (query.trim().length >= 2) setOpen(true);
         }}
-        placeholder="Search jobs, quotes, requests…"
+        placeholder="Search"
         className="h-10 w-full rounded-lg border border-fx-line bg-surface pl-9 pr-10 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
       />
       {query ? (
@@ -285,7 +285,7 @@ function GlobalSearch() {
             onFocus={() => {
               if (query.trim().length >= 2) setOpen(true);
             }}
-            placeholder="Search jobs, quotes, requests, address, postcode…"
+            placeholder="Search"
             className="h-9 w-full max-w-96 rounded-lg border border-fx-line bg-surface pl-9 pr-16 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary transition-all hover:border-fx-line/80 hover:bg-fx-paper focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
           />
           {query ? (

@@ -26,6 +26,7 @@ import {
 import {
   LiveMapCoverageScout,
   type LiveMapCoverageSearchState,
+  type LiveMapEntityType,
 } from "@/components/dashboard/live-map-coverage-scout";
 import { LiveMapPartnersPanel } from "@/components/dashboard/live-map-partners-panel";
 import { LiveMapJobsPanel } from "@/components/dashboard/live-map-jobs-panel";
@@ -66,6 +67,10 @@ import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 
 const LIVE_MAP_INACTIVE_MINUTES = 15;
+
+/** Stable empties — a fresh [] each render would rebuild the map layers. */
+const EMPTY_PARTNER_POINTS: ScheduleLiveMapPoint[] = [];
+const EMPTY_JOB_POINTS: ScheduleLiveMapJobPoint[] = [];
 
 const COVERAGE_PARTNER_SELECT =
   "id, company_name, contact_name, trade, trades, catalog_service_ids, status, auth_user_id, coverage_mode, service_radius_miles, coverage_latitude, coverage_longitude, coverage_base_postcode, included_postcodes, coverage_cities, uk_coverage_regions, excluded_postcodes, location";
@@ -160,6 +165,7 @@ async function resolveActivePartnerMapPoint(
 }
 
 function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
+  if (status === "completed" || status === "awaiting_payment") return "completed";
   if (status === "unassigned" || status === "auto_assigning") return "unassigned";
   if (status === "scheduled" || status === "late") return "scheduled";
   if (
@@ -251,6 +257,10 @@ export default function SchedulePage() {
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
   const liveMapRegionPreset: LiveMapRegionPreset = "london";
   const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
+  /** What the map draws: jobs, partners, or both. */
+  const [liveMapEntityType, setLiveMapEntityType] = useState<LiveMapEntityType>("both");
+  const showPartnersOnMap = liveMapEntityType !== "jobs";
+  const showJobsOnMap = liveMapEntityType !== "partners";
   const [coveragePartners, setCoveragePartners] = useState<PartnerCoverageRow[]>([]);
   const [coverageDraft, setCoverageDraft] = useState<{
     target: LiveMapCoverageSearchState["target"];
@@ -444,12 +454,10 @@ export default function SchedulePage() {
   const jobsForSelectedDay = useMemo<Job[]>(() => {
     const { fromMs, toMs } = liveSelectedWindow;
     return jobs.filter((j) => {
-      const isLiveOpsVisible =
-        j.status !== "completed" &&
-        j.status !== "awaiting_payment" &&
-        j.status !== "cancelled" &&
-        j.status !== "deleted";
-      if (!isLiveOpsVisible) return false;
+      // Every job in the selected date window gets a pin, completed included:
+      // "Today" on the map has to mean the whole day, not just what is still
+      // open. Cancelled and deleted stay out — there is nothing on the ground.
+      if (j.status === "cancelled" || j.status === "deleted") return false;
       const s = jobScheduleYmd(j);
       if (!s) return false;
       const e = jobFinishYmd(j) ?? s;
@@ -770,7 +778,9 @@ export default function SchedulePage() {
     <PageTransition
       className={cn(
         "flex flex-col min-w-0 gap-4 -mt-2 sm:-mt-3 lg:-mt-4",
-        view === "map" &&
+        // Map and Kanban are full-height boards: the page itself never scrolls,
+        // each column (or the map) scrolls inside its own box.
+        (view === "map" || view === "kanban") &&
           "min-h-0 overflow-hidden gap-2 sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]",
       )}
     >
@@ -798,11 +808,11 @@ export default function SchedulePage() {
       >
         <ScheduleLiveMap
           className="flex min-h-0 flex-1 flex-col"
-          points={partnerPointsForMap}
+          points={showPartnersOnMap ? partnerPointsForMap : EMPTY_PARTNER_POINTS}
           regionPreset={liveMapRegionPreset}
           tradeFilter={liveMapTradeFilter}
           embeddedInCard
-          jobPoints={liveMapJobPoints}
+          jobPoints={showJobsOnMap ? liveMapJobPoints : EMPTY_JOB_POINTS}
           selectedJobIds={liveMapSelectedJobSet}
           onJobMarkerClick={toggleJobSelection}
           onPartnerMarkerClick={handlePartnerMarkerClick}
@@ -849,6 +859,8 @@ export default function SchedulePage() {
               catalogServices={serviceCatalogServices}
               search={coverageSearch}
               onSearchChange={handleCoverageSearchChange}
+              entityType={liveMapEntityType}
+              onEntityTypeChange={setLiveMapEntityType}
             />
           }
           bottomLeftOverlay={
@@ -925,6 +937,7 @@ export default function SchedulePage() {
                   </div>
                 );
               })() : null}
+              {showPartnersOnMap ? (
               <LiveMapPartnersPanel
                 points={partnerPointsForMap}
                 selectedStatus={liveMapPartnerStatus}
@@ -932,9 +945,11 @@ export default function SchedulePage() {
                 onPartnerClick={focusPartner}
                 lastUpdatedAt={liveMapUpdatedAt}
               />
+              ) : null}
             </div>
           }
           bottomRightOverlay={
+            showJobsOnMap ? (
             <LiveMapJobsPanel
               jobPoints={liveMapJobPoints}
               selectedStatus={liveMapJobStatusFilter}
@@ -944,6 +959,7 @@ export default function SchedulePage() {
               jobsMissingLocation={liveMapJobsMissingLocation}
               dateLabel={liveMapSelectedLabel}
             />
+            ) : null
           }
         />
       </motion.div>

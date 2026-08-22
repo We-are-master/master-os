@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { endOfMonth, format, startOfMonth } from "date-fns";
+import { format } from "date-fns";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
-import { SearchInput } from "@/components/ui/input";
+import { ExpandingSearch } from "@/components/shared/page-toolbar";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -18,8 +18,7 @@ import { activateWorkforcePerson } from "@/lib/workforce-lifecycle";
 import { toast } from "sonner";
 import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit, WorkforceCommissionBasis, WorkforcePaymentMethod } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { listBusinessUnits, createBusinessUnit, updateBusinessUnit, deleteBusinessUnit } from "@/services/teams";
-import { BuModal } from "@/components/teams/bu-modal";
+import { listBusinessUnits } from "@/services/teams";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
   PROFILE_PHOTO_DOC_KEY,
@@ -31,10 +30,9 @@ import { WorkforcePersonDrawer } from "@/components/people/workforce-person-draw
 import {
   WorkforceAddCard,
   WorkforceAddListRow,
-  WorkforceBuStrip,
-  WorkforceKpiGrid,
   WorkforcePersonCard,
   WorkforcePersonListRow,
+  WORKFORCE_LIST_GRID,
   WorkforceStagePills,
   WorkforceTypeSegment,
   WorkforceViewToggle,
@@ -95,13 +93,12 @@ function mapCostRows(
 export default function PeoplePage() {
   const { workforceDocumentRules } = useFrontendSetup();
   const [section, setSection] = useState<WorkforcePeopleTab>("all");
-  const [displayMode, setDisplayMode] = useState<WorkforceDisplayMode>("grid");
+  const [displayMode, setDisplayMode] = useState<WorkforceDisplayMode>("list");
   const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("active");
   const [rows, setRows] = useState<PeopleRow[]>([]);
   const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [buFilter, setBuFilter] = useState<string>("all");
   const [selected, setSelected] = useState<PeopleRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInitialTab, setDrawerInitialTab] = useState<WorkforceDrawerTab>("overview");
@@ -131,10 +128,6 @@ export default function PeoplePage() {
   const [formContractorCountry, setFormContractorCountry] = useState("");
   const [formContractorTaxNumber, setFormContractorTaxNumber] = useState("");
   const [formContractorAddress, setFormContractorAddress] = useState("");
-
-  const [buModalOpen, setBuModalOpen] = useState(false);
-  const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
-  const [buSaving, setBuSaving] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
   const [onboardingSendBusyId, setOnboardingSendBusyId] = useState<string | null>(null);
@@ -295,11 +288,6 @@ export default function PeoplePage() {
             (r) =>
               r.employment_type === (section === "internal" ? "employee" : "self_employed"),
           );
-    if (buFilter === "unassigned") {
-      list = list.filter((r) => !r.bu_id);
-    } else if (buFilter !== "all") {
-      list = list.filter((r) => r.bu_id === buFilter);
-    }
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((r) => {
@@ -320,7 +308,7 @@ export default function PeoplePage() {
       list = list.filter((r) => (r.lifecycle_stage ?? "active") === stageFilter);
     }
     return list;
-  }, [rows, section, search, buFilter, stageFilter]);
+  }, [rows, section, search, stageFilter]);
 
   const rosterCounts = useMemo(() => {
     const base = rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
@@ -340,53 +328,6 @@ export default function PeoplePage() {
       : section === "contractors"
         ? "Invite contractor"
         : "Invite team";
-
-  const rosterRows = useMemo(
-    () => rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard"),
-    [rows],
-  );
-
-  const workforceKpis = useMemo(() => {
-    const active = rosterRows.filter((r) => {
-      const stage = r.lifecycle_stage ?? "active";
-      return stage === "active" || stage === "needs_attention";
-    }).length;
-    const onboarding = rosterRows.filter((r) => (r.lifecycle_stage ?? "active") === "onboarding").length;
-    const payrollPeople = rosterRows.filter((r) => Number(r.amount ?? 0) > 0);
-    const monthlyPayroll = payrollPeople.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
-
-    let docsOutstanding = 0;
-    for (const r of rosterRows) {
-      const files = parsePayrollDocumentFiles(r.payroll_document_files);
-      const { done, total } = payrollDocsRowCompletion(
-        r.employment_type ?? null,
-        files,
-        r.documents_on_file ?? null,
-        r.has_equity ?? false,
-        workforceDocumentRules,
-      );
-      docsOutstanding += Math.max(0, total - done);
-    }
-
-    const monthStart = format(startOfMonth(new Date()), "yyyy-MM-dd");
-    const monthEnd = format(endOfMonth(new Date()), "yyyy-MM-dd");
-    const dueThisMonth = rosterRows.filter((r) => {
-      const due = r.due_date?.slice(0, 10);
-      return !!due && due >= monthStart && due <= monthEnd;
-    });
-    const dueThisMonthTotal = dueThisMonth.reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
-
-    return {
-      headcount: rosterRows.length,
-      active,
-      onboarding,
-      monthlyPayroll,
-      payrollPeople: payrollPeople.length,
-      docsOutstanding,
-      dueThisMonthCount: dueThisMonth.length,
-      dueThisMonthTotal,
-    };
-  }, [rosterRows, workforceDocumentRules]);
 
   const selfBillSyncRef = useRef(false);
   useEffect(() => {
@@ -690,79 +631,31 @@ export default function PeoplePage() {
     }
   };
 
-  const buFilterOptions = useMemo(
-    () => [
-      { value: "all", label: "All BUs" },
-      { value: "unassigned", label: "No BU" },
-      ...bus.map((s) => ({ value: s.id, label: s.name })),
-    ],
-    [bus],
-  );
-
-  const openAddBu = () => {
-    setEditingBu(null);
-    setBuModalOpen(true);
-  };
-
-  const openEditBu = (s: BusinessUnit) => {
-    setEditingBu(s);
-    setBuModalOpen(true);
-  };
-
-  const handleSaveBu = async (name: string) => {
-    setBuSaving(true);
-    try {
-      if (editingBu) {
-        await updateBusinessUnit(editingBu.id, { name });
-        toast.success("BU updated");
-      } else {
-        await createBusinessUnit(name);
-        toast.success("BU created");
-      }
-      setBuModalOpen(false);
-      setEditingBu(null);
-      await load();
-    } catch (e) {
-      const msg =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in (e as object)
-            ? String((e as { message: unknown }).message)
-            : "Failed to save BU";
-      console.error("Save BU failed", e);
-      toast.error(msg);
-    } finally {
-      setBuSaving(false);
-    }
-  };
-
-  const handleDeleteBu = async (s: BusinessUnit) => {
-    if (!confirm(`Remove BU “${s.name}”? People in this BU will become unassigned.`)) return;
-    try {
-      await deleteBusinessUnit(s.id);
-      toast.success("BU removed");
-      if (buFilter === s.id) setBuFilter("all");
-      await load();
-    } catch {
-      toast.error("Failed to delete BU");
-    }
-  };
-
   return (
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          eyebrow="People · Internal team & contractors"
           title="Workforce"
           infoTooltip={"Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay.\n\nWorking lists everyone except offboard. Use Employees for PAYE staff and Contractors for self-billed. Finance → Payroll keeps commission runs and recurring bills."}
         >
+          {/* Roster filters ride in the header line — one bar for the page. */}
+          <WorkforceTypeSegment
+            value={section}
+            counts={rosterCounts}
+            onChange={(id) => {
+              setSection(id);
+              setStageFilter("active");
+            }}
+          />
+          <WorkforceViewToggle mode={displayMode} onChange={setDisplayMode} />
+          <ExpandingSearch value={search} onChange={setSearch} placeholder="Search by name, role…" />
           <Button
             icon={<Plus className="h-4 w-4" />}
             onClick={() => {
               const emp = inviteEmploymentType(section);
               setFormEmployment(emp);
               setFormCreateAccess(emp === "employee");
-              setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+              setFormBuId("");
               setAddOpen(true);
             }}
           >
@@ -770,55 +663,8 @@ export default function PeoplePage() {
           </Button>
         </PageHeader>
 
-        <WorkforceKpiGrid
-          headcount={workforceKpis.headcount}
-          active={workforceKpis.active}
-          onboarding={workforceKpis.onboarding}
-          monthlyPayroll={workforceKpis.monthlyPayroll}
-          payrollPeople={workforceKpis.payrollPeople}
-          docsOutstanding={workforceKpis.docsOutstanding}
-          dueThisMonthCount={workforceKpis.dueThisMonthCount}
-          dueThisMonthTotal={workforceKpis.dueThisMonthTotal}
-        />
-
-        {bus.length > 0 && (
-          <WorkforceBuStrip
-            bus={bus}
-            buFilter={buFilter}
-            onFilter={setBuFilter}
-            onAdd={openAddBu}
-            onEdit={openEditBu}
-            onDelete={(s) => void handleDeleteBu(s)}
-          />
-        )}
-
         <div className="rounded-xl border border-border-light bg-card shadow-sm overflow-hidden">
-          <div className="px-3 sm:px-4 pt-3 pb-2 border-b border-border-light flex flex-col gap-2">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <WorkforceTypeSegment
-                value={section}
-                counts={rosterCounts}
-                onChange={(id) => {
-                  setSection(id);
-                  setStageFilter("active");
-                }}
-              />
-              <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
-                <WorkforceViewToggle mode={displayMode} onChange={setDisplayMode} />
-                <Select
-                  value={buFilter}
-                  onChange={(e) => setBuFilter(e.target.value)}
-                  options={buFilterOptions}
-                  className="min-w-[160px] shrink-0 rounded-xl"
-                />
-                <SearchInput
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name, role…"
-                  className="flex-1 w-full min-w-0 rounded-xl"
-                />
-              </div>
-            </div>
+          <div className="px-3 sm:px-4 pt-2.5 pb-2 border-b border-border-light">
             <WorkforceStagePills value={stageFilter} onChange={setStageFilter} />
           </div>
 
@@ -839,7 +685,7 @@ export default function PeoplePage() {
                       )}
                     </div>
                     <p className="text-text-secondary font-medium">
-                      {search.trim() || buFilter !== "all" || stageFilter !== "all"
+                      {search.trim() || stageFilter !== "all"
                         ? "No matches for your filters"
                         : section === "internal"
                           ? "No internal team members yet"
@@ -847,7 +693,7 @@ export default function PeoplePage() {
                             ? "No contractors yet"
                             : "No people yet"}
                     </p>
-                    {!search.trim() && buFilter === "all" && stageFilter === "all" && (
+                    {!search.trim() && stageFilter === "all" && (
                       <p className="text-sm text-text-tertiary mt-2 max-w-md mx-auto">
                         {section === "internal"
                           ? "Add PAYE employees with salary lines. Upload passport, contract, and payroll setup from each person’s drawer."
@@ -860,12 +706,12 @@ export default function PeoplePage() {
                 )}
                 {displayMode === "list" ? (
                   <div className="rounded-xl border border-border-light overflow-hidden -mx-1 sm:mx-0">
-                    <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(7.5rem,1fr)_auto] gap-2 border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    <div className={cn("hidden border-b border-border-light bg-surface-hover/50 px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary sm:block", WORKFORCE_LIST_GRID)}>
                       <span>
                         {section === "contractors" ? "Contractor" : section === "internal" ? "Employee" : "Person"}
                       </span>
                       <span>Status</span>
-                      <span className="text-right">Schedule</span>
+                      <span className="text-right">Amount</span>
                       <span className="text-right">Actions</span>
                     </div>
                     {filtered.map((r, index) => {
@@ -902,7 +748,7 @@ export default function PeoplePage() {
                       label={inviteLabel}
                       onClick={() => {
                         setFormEmployment(inviteEmploymentType(section));
-                        setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+                        setFormBuId("");
                         setAddOpen(true);
                       }}
                     />
@@ -944,7 +790,7 @@ export default function PeoplePage() {
                         label={inviteLabel}
                         onClick={() => {
                           setFormEmployment(inviteEmploymentType(section));
-                          setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
+                          setFormBuId("");
                           setAddOpen(true);
                         }}
                       />
@@ -964,17 +810,6 @@ export default function PeoplePage() {
         initialTab={drawerInitialTab}
         onClose={closeDrawer}
         onSaved={handleDrawerSaved}
-      />
-
-      <BuModal
-        open={buModalOpen}
-        onClose={() => {
-          setBuModalOpen(false);
-          setEditingBu(null);
-        }}
-        initial={editingBu}
-        onSave={handleSaveBu}
-        saving={buSaving}
       />
 
       <Modal
@@ -1223,13 +1058,6 @@ export default function PeoplePage() {
               { value: "employee", label: "Employee (internal team)" },
               { value: "self_employed", label: "Self-employed (contractor)" },
             ]}
-            className="min-w-0"
-          />
-          <Select
-            label="Business Unit"
-            value={formBuId}
-            onChange={(e) => setFormBuId(e.target.value)}
-            options={[{ value: "", label: "— No BU" }, ...bus.map((s) => ({ value: s.id, label: s.name }))]}
             className="min-w-0"
           />
 

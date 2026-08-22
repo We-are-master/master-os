@@ -379,6 +379,11 @@ function workforceRowSchedule(row: WorkforcePeopleRow) {
   return { startYmd, nextDueYmd, cutoffYmd };
 }
 
+/**
+ * Just the amount. Start / Due / Cutoff used to ride along on every row and set
+ * its height for three dates nobody reads at a glance — they live in the
+ * person's Finance tab, where a pay date is actually acted on.
+ */
 function WorkforceScheduleBlock({
   row,
   className,
@@ -388,35 +393,15 @@ function WorkforceScheduleBlock({
   className?: string;
   compact?: boolean;
 }) {
-  const { startYmd, nextDueYmd, cutoffYmd } = workforceRowSchedule(row);
-  if (compact) {
-    return (
-      <div className={cn("text-[10px] tabular-nums text-text-tertiary", className)}>
-        <span className="font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</span>
-        <span className="mx-1">·</span>
-        <span>Start {startYmd ? formatDate(startYmd) : "—"}</span>
-        <span className="mx-1">·</span>
-        <span>Due {nextDueYmd ? formatDate(nextDueYmd) : "—"}</span>
-        <span className="mx-1">·</span>
-        <span>Cutoff {cutoffYmd ? formatDate(cutoffYmd) : "—"}</span>
-      </div>
-    );
-  }
   return (
-    <div className={cn("text-right shrink-0 tabular-nums leading-tight", className)}>
-      <p className="text-[11px] font-medium text-text-secondary">{formatCurrency(Number(row.amount))}</p>
-      <p className="text-[10px] text-text-tertiary mt-0.5">
-        <span className="text-text-tertiary/80">Start </span>
-        {startYmd ? formatDate(startYmd) : "—"}
-      </p>
-      <p className="text-[10px] text-text-tertiary">
-        <span className="text-text-tertiary/80">Due </span>
-        {nextDueYmd ? formatDate(nextDueYmd) : "—"}
-      </p>
-      <p className="text-[10px] text-text-tertiary">
-        <span className="text-text-tertiary/80">Cutoff </span>
-        {cutoffYmd ? formatDate(cutoffYmd) : "—"}
-      </p>
+    <div
+      className={cn(
+        "shrink-0 text-right tabular-nums",
+        compact ? "text-[11px] font-medium text-text-secondary" : "text-[13px] font-semibold text-text-primary",
+        className,
+      )}
+    >
+      {formatCurrency(Number(row.amount))}
     </div>
   );
 }
@@ -611,6 +596,17 @@ export function WorkforcePersonCard({
   );
 }
 
+/**
+ * Column template shared by the list header and every row.
+ *
+ * The header and the rows are separate grids, so `fr` and `auto` columns each
+ * resolve against their own content and never line up — that is why the header
+ * labels sat off to the side of the values they name. Fixed widths on Schedule
+ * and Actions make both grids resolve identically.
+ */
+export const WORKFORCE_LIST_GRID =
+  "sm:grid sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_7rem_20.5rem] sm:items-center sm:gap-2";
+
 export function WorkforcePersonListRow({
   row,
   rowIndex = 0,
@@ -645,7 +641,6 @@ export function WorkforcePersonListRow({
   onSendOnboardingLink: () => void;
 }) {
   const stage = row.lifecycle_stage ?? "active";
-  const schedule = workforceRowSchedule(row);
   const emailLine =
     row.payroll_profile && typeof row.payroll_profile === "object" && "email" in (row.payroll_profile as object)
       ? String((row.payroll_profile as { email?: string }).email ?? "").trim()
@@ -656,7 +651,8 @@ export function WorkforcePersonListRow({
   return (
     <div
       className={cn(
-        "group flex flex-col gap-1 border-b border-border-light/80 px-3 py-1.5 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(7.5rem,1fr)_auto] sm:items-center sm:gap-2 transition-colors",
+        "group flex flex-col gap-1 border-b border-border-light/80 px-3 py-1.5 last:border-b-0 transition-colors",
+        WORKFORCE_LIST_GRID,
         striped ? "bg-surface-hover/35" : "bg-card",
         "hover:bg-primary/[0.04]",
       )}
@@ -695,7 +691,7 @@ export function WorkforcePersonListRow({
         )}
       </div>
       <WorkforceScheduleBlock row={row} className="hidden sm:block" />
-      <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+      <div className="flex flex-wrap items-center gap-1 sm:flex-nowrap sm:justify-end">
         <div className="flex gap-1 sm:hidden w-full">
           <WorkforceScheduleBlock row={row} compact className="w-full" />
         </div>

@@ -28,14 +28,14 @@ import {
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
-import { Input, SearchInput } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, Download, List, LayoutGrid, Calendar, Map as MapIcon,
+  Plus, Filter, Download, List, LayoutGrid,
   FileText, BarChart3, Clock, ArrowRight, Check,
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail,
@@ -95,6 +95,9 @@ import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { listActiveAccountsForFilter } from "@/services/accounts";
+import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import {
   quoteBiddingSlaDeadlineMsFromQuote,
@@ -744,7 +747,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     convertedCount: 0,
     totalCount: 0,
   });
-  const [viewMode, setViewMode] = useState("list");
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("quotes_kpis_visible_v1");
+  /** Kanban drop that needs a decision before it saves. Null while nothing is pending. */
+  const [kanbanMove, setKanbanMove] = useState<
+    { quote: Quote; toStatus: string; blockedReason: string | null } | null
+  >(null);
+  const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
   const [biddingSlaRollup, setBiddingSlaRollup] = useState<BiddingSlaRollup | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
@@ -1199,18 +1208,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const supabase = getSupabase();
-      const { data } = await supabase
-        .from("accounts")
-        .select("id, name")
-        .order("name", { ascending: true })
-        .limit(2000);
+      // `accounts.name` does not exist (the column is `company_name`), so the
+      // old inline query errored and this picker was always empty.
+      const rows = await listActiveAccountsForFilter();
       if (cancelled) return;
-      setFilterAccountsList(
-        ((data ?? []) as { id: string; name: string | null }[])
-          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
-          .filter((a) => a.id && a.name),
-      );
+      setFilterAccountsList(rows);
     };
     const run = () => {
       if (!cancelled) void load();
@@ -2023,7 +2025,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   );
 
   const handleStatusChange = useCallback(
-    async (quote: Quote, newStatus: string, opts?: { successToast?: string }): Promise<boolean> => {
+    async (
+      quote: Quote,
+      newStatus: string,
+      opts?: { successToast?: string; skipMarginConfirm?: boolean },
+    ): Promise<boolean> => {
       if (newStatus === "create_job") {
         setConvertRecordedDepositAmount(null);
         setConvertMarkDepositPaid(false);
@@ -2060,7 +2066,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         toast.error(check.message ?? "Complete the current step before advancing.");
         return false;
       }
-      if (newStatus === "awaiting_customer" && (quote.margin_percent ?? 0) < 25 && (quote.margin_percent ?? 0) > 0) {
+      if (
+        !opts?.skipMarginConfirm &&
+        newStatus === "awaiting_customer" &&
+        (quote.margin_percent ?? 0) < 25 &&
+        (quote.margin_percent ?? 0) > 0
+      ) {
         if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Move to Awaiting Customer anyway?")) {
           return false;
         }
@@ -2154,6 +2165,33 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         return;
       }
       setApproveDepositGateQuote(quoteRow);
+    },
+    [handleStatusChange],
+  );
+
+  /**
+   * Kanban drop. A move the quote is ready for just happens — that is the point
+   * of dragging. A move that needs a decision (missing pricing, a proposal not
+   * ready, a thin margin, marking a quote lost) opens a modal instead of saving
+   * quietly, so the operator sees what they are about to do.
+   */
+  const handleKanbanDrop = useCallback(
+    (quote: Quote, toColumnId: string) => {
+      // Win runs the convert-to-job flow, which already carries its own modal.
+      if (toColumnId === "converted_to_job") {
+        void handleStatusChange(quote, "create_job");
+        return;
+      }
+      const check = canAdvanceQuote(quote, toColumnId);
+      const thinMargin =
+        toColumnId === "awaiting_customer" &&
+        (quote.margin_percent ?? 0) > 0 &&
+        (quote.margin_percent ?? 0) < 25;
+      if (!check.ok || thinMargin || toColumnId === "rejected") {
+        setKanbanMove({ quote, toStatus: toColumnId, blockedReason: check.ok ? null : check.message ?? null });
+        return;
+      }
+      void handleStatusChange(quote, toColumnId);
     },
     [handleStatusChange],
   );
@@ -2266,7 +2304,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         sortOptions: QUOTE_SORT_REFERENCE,
         render: (item) => (
           <div>
-            <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
+            <p className="text-[13px] font-semibold text-text-primary">{item.reference}</p>
           </div>
         ),
       },
@@ -2283,12 +2321,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             <div className="flex items-start gap-2 min-w-0">
               <Avatar
                 name={accountLabel}
-                size="sm"
+                size="xs"
                 className="shrink-0 mt-0.5"
                 src={item.source_account_logo_url?.trim() || undefined}
               />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-text-primary truncate">{accountLabel}</p>
+                <p className="text-[13px] font-medium text-text-primary truncate">{accountLabel}</p>
                 <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{postcode}</p>
               </div>
             </div>
@@ -2304,13 +2342,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         render: (item) => {
           if (isDraftRoutingPhase(item)) {
             return (
-              <span className="text-sm text-text-tertiary italic truncate block max-w-[180px]" title="Choose type of work in the quote drawer">
+              <span className="text-[12.5px] text-text-tertiary italic truncate block max-w-[180px]" title="Choose type of work in the quote drawer">
                 Add in drawer
               </span>
             );
           }
           const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
-          return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
+          return <span className="text-[12.5px] text-text-secondary truncate block max-w-[180px]">{type}</span>;
         },
       },
     ];
@@ -2352,9 +2390,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       render: (item) => {
         const avg = avgBidByQuoteId[item.id];
         return typeof avg === "number" && Number.isFinite(avg) ? (
-          <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(avg)}</span>
+          <span className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(avg)}</span>
         ) : (
-          <span className="text-sm text-text-tertiary">—</span>
+          <span className="text-[12.5px] text-text-tertiary">—</span>
         );
       },
     };
@@ -2369,10 +2407,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const total = Number(item.total_value) || 0;
         const dep = Math.min(Number(item.deposit_required) || 0, total);
         const pct = Number(item.deposit_percent) || (total > 0 ? Math.round((dep / total) * 100) : 0);
-        if (!(dep > 0)) return <span className="text-sm text-text-tertiary">—</span>;
+        if (!(dep > 0)) return <span className="text-[12.5px] text-text-tertiary">—</span>;
         return (
           <div className="flex flex-col items-end">
-            <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(dep)}</span>
+            <span className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(dep)}</span>
             {pct > 0 ? (
               <span className="text-[10px] text-text-tertiary tabular-nums">{pct}%</span>
             ) : null}
@@ -2392,10 +2430,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const dep = Math.min(Number(item.deposit_required) || 0, total);
         const remainder = Math.max(0, total - dep);
         const pct = total > 0 ? Math.round((remainder / total) * 100) : 0;
-        if (total <= 0) return <span className="text-sm text-text-tertiary">—</span>;
+        if (total <= 0) return <span className="text-[12.5px] text-text-tertiary">—</span>;
         return (
           <div className="flex flex-col items-end">
-            <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(remainder)}</span>
+            <span className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(remainder)}</span>
             {pct > 0 && pct < 100 ? (
               <span className="text-[10px] text-text-tertiary tabular-nums">{pct}%</span>
             ) : null}
@@ -2410,7 +2448,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       align: "right" as const,
       sortable: true,
       sortOptions: QUOTE_SORT_AMOUNT,
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
+      render: (item) => <span className="text-[13px] font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
     };
     const marginColumn: Column<Quote> = {
       key: "margin_percent",
@@ -2452,7 +2490,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         sortable: true,
         sortOptions: QUOTE_SORT_AMOUNT,
         render: (item) => (
-          <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>
+          <span className="text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>
         ),
       };
       const summaryCol: Column<Quote> = {
@@ -2466,7 +2504,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           return (
             <div className="flex items-start justify-between gap-3 min-w-0">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
+                <p className="text-[13px] font-semibold text-text-primary truncate">{item.reference}</p>
                 <p className="text-[11px] text-text-tertiary truncate">{accountLabel}</p>
               </div>
               <Badge variant={won ? "success" : "danger"} size="sm" className="shrink-0">
@@ -2503,22 +2541,23 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+            <ToolbarIconButton
+              icon={BarChart3}
+              label={kpisVisible ? "Hide KPIs" : "Show KPIs"}
+              active={kpisVisible}
+              onClick={toggleKpis}
+            />
+            <ToolbarIconButton
+              icon={RefreshCw}
+              label="Refresh quotes, KPIs, SLA snapshot and tab counts"
+              spinning={loading}
               onClick={() => {
                 void reloadQuoteMetrics();
                 void loadBiddingSlaRollup();
                 refreshSilent();
               }}
-              title="Reload quotes, KPI aggregates, Bidding SLA snapshot, and tab counts (no full-table loading flash)"
-            >
-              Refresh
-            </Button>
-            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
-              Export
-            </Button>
+            />
+            <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
             <Button
               size="sm"
               icon={<Plus className="h-3.5 w-3.5" />}
@@ -2537,7 +2576,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           </div>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        {kpisVisible ? (
+        <StaggerContainer className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           <KpiCard
             title="Total Quoted"
             value={kpiSummary.totalSentToCustomerValue}
@@ -2546,6 +2586,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             accent="primary"
             description="Total value of quotes currently with the customer in Approval or Payment (sent for decision or deposit)."
             descriptionAsTooltip
+            compact
           />
           <KpiCard
             title="Bidding"
@@ -2555,6 +2596,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             accent="amber"
             description="Number of quotes in Bidding (includes legacy “survey” rows). Matches the Bidding tab badge."
             descriptionAsTooltip
+            compact
           />
           <KpiCard
             title="Approval"
@@ -2564,6 +2606,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             accent="amber"
             description="Quotes sent, waiting for customer response"
             descriptionAsTooltip
+            compact
           />
           <KpiCard
             title="SLA overdue"
@@ -2573,6 +2616,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             accent="amber"
             description={`Open quotes in Bidding past the ${biddingSlaHoursLabelPretty} SLA window (company-wide). Matches “Past SLA” in the Bidding tab snapshot.`}
             descriptionAsTooltip
+            compact
           />
           <KpiCard
             title="Conversion Rate"
@@ -2586,8 +2630,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 : `${quoteToJobConversion.converted} job${quoteToJobConversion.converted === 1 ? "" : "s"} from ${quoteToJobConversion.total} quote${quoteToJobConversion.total === 1 ? "" : "s"} · conversion rate`
             }
             descriptionAsTooltip
+            compact
           />
         </StaggerContainer>
+        ) : null}
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
@@ -2596,19 +2642,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
-                  <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
+                {([{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }] as const).map(({ id, icon: Icon }) => (
+                  <button key={id} onClick={() => setViewMode(id)} title={id === "list" ? "List" : "Kanban"} aria-label={id === "list" ? "List" : "Kanban"} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
                     <Icon className="h-3.5 w-3.5" />
                   </button>
                 ))}
               </div>
-              <SearchInput
-                placeholder="Search quotes..."
-                className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <DateRangeFilter variant="chip" compactQuickOptions value={dateFilter} onChange={setDateFilter} />
+              <ExpandingSearch value={search} onChange={setSearch} placeholder="Search quotes…" />
+              <DateRangeFilter value={dateFilter} onChange={setDateFilter} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
                   Filter
@@ -2737,6 +2778,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             <div className="min-h-[400px]">
               {showListLoading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : (
                 <KanbanBoard columns={quoteKanbanColumns} getCardId={(q) => q.id} onCardClick={setSelectedQuote}
+                  onCardDrop={handleKanbanDrop}
                   renderCard={(q) => (
                     <div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors">
                       <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
@@ -2751,8 +2793,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               )}
             </div>
           )}
-          {viewMode === "calendar" && <QuotesCalendarView quotes={filteredQuotes} loading={loading} onSelectQuote={setSelectedQuote} />}
-          {viewMode === "map" && <QuotesCardGridView quotes={filteredQuotes} loading={loading} onSelectQuote={setSelectedQuote} />}
         </motion.div>
       </div>
 
@@ -3011,6 +3051,63 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           }
         }}
       />
+      <Modal
+        open={kanbanMove !== null}
+        onClose={() => {
+          if (!kanbanMoveSaving) setKanbanMove(null);
+        }}
+        title={kanbanMove?.blockedReason ? "This quote isn't ready to move" : "Confirm move"}
+        subtitle={kanbanMove?.quote.reference}
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <p className="text-sm leading-snug text-text-secondary">
+            {kanbanMove?.blockedReason
+              ? kanbanMove.blockedReason
+              : kanbanMove?.toStatus === "rejected"
+                ? "Marking this quote as lost closes it. It stays on record and can be reopened from the quote itself."
+                : kanbanMove?.toStatus === "awaiting_customer"
+                  ? `Margin on this quote is ${Math.round(kanbanMove?.quote.margin_percent ?? 0)}%, under the 25% target. Send it to the customer anyway?`
+                  : `Move to ${statusLabels[kanbanMove?.toStatus ?? ""] ?? kanbanMove?.toStatus}?`}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setKanbanMove(null)} disabled={kanbanMoveSaving}>
+              Cancel
+            </Button>
+            {kanbanMove?.blockedReason ? (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  const q = kanbanMove.quote;
+                  setKanbanMove(null);
+                  setSelectedQuote(q);
+                }}
+              >
+                Open quote
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="primary"
+                loading={kanbanMoveSaving}
+                onClick={async () => {
+                  if (!kanbanMove) return;
+                  setKanbanMoveSaving(true);
+                  try {
+                    await handleStatusChange(kanbanMove.quote, kanbanMove.toStatus, { skipMarginConfirm: true });
+                    setKanbanMove(null);
+                  } finally {
+                    setKanbanMoveSaving(false);
+                  }
+                }}
+              >
+                Move
+              </Button>
+            )}
+          </div>
+        </div>
+      </Modal>
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
@@ -9977,83 +10074,6 @@ function CreateQuoteForm({
 
 /* ========== CALENDAR VIEW ========== */
 const QUOTE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function QuotesCalendarView({ quotes, loading, onSelectQuote }: { quotes: Quote[]; loading: boolean; onSelectQuote: (q: Quote) => void }) {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth());
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7;
-  const calendarDays: (number | null)[] = useMemo(() => {
-    const days: (number | null)[] = [];
-    for (let i = 0; i < firstDayOfWeek; i++) days.push(null);
-    for (let i = 1; i <= daysInMonth; i++) days.push(i);
-    while (days.length % 7 !== 0) days.push(null);
-    return days;
-  }, [firstDayOfWeek, daysInMonth]);
-
-  const quotesByDay = useMemo(() => {
-    const map: Record<number, Quote[]> = {};
-    for (const q of quotes) {
-      const d = q.created_at?.slice(0, 10);
-      if (!d) continue;
-      const [y, m, day] = d.split("-").map(Number);
-      if (y !== year || m !== month + 1) continue;
-      if (!map[day]) map[day] = [];
-      map[day].push(q);
-    }
-    return map;
-  }, [quotes, year, month]);
-
-  if (loading) return <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>;
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <button type="button" onClick={() => { if (month === 0) { setMonth(11); setYear((y) => y - 1); } else setMonth((m) => m - 1); }} className="p-1 rounded-lg hover:bg-surface-hover"><ArrowRight className="h-4 w-4 rotate-180" /></button>
-        <span className="text-sm font-semibold text-text-primary">{QUOTE_MONTHS[month]} {year}</span>
-        <button type="button" onClick={() => { if (month === 11) { setMonth(0); setYear((y) => y + 1); } else setMonth((m) => m + 1); }} className="p-1 rounded-lg hover:bg-surface-hover"><ArrowRight className="h-4 w-4" /></button>
-      </div>
-      <div className="grid grid-cols-7 gap-px bg-border p-2">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="text-[10px] font-semibold text-text-tertiary text-center py-1">{d}</div>)}
-        {calendarDays.map((day, i) => (
-          <div key={i} className="min-h-[80px] bg-card p-1.5">
-            {day != null ? (
-              <>
-                <span className="text-xs font-medium text-text-secondary">{day}</span>
-                {(quotesByDay[day] ?? []).slice(0, 2).map((q) => (
-                  <button key={q.id} type="button" onClick={() => onSelectQuote(q)} className="block w-full text-left mt-1 px-1.5 py-1 rounded bg-primary/10 text-primary text-[10px] font-medium truncate">{q.reference}</button>
-                ))}
-                {(quotesByDay[day] ?? []).length > 2 && <span className="text-[10px] text-text-tertiary">+{(quotesByDay[day] ?? []).length - 2}</span>}
-              </>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[]; loading: boolean; onSelectQuote: (q: Quote) => void }) {
-  if (loading) return <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>;
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {quotes.map((q) => (
-        <button key={q.id} type="button" onClick={() => onSelectQuote(q)} className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-colors">
-          <p className="text-sm font-semibold text-text-primary">{q.reference}</p>
-          <p className="text-xs text-text-tertiary truncate">{quoteListSubtitlePostcode(q)}</p>
-          {q.request_id && (
-            <p className="text-[10px] text-text-tertiary mt-1">From request · optional site photos in drawer</p>
-          )}
-          {q.source_account_name?.trim() ? (
-            <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
-          ) : null}
-          <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
-          <Badge variant={statusConfig[q.status]?.variant ?? "default"} size="sm" className="mt-2">{statusLabels[q.status]}</Badge>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {

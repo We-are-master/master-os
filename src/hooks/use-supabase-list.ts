@@ -188,7 +188,14 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
         if (!silent) setData([]);
       })
       .finally(() => {
-        if (!cancelled && !silent) setLoading(false);
+        // Always clear on the run that finishes, silent or not.
+        //
+        // The bug this fixes: a visible load sets `loading = true`, then a
+        // silent refresh bumps `tick` and cancels it. The cancelled run skips
+        // its cleanup, and the silent run that replaced it never touches
+        // `loading` — so the table span forever. The Closed tab hit this on
+        // every open, because it fires a silent refresh the moment it mounts.
+        if (!cancelled) setLoading(false);
       });
 
     return () => {

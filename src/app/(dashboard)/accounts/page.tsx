@@ -8,6 +8,9 @@ import { PageTransition, StaggerContainer } from "@/components/layout/page-trans
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { DrawerSection } from "@/components/shared/drawer-section";
+import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
@@ -18,9 +21,9 @@ import { Tabs } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar,
+  Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar, BarChart3,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
-  LayoutList, LayoutGrid, ChevronLeft, ChevronRight, Minus, ArrowRight, Share2,
+  Minus, ArrowRight, Share2,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
@@ -108,13 +111,11 @@ const ACCOUNT_STATUS_OPTIONS = [
   { value: "inactive", label: "Inactive" },
 ];
 
-const ACCOUNTS_VIEW_STORAGE_KEY = "master-os-accounts-view";
 
 const ACCOUNTS_LIST_PAGE_SIZE = 10;
 /** Fetch all accounts in one request so revenue + legacy ranking/sort is global (not per server page). */
 const ACCOUNTS_FETCH_PAGE_SIZE = 500;
 
-type AccountsDisplayMode = "list" | "grid";
 
 function ApplyAccountsSearchQuery({ setSearch }: { setSearch: (s: string) => void }) {
   const searchParams = useSearchParams();
@@ -255,29 +256,13 @@ export default function AccountsPage() {
   const [form, setForm] = useState(emptyForm);
   const [createAssignableUsers, setCreateAssignableUsers] = useState<AssignableUser[]>([]);
   /** Resolve account_owner_id → name in the main table (same directory as job/account owner pickers). */
-  const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [accountsDisplayMode, setAccountsDisplayMode] = useState<AccountsDisplayMode>("list");
+  // Accounts is a numbers page — the strip opens up here, unlike Jobs/Quotes.
+  const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("accounts_kpis_visible_v1", {
+    defaultVisible: true,
+  });
   const [listSortKey, setListSortKey] = useState<string | null>("total_revenue");
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
-
-  /** Avoid SSR/localStorage mismatch — restore saved view after mount. */
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem(ACCOUNTS_VIEW_STORAGE_KEY);
-      if (v === "grid" || v === "list") setAccountsDisplayMode(v);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(ACCOUNTS_VIEW_STORAGE_KEY, accountsDisplayMode);
-    } catch {
-      /* ignore */
-    }
-  }, [accountsDisplayMode]);
 
   const { profile } = useProfile();
   const { can, loading: configLoading } = useAdminConfig();
@@ -341,10 +326,6 @@ export default function AccountsPage() {
     loadKpis();
     loadClientCounts();
   }, [loadKpis, loadClientCounts]);
-
-  useEffect(() => {
-    void listActiveAssignableUsers().then(setAccountOwnerDirectory).catch(() => setAccountOwnerDirectory([]));
-  }, []);
 
   useEffect(() => {
     void listCatalogServicesForPicker()
@@ -609,18 +590,18 @@ export default function AccountsPage() {
         const rank = revenueRankByAccountId.get(item.id);
         const medal = accountRevenueRankMedal(rank);
         return (
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             {medal ? (
               <span
-                className="text-lg shrink-0 leading-none w-6 text-center"
+                className="text-sm shrink-0 leading-none w-4 text-center"
                 title={`${rank}${rank === 1 ? "st" : rank === 2 ? "nd" : "rd"} by revenue`}
               >
                 {medal}
               </span>
             ) : (
-              <span className="w-6 shrink-0" aria-hidden />
+              <span className="w-4 shrink-0" aria-hidden />
             )}
-            <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
+            <Avatar name={item.company_name} size="sm" src={item.logo_url ?? undefined} className="shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 min-w-0">
                 <p className="text-sm font-semibold text-text-primary truncate">{item.company_name}</p>
@@ -633,11 +614,11 @@ export default function AccountsPage() {
                 />
               </div>
               {serviceLabels.length > 0 ? (
-                <div className="mt-1 min-w-0">
+                <div className="mt-0.5 min-w-0">
                   <PartnerTradesIconStrip
                     trades={serviceLabels}
                     catalogServices={catalogServices}
-                    maxVisible={5}
+                    maxVisible={3}
                   />
                 </div>
               ) : industry ? (
@@ -781,26 +762,22 @@ export default function AccountsPage() {
         <ApplyAccountsSearchQuery setSearch={setSearch} />
       </Suspense>
       <div className="space-y-5">
-        <PageHeader title="Accounts" subtitle="Corporate clients — billing, jobs, and rate cards in one place.">
+        <PageHeader title="Accounts">
+          <ToolbarIconButton
+            icon={BarChart3}
+            label={kpisVisible ? "Hide KPIs" : "Show KPIs"}
+            active={kpisVisible}
+            onClick={toggleKpis}
+          />
           {!configLoading && canCatalog ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Share2 className="h-3.5 w-3.5" />}
-              onClick={() => setShareOpen(true)}
-            >
-              Share rate card
-            </Button>
+            <ToolbarIconButton icon={Share2} label="Share rate card" onClick={() => setShareOpen(true)} />
           ) : null}
-          {isAdmin && (
-            <Button size="sm" variant="outline" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setSyncOpen(true)}>
-              Sync due dates
-            </Button>
-          )}
+          {isAdmin && <ToolbarIconButton icon={Receipt} label="Sync due dates" onClick={() => setSyncOpen(true)} />}
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Account</Button>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {kpisVisible ? (
+        <StaggerContainer className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <KpiCard
             title="Total Accounts"
             value={totalAccounts}
@@ -827,6 +804,7 @@ export default function AccountsPage() {
             accent="purple"
           />
         </StaggerContainer>
+        ) : null}
 
         <motion.div
           variants={fadeInUp}
@@ -848,52 +826,16 @@ export default function AccountsPage() {
                 {sortedListData.length} {sortedListData.length === 1 ? "account" : "accounts"}
               </p>
               <div className="flex items-center gap-2 w-full min-w-0">
-                <div
-                  className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-[3px] gap-0.5"
-                  role="group"
-                  aria-label="Accounts view mode"
-                >
-                  <button
-                    type="button"
-                    aria-pressed={accountsDisplayMode === "list"}
-                    onClick={() => setAccountsDisplayMode("list")}
-                    className={cn(
-                      "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                      accountsDisplayMode === "list"
-                        ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
-                        : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
-                    )}
-                    title="List view"
-                  >
-                    <LayoutList className="h-4 w-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={accountsDisplayMode === "grid"}
-                    onClick={() => setAccountsDisplayMode("grid")}
-                    className={cn(
-                      "rounded-md px-2.5 py-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                      accountsDisplayMode === "grid"
-                        ? "bg-surface-secondary text-text-primary shadow-sm ring-1 ring-border/70"
-                        : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover",
-                    )}
-                    title="Grid view"
-                  >
-                    <LayoutGrid className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
-                <SearchInput
-                  placeholder="Search accounts…"
-                  className="min-w-0 flex-1"
+                <ExpandingSearch
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={setSearch}
+                  placeholder="Search accounts…"
+                  className="ml-auto"
                 />
               </div>
             </div>
           </div>
 
-          {accountsDisplayMode === "list" ? (
-          <>
           <DataTable
             columns={columns}
             data={pageListData}
@@ -929,7 +871,7 @@ export default function AccountsPage() {
               </div>
             }
           />
-          {accountsDisplayMode === "list" && sortedListData.length > 0 ? (
+          {sortedListData.length > 0 ? (
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
               <span>
                 Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
@@ -939,36 +881,6 @@ export default function AccountsPage() {
               </span>
             </div>
           ) : null}
-          </>
-          ) : (
-            <AccountsGridView
-              embedded
-              data={pageListData}
-              loading={loading}
-              page={listPage}
-              totalPages={clientTotalPages}
-              totalItems={sortedListData.length}
-              onPageChange={setListPage}
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
-              selectedDetailId={selectedAccount?.id}
-              onOpenAccount={openAccountDetail}
-              accountOwnerDirectory={accountOwnerDirectory}
-              catalogServices={catalogServices}
-              paymentOrgCtx={paymentOrgCtx}
-              legacyRevenueByAccount={legacyRevenueByAccount}
-              revenueRankByAccountId={revenueRankByAccountId}
-              relationshipRevenueFor={relationshipRevenueFor}
-              clientCountByAccountId={clientCountByAccountId}
-              bulkActionButtons={
-                <>
-                  <BulkBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
-                  <BulkBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
-                  <BulkBtn label="Onboarding" onClick={() => handleBulkStatusChange("onboarding")} variant="warning" />
-                </>
-              }
-            />
-          )}
         </motion.div>
       </div>
 
@@ -1165,359 +1077,7 @@ export default function AccountsPage() {
   );
 }
 
-function AccountsGridCheckbox({
-  checked,
-  indeterminate,
-  onChange,
-  className,
-}: {
-  checked: boolean;
-  indeterminate?: boolean;
-  onChange: () => void;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onChange();
-      }}
-      className={cn(
-        "h-[18px] w-[18px] rounded-md border-2 flex items-center justify-center transition-all shrink-0",
-        checked || indeterminate
-          ? "bg-primary border-primary text-white"
-          : "border-border hover:border-text-tertiary bg-card",
-        className,
-      )}
-    >
-      {checked && !indeterminate ? (
-        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" aria-hidden>
-          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ) : null}
-      {indeterminate && !checked ? <Minus className="h-3 w-3" aria-hidden /> : null}
-    </button>
-  );
-}
 
-const ACCOUNT_STATUS_ACCENT: Record<string, string> = {
-  active: "border-l-emerald-500",
-  onboarding: "border-l-amber-400",
-  inactive: "border-l-border",
-};
-
-function AccountsGridView({
-  data,
-  loading,
-  page,
-  totalPages,
-  totalItems,
-  onPageChange,
-  selectedIds,
-  onSelectionChange,
-  selectedDetailId,
-  onOpenAccount,
-  accountOwnerDirectory,
-  catalogServices,
-  paymentOrgCtx,
-  legacyRevenueByAccount,
-  revenueRankByAccountId,
-  relationshipRevenueFor,
-  clientCountByAccountId,
-  bulkActionButtons,
-  embedded = false,
-}: {
-  data: Account[];
-  loading: boolean;
-  page: number;
-  totalPages: number;
-  totalItems: number;
-  onPageChange: (p: number) => void;
-  selectedIds: Set<string>;
-  onSelectionChange: (ids: Set<string>) => void;
-  selectedDetailId?: string | null;
-  onOpenAccount: (a: Account) => void;
-  accountOwnerDirectory: AssignableUser[];
-  catalogServices: CatalogService[];
-  paymentOrgCtx: AccountPaymentOrgContext;
-  legacyRevenueByAccount: Record<string, number>;
-  revenueRankByAccountId: Map<string, number>;
-  relationshipRevenueFor: (account: Account) => number;
-  clientCountByAccountId: Record<string, number>;
-  bulkActionButtons: ReactNode;
-  embedded?: boolean;
-}) {
-  const allIds = data.map((a) => a.id);
-  const allSelected = data.length > 0 && allIds.every((id) => selectedIds.has(id));
-  const someSelected = allIds.some((id) => selectedIds.has(id));
-
-  const toggleAll = () => {
-    if (allSelected) {
-      const next = new Set(selectedIds);
-      for (const id of allIds) next.delete(id);
-      onSelectionChange(next);
-    } else {
-      const next = new Set(selectedIds);
-      for (const id of allIds) next.add(id);
-      onSelectionChange(next);
-    }
-  };
-
-  const toggleOne = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    onSelectionChange(next);
-  };
-
-  const selectionCount = selectedIds.size;
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden relative",
-        embedded ? "bg-transparent" : "bg-card rounded-xl border border-card-border shadow-soft",
-      )}
-    >
-      <AnimatePresence>
-        {selectionCount > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.15 }}
-            className="sticky top-0 z-10 flex items-center gap-3 px-5 py-2.5 bg-primary/[0.04] border-b border-primary/10"
-          >
-            <div className="flex items-center gap-2">
-              <AccountsGridCheckbox
-                checked={allSelected}
-                indeterminate={someSelected && !allSelected}
-                onChange={toggleAll}
-              />
-              <span className="text-sm font-medium text-primary">{selectionCount} selected</span>
-            </div>
-            <div className="h-4 w-px bg-border" />
-            <div className="flex items-center gap-1.5 flex-wrap">{bulkActionButtons}</div>
-            <button
-              type="button"
-              onClick={() => onSelectionChange(new Set())}
-              className="ml-auto text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors"
-            >
-              Clear selection
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {loading ? (
-        <div className="p-5 grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-[14.5rem] rounded-xl border border-border-light bg-surface-secondary animate-shimmer"
-            />
-          ))}
-        </div>
-      ) : data.length === 0 ? (
-        <div className="px-5 py-16 text-center">
-          <div className="flex flex-col items-center gap-2">
-            <div className="h-12 w-12 rounded-xl bg-surface-tertiary flex items-center justify-center">
-              <Building className="h-6 w-6 text-text-tertiary" />
-            </div>
-            <p className="text-sm font-medium text-text-secondary">No accounts found</p>
-            <p className="text-xs text-text-tertiary max-w-xs">Try another status tab or clear your search.</p>
-          </div>
-        </div>
-      ) : (
-        <div className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {data.map((item) => {
-            const id = item.id;
-            const isChecked = selectedIds.has(id);
-            const isOpen = selectedDetailId === id;
-            const cfg = statusConfig[item.status] ?? statusConfig.inactive;
-            const termsLabel = shortenPaymentTerms(item.payment_terms);
-            const statusAccent = ACCOUNT_STATUS_ACCENT[item.status] ?? ACCOUNT_STATUS_ACCENT.inactive;
-            const serviceLabels = catalogServiceLabelsForIds(item.catalog_service_ids, catalogServices);
-            const industry = item.industry?.trim();
-            const rank = revenueRankByAccountId.get(id);
-            const medal = accountRevenueRankMedal(rank);
-            const totalRev = relationshipRevenueFor(item);
-            return (
-              <div
-                key={id}
-                role="button"
-                tabIndex={0}
-                onClick={() => onOpenAccount(item)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onOpenAccount(item);
-                  }
-                }}
-                className={cn(
-                  "relative rounded-xl border border-l-[3px] text-left outline-none transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
-                  statusAccent,
-                  isChecked
-                    ? "border-primary bg-primary/[0.04]"
-                    : isOpen
-                      ? "border-primary/45 bg-primary/[0.02] shadow-sm"
-                      : "border-border-light hover:border-primary/30 hover:bg-surface-hover/70 hover:shadow-sm",
-                )}
-              >
-                <div
-                  className="absolute left-3 top-3 z-[1]"
-                  role="presentation"
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                >
-                  <AccountsGridCheckbox checked={isChecked} onChange={() => toggleOne(id)} />
-                </div>
-
-                <div className="absolute right-3 top-3 flex items-center gap-2 max-w-[calc(100%-5.5rem)]">
-                  <Badge variant={cfg.variant} size="sm" dot className="shrink truncate max-w-full">
-                    {cfg.label}
-                  </Badge>
-                </div>
-
-                <div className="p-4 pt-11 sm:pr-4">
-                  <div className="flex gap-3 min-w-0">
-                    {medal ? (
-                      <span
-                        className="text-xl shrink-0 leading-none pt-0.5"
-                        title={`${rank}${rank === 1 ? "st" : rank === 2 ? "nd" : "rd"} by revenue`}
-                      >
-                        {medal}
-                      </span>
-                    ) : null}
-                    <Avatar name={item.company_name} size="md" src={item.logo_url ?? undefined} className="shrink-0" />
-                    <div className="min-w-0 flex-1 pr-1">
-                      <p className="text-sm font-semibold text-text-primary leading-snug truncate">{item.company_name}</p>
-                      <p className="text-[11px] text-text-tertiary truncate mt-0.5">{item.contact_name}</p>
-                      {serviceLabels.length === 0 && industry ? (
-                        <p className="text-[10px] text-text-tertiary truncate mt-1">{industry}</p>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {serviceLabels.length > 0 ? (
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">
-                        Services
-                      </p>
-                      <PartnerTradesIconStrip
-                        trades={serviceLabels}
-                        catalogServices={catalogServices}
-                        maxVisible={6}
-                      />
-                    </div>
-                  ) : null}
-
-                  <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-border-light/80 pt-4">
-                    <div>
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Jobs</dt>
-                      <dd
-                        className={cn(
-                          "text-lg font-semibold tabular-nums",
-                          item.active_jobs > 0 ? "text-primary" : "text-text-tertiary",
-                        )}
-                      >
-                        {item.active_jobs}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Clients</dt>
-                      <dd
-                        className={cn(
-                          "text-lg font-semibold tabular-nums",
-                          (clientCountByAccountId[item.id] ?? 0) > 0 ? "text-fx-navy dark:text-white" : "text-text-tertiary",
-                        )}
-                      >
-                        {clientCountByAccountId[item.id] ?? 0}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Revenue</dt>
-                      <dd className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(totalRev)}</dd>
-                    </div>
-                    <div className="col-span-3">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Credit</dt>
-                      <dd
-                        className="text-sm font-medium tabular-nums text-text-secondary"
-                        title={formatCurrency(item.credit_limit)}
-                      >
-                        {formatCreditLimitCompact(item.credit_limit)}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <div className="mt-4 pt-3 border-t border-border-light/80 flex flex-wrap items-start justify-between gap-2">
-                    <Badge variant="outline" size="sm" className="max-w-[65%] truncate">
-                      {termsLabel}
-                    </Badge>
-                    <div className="text-right min-w-0">
-                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        Next payment
-                      </span>
-                      <span className="inline-block mt-0.5">{renderAccountNextPayment(item, paymentOrgCtx)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {totalPages > 1 ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3 border-t border-border-light">
-          <p className="text-xs text-text-tertiary">
-            Showing {(page - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}-{Math.min(page * ACCOUNTS_LIST_PAGE_SIZE, totalItems)} of{" "}
-            {totalItems}
-          </p>
-          <div className="flex items-center gap-1 shrink-0 justify-end">
-            <button
-              type="button"
-              onClick={() => onPageChange(page - 1)}
-              disabled={page <= 1}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
-              const pageNum = i + 1;
-              return (
-                <button
-                  key={pageNum}
-                  type="button"
-                  onClick={() => onPageChange(pageNum)}
-                  className={cn(
-                    "h-8 w-8 rounded-lg text-xs font-medium transition-colors shrink-0",
-                    page === pageNum
-                      ? "bg-primary text-white"
-                      : "text-text-secondary hover:bg-surface-tertiary",
-                  )}
-                >
-                  {pageNum}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => onPageChange(page + 1)}
-              disabled={page >= totalPages}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              aria-label="Next page"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function AccountDetailDrawer({
   account,
@@ -1911,13 +1471,13 @@ function AccountDetailDrawer({
           activeTab={tab}
           onChange={setTab}
           tabs={[
+            // Four tabs. Services, Rates and Portal moved into Overview as
+            // sections: across the ten active accounts they were filled on 7, 2
+            // and 1 respectively, so as tabs they were mostly a dead click.
             { id: "overview", label: "Overview" },
-            { id: "trades", label: "Services" },
-            { id: "rates", label: "Rates" },
-            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
             { id: "clients", label: "Clients", count: clientsTotal || undefined },
+            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
             { id: "finance", label: "Finance", count: invoices.length || undefined },
-            { id: "portal", label: "Portal" },
           ]}
         />
       </div>
@@ -2149,6 +1709,56 @@ function AccountDetailDrawer({
                 </div>
               </div>
             </div>
+
+            {account ? (
+              <div className="space-y-3">
+                <DrawerSection
+                  title="Services"
+                  summary={
+                    editCatalogServiceIds.length > 0
+                      ? `${editCatalogServiceIds.length} service${editCatalogServiceIds.length === 1 ? "" : "s"} on this account`
+                      : "No services picked yet"
+                  }
+                >
+                  <CatalogTradesSkillsTab
+                    kind="account"
+                    account={account}
+                    canEdit={isAdmin}
+                    onAccountUpdate={(a) => {
+                      onAccountUpdated(a);
+                      setEditCatalogServiceIds(a.catalog_service_ids ?? []);
+                    }}
+                  />
+                </DrawerSection>
+
+                <DrawerSection title="Rate card" summary="Prices agreed with this account">
+                  <AccountServiceRatesTabSection
+                    accountId={account.id}
+                    account={{ catalog_service_ids: editCatalogServiceIds }}
+                  />
+                </DrawerSection>
+
+                <DrawerSection title="Portal & history" summary="Client logins and legacy revenue">
+                  <div className="space-y-6">
+                    <AccountHistorySection
+                      account={account}
+                      jobs={jobs}
+                      legacyRows={legacyRows}
+                      loading={loadingExtras}
+                      isAdmin={isAdmin}
+                      onLegacyRowsChange={(rows) => {
+                        setLegacyRows(rows);
+                        onLegacyRevenueChanged?.();
+                      }}
+                    />
+                    <div>
+                      <p className="mb-3 text-xs font-bold uppercase tracking-wider text-text-primary">Portal users</p>
+                      <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+                    </div>
+                  </div>
+                </DrawerSection>
+              </div>
+            ) : null}
           </>
         )}
 
@@ -2524,50 +2134,6 @@ function AccountDetailDrawer({
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── Trades & skills tab ──────────────────────────────────── */}
-        {tab === "trades" && account && (
-          <CatalogTradesSkillsTab
-            kind="account"
-            account={account}
-            canEdit={isAdmin}
-            onAccountUpdate={(a) => {
-              onAccountUpdated(a);
-              setEditCatalogServiceIds(a.catalog_service_ids ?? []);
-            }}
-          />
-        )}
-
-        {/* ── Rate card tab ────────────────────────────────────────── */}
-        {tab === "rates" && account && (
-          <AccountServiceRatesTabSection
-            accountId={account.id}
-            account={{ catalog_service_ids: editCatalogServiceIds }}
-          />
-        )}
-
-        {/* ── Portal tab (history + portal users) ──────────────────── */}
-        {tab === "portal" && account && (
-          <div className="space-y-6">
-            <AccountHistorySection
-              account={account}
-              jobs={jobs}
-              legacyRows={legacyRows}
-              loading={loadingExtras}
-              isAdmin={isAdmin}
-              onLegacyRowsChange={(rows) => {
-                setLegacyRows(rows);
-                onLegacyRevenueChanged?.();
-              }}
-            />
-            <div className="rounded-2xl border border-border-light bg-white p-5">
-              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider mb-4">
-                Portal users
-              </p>
-              <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
-            </div>
           </div>
         )}
 

@@ -33,6 +33,7 @@ const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>([
   "yesterday",
   "tomorrow",
   "week",
+  "next_week",
   "month",
   "qtd",
   "last_month",
@@ -57,7 +58,7 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
   };
 
   return (
-    <div className="flex items-start justify-between gap-6 flex-wrap">
+    <div className="flex shrink-0 items-start justify-between gap-6 flex-wrap">
       <div className="flex flex-col gap-0.5 min-w-0">
         <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
@@ -67,7 +68,7 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <DateRangeFilter value={sharedValue} onChange={applyShared} variant="segment" />
+        <DateRangeFilter value={sharedValue} onChange={applyShared} />
         <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
           {VIEWS.map((v) => {
             const Icon = v.icon;

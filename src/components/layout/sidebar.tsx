@@ -97,7 +97,7 @@ const navLogoComponents: Record<string, (props: { className?: string }) => React
 };
 
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
-const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm"]);
+const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/leads"]);
 
 function pathMatchesHref(pathname: string, href: string): boolean {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
@@ -322,7 +322,12 @@ function SidebarNavGroups({
 }) {
   return (
     <>
-      {navGroups.map((group) => (
+      {navGroups.map((group) => {
+        const visibleItems = group.items.filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href));
+        // A group whose every item is hidden would otherwise leave its heading
+        // floating alone (what "Learn" did once Fixfy School was pulled).
+        if (visibleItems.length === 0) return null;
+        return (
         <div key={group.label}>
           <AnimatePresence>
             {!collapsed && (
@@ -350,8 +355,7 @@ function SidebarNavGroups({
           </AnimatePresence>
           {(collapsed || !collapsedSections[group.label]) && (
             <div className="space-y-0.5">
-              {group.items
-                .filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href))
+              {visibleItems
                 .map((item) => (
                   <div key={item.href} className="space-y-0.5">
                     <NavLink item={item} collapsed={collapsed} onNavigate={onNavigate} />
@@ -372,7 +376,8 @@ function SidebarNavGroups({
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </>
   );
 }

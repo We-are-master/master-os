@@ -4,16 +4,16 @@ import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
-import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { KpiCard } from "@/components/ui/kpi-card";
+import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
 import { Modal } from "@/components/ui/modal";
-import { Input, SearchInput } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import {
@@ -25,7 +25,7 @@ import {
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import {
-  Plus, Filter, Download, UserPlus, Users,
+  Filter, Download, UserPlus, Users,
   DollarSign, Briefcase, ArrowRight, MapPin,
   Mail, Phone, Calendar, Tag, Edit3, Trash2,
   Home, Building2, Key, UserCheck, Ban, Crown,
@@ -462,30 +462,16 @@ function ClientsPageInner() {
               Clear account filter
             </Link>
           ) : null}
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>Export</Button>
+          <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
           <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Client</Button>
         </PageHeader>
-
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Clients" value={statusCounts.all ?? 0} format="number" icon={Users} accent="blue" />
-          <KpiCard title="Lifetime Value" value={totalSpent} format="currency" icon={DollarSign} accent="emerald" />
-          <KpiCard
-            title="Clients per Account"
-            value={clientsPerAccountAvg > 0 ? clientsPerAccountAvg.toFixed(1) : "0"}
-            format="none"
-            description="Avg. linked clients per corporate account"
-            icon={Building2}
-            accent="purple"
-          />
-          <KpiCard title="Active" value={statusCounts.active ?? 0} format="number" description="Currently active clients" icon={UserCheck} accent="primary" />
-        </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex items-center justify-between mb-4">
             <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             <div className="flex items-center gap-2">
-              <SearchInput placeholder="Search clients..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
+              <ExpandingSearch value={search} onChange={setSearch} placeholder="Search clients…" />
+              <ToolbarIconButton icon={Filter} label="Filter" />
             </div>
           </div>
           <DataTable

@@ -22,14 +22,14 @@ import {
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
 import { createJobPayment } from "@/services/job-payments";
-import { SearchInput, Input } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
+  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3,
   ArrowRight, Briefcase, Receipt, Wallet,
-  MapPin, Building2, TrendingUp,
+  Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
   Timer,
 } from "lucide-react";
@@ -82,7 +82,8 @@ import { patchOfficeCancelZeroJobEconomics } from "@/lib/job-cancel-economics";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
-import { listPartners } from "@/services/partners";
+import { listPartners, listAssignablePartners } from "@/services/partners";
+import { listActiveAccountsForFilter } from "@/services/accounts";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
@@ -91,6 +92,9 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { MarginValue } from "@/components/shared/margin-value";
+import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
 import {
@@ -215,7 +219,6 @@ const LEGACY_JOBS_MANAGEMENT_TAB: Partial<
   deleted: { tab: "closed", closedFilter: "archived" },
 };
 
-const JOBS_PAGE_SIZE_OPTIONS = [50, 10, 100] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
 
@@ -372,7 +375,6 @@ function readStoredJobsSchedulePreset(): ScheduleDatePreset {
 
 const JOBS_DEFAULT_TAB_STORAGE_KEY = "master-os-jobs-default-tab-v1";
 const JOBS_DEFAULT_TAB_IDS = [
-  "all",
   "action_required",
   "scheduled",
   "in_progress",
@@ -382,7 +384,6 @@ const JOBS_DEFAULT_TAB_IDS = [
 ] as const;
 type JobsDefaultTabId = (typeof JOBS_DEFAULT_TAB_IDS)[number];
 const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
-  all: "Active jobs",
   action_required: "Action Required",
   scheduled: "Scheduled",
   in_progress: "In Progress",
@@ -391,15 +392,17 @@ const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
   closed: "Closed",
 };
 
+/** Opens on Action Required. Anyone whose stored default was the old
+ *  "Active jobs" tab lands here too, since that tab is no longer shown. */
 function readStoredJobsDefaultTab(): JobsDefaultTabId {
-  if (typeof window === "undefined") return "all";
+  if (typeof window === "undefined") return "action_required";
   try {
     const v = localStorage.getItem(JOBS_DEFAULT_TAB_STORAGE_KEY);
     if (v && (JOBS_DEFAULT_TAB_IDS as readonly string[]).includes(v)) return v as JobsDefaultTabId;
   } catch {
     /* ignore */
   }
-  return "all";
+  return "action_required";
 }
 
 function formatMediumYmd(ymd: string): string {
@@ -539,33 +542,6 @@ function jobBillableAmount(j: Job) {
   return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
 }
 
-function JobMarginStack({ margin, marginPct }: { margin: number; marginPct: number }) {
-  return (
-    <div className="leading-tight">
-      <p
-        className={cn(
-          "text-[11px] font-medium tabular-nums",
-          margin >= 0
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-red-600 dark:text-red-400",
-        )}
-      >
-        {formatCurrency(margin)}
-      </p>
-      <p
-        className={cn(
-          "text-[11px] font-medium tabular-nums",
-          marginPct >= 20
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-amber-600 dark:text-amber-400",
-        )}
-      >
-        {marginPct}%
-      </p>
-    </div>
-  );
-}
-
 /** Mini financial strip: amount (incl. extras), partner cost, margin £, margin %. */
 function JobCardFinanceRow({ job }: { job: Job }) {
   const amount = jobBillableAmount(job);
@@ -573,7 +549,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
   const profit = jobProfit(job);
   const marginPct = jobMarginPercent(job);
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 pt-2.5 border-t border-border-light">
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 pt-2.5 border-t border-border-light">
       <div className="min-w-0">
         <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
         <p className="text-xs font-semibold text-text-primary tabular-nums truncate">{formatCurrency(amount)}</p>
@@ -584,25 +560,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
       </div>
       <div className="min-w-0">
         <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
-        <p
-          className={cn(
-            "text-xs font-semibold tabular-nums truncate",
-            profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
-          )}
-        >
-          {formatCurrency(profit)}
-        </p>
-      </div>
-      <div className="min-w-0">
-        <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
-        <p
-          className={cn(
-            "text-xs font-semibold tabular-nums",
-            marginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
-          )}
-        >
-          {marginPct}%
-        </p>
+        <MarginValue value={profit} pct={marginPct} />
       </div>
     </div>
   );
@@ -785,7 +743,7 @@ function JobsPageContent() {
     return listJobs(merged);
   }, []);
 
-  const [jobsPageSize, setJobsPageSize] = useState<number>(50);
+  const [jobsPageSize] = useState<number>(50);
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
     fetcher: fetchJobsManagementList,
     pageSize: jobsPageSize,
@@ -795,7 +753,13 @@ function JobsPageContent() {
   });
   const { profile } = useProfile();
   const { officeCancellationPresets, accessFees } = useFrontendSetup();
-  const [viewMode, setViewMode] = useState("list");
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("jobs_kpis_visible_v1");
+  /** Kanban drop that needs a decision before it saves. Null while nothing is pending. */
+  const [kanbanMove, setKanbanMove] = useState<
+    { job: Job; toColumnId: string; blockedReason: string | null } | null
+  >(null);
+  const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -892,8 +856,15 @@ function JobsPageContent() {
     if (status === "closed" && closedJobsFilter === "archived") setSelectedIds(new Set());
   }, [closedJobsFilter, status]);
 
+  // Closed's sub-filter (All / Paid / Archived / Lost) rides in `listParams`,
+  // which the list hook reads through a ref — so changing it does not refetch on
+  // its own. Refresh only when the sub-filter actually changes: entering the tab
+  // already triggers a fetch through `status`, and firing both raced them.
+  const lastClosedFilterRef = useRef(closedJobsFilter);
   useEffect(() => {
-    if (status !== "closed") return;
+    const changed = lastClosedFilterRef.current !== closedJobsFilter;
+    lastClosedFilterRef.current = closedJobsFilter;
+    if (status !== "closed" || !changed) return;
     refreshSilent();
   }, [closedJobsFilter, refreshSilent, status]);
 
@@ -924,58 +895,28 @@ function JobsPageContent() {
     setJobsListSortDir(direction);
   }, []);
 
-  // Load partner + account option lists for the filter popover (once per mount).
+  // Filter option lists (once per mount). Both come from the shared services so
+  // the partner picker offers only active partners, and the account picker
+  // reads the column that actually exists.
+  //
+  // What was here before: every partner in the directory regardless of status,
+  // merged with anyone who ever held a job — so off-boarded partners stayed in
+  // the filter forever. The account query asked for `accounts.name`, a column
+  // that does not exist, so it errored and the picker was always empty.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const supabase = getSupabase();
-      const [directoryRes, jobPartnersRes, accountsRes] = await Promise.all([
-        supabase
-          .from("partners")
-          .select("id, company_name, contact_name")
-          .order("company_name", { ascending: true })
-          .limit(3000),
-        supabase
-          .from("jobs")
-          .select("partner_id, partner_name")
-          .not("partner_id", "is", null)
-          .not("partner_name", "is", null)
-          .is("deleted_at", null)
-          .limit(2000),
-        supabase
-          .from("accounts")
-          .select("id, name")
-          .order("name", { ascending: true })
-          .limit(2000),
+      const [partners, accounts] = await Promise.all([
+        listAssignablePartners(),
+        listActiveAccountsForFilter(),
       ]);
       if (cancelled) return;
-      const seen = new Map<string, string>();
-      for (const r of (directoryRes.data ?? []) as {
-        id: string;
-        company_name: string | null;
-        contact_name: string | null;
-      }[]) {
-        const id = r.id?.trim();
-        const nm = r.company_name?.trim() || r.contact_name?.trim();
-        if (!id || !nm) continue;
-        seen.set(id, nm);
-      }
-      for (const r of (jobPartnersRes.data ?? []) as { partner_id: string | null; partner_name: string | null }[]) {
-        const id = r.partner_id?.trim();
-        const nm = r.partner_name?.trim();
-        if (!id || !nm) continue;
-        if (!seen.has(id)) seen.set(id, nm);
-      }
       setFilterPartnersList(
-        Array.from(seen.entries())
-          .map(([id, name]) => ({ id, name }))
+        partners
+          .map((p) => ({ id: p.id, name: p.company_name?.trim() || p.contact_name?.trim() || "Partner" }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
-      setFilterAccountsList(
-        ((accountsRes.data ?? []) as { id: string; name: string | null }[])
-          .map((r) => ({ id: r.id, name: r.name?.trim() ?? "" }))
-          .filter((a) => a.id && a.name),
-      );
+      setFilterAccountsList(accounts);
     })();
     return () => {
       cancelled = true;
@@ -1233,10 +1174,7 @@ function JobsPageContent() {
   ) : null;
 
   const jobMarginFooter = hasJobsListTotals ? (
-    <JobMarginStack
-      margin={jobsListFinancialTotals.profit}
-      marginPct={jobsListFinancialTotals.marginPct}
-    />
+    <MarginValue value={jobsListFinancialTotals.profit} pct={jobsListFinancialTotals.marginPct} size="md" />
   ) : null;
 
   const kanbanColumns = useMemo(() => {
@@ -1430,7 +1368,9 @@ function JobsPageContent() {
   const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
-    { id: "all", label: "Active jobs", count: kpiAllJobsCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
+    // "Active jobs" hidden for now: it is the union of the tabs beside it, so it
+    // duplicated every row and made the strip read as eight filters when there
+    // are seven. `status === "all"` still works from a link.
     { id: "action_required", label: "Action Required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
@@ -1882,6 +1822,7 @@ function JobsPageContent() {
   }, [attachSitePhotosToJob, refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
+
     const check = canAdvanceJob(job, newStatus);
     if (!check.ok) {
       toast.error(check.message ?? "Complete the current step before advancing.");
@@ -1910,6 +1851,40 @@ function JobsPageContent() {
       refresh(); loadDashboardStats();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
   }, [refresh, loadDashboardStats, profile?.id, profile?.full_name]);
+
+  /**
+   * Kanban drop. Columns here are tabs, not a clean status ladder: "Action
+   * required" and "Closed" are buckets the system fills, so a drop on those
+   * opens a modal explaining where the move actually happens. Awaiting payment
+   * also stops for confirmation, because landing there creates the self-bill.
+   */
+  const handleKanbanDrop = useCallback(
+    (job: Job, toColumnId: string) => {
+      const target = JOBS_KANBAN_DROP_STATUS[toColumnId];
+      if (!target) {
+        setKanbanMove({
+          job,
+          toColumnId,
+          blockedReason:
+            toColumnId === "closed"
+              ? "Closing a job runs the final review: reports, invoice and self-bill. Open the job to approve or cancel it."
+              : "Action required collects jobs the system flagged. Put the job on hold, or flag it from inside the job.",
+        });
+        return;
+      }
+      const check = canAdvanceJob(job, target);
+      if (!check.ok) {
+        setKanbanMove({ job, toColumnId, blockedReason: check.message ?? null });
+        return;
+      }
+      if (target === "awaiting_payment") {
+        setKanbanMove({ job, toColumnId, blockedReason: null });
+        return;
+      }
+      void handleStatusChange(job, target);
+    },
+    [handleStatusChange],
+  );
 
   const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
     try {
@@ -2770,12 +2745,11 @@ function JobsPageContent() {
   }, [scheduleWindowLine]);
 
   return (
-    <PageTransition>
-      <div className="space-y-5">
+    <PageTransition className="flex min-h-0 flex-col -mt-2 sm:-mt-3 lg:-mt-4 h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)] overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2 sm:pt-3 lg:pt-4">
         <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DateRangeFilter
-              variant="chip"
               value={{
                 mode: scheduleDatePreset as DateFilterMode,
                 customFrom: customScheduleFrom,
@@ -2789,28 +2763,30 @@ function JobsPageContent() {
                 }
               }}
             />
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+            <ToolbarIconButton
+              icon={BarChart3}
+              label={kpisVisible ? "Hide KPIs" : "Show KPIs"}
+              active={kpisVisible}
+              onClick={toggleKpis}
+            />
+            <ToolbarIconButton
+              icon={RefreshCw}
+              label="Refresh jobs, KPIs and tab counts"
+              spinning={loading}
               onClick={() => {
                 void loadDashboardStats();
                 refreshSilent();
               }}
-              title="Reload jobs, KPIs, and tab counts from the server (no full-table loading flash)"
-            >
-              Refresh
-            </Button>
-            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
-              Export
-            </Button>
+            />
+            <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
+        {kpisVisible ? (
+        <StaggerContainer className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
           <KpiCard
-            className="min-h-[128px] h-full"
+            compact
             title={scheduleRange ? "Active jobs (window)" : "Active jobs"}
             value={kpiFinancialLoading ? "—" : kpiActiveJobsCount}
             format="number"
@@ -2818,7 +2794,7 @@ function JobsPageContent() {
             accent="blue"
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            compact
             title="Avg. time per job"
             value={kpiFinancialLoading ? "—" : kpiAvgWorkTimeLabel}
             format="none"
@@ -2828,7 +2804,7 @@ function JobsPageContent() {
           {status === "all" ? (
             <>
               <KpiCard
-                className="min-h-[128px] h-full"
+                compact
                 title="Revenue"
                 value={loading ? "—" : formatCurrencyPrecise(activeJobsTabFinancialTotals.revenue)}
                 format="none"
@@ -2836,7 +2812,7 @@ function JobsPageContent() {
                 accent="purple"
               />
               <KpiCard
-                className="min-h-[128px] h-full"
+                compact
                 title="Cost"
                 value={loading ? "—" : formatCurrencyPrecise(activeJobsTabFinancialTotals.cost)}
                 format="none"
@@ -2847,7 +2823,7 @@ function JobsPageContent() {
           ) : (
             <>
               <KpiCard
-                className="min-h-[128px] h-full"
+                compact
                 title="Avg ticket"
                 value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(avgTicket)}
                 format="none"
@@ -2855,7 +2831,7 @@ function JobsPageContent() {
                 accent="purple"
               />
               <KpiCard
-                className="min-h-[128px] h-full"
+                compact
                 title="Avg margin"
                 value={kpiFinancialLoading ? "—" : avgMarginPct}
                 format={kpiFinancialLoading ? "none" : "percent"}
@@ -2865,8 +2841,9 @@ function JobsPageContent() {
             </>
           )}
         </StaggerContainer>
+        ) : null}
 
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
+        <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
             <div className="min-w-0 flex-1 pb-1 -mb-1">
             <Tabs
@@ -2880,11 +2857,11 @@ function JobsPageContent() {
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
-                  <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
+                {([{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }] as const).map(({ id, icon: Icon }) => (
+                  <button key={id} onClick={() => setViewMode(id)} title={id === "list" ? "List" : "Kanban"} aria-label={id === "list" ? "List" : "Kanban"} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
-              <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <ExpandingSearch value={search} onChange={setSearch} placeholder="Search jobs…" />
               <JobsPartnerFinder value={filterPartner} partners={filterPartnersList} onChange={setFilterPartner} />
               <div className="relative flex items-center gap-1.5" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
@@ -2998,17 +2975,18 @@ function JobsPageContent() {
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={openJobDetail}
+              rowHref={(j) => `/jobs/${j.id}`}
+              // On hold tints the whole line: the status chip alone was easy to
+              // miss when scanning a page of rows for what is stuck.
+              rowClassName={(j) =>
+                j.status === "on_hold" ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]" : undefined
+              }
               page={page}
               totalPages={totalPages}
               totalItems={totalItems}
               pageSize={jobsPageSize}
-              pageSizeOptions={[...JOBS_PAGE_SIZE_OPTIONS]}
-              onPageSizeChange={(size) => {
-                if (size === jobsPageSize) return;
-                setJobsPageSize(size);
-                if (page !== 1) setPage(1);
-              }}
               onPageChange={setPage}
+              fillHeight
               selectable
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
@@ -3046,6 +3024,7 @@ function JobsPageContent() {
                   columns={kanbanColumns}
                   getCardId={(j) => j.id}
                   onCardClick={openJobDetail}
+                  onCardDrop={handleKanbanDrop}
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
                     const onHoldKanbanBadge = jobOnHoldDisplayBadge(j);
@@ -3129,8 +3108,6 @@ function JobsPageContent() {
               )}
             </div>
           )}
-          {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={openJobDetail} />}
-          {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={openJobDetail} />}
         </motion.div>
       </div>
 
@@ -3288,6 +3265,56 @@ function JobsPageContent() {
       </Modal>
 
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+      <Modal
+        open={kanbanMove !== null}
+        onClose={() => {
+          if (!kanbanMoveSaving) setKanbanMove(null);
+        }}
+        title={kanbanMove?.blockedReason ? "This job can't move that way" : "Confirm move"}
+        subtitle={kanbanMove?.job.reference}
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <p className="text-sm leading-snug text-text-secondary">
+            {kanbanMove?.blockedReason ??
+              "Moving to Awaiting payment creates the partner self-bill for this job. Continue?"}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setKanbanMove(null)} disabled={kanbanMoveSaving}>
+              Cancel
+            </Button>
+            {kanbanMove?.blockedReason ? (
+              <Button
+                size="sm"
+                onClick={() => {
+                  const j = kanbanMove.job;
+                  setKanbanMove(null);
+                  openJobDetail(j);
+                }}
+              >
+                Open job
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                loading={kanbanMoveSaving}
+                onClick={async () => {
+                  if (!kanbanMove) return;
+                  setKanbanMoveSaving(true);
+                  try {
+                    await handleStatusChange(kanbanMove.job, "awaiting_payment");
+                    setKanbanMove(null);
+                  } finally {
+                    setKanbanMoveSaving(false);
+                  }
+                }}
+              >
+                Move
+              </Button>
+            )}
+          </div>
+        </div>
+      </Modal>
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
@@ -3298,6 +3325,14 @@ function JobsPageContent() {
     </PageTransition>
   );
 }
+
+/** Kanban columns that map to a real job status. The rest are buckets. */
+const JOBS_KANBAN_DROP_STATUS: Record<string, Job["status"] | undefined> = {
+  scheduled: "scheduled",
+  in_progress: "in_progress",
+  final_check: "final_check",
+  awaiting_payment: "awaiting_payment",
+};
 
 export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
@@ -4664,136 +4699,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
 
 /* ========== CALENDAR VIEW ========== */
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boolean; onSelectJob: (j: Job) => void }) {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth());
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7;
-  const calendarDays = useMemo(() => {
-    const days: (number | null)[] = [];
-    for (let i = 0; i < firstDayOfWeek; i++) days.push(null);
-    for (let i = 1; i <= daysInMonth; i++) days.push(i);
-    while (days.length % 7 !== 0) days.push(null);
-    return days;
-  }, [firstDayOfWeek, daysInMonth]);
-
-  const jobsByDay = useMemo(() => {
-    const map: Record<number, Array<{ job: Job; kind: "start" | "end" | "span" }>> = {};
-    for (const job of jobs) {
-      const start = jobScheduleYmd(job);
-      if (!start) continue;
-      const finish = jobFinishYmd(job) ?? start;
-      const startsThisMonth = start.y === year && start.m === month + 1;
-      const finishesThisMonth = finish.y === year && finish.m === month + 1;
-
-      if (startsThisMonth) {
-        if (!map[start.d]) map[start.d] = [];
-        map[start.d].push({ job, kind: "start" });
-      }
-      if (finishesThisMonth) {
-        if (!map[finish.d]) map[finish.d] = [];
-        map[finish.d].push({ job, kind: "end" });
-      }
-
-      const cursor = new Date(start.y, start.m - 1, start.d);
-      const endDate = new Date(finish.y, finish.m - 1, finish.d);
-      cursor.setDate(cursor.getDate() + 1);
-      while (cursor < endDate) {
-        if (cursor.getFullYear() === year && cursor.getMonth() === month) {
-          const d = cursor.getDate();
-          if (!map[d]) map[d] = [];
-          map[d].push({ job, kind: "span" });
-        }
-        cursor.setDate(cursor.getDate() + 1);
-      }
-    }
-    return map;
-  }, [jobs, year, month]);
-
-  if (loading) return <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>;
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <button type="button" onClick={() => { if (month === 0) { setMonth(11); setYear((y) => y - 1); } else setMonth((m) => m - 1); }} className="p-1 rounded-lg hover:bg-surface-hover"><ArrowRight className="h-4 w-4 rotate-180" /></button>
-        <span className="text-sm font-semibold text-text-primary">{MONTHS[month]} {year}</span>
-        <button type="button" onClick={() => { if (month === 11) { setMonth(0); setYear((y) => y + 1); } else setMonth((m) => m + 1); }} className="p-1 rounded-lg hover:bg-surface-hover"><ArrowRight className="h-4 w-4" /></button>
-      </div>
-      <div className="grid grid-cols-7 gap-px bg-border p-2">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="text-[10px] font-semibold text-text-tertiary text-center py-1">{d}</div>)}
-        {calendarDays.map((day, i) => (
-          <div key={i} className="min-h-[80px] bg-card p-1.5">
-            {day != null ? (
-              <>
-                <span className="text-xs font-medium text-text-secondary">{day}</span>
-                {(jobsByDay[day] ?? []).slice(0, 2).map(({ job, kind }, idx) => (
-                  <button
-                    key={`${job.id}-${kind}-${idx}`}
-                    type="button"
-                    onClick={() => onSelectJob(job)}
-                    className={`block w-full text-left mt-1 px-1.5 py-1 rounded text-[10px] font-medium truncate ${
-                      kind === "start"
-                        ? "bg-primary/10 text-primary"
-                        : kind === "end"
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-                          : "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                    }`}
-                  >
-                    {kind === "start" ? "Start / arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.reference}
-                  </button>
-                ))}
-                {(jobsByDay[day] ?? []).length > 2 && <span className="text-[10px] text-text-tertiary">+{(jobsByDay[day] ?? []).length - 2}</span>}
-              </>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boolean; onSelectJob: (j: Job) => void }) {
-  if (loading) return <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>;
-  const withAddress = jobs.filter((j) => j.property_address);
-  if (withAddress.length === 0) return <div className="py-20 text-center text-text-tertiary text-sm">No jobs with address to show on map.</div>;
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {withAddress.slice(0, 12).map((j) => {
-        const mapSched = formatJobScheduleListLabel(j);
-        const mapSchedDetail = formatJobScheduleLine(j);
-        return (
-          <button
-            key={j.id}
-            type="button"
-            onClick={() => onSelectJob(j)}
-            className="text-left rounded-xl border border-border bg-card overflow-hidden hover:border-primary/40 transition-colors flex flex-col w-full min-w-0"
-          >
-            <div className="relative w-full aspect-[16/9] min-h-[160px] sm:min-h-[180px] bg-surface-hover">
-              <LocationMiniMap address={j.property_address} className="h-full w-full" mapHeight="100%" showAddressBelowMap={false} lazy />
-            </div>
-            <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
-                <ZendeskTicketBadge source={j.external_source} ref={j.external_ref} size="xs" />
-                <JobOverdueBadge job={j} />
-              </div>
-              <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
-              <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
-              {mapSched ? (
-                <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug" title={mapSchedDetail ?? undefined}>
-                  {mapSched}
-                </p>
-              ) : null}
-              <JobCardFinanceRow job={j} />
-            </div>
-          </button>
-        );
-      })}
-      {withAddress.length > 12 && <p className="col-span-full text-xs text-text-tertiary text-center">Showing 12 of {withAddress.length} jobs</p>}
-    </div>
-  );
-}
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
