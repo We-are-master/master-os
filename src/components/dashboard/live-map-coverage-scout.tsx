@@ -27,6 +27,15 @@ function scoutTradeLabel(tradeFilter: "all" | string): string {
   return tradeFilter === "all" ? "All trades" : tradeFilter;
 }
 
+/** What the map draws. "both" is the default: jobs and partners together. */
+export type LiveMapEntityType = "both" | "jobs" | "partners";
+
+export const LIVE_MAP_ENTITY_OPTIONS: { value: string; label: string }[] = [
+  { value: "both", label: "Both" },
+  { value: "jobs", label: "Jobs" },
+  { value: "partners", label: "Partners" },
+];
+
 export type LiveMapCoverageSearchState = {
   target: CoverageSearchTarget;
   radiusMiles: number;
@@ -41,6 +50,14 @@ type Props = {
   search: LiveMapCoverageSearchState | null;
   onSearchChange: (next: LiveMapCoverageSearchState | null) => void;
   defaultRadiusMiles?: number;
+  entityType: LiveMapEntityType;
+  onEntityTypeChange: (value: LiveMapEntityType) => void;
+  /**
+   * Area search (postcode → partners in radius, plus the recruit prompt).
+   * Off on the Live View map: the bar there is two selects and nothing else.
+   * Flip it on to bring the whole scout back, input and results together.
+   */
+  showAreaSearch?: boolean;
 };
 
 export function LiveMapCoverageScout({
@@ -51,6 +68,9 @@ export function LiveMapCoverageScout({
   search,
   onSearchChange,
   defaultRadiusMiles = 5,
+  entityType,
+  onEntityTypeChange,
+  showAreaSearch = false,
 }: Props) {
   const [addressQuery, setAddressQuery] = useState("");
   const [radiusMiles, setRadiusMiles] = useState(defaultRadiusMiles);
@@ -66,6 +86,11 @@ export function LiveMapCoverageScout({
   const areaLabel = search?.target.label ?? "";
   const tradeLabel = scoutTradeLabel(tradeFilter);
   const radiusLabel = search?.radiusMiles ?? radiusMiles;
+
+  const setRadius = (n: number) => {
+    setRadiusMiles(n);
+    if (search) onSearchChange({ ...search, radiusMiles: n });
+  };
 
   useEffect(() => {
     if (!search) {
@@ -100,86 +125,73 @@ export function LiveMapCoverageScout({
     setListOpen(false);
   }
 
-  const scoutFieldClass =
-    "h-9 w-full appearance-none rounded-lg border border-[#D8D8DD] bg-[#FAFAFB] py-1.5 pl-2.5 pr-7 text-[11px] font-medium text-[#020040] outline-none focus:ring-2 focus:ring-[#ED4B00]/20 focus:border-[#ED4B00]/40";
-
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1.5">
-      <div className="grid w-full min-w-0 grid-cols-1 gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 px-2 py-2 shadow-md backdrop-blur-sm sm:grid-cols-12 sm:items-center sm:gap-2">
-        <div className="min-w-0 sm:col-span-5">
-          <AddressAutocomplete
-            value={addressQuery}
-            onChange={setAddressQuery}
-            onSelect={handleAddressSelect}
-            placeholder="Postcode or address"
-            fieldClassName="!h-9 !rounded-lg !text-[12px] !pl-9 !pr-8 border-[#D8D8DD] bg-[#FAFAFB] focus:ring-[#ED4B00]/25 focus:border-[#ED4B00]/50"
-            className="w-full"
-          />
-        </div>
+    <div className={cn("flex min-w-0 flex-col gap-1.5", showAreaSearch && "w-[min(620px,100%)]")}>
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 px-2 py-2 shadow-md backdrop-blur-sm">
+        {showAreaSearch ? (
+          <div className="min-w-0 flex-1 basis-[180px]">
+            <AddressAutocomplete
+              value={addressQuery}
+              onChange={setAddressQuery}
+              onSelect={handleAddressSelect}
+              placeholder="Postcode or address"
+              fieldClassName="!h-9 !rounded-lg !text-[12px] !pl-9 !pr-8 border-[#D8D8DD] bg-[#FAFAFB] focus:ring-[#ED4B00]/25 focus:border-[#ED4B00]/50"
+              className="w-full"
+            />
+          </div>
+        ) : null}
 
-        <div className="relative min-w-0 sm:col-span-2">
-          <select
-            aria-label="Scout radius"
-            value={search?.radiusMiles ?? radiusMiles}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              setRadiusMiles(n);
-              if (search) {
-                onSearchChange({ ...search, radiusMiles: n });
-              }
-            }}
-            className={cn(scoutFieldClass, "font-semibold")}
-          >
-            {SERVICE_RADIUS_MILE_OPTIONS.map((mi) => (
-              <option key={mi} value={mi}>
-                {mi} mi
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
-            aria-hidden
-          />
-        </div>
+        <ScoutSelect
+          label="Show"
+          value={entityType}
+          onChange={(v) => onEntityTypeChange(v as LiveMapEntityType)}
+          options={LIVE_MAP_ENTITY_OPTIONS}
+          className="w-[104px]"
+          highlighted={entityType !== "both"}
+        />
 
-        <div className="relative min-w-0 sm:col-span-3">
-          <select
-            aria-label="Type of work"
-            value={tradeFilter}
-            onChange={(e) => onTradeFilterChange(e.target.value)}
-            className={cn(
-              scoutFieldClass,
-              search && tradeFilter !== "all" && "border-[#ED4B00]/35 bg-[#FFF9F6] font-semibold",
-            )}
-          >
-            {tradeOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
-            aria-hidden
-          />
-        </div>
+        <ScoutSelect
+          label="Type of work"
+          value={tradeFilter}
+          onChange={onTradeFilterChange}
+          options={tradeOptions}
+          className="w-[134px]"
+          highlighted={tradeFilter !== "all"}
+        />
 
-        {search ? (
+        {showAreaSearch && search ? (
           <button
             type="button"
             onClick={handleClear}
-            className="inline-flex h-9 w-full shrink-0 items-center justify-center gap-1 rounded-lg border border-[#D8D8DD] bg-white px-2 text-[11px] font-medium text-[#64748B] hover:text-[#020040] sm:col-span-2"
+            title="Clear area search"
+            aria-label="Clear area search"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D8D8DD] bg-white text-[#64748B] hover:text-[#020040]"
           >
-            <X className="h-3 w-3" aria-hidden />
-            Clear
+            <X className="h-3.5 w-3.5" aria-hidden />
           </button>
-        ) : (
-          <div className="hidden sm:col-span-2 sm:block" aria-hidden />
-        )}
+        ) : null}
       </div>
 
-      {search ? (
+      {showAreaSearch && search ? (
         <div className="flex flex-wrap items-center gap-2 px-0.5">
+          <div className="relative shrink-0">
+            <select
+              aria-label="Scout radius"
+              value={search.radiusMiles}
+              onChange={(e) => setRadius(Number(e.target.value))}
+              className="h-7 appearance-none rounded-lg border border-[#D8D8DD] bg-white/95 py-0 pl-2 pr-6 text-[11px] font-semibold text-[#020040] shadow-sm outline-none focus:border-[#ED4B00]/40 focus:ring-2 focus:ring-[#ED4B00]/20"
+            >
+              {SERVICE_RADIUS_MILE_OPTIONS.map((mi) => (
+                <option key={mi} value={mi}>
+                  {mi} mi
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
+              aria-hidden
+            />
+          </div>
           {totalCount > 0 ? (
             <button
               type="button"
@@ -223,7 +235,7 @@ export function LiveMapCoverageScout({
         </div>
       ) : null}
 
-      {search && listOpen && totalCount > 0 ? (
+      {showAreaSearch && search && listOpen && totalCount > 0 ? (
         <div className="max-h-40 overflow-y-auto rounded-xl border border-[#E4E4E8] bg-white/98 shadow-md backdrop-blur-sm">
           <ul className="divide-y divide-[#F0F0F4]">
             {search.matches.map(({ partner, coverageSummary, isOnlineNow }) => (
@@ -271,4 +283,47 @@ export function buildCoverageSearchFromAddress(
     radiusMiles,
     matches: [],
   };
+}
+
+/** One compact select in the map filter bar. Label rides in `title` + aria so
+ *  the bar stays narrow without becoming a row of unlabelled dropdowns. */
+function ScoutSelect({
+  label,
+  value,
+  onChange,
+  options,
+  className,
+  highlighted = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  className?: string;
+  highlighted?: boolean;
+}) {
+  return (
+    <div className={cn("relative shrink-0", className)}>
+      <select
+        aria-label={label}
+        title={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-9 w-full appearance-none rounded-lg border border-[#D8D8DD] bg-[#FAFAFB] py-1.5 pl-2.5 pr-7 text-[11px] font-medium text-[#020040] outline-none focus:border-[#ED4B00]/40 focus:ring-2 focus:ring-[#ED4B00]/20",
+          highlighted && "border-[#ED4B00]/35 bg-[#FFF9F6] font-semibold",
+        )}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
+        aria-hidden
+      />
+    </div>
+  );
 }
