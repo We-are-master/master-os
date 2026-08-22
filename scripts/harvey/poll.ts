@@ -44,6 +44,15 @@ const TAG_JOB = "ai_job_created";
 const MAX_JOBS_POR_CICLO = 2;
 const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
 const CANCEL_SEEN_PATH = join(process.cwd(), "scripts/harvey/.cancel-seen.json");
+/**
+ * Quem já foi triado. Arquivo SEPARADO do `.seen.json` de propósito: `.seen`
+ * quer dizer "acabou, não olhe mais", e ticket triado continua candidato — ele
+ * pode virar pedido de quote num comentário de amanhã. Este arquivo só evita
+ * repetir a NOTA de triagem no mesmo ticket a cada 5 minutos.
+ */
+const TRIAGEM_SEEN_PATH = join(process.cwd(), "scripts/harvey/.triagem-seen.json");
+/** Teto de notas de triagem por ciclo: sem ele, a primeira rodada despeja o backlog inteiro na fila. */
+const MAX_NOTAS_TRIAGEM_POR_CICLO = 5;
 const RECON_PATH = join(process.cwd(), "scripts/harvey/.reconciliado.json");
 /** A view "Customer Support::🛠️ Jobs" — a fila oficial de jobs no Zendesk. */
 const VIEW_JOBS = "5687884937759";
@@ -66,6 +75,14 @@ function lerVistos(): Set<number> {
 function gravarVistos(vistos: Set<number>): void {
   if (!existsSync(dirname(SEEN_PATH))) mkdirSync(dirname(SEEN_PATH), { recursive: true });
   writeFileSync(SEEN_PATH, JSON.stringify([...vistos]));
+}
+
+function lerIds(caminho: string): Set<number> {
+  try { return new Set(JSON.parse(readFileSync(caminho, "utf8")) as number[]); } catch { return new Set(); }
+}
+function gravarIds(caminho: string, ids: Set<number>): void {
+  if (!existsSync(dirname(caminho))) mkdirSync(dirname(caminho), { recursive: true });
+  writeFileSync(caminho, JSON.stringify([...ids]));
 }
 
 type TicketDaBusca = { id: number; subject: string; description: string; tags: string[] };
@@ -252,9 +269,12 @@ async function sincronizarAwaitingPayment(): Promise<void> {
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro } = await import("../../src/lib/zendesk-quoter/quoter");
+  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+  const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem } = await import("../../src/lib/zendesk-triage");
 
   const vistos = lerVistos();
+  const triados = lerIds(TRIAGEM_SEEN_PATH);
+  let notasTriagem = 0;
   const candidatos = (await buscarCandidatos()).filter(
     (t) =>
       !vistos.has(t.id) &&
@@ -271,6 +291,32 @@ async function ciclo(): Promise<void> {
   let cotados = 0, criados = 0;
   for (const t of candidatos.slice(0, MAX_CLASSIFICADOS_POR_CICLO)) {
     if (cotados >= MAX_QUOTES_POR_CICLO && criados >= MAX_JOBS_POR_CICLO) break;
+
+    /**
+     * TRIAGEM — que espécie de ticket é este.
+     *
+     * Ela é ADITIVA: não desvia nem bloqueia nada do que o Harvey já fazia. As
+     * classes em que ele age (`age`) caem no mesmo fluxo de sempre, linha por
+     * linha. Só existem duas consequências novas:
+     *
+     *   `passa`  ticket que comprovadamente não pede nada (código de acesso,
+     *            lembrete diário, ticket do próprio OS). Sai antes do modelo,
+     *            que é onde mora o custo.
+     *   `nota`   classe nova. Ele segue o fluxo normal, e SE o fluxo não achar
+     *            nada para fazer, aí deixa uma nota interna dizendo o que acha
+     *            que é o ticket. Regra do dono (21/08): classe nova só comenta
+     *            até a gente saber que ele está esperto o bastante.
+     */
+    const tri = triarTicket({ subject: t.subject, description: t.description, tags: t.tags });
+    const acaoDaTriagem = ACAO_POR_CLASSE[tri.classe];
+    if (acaoDaTriagem === "passa") {
+      if (!triados.has(t.id)) {
+        try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* tag é observabilidade, não pode derrubar o ciclo */ }
+        triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+      }
+      console.log(`[harvey] · #${t.id} triado como ${tri.classe} — nada a fazer, nem modelo`);
+      continue;
+    }
     /**
      * PARCEIRO confirmando agendamento vem ANTES do classificador.
      *
@@ -330,6 +376,25 @@ async function ciclo(): Promise<void> {
       }
     }
     if (!quer.quote || cotados >= MAX_QUOTES_POR_CICLO) {
+      /**
+       * Aqui é o único ponto do ciclo onde o Harvey conclui "não tenho o que
+       * fazer com isto". É onde a nota de triagem cabe: depois de o fluxo
+       * antigo ter tido a chance inteira, e nunca no lugar dele.
+       *
+       * `cotados >= MAX` fica de fora de propósito: aí ele não decidiu nada,
+       * só bateu no teto do ciclo, e o ticket volta na próxima rodada.
+       */
+      if (!quer.quote && acaoDaTriagem === "nota" && !triados.has(t.id) && notasTriagem < MAX_NOTAS_TRIAGEM_POR_CICLO) {
+        try {
+          await postarNotaInterna(t.id, notaDeTriagem(tri));
+          try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu; a tag é extra */ }
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          notasTriagem++;
+          console.log(`[harvey] ✎ #${t.id} triado como ${tri.classe} — nota interna, sem acao`);
+        } catch (err) {
+          console.error(`[harvey] nota de triagem falhou no ${t.id}: ${err}`);
+        }
+      }
       // Não marca visto: um ticket pode virar pedido de quote num comentário
       // futuro, e a janela de busca é curta o bastante para reavaliar barato.
       continue;
@@ -354,7 +419,7 @@ async function ciclo(): Promise<void> {
       console.error(`[harvey] cotacao falhou no ${t.id}: ${err}`);
     }
   }
-  console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s)`);
+  console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s), ${notasTriagem} triagem(ns)`);
 
   // Vigia de cancelamentos em TODO ciclo (dono, 19/08): o aviso chega, cai em
   // auto-solved e ninguém vê — o Harvey vê, cancela no OS com match
