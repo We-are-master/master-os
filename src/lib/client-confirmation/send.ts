@@ -24,9 +24,18 @@ import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
  * marca o cliente vê no perfil (539660 é Fixfy, 544116 é Master Services).
  * Mandar pelo canal errado entrega a mensagem certa com o remetente errado.
  */
-const TEMPLATE = process.env.RESPONDIO_CONFIRMATION_TEMPLATE?.trim() || "booking_confirmed";
-const IDIOMA = process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const CANAL = Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+/**
+ * Lidos na hora da chamada, não no import.
+ *
+ * Como constante de módulo isto quebrava em script: `import` é içado para
+ * antes do corpo do arquivo, então a constante capturava o valor ANTES de o
+ * `loadEnvLocal()` do script rodar, e o canal chegava nulo. O agendador do
+ * lembrete de véspera pularia todo job com "nowhere to send from" sem que
+ * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
+ */
+const template = () => process.env.RESPONDIO_CONFIRMATION_TEMPLATE?.trim() || "booking_confirmed";
+const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
+const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
 
 /** Quanto esperar pela confirmação de entrega antes de desistir de esperar. */
 const TENTATIVAS_STATUS = 5;
@@ -165,7 +174,7 @@ export async function enviarConfirmacaoDoCliente(
   // Sem canal configurado NÃO se manda pelo canal padrão: o padrão pode ser o
   // canal de parceiro, e aí o cliente recebe a confirmação com a marca errada
   // no perfil. Melhor virar pendência visível.
-  if (!CANAL) {
+  if (!canal()) {
     return anotarPulo("RESPONDIO_CONFIRMATION_CHANNEL_ID is not set: nowhere to send from");
   }
 
@@ -186,7 +195,7 @@ export async function enviarConfirmacaoDoCliente(
   ];
 
   if (opcoes?.simular) {
-    return { estado: "pulado", motivo: `dry run: would send ${TEMPLATE} → ${parametros.join(" | ")}` };
+    return { estado: "pulado", motivo: `dry run: would send ${template()} → ${parametros.join(" | ")}` };
   }
 
   const respond = opcoes?.client ?? createRespondIoClient();
@@ -203,10 +212,10 @@ export async function enviarConfirmacaoDoCliente(
 
     const { messageId } = await respond.sendTemplate(
       id,
-      { name: TEMPLATE, languageCode: IDIOMA, components: [
+      { name: template(), languageCode: idioma(), components: [
         { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
       ] },
-      CANAL,
+      canal()!,
     );
 
     const entrega = await confirmarEntrega(respond, id, messageId);
