@@ -35,6 +35,15 @@ export type EstadoEnvioExterno = {
   submittedAt?: string | null;
   /** Marcado como enviado à mão (migração 249): quem marcou assume o envio. */
   manualAt?: string | null;
+  /**
+   * A leitura do estado não respondeu.
+   *
+   * Existe porque a alternativa era o silêncio: quando o GET falhava, o passo
+   * simplesmente não desenhava esta faixa, e quem olhava a tela via um passo
+   * incompleto sem nada dizendo que faltava informação — foi assim que a
+   * produção passou dias sem as ações de envio sem ninguém saber por quê.
+   */
+  indisponivel?: boolean;
 };
 
 type Preview =
@@ -168,7 +177,6 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
               true,
             )}
         {!conserto && podeEditar ? botao("Edit report", onEditReport!) : null}
-        {botao("Sent manually? Mark it", () => void enviar({ manual: true }))}
         {botao("Check what will be sent", () => void conferir())}
       </div>
     );
@@ -181,6 +189,24 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
   ) : null;
 
   if (!envio) return null;
+
+  if (envio.indisponivel) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={chip} style={{ background: "#FDECEA", color: "#A32D2D" }}>
+          <span aria-hidden>!</span>
+          Could not read the report status. The send actions are hidden until it answers.
+        </span>
+        <button
+          type="button"
+          onClick={onEnviado}
+          className="rounded-[5px] border border-[#D8D8DD] bg-white px-2.5 py-[4px] text-[11px] font-semibold text-[#020040] hover:bg-[#F4F4F6]"
+        >
+          Try reading it again
+        </button>
+      </div>
+    );
+  }
 
   if (envio.estado === "enviando") {
     return (

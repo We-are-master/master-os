@@ -164,6 +164,16 @@ export function StepsTimeline({
    * sempre depois de marcado, e a tela pedia de novo o que já tinha sido feito.
    */
   const entregueAMao = !!envioExterno?.manualAt;
+  /**
+   * Quando a plataforma recusa PORQUE o relatório não existe, ela não está
+   * contando nada novo: o chip vermelho ao lado já disse isso, e as duas saídas
+   * reais (preencher, ou marcar que já foi à mão) estão a dois centímetros
+   * dali. O bloco embaixo só acrescentava a mesma frase em outras palavras e um
+   * "Try again" que não tem como dar certo sem relatório — quatro botões para
+   * um passo que tem duas decisões.
+   */
+  const repeteAFaltaDoRelatorio =
+    !allUploaded && /has not sent the final report/i.test(envioExterno?.bloqueio ?? "");
   const relatorioResolvido = allUploaded || entregueAMao;
   const reportsUploadedState: StepState = relatorioResolvido ? "issued" : "pending";
   const reportsApprovedState: StepState = !allUploaded ? "blocked" : allApproved ? "approved" : "pending";
@@ -248,13 +258,17 @@ export function StepsTimeline({
               Fill the report
             </button>
           ) : null}
-          {!allUploaded && !entregueAMao && jobUuid && envioExterno?.estado !== "enviado" ? (
+          {/* Uma marcação manual só, e sempre no mesmo lugar. Antes ela vivia
+              lá embaixo, dentro do envio externo, e só em dois dos seus
+              estados: com o relatório faltando apareciam as duas ao mesmo
+              tempo, com nomes diferentes, fazendo a mesma coisa. */}
+          {!entregueAMao && jobUuid && envioExterno && !envioExterno.indisponivel && envioExterno.estado !== "enviado" ? (
             <MarkSentManually jobUuid={jobUuid} onMarcado={onEnvioDisparado} />
           ) : null}
           {/* Todo o envio externo — estado, conferência e ação — mora aqui.
               Antes o passo só falava depois que o envio já tinha acontecido,
               calado justamente quando havia algo a fazer. */}
-          {jobUuid && envioExterno ? (
+          {jobUuid && envioExterno && !repeteAFaltaDoRelatorio ? (
             <div className="w-full">
               <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} relatorioEnviado={allUploaded} />
             </div>
