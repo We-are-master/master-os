@@ -88,7 +88,11 @@ export function PartnerTradesIconStrip({
   /** When provided, resolves `display_icon_key` per catalogue name match. */
   catalogServices?: CatalogService[] | readonly CatalogService[];
   className?: string;
-  /** Show up to N icons, then a "+" hover panel with every trade. */
+  /**
+   * Icons shown before the rest collapse into "+N". Three is the default:
+   * beyond that the strip stops reading as "what they do" and starts reading as
+   * decoration. The overflow lists every remaining trade by name.
+   */
   maxVisible?: number;
 }) {
   const byLc = useMemo(
@@ -99,12 +103,14 @@ export function PartnerTradesIconStrip({
   const list = trades.filter(Boolean);
   if (list.length === 0) return <span className="text-xs text-text-tertiary">—</span>;
 
-  const cap = maxVisible != null && maxVisible > 0 ? maxVisible : list.length;
+  // Three by default, everywhere. Callers that used to omit this rendered the
+  // whole trade list as icons, which is what turned drawers and rows into a
+  // wall of glyphs.
+  const cap = maxVisible != null && maxVisible > 0 ? maxVisible : 3;
   const hasOverflow = list.length > cap;
   const visible = hasOverflow ? list.slice(0, cap) : list;
   const hiddenCount = hasOverflow ? list.length - cap : 0;
   const hiddenTrades = hasOverflow ? list.slice(cap) : [];
-  const title = list.join(" · ");
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
 
@@ -128,10 +134,8 @@ export function PartnerTradesIconStrip({
     <div
       className={cn(
         "flex items-center gap-0.5",
-        maxVisible == null && "max-w-[min(100%,20rem)] flex-nowrap overflow-x-auto [scrollbar-width:thin]",
         className,
       )}
-      title={maxVisible == null ? title : undefined}
     >
       {visible.map((t, i) => (
         <TradeIconBadge key={`vis-${i}`} trade={t} byLc={byLc} tooltipPlacement="bottom" />
@@ -143,6 +147,9 @@ export function PartnerTradesIconStrip({
             aria-expanded={overflowOpen}
             aria-label={`${hiddenCount} more trades: ${hiddenTradeLabels.join(", ")}`}
             title={hiddenTradeLabels.join(" · ")}
+            onMouseEnter={() => setOverflowOpen(true)}
+            onMouseLeave={() => setOverflowOpen(false)}
+            onFocus={() => setOverflowOpen(true)}
             onClick={() => setOverflowOpen((v) => !v)}
             className={cn(
               SERVICE_ICON_CELL_CLASSES,

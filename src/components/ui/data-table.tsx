@@ -36,6 +36,15 @@ interface DataTableProps<T> {
   columns: Column<T>[];
   data: T[];
   onRowClick?: (item: T) => void;
+  /**
+   * Destination for a row, when the row represents a page. Turns the first cell
+   * into a real link, so right-click → "Open in new tab", middle-click and
+   * ⌘/Ctrl-click all work. Rows that navigate only through `onRowClick` give the
+   * browser no URL to offer, which is why those menu items were greyed out.
+   */
+  rowHref?: (item: T) => string | null;
+  /** Extra classes per row — for state the whole line should carry (e.g. on hold). */
+  rowClassName?: (item: T) => string | undefined;
   selectedId?: string;
   getRowId?: (item: T) => string;
   emptyMessage?: string;
@@ -45,9 +54,9 @@ interface DataTableProps<T> {
   totalPages?: number;
   totalItems?: number;
   pageSize?: number;
-  pageSizeOptions?: number[];
-  onPageSizeChange?: (size: number) => void;
   onPageChange?: (page: number) => void;
+  /** Table fills its parent's height: rows scroll inside, footer pinned below. */
+  fillHeight?: boolean;
   className?: string;
   selectable?: boolean;
   selectedIds?: Set<string>;
@@ -107,6 +116,8 @@ export function DataTable<T>({
   columns,
   data,
   onRowClick,
+  rowHref,
+  rowClassName,
   selectedId,
   getRowId,
   emptyMessage = "No data found",
@@ -115,9 +126,8 @@ export function DataTable<T>({
   totalPages,
   totalItems,
   pageSize = 10,
-  pageSizeOptions,
-  onPageSizeChange,
   onPageChange,
+  fillHeight = false,
   className,
   selectable = false,
   selectedIds,
@@ -211,6 +221,8 @@ export function DataTable<T>({
   };
 
   const hasColumnFooters = visibleColumns.some((c) => c.footer != null);
+  /** Index of the first column that actually shows a total. */
+  const firstFooterColumnIndex = visibleColumns.findIndex((c) => c.footer != null);
 
   const isGrouped = Boolean(groupedSections && groupedSections.length > 0);
   const tableRows = useMemo(
@@ -267,7 +279,13 @@ export function DataTable<T>({
   };
 
   return (
-    <div className={cn("bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative", className)}>
+    <div
+      className={cn(
+        "bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative",
+        fillHeight && "flex min-h-0 flex-1 flex-col",
+        className,
+      )}
+    >
       <AnimatePresence>
         {selectable && selectionCount > 0 && bulkActions && (
           <motion.div
@@ -301,7 +319,13 @@ export function DataTable<T>({
         )}
       </AnimatePresence>
 
-      <div className="overflow-x-auto -mx-px sm:mx-0 relative" ref={sortMenuRef}>
+      <div
+        className={cn(
+          "overflow-x-auto -mx-px sm:mx-0 relative",
+          fillHeight && "min-h-0 flex-1 overflow-y-auto",
+        )}
+        ref={sortMenuRef}
+      >
         <table className={cn("w-full min-w-[1080px]", tableClassName)}>
           <thead>
             <tr className="border-b border-border-light">
@@ -550,7 +574,19 @@ export function DataTable<T>({
                       return (
                         <tr
                           key={id}
-                          onClick={() => onRowClick?.(item)}
+                          onClick={(e) => {
+                        const href = rowHref?.(item);
+                        // ⌘/Ctrl-click opens a background tab, same as a link.
+                        if (href && (e.metaKey || e.ctrlKey)) {
+                          window.open(href, "_blank", "noopener");
+                          return;
+                        }
+                        onRowClick?.(item);
+                      }}
+                      onAuxClick={(e) => {
+                        const href = rowHref?.(item);
+                        if (e.button === 1 && href) window.open(href, "_blank", "noopener");
+                      }}
                           className={cn(
                             "border-b border-border-light/50 transition-colors duration-150",
                             onRowClick && "cursor-pointer",
@@ -560,6 +596,7 @@ export function DataTable<T>({
                                 ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
                                 : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
                             isZebra && zebraRowTint,
+                            rowClassName?.(item),
                           )}
                         >
                           {selectable && (
@@ -567,7 +604,7 @@ export function DataTable<T>({
                               <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                             </td>
                           )}
-                          {visibleColumns.map((col) => (
+                          {visibleColumns.map((col, ci) => (
                             <td
                               key={col.key}
                               style={{
@@ -580,9 +617,7 @@ export function DataTable<T>({
                                 col.cellClassName,
                               )}
                             >
-                              {col.render
-                                ? col.render(item, index)
-                                : String((item as Record<string, unknown>)[col.key] ?? "")}
+                              <RowCell item={item} index={index} col={col} isFirst={ci === 0} rowHref={rowHref} />
                             </td>
                           ))}
                           {supportsColumnConfig ? (
@@ -606,7 +641,19 @@ export function DataTable<T>({
                   return (
                     <tr
                       key={id}
-                      onClick={() => onRowClick?.(item)}
+                      onClick={(e) => {
+                        const href = rowHref?.(item);
+                        // ⌘/Ctrl-click opens a background tab, same as a link.
+                        if (href && (e.metaKey || e.ctrlKey)) {
+                          window.open(href, "_blank", "noopener");
+                          return;
+                        }
+                        onRowClick?.(item);
+                      }}
+                      onAuxClick={(e) => {
+                        const href = rowHref?.(item);
+                        if (e.button === 1 && href) window.open(href, "_blank", "noopener");
+                      }}
                       className={cn(
                         "border-b border-border-light/50 transition-colors duration-150",
                         onRowClick && "cursor-pointer",
@@ -615,7 +662,8 @@ export function DataTable<T>({
                           : isRowSelected
                             ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
                             : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
-                        isZebra && zebraRowTint
+                        isZebra && zebraRowTint,
+                        rowClassName?.(item)
                       )}
                     >
                       {selectable && (
@@ -623,7 +671,7 @@ export function DataTable<T>({
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}
-                      {visibleColumns.map((col) => (
+                      {visibleColumns.map((col, ci) => (
                         <td
                           key={col.key}
                           style={{
@@ -636,9 +684,7 @@ export function DataTable<T>({
                             col.cellClassName
                           )}
                         >
-                          {col.render
-                            ? col.render(item, index)
-                            : String((item as Record<string, unknown>)[col.key] ?? "")}
+                          <RowCell item={item} index={index} col={col} isFirst={ci === 0} rowHref={rowHref} />
                         </td>
                       ))}
                       {supportsColumnConfig ? (
@@ -652,8 +698,25 @@ export function DataTable<T>({
           {!loading && tableRows.length > 0 && hasColumnFooters ? (
             <tfoot>
               <tr className="border-t-2 border-border bg-surface-secondary/90">
-                {selectable ? <td className="w-12 px-2 sm:px-3 py-2" aria-hidden /> : null}
-                {visibleColumns.map((col) => (
+                {/* Leading columns carry no total, so they collapse into one
+                    cell holding the row count and the pager. */}
+                <td
+                  colSpan={(selectable ? 1 : 0) + Math.max(1, firstFooterColumnIndex)}
+                  className="px-2 sm:px-3 py-2 align-middle"
+                >
+                  <div className="flex items-center gap-3">
+                    {totalItems != null ? (
+                      <span className="shrink-0 text-xs text-text-tertiary">
+                        Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItems)} of {totalItems}
+                      </span>
+                    ) : null}
+                    {totalPages && totalPages > 1 ? <Pager page={page} totalPages={totalPages} onPageChange={onPageChange} /> : null}
+                    {footerSummary ? (
+                      <span className="min-w-0 truncate text-xs text-text-secondary">{footerSummary}</span>
+                    ) : null}
+                  </div>
+                </td>
+                {visibleColumns.slice(Math.max(1, firstFooterColumnIndex)).map((col) => (
                   <td
                     key={col.key}
                     style={{
@@ -678,8 +741,10 @@ export function DataTable<T>({
         </table>
       </div>
 
-      {(totalPages && totalPages > 1) || (onPageSizeChange && totalItems != null) || footerSummary ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3 border-t border-border-light">
+      {/* Only when the table has no totals row — otherwise the count and the
+          pager ride inside it, so the table ends in one bar instead of two. */}
+      {!hasColumnFooters && ((totalPages && totalPages > 1) || totalItems != null || footerSummary) ? (
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3 border-t border-border-light">
           <p className="text-xs text-text-tertiary shrink-0">
             {totalItems != null ? (
               <>
@@ -693,66 +758,101 @@ export function DataTable<T>({
             </div>
           ) : null}
           <div className="flex items-center gap-3 shrink-0 sm:justify-end">
-            {onPageSizeChange && (pageSizeOptions?.length ?? 0) > 0 ? (
-              <div className="flex items-center gap-1 text-xs text-text-tertiary">
-                <span>Rows</span>
-                {pageSizeOptions!.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => {
-                      if (size !== pageSize) onPageSizeChange(size);
-                    }}
-                    className={cn(
-                      "h-8 min-w-8 rounded-lg px-2 text-xs font-medium transition-colors",
-                      size === pageSize
-                        ? "bg-primary text-white"
-                        : "text-text-secondary hover:bg-surface-tertiary",
-                    )}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             {totalPages && totalPages > 1 ? (
-            <div className="flex items-center gap-1">
-            <button
-              onClick={() => onPageChange?.(page - 1)}
-              disabled={page <= 1}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
-              const pageNum = i + 1;
-              return (
-                <button
-                  key={pageNum}
-                  onClick={() => onPageChange?.(pageNum)}
-                  className={cn(
-                    "h-8 w-8 rounded-lg text-xs font-medium transition-colors",
-                    page === pageNum
-                      ? "bg-primary text-white"
-                      : "text-text-secondary hover:bg-surface-tertiary"
-                  )}
-                >
-                  {pageNum}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => onPageChange?.(page + 1)}
-              disabled={page >= totalPages}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            </div>
+              <Pager page={page} totalPages={totalPages} onPageChange={onPageChange} />
             ) : null}
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * A cell's content, wrapped in a real anchor when it is the row's first cell and
+ * the row has a destination. That anchor is what gives the browser a URL for the
+ * right-click menu, the status bar, and ⌘-click.
+ */
+function RowCell<T>({
+  item,
+  index,
+  col,
+  isFirst,
+  rowHref,
+}: {
+  item: T;
+  index: number;
+  col: Column<T>;
+  isFirst: boolean;
+  rowHref?: (item: T) => string | null;
+}) {
+  const content = col.render
+    ? col.render(item, index)
+    : String((item as Record<string, unknown>)[col.key] ?? "");
+  const href = isFirst ? rowHref?.(item) : null;
+  if (!href) return <>{content}</>;
+  return (
+    <a
+      href={href}
+      // The row already handles plain clicks; the anchor is here for the
+      // browser's own affordances, so a normal click must not double-navigate.
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+      }}
+      className="block text-inherit no-underline"
+    >
+      {content}
+    </a>
+  );
+}
+
+/** Page numbers with prev / next. Shared by the totals row and the plain footer. */
+function Pager({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange?: (page: number) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        aria-label="Previous page"
+        onClick={() => onPageChange?.(page - 1)}
+        disabled={page <= 1}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
+        const pageNum = i + 1;
+        return (
+          <button
+            key={pageNum}
+            type="button"
+            onClick={() => onPageChange?.(pageNum)}
+            className={cn(
+              "h-7 w-7 rounded-lg text-xs font-medium transition-colors",
+              page === pageNum ? "bg-primary text-white" : "text-text-secondary hover:bg-surface-tertiary",
+            )}
+          >
+            {pageNum}
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        aria-label="Next page"
+        onClick={() => onPageChange?.(page + 1)}
+        disabled={page >= totalPages}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
     </div>
   );
 }

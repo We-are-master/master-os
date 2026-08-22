@@ -1,4 +1,5 @@
 "use client";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 
 import { useState, useEffect, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
@@ -113,15 +114,14 @@ export function RevenueChart() {
           </p>
         </div>
         {!bounds && (
-          <Tabs
-            variant="pills"
-            tabs={[
+          <SegmentedControl
+            options={[
               { id: "3m", label: "3M" },
               { id: "6m", label: "6M" },
               { id: "12m", label: "12M" },
             ]}
-            activeTab={period}
-            onChange={setPeriod}
+            value={period}
+            onChange={(id) => setPeriod(id as typeof period)}
           />
         )}
       </CardHeader>

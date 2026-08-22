@@ -1,4 +1,5 @@
 "use client";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -219,11 +220,10 @@ export default function TicketsPage() {
 
         {/* Tabs + search */}
         <div className="flex items-center gap-3 flex-wrap">
-          <Tabs
-            variant="pills"
-            activeTab={tab}
-            onChange={setTab}
-            tabs={[
+          <SegmentedControl
+            value={tab}
+            onChange={(id) => setTab(id as typeof tab)}
+            options={[
               { id: "open",     label: "Open",     count: counts.open + counts.in_progress + counts.awaiting },
               { id: "mine",     label: "Mine",     count: tickets.filter((t) => t.assigned_to === profile?.id && t.status !== "resolved" && t.status !== "closed").length },
               { id: "resolved", label: "Resolved", count: counts.resolved },

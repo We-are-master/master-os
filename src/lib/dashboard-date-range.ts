@@ -5,6 +5,7 @@ export type DateRangePreset =
   | "yesterday"
   | "tomorrow"
   | "wtd"
+  | "next_week"
   | "7d"
   | "30d"
   | "90d"
@@ -78,6 +79,16 @@ export function getBoundsForPreset(
       start.setDate(start.getDate() - diff);
       break;
     }
+    case "next_week": {
+      // Monday of next week through the Sunday that closes it.
+      const day = start.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      start.setDate(start.getDate() - diff + 7);
+      end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+      break;
+    }
     case "qtd": {
       const m = now.getMonth();
       const qStartMonth = Math.floor(m / 3) * 3;
@@ -134,6 +145,7 @@ export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "yesterday", label: "Yesterday" },
   { id: "tomorrow", label: "Tomorrow" },
   { id: "wtd", label: "Week to date" },
+  { id: "next_week", label: "Next week" },
   { id: "mtd", label: "This month (full)" },
   { id: "last_month", label: "Last month" },
   { id: "next_month", label: "Next month" },
@@ -162,6 +174,7 @@ const COMPACT_PRESET_LABELS: Record<DateRangePreset, string> = {
   yesterday: "Yesterday",
   tomorrow: "Tomorrow",
   wtd: "Week to date",
+  next_week: "Next week",
   mtd: "Current month",
   last_month: "Last month",
   next_month: "Next month",

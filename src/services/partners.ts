@@ -266,3 +266,29 @@ export async function createPartner(
 export async function updatePartner(id: string, input: Partial<Partner>): Promise<Partner> {
   return writePartnerWithSchemaCompat("update", id, { ...(input as unknown as Record<string, unknown>) });
 }
+
+/** Minimal partner shape for pickers and filters. */
+export type AssignablePartner = {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  trade: string | null;
+  avatar_url: string | null;
+};
+
+/**
+ * Partners the office is allowed to put on a job right now: `status = 'active'`.
+ * Every partner picker and partner filter reads from here, so an off-boarded or
+ * on-break partner can never be offered by one screen and refused by another.
+ */
+export async function listAssignablePartners(): Promise<AssignablePartner[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("partners")
+    .select("id, company_name, contact_name, trade, avatar_url")
+    .eq("status", "active")
+    .order("company_name", { ascending: true })
+    .limit(2000);
+  if (error) return [];
+  return ((data ?? []) as AssignablePartner[]).filter((p) => !!p.id);
+}

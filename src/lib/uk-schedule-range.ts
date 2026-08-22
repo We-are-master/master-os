@@ -6,6 +6,7 @@ export type ScheduleDatePreset =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "next_week"
   | "month"
   | "qtd"
   | "last_month"
@@ -74,6 +75,10 @@ export function getScheduleRangeYmd(
   }
   if (preset === "week") {
     return { from: startOfWeekMondayYmd(anchor), to: endOfWeekSundayYmd(anchor) };
+  }
+  if (preset === "next_week") {
+    const nextMonday = addDaysYmd(startOfWeekMondayYmd(anchor), 7);
+    return { from: nextMonday, to: addDaysYmd(nextMonday, 6) };
   }
   if (preset === "month") {
     return { from: startOfMonthYmd(anchor), to: endOfMonthYmd(anchor) };

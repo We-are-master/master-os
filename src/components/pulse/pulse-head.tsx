@@ -24,6 +24,7 @@ const SHARED_TO_PRESET: Record<DateFilterMode, DateRangePreset> = {
   yesterday: "yesterday",
   tomorrow: "tomorrow",
   week: "wtd",
+  next_week: "next_week",
   month: "mtd",
   last_month: "last_month",
   next_month: "next_month",
@@ -80,7 +81,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
         </p>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <DateRangeFilter value={sharedValue} onChange={applyShared} variant="segment" />
+        <DateRangeFilter value={sharedValue} onChange={applyShared} />
         {canSeeCeo && (
           <button
             type="button"
