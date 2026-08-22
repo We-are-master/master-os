@@ -28,7 +28,7 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3,
-  ArrowRight, Briefcase, Receipt, Wallet,
+  Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
   Timer,
@@ -2604,15 +2604,6 @@ function JobsPageContent() {
         return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
       },
     },
-    {
-      key: "actions",
-      label: "",
-      width: "44px",
-      minWidth: "44px",
-      cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
-      headerClassName: "w-11 normal-case",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
-    },
   ];
 
   const partnerCostColumn: Column<Job> = useMemo(
@@ -2975,8 +2966,6 @@ function JobsPageContent() {
             <DataTable
               columns={tableColumns}
               data={sortedDataForTable}
-              columnConfigKey="jobs-columns"
-              columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={openJobDetail}
