@@ -1350,6 +1350,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingPartner, setSavingPartner] = useState(false);
   const [signingOffPartner, setSigningOffPartner] = useState(false);
   const [resendingPartnerEmail, setResendingPartnerEmail] = useState(false);
+  /** Reenvio do relatorio para a plataforma do cliente, a partir da aba Reports. */
+  const [reenviandoRelatorio, setReenviandoRelatorio] = useState(false);
+  const reenviarRelatorioExterno = useCallback(async () => {
+    if (!job?.id) return;
+    setReenviandoRelatorio(true);
+    try {
+      // `reiniciar=1` zera o contador: quem clica aqui ja sabe que quer insistir,
+      // e o teto de tres nao pode virar beco sem saida depois da causa resolvida.
+      const res = await fetch(`/api/jobs/${job.id}/submit-external-report?reiniciar=1`, { method: "POST" });
+      const d = (await res.json().catch(() => ({}))) as { estado?: string; motivo?: string; error?: string };
+      if (d.estado === "enviando") {
+        toast.success("Sending the report to the client platform. It takes up to a minute.");
+        return;
+      }
+      toast.error(d.motivo ?? d.error ?? "Could not send the report.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send the report.");
+    } finally {
+      setReenviandoRelatorio(false);
+    }
+  }, [job?.id]);
   const [dispatchingAutoAssign, setDispatchingAutoAssign] = useState(false);
   const [cancellingAutoAssign, setCancellingAutoAssign] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
@@ -8443,6 +8464,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       >
                         Edit report
                       </button>
+                      {/* Awaiting payment e onde o job fica quando o trabalho
+                          acabou e o relatorio ainda nao chegou na plataforma do
+                          cliente. Ate agora reenviar so existia dentro da
+                          revisao final, que ja tinha sido fechada — a pessoa
+                          via o job parado e nao tinha por onde insistir. */}
+                      {job.status === "awaiting_payment" ? (
+                        <button
+                          type="button"
+                          disabled={reenviandoRelatorio}
+                          onClick={() => void reenviarRelatorioExterno()}
+                          className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-50"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          <RefreshCw className={cn("h-3.5 w-3.5", reenviandoRelatorio && "animate-spin")} />
+                          {reenviandoRelatorio ? "Sending…" : "Try again"}
+                        </button>
+                      ) : null}
                       <JobReportV2DownloadButton jobId={job.id} reference={job.reference} rawFinalReport={job.final_report} />
                       {/* Ver e guardar: as duas coisas que esta aba faz agora.
                           Decidir se o relatório serve é da nota da IA acima, e

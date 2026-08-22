@@ -738,15 +738,18 @@ export function JobReportV2DownloadButton({ jobId, reference, rawFinalReport }: 
   }
 
   return (
+    // Icone puro: guardar o PDF e uma acao secundaria desta aba, e o rotulo
+    // inteiro com a referencia ocupava mais largura que o botao principal.
     <a
       href={`/api/jobs/${jobId}/reports/pdf`}
       target="_blank"
       rel="noopener noreferrer"
-      className={DOWNLOAD_BTN_CLASS}
+      title={`Download PDF · ${reference}`}
+      aria-label={`Download PDF · ${reference}`}
+      className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[6px] bg-white cursor-pointer"
       style={DOWNLOAD_BTN_STYLE}
     >
-      <ExternalLink className="h-3 w-3" />
-      Download PDF · {reference}
+      <ExternalLink className="h-3.5 w-3.5" />
     </a>
   );
 }
@@ -800,11 +803,12 @@ export function JobReportPhotosZipButton({ jobId, reference }: { jobId: string; 
       type="button"
       onClick={() => void baixar()}
       disabled={baixando}
-      className="inline-flex items-center gap-1.5 rounded-[6px] bg-white px-[12px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-50"
+      title={baixando ? "Zipping photos…" : `Download photos · ${reference}`}
+      aria-label={baixando ? "Zipping photos" : "Download photos"}
+      className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[6px] bg-white cursor-pointer disabled:opacity-50"
       style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
     >
-      <Download className="h-3.5 w-3.5" />
-      {baixando ? "Zipping photos…" : "Download photos"}
+      <Download className={baixando ? "h-3.5 w-3.5 animate-pulse" : "h-3.5 w-3.5"} />
     </button>
   );
 }
