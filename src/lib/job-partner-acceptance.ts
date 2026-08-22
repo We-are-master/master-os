@@ -6,6 +6,8 @@ import {
   resolvePartnerHourlyForJob,
 } from "@/lib/job-pricing-resolver";
 import { createSideConversation } from "@/lib/zendesk";
+import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
+import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
 import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
@@ -531,6 +533,31 @@ export async function sendBookedSideConvReply(args: {
     });
     if (created.ok && created.id) {
       await persistSuccess(created.id);
+      /**
+       * O parceiro entrou: agora os TRÊS lados sabem do mesmo job.
+       *
+       * Pedido do dono em 21/08/2026, e a razão é boa: antes de existir
+       * parceiro não há o que confirmar a ninguém. Uma conta avisada de um job
+       * que ninguém vai executar é uma promessa que a gente ainda não pode
+       * cumprir, e um morador avisado é pior ainda.
+       *
+       * Acrescenta, não move. Os dois envios já são idempotentes — a conta
+       * reivindica `job_creation_notice_sent_at` com um update atômico em
+       * `.is(null)`, e o cliente pula quando `client_confirmation_sent_at` já
+       * tem data. Então job que nasce COM parceiro dispara na criação, job que
+       * ganha parceiro depois dispara aqui, e nenhum dos dois dispara duas
+       * vezes. Mover o gatilho, em vez de somar, arriscaria o contrário: o
+       * silêncio nos casos que hoje funcionam.
+       *
+       * Sem `await`: o parceiro já foi avisado, que é o que trava a operação.
+       * Uma falha de email da conta não pode desfazer a aceitação do job.
+       */
+      void dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }).catch((e) =>
+        console.error("[booked reply] confirmação da conta falhou:", e),
+      );
+      void enviarConfirmacaoDoCliente(supabase, job.id).catch((e) =>
+        console.error("[booked reply] confirmação do cliente falhou:", e),
+      );
       return { sent: true, sideConversationId: created.id };
     }
 

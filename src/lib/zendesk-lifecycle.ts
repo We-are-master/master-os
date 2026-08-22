@@ -18,17 +18,20 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
+import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
-  createSideConversation,
-  replyToSideConversation,
   getZendeskTicketId,
   getTicketRequester,
   setTicketRequester,
   isZendeskConfigured,
   updateTicket as zdUpdateTicket,
 } from "@/lib/zendesk";
-import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
-import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import {
+  buildJobCancelledHtml,
+  buildJobCompletedHtml,
+  buildQuoteRejectedHtml,
+} from "@/lib/zendesk-lifecycle-templates";
 import {
   buildJobConfirmationHtml,
   formatJobConfirmationArrivalWindow,
@@ -36,15 +39,6 @@ import {
   resolveCustomerGreetingName,
   splitPropertyAddressAndPostcode,
 } from "@/lib/zendesk-job-confirmation";
-import {
-  buildJobCancelledHtml,
-  buildJobCompletedHtml,
-  buildPartnerJobConfirmedSideConvBody,
-  buildQuoteRejectedHtml,
-} from "@/lib/zendesk-lifecycle-templates";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
-import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
-import { appBaseUrl } from "@/lib/app-base-url";
 
 type PartnerEmbed = {
   company_name?: string | null;
@@ -276,7 +270,7 @@ export async function dispatchJobCreatedZendesk(args: {
   // Partner side conv here only when a partner is on the job but not yet office-confirmed
   // (e.g. quote accept). Create Job with a manual partner sets partner_confirmed_at and
   // fires `assigned` via notifyPartnerJobZendesk — skip to avoid a duplicate thread.
-  let sideConvId: string | null =
+  const sideConvId: string | null =
     (job as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null;
 
   const { email: partnerEmail, name: partnerName, zendeskUserId } = await carregarParceiro(
@@ -287,63 +281,29 @@ export async function dispatchJobCreatedZendesk(args: {
     (job as { partner_confirmed_at?: string | null }).partner_confirmed_at,
   );
 
-  if (!sideConvId && job.partner_id && partnerEmail && !partnerConfirmed) {
-    try {
-      // Build the partner-scoped report URL up front and include it as the
-      // primary CTA so the partner can submit the report without waiting
-      // for a separate email or having the app installed.
-      const reportToken = createPartnerReportToken(String(job.id), String(job.partner_id));
-      const base = appBaseUrl();
-      const reportTargetPath = `/job/report?token=${encodeURIComponent(reportToken)}`;
-      let reportShortPath = reportTargetPath;
-      try {
-        const r = await upsertShortLink({
-          targetPath: reportTargetPath,
-          kind:       "partner_report",
-          entityRef: jobPartnerShortLinkEntityRef(String(job.id), String(job.partner_id), "report"),
-        });
-        reportShortPath = r.shortPath;
-      } catch (err) {
-        console.error("[zendesk-lifecycle] short link upsert for report failed:", err);
-      }
-      const reportUrl = `${base}${reportShortPath}`;
-      const scheduledHour = job.scheduled_start_at
-        ? new Intl.DateTimeFormat("en-GB", {
-            timeZone: "Europe/London",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true,
-          }).format(new Date(String(job.scheduled_start_at)))
-        : "";
-
-      const sideConvBody = buildPartnerJobConfirmedSideConvBody({
-        reference: String(job.reference ?? ""),
-        title: String(job.title ?? ""),
-        scheduledDate: dateStr,
-        scheduledHour,
-        propertyAddress: String(job.property_address ?? ""),
-        scope: (job.scope as string | null) ?? null,
-        reportUrl,
-      });
-      const result = await createSideConversation({
-        ticketId,
-        toEmail: partnerEmail,
-        toName: partnerName || null,
-        toUserId: zendeskUserId,
-        subject: `Job confirmed — #${String(job.reference ?? "")}`,
-        htmlBody: sideConvBody,
-      });
-      if (result.ok && result.id) {
-        sideConvId = result.id;
-        await supabase
-          .from("jobs")
-          .update({ zendesk_side_conversation_id: sideConvId })
-          .eq("id", args.jobId);
-      }
-    } catch (err) {
-      console.error("[zendesk-lifecycle] dispatchJobCreated side conv failed:", err);
-    }
-  }
+  /**
+   * A segunda mensagem ao parceiro saiu daqui em 21/08/2026.
+   *
+   * O parceiro recebia DUAS para o mesmo job, com dois minutos de diferença: a
+   * com a nossa marca, vinda do aceite, e esta, sem cabeçalho e com emoji no
+   * lugar dos rótulos. Mesmo fato, mesma pessoa, duas caixas de entrada.
+   *
+   * O guarda que deveria evitar isso era `!partnerConfirmed`, e ele partia de
+   * uma premissa que a operação desmentiu: que o parceiro clica em Accept. Em
+   * 20/08 eram 15 de 16 jobs agendados SEM `partner_confirmed_at` — o mesmo
+   * fato que fez a escalação automática soltar o quadro inteiro. Com a
+   * confirmação quase sempre ausente, o guarda quase nunca segurava e a
+   * duplicata virou a regra, não a exceção.
+   *
+   * Nada se perde ao remover: quem cria a side conversation e grava
+   * `zendesk_side_conversation_id` é o caminho de aceite
+   * (`job-partner-acceptance`) e o de convite (`auto-assign-job-invites`), e o
+   * link do relatório vai na mensagem deles.
+   */
+  void partnerConfirmed;
+  void partnerEmail;
+  void partnerName;
+  void zendeskUserId;
 
   // job_creation_notice_sent_at was already claimed atomically at the top.
   return { ok: true, mainPosted, sideConvId };
