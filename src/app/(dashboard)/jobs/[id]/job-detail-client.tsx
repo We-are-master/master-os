@@ -1064,6 +1064,116 @@ function hourlyRatesFromCatalogService(
   return { presetId: pid, clientRate, partnerRate, billedHours };
 }
 
+/**
+ * A compensação de cancelamento, editável na própria linha.
+ *
+ * Este número só era escrito no modal "Cancel job", no instante do
+ * cancelamento. Errou ali, errou para sempre: não havia tela que o mudasse, e
+ * ele decide quanto o parceiro recebe na quinzena. O JOB-9436 ficou com £200
+ * onde o combinado era £100, e o pagamento sairia assim.
+ *
+ * Salva pela rota dedicada, que também atualiza o total do self-bill. Ir por
+ * `updateJob` aqui anularia o self-bill aberto, porque job cancelado dispara o
+ * cancelamento dos documentos dele.
+ */
+function CompensacaoEditavel({
+  jobId,
+  valor,
+  onSalvo,
+}: {
+  jobId: string;
+  valor: number;
+  onSalvo: () => void;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState(String(valor));
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    const novo = Number(texto);
+    if (!Number.isFinite(novo) || novo < 0) {
+      toast.error("Enter an amount of 0 or more");
+      return;
+    }
+    if (Math.abs(novo - valor) < 0.005) {
+      setEditando(false);
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/cancellation-compensation`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountGbp: novo }),
+      });
+      const json = (await r.json()) as { error?: string; warning?: string; selfBillNetPayout?: number | null };
+      if (!r.ok) throw new Error(json.error ?? "Could not save");
+      if (json.warning) toast.warning(json.warning);
+      else if (typeof json.selfBillNetPayout === "number") {
+        toast.success(`Compensation saved — self-bill now ${formatCurrency(json.selfBillNetPayout)}`);
+      } else toast.success("Compensation saved");
+      setEditando(false);
+      onSalvo();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  if (!editando) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setTexto(String(valor));
+          setEditando(true);
+        }}
+        title="Edit what the partner is paid for this cancellation"
+        className="font-semibold tabular-nums text-rose-700 underline decoration-dotted underline-offset-2 hover:text-rose-800"
+      >
+        {formatCurrency(valor)}
+      </button>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1">
+      <span className="text-text-tertiary">£</span>
+      <input
+        type="number"
+        min={0}
+        step={0.01}
+        autoFocus
+        value={texto}
+        disabled={salvando}
+        onChange={(e) => setTexto(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void salvar();
+          if (e.key === "Escape") setEditando(false);
+        }}
+        className="h-7 w-20 rounded border border-border bg-card px-1.5 text-right text-xs tabular-nums"
+      />
+      <button
+        type="button"
+        onClick={() => void salvar()}
+        disabled={salvando}
+        className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+      >
+        {salvando ? "…" : "Save"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditando(false)}
+        disabled={salvando}
+        className="rounded px-1 py-0.5 text-[11px] text-text-tertiary hover:bg-surface-hover"
+      >
+        Cancel
+      </button>
+    </span>
+  );
+}
+
 export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const params = useParams();
   const router = useRouter();
@@ -2865,6 +2975,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     (JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status) ||
       job.status === "on_hold" ||
       job.status === "unassigned");
+  /**
+   * Picking the partner is enough on a fixed-price job. Zero is a real answer:
+   * a return visit to finish work already paid for is worth nothing new to
+   * either side, and the old gate refused to assign anyone until someone typed
+   * a price that would then have to be corrected back to zero.
+   *
+   * Hourly still needs its service and rate, because those are what the totals
+   * are computed from — without them there is no number at all, not a zero.
+   */
   const partnerAssignCanConfirm =
     partnerAssignIsUnassign ||
     (!!selectedPartnerId &&
@@ -2872,7 +2991,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? !!partnerAssignServiceId &&
           Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
           Math.max(0, Number(partnerAssignClientHourlyRate) || 0) > 0
-        : partnerAssignBaseCost >= 0 && Math.max(0, Number(partnerAssignFixedClientPrice) || 0) > 0));
+        : true));
 
   useEffect(() => {
     if (!job) return;
@@ -6692,13 +6811,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ? "Cancellation compensation (Fixfy pays)"
                     : "Partner total (incl. materials)"}
               </span>
-              <span className="font-semibold tabular-nums text-rose-700">
-                {partnerUsesClawbackUi
-                  ? formatCurrencyPrecise(-partnerClawbackOwed)
-                  : partnerUsesCompensationUi
-                    ? formatCurrency(officePartnerCompensation)
+              {partnerUsesCompensationUi && !partnerUsesClawbackUi ? (
+                /* Editável: era o único número do job que, uma vez salvo no
+                   modal de cancelamento, só saía do sistema por SQL. */
+                <CompensacaoEditavel
+                  jobId={job.id}
+                  valor={officePartnerCompensation}
+                  onSalvo={() => void refreshJobFinance()}
+                />
+              ) : (
+                <span className="font-semibold tabular-nums text-rose-700">
+                  {partnerUsesClawbackUi
+                    ? formatCurrencyPrecise(-partnerClawbackOwed)
                     : formatCurrency(partnerCashOutTotal)}
-              </span>
+                </span>
+              )}
             </div>
             {!partnerUsesClawbackUi && !partnerUsesCompensationUi ? (
               <>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { Drawer } from "@/components/ui/drawer";
+import { Tabs } from "@/components/ui/tabs";
 import { Modal } from "@/components/ui/modal";
 
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
@@ -47,7 +48,6 @@ import {
   WORKFORCE_CONTRACTOR_FEE_LABEL,
   WORKFORCE_DRAWER_TAB_CONFIG,
   WorkforceDrawerStatusBadge,
-  WorkforceDrawerTabs,
   WorkforceSectionTitle,
   workforceFieldClass,
   workforceSectionFormClass,
@@ -73,9 +73,7 @@ import {
 import { format } from "date-fns";
 import {
   FileText,
-  Wallet,
   Trash2,
-  Calendar,
   ExternalLink,
   Loader2,
   Download,
@@ -1424,11 +1422,14 @@ export function WorkforcePersonDrawer({
         ) : undefined
       }
     >
-      <div className="px-4 sm:px-6 pt-1 pb-0 border-b border-[#020040]/10 bg-card/95 backdrop-blur-sm sticky top-0 z-[1]">
-        <WorkforceDrawerTabs
-          tabs={visibleDrawerTabs}
+      {/* Same tab strip as the Partner and Account drawers. This one used to
+          have its own component with an icon per tab, so the OS had two ways of
+          drawing the same control depending on which drawer you opened. */}
+      <div className="sticky top-0 z-[1] border-b border-border-light bg-card/95 px-4 pt-2 pb-0 backdrop-blur-sm sm:px-6">
+        <Tabs
+          tabs={visibleDrawerTabs.map((t) => ({ id: t.id, label: t.label }))}
           activeTab={tab}
-          onChange={(id) => setTab(id)}
+          onChange={(id) => setTab(id as WorkforceDrawerTab)}
         />
       </div>
 

@@ -6,7 +6,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Calendar,
   CheckCircle2,
   FileText,
   LayoutGrid,
@@ -16,9 +15,7 @@ import {
   Mail,
   Pencil,
   Plus,
-  Shield,
   Trash2,
-  User,
   UserPlus,
   Wallet,
 } from "lucide-react";
@@ -61,51 +58,17 @@ export function WorkforceSectionTitle({
   );
 }
 
-export function WorkforceDrawerTabs({
-  tabs,
-  activeTab,
-  onChange,
-}: {
-  tabs: { id: WorkforceDrawerTab; label: string; icon: ReactNode; contractorOnly?: boolean }[];
-  activeTab: WorkforceDrawerTab;
-  onChange: (id: WorkforceDrawerTab) => void;
-}) {
-  return (
-    <div className="flex gap-1 overflow-x-auto overscroll-x-contain scroll-smooth -mb-px">
-      {tabs.map((t) => {
-        const active = activeTab === t.id;
-        return (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onChange(t.id)}
-            className={cn(
-              "flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors whitespace-nowrap",
-              active
-                ? "border-primary text-[#020040] dark:text-text-primary"
-                : "border-transparent text-text-tertiary hover:text-text-secondary",
-            )}
-          >
-            <span className={cn("opacity-80", active && "text-primary opacity-100")}>{t.icon}</span>
-            {t.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
+/** Tab order for the person drawer. Rendered by the shared `Tabs` strip. */
 export const WORKFORCE_DRAWER_TAB_CONFIG: {
   id: WorkforceDrawerTab;
   label: string;
-  icon: ReactNode;
   contractorOnly?: boolean;
 }[] = [
-  { id: "overview", label: "Profile", icon: <User className="h-3.5 w-3.5" /> },
-  { id: "documents", label: "Documents", icon: <FileText className="h-3.5 w-3.5" /> },
-  { id: "schedule", label: "Schedule", icon: <Calendar className="h-3.5 w-3.5" />, contractorOnly: true },
-  { id: "finance", label: "Finance", icon: <Wallet className="h-3.5 w-3.5" /> },
-  { id: "access", label: "Login Details", icon: <Shield className="h-3.5 w-3.5" /> },
+  { id: "overview", label: "Profile" },
+  { id: "documents", label: "Documents" },
+  { id: "schedule", label: "Schedule", contractorOnly: true },
+  { id: "finance", label: "Finance" },
+  { id: "access", label: "Login Details" },
 ];
 
 export function WorkforceKpiGrid({

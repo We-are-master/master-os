@@ -53,9 +53,8 @@ function parseCycleHint(raw: unknown): PaymentRunCycleKind | "auto" {
 }
 
 export async function POST(req: NextRequest) {
-  const authResult = await requireAuth();
-  if (authResult instanceof NextResponse) return authResult;
-  const auth = authResult;
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
 
   let body: { selfBillIds?: unknown; paymentRunHint?: unknown };
   try {
@@ -78,18 +77,29 @@ export async function POST(req: NextRequest) {
   if (!resendKey) {
     return NextResponse.json({ error: "RESEND_API_KEY not configured" }, { status: 503 });
   }
-  const fromEmailRaw = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!fromEmailRaw) {
+  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!fromEmail) {
     return NextResponse.json({ error: "RESEND_FROM_EMAIL not configured" }, { status: 503 });
   }
-  const fromEmail: string = fromEmailRaw;
 
   const supabase = createServiceClient();
   const { data: company } = await supabase.from("company_settings").select("email, company_name").limit(1).maybeSingle();
-  const ccEmail =
-    process.env.SELF_BILL_CC_EMAIL?.trim() ||
-    (company?.email && String(company.email).trim()) ||
-    null;
+  /**
+   * SEM cópia para o endereço de suporte.
+   *
+   * O padrão caía em `company_settings.email`, que é `support@getfixfy.com`, o
+   * endereço do Zendesk. Cada self-bill enviado virava um TICKET NOVO lá, o
+   * autoresponder respondia "Your request has been received" para todos do
+   * thread — inclusive o parceiro — e o Harvey ainda lia o ticket como
+   * confirmação de agendamento e comentava sem entender. Aconteceu em
+   * 21/08/2026 com o Fernando, ticket #49129.
+   *
+   * O registro interno do envio é o ticket do payment run com uma side
+   * conversation por parceiro, não uma cópia de email. `SELF_BILL_CC_EMAIL`
+   * continua valendo para quem quiser um arquivo de verdade, mas nunca mais um
+   * fallback que aponta para a própria caixa de entrada do suporte.
+   */
+  const ccEmail = process.env.SELF_BILL_CC_EMAIL?.trim() || null;
   const companyEmail = (company?.email && String(company.email).trim()) || null;
   const companyName = (company?.company_name && String(company.company_name).trim()) || null;
 
@@ -112,7 +122,20 @@ export async function POST(req: NextRequest) {
   const sbById = new Map(sbList.map((sb) => [sb.id, sb]));
 
   const cycleKind: PaymentRunCycleKind = cycleHint === "off_cycle" ? "off_cycle" : "standard";
-  const requesterEmail = companyEmail || auth.user.email || "no-reply@example.com";
+  /**
+   * O requester do ticket interno é a PESSOA, não o endereço de suporte.
+   *
+   * Com `support@getfixfy.com` o Zendesk recusa a criação inteira:
+   *
+   *   "Requester: Email: support@getfixfy.com cannot be used;
+   *    it is in use as a support address"
+   *
+   * Foi por isso que os quatro payment runs existiam no banco com
+   * `zendesk_ticket_id` nulo: o ticket nunca nascia, e sem ticket não há onde
+   * pendurar a side conversation de cada parceiro. O envio saía por email e
+   * não deixava rastro nenhum.
+   */
+  const requesterEmail = auth.user.email || companyEmail || "no-reply@example.com";
   const requesterName = companyName || userName;
 
   const groups = groupSelfBillsByPeriod(sbList);
@@ -132,38 +155,60 @@ export async function POST(req: NextRequest) {
   }
 
   const resend = new Resend(resendKey);
+  const sentIds: string[] = [];
+  const skipped: Skipped[] = [];
 
-  type ItemResult = { id: string; ok: true } | { id: string; ok: false; reference?: string; reason: string };
-
-  async function processSelfBill(id: string): Promise<ItemResult> {
+  for (const id of selfBillIds) {
     const sb = sbById.get(id);
     if (!sb) {
-      return { id, ok: false, reason: "Not found" };
+      skipped.push({ id, reason: "Not found" });
+      continue;
     }
     if (isSelfBillPayoutVoided(sb)) {
-      return { id, ok: false, reference: sb.reference, reason: "Void or cancelled" };
+      skipped.push({ id, reference: sb.reference, reason: "Void or cancelled" });
+      continue;
     }
     if (sb.bill_origin === "internal") {
-      return { id, ok: false, reference: sb.reference, reason: "Internal payroll bill" };
+      skipped.push({ id, reference: sb.reference, reason: "Internal payroll bill" });
+      continue;
     }
     if (!sb.partner_id?.trim()) {
-      return { id, ok: false, reference: sb.reference, reason: "No partner linked" };
+      skipped.push({ id, reference: sb.reference, reason: "No partner linked" });
+      continue;
     }
 
-    const { data: partner } = await supabase
+    /**
+     * `partners.name` NÃO EXISTE. As colunas são `company_name` e `contact_name`.
+     *
+     * Pedir uma coluna inexistente faz o PostgREST devolver erro e `data` nulo.
+     * O erro era descartado, então `partner` ficava nulo e TODO parceiro caía em
+     * "Partner has no email" — inclusive os quatro do pagamento de 21/08/2026,
+     * que têm email cadastrado. Nenhum self-bill conseguia sair.
+     *
+     * O erro agora é lido e vira um motivo diferente: banco que recusa a
+     * consulta e parceiro sem email são problemas distintos, e chamar os dois
+     * de "sem email" manda procurar no lugar errado.
+     */
+    const { data: partner, error: partnerErr } = await supabase
       .from("partners")
-      .select("email, contact_name")
+      .select("email, company_name, contact_name")
       .eq("id", sb.partner_id)
       .maybeSingle();
+    if (partnerErr) {
+      skipped.push({ id, reference: sb.reference, reason: `Could not read partner: ${partnerErr.message}` });
+      continue;
+    }
     const partnerEmail = partner?.email?.trim().toLowerCase();
-    const partnerName = partner?.contact_name?.trim() ?? null;
+    const partnerName = partner?.company_name?.trim() || partner?.contact_name?.trim() || null;
     if (!partnerEmail) {
-      return { id, ok: false, reference: sb.reference, reason: "Partner has no email" };
+      skipped.push({ id, reference: sb.reference, reason: "Partner has no email" });
+      continue;
     }
 
     const pdfResult = await renderSelfBillPdfBuffer(supabase, id);
     if ("error" in pdfResult) {
-      return { id, ok: false, reference: sb.reference, reason: pdfResult.error };
+      skipped.push({ id, reference: sb.reference, reason: pdfResult.error });
+      continue;
     }
 
     const weekEndStr = sb.week_end?.trim() ?? "";
@@ -203,14 +248,14 @@ export async function POST(req: NextRequest) {
     });
 
     if (emailError) {
-      return {
+      skipped.push({
         id,
-        ok: false,
         reference: sb.reference,
         reason: typeof emailError === "object" && emailError && "message" in emailError
           ? String((emailError as { message: unknown }).message)
           : "Email delivery failed",
-      };
+      });
+      continue;
     }
 
     // Zendesk side conversation — recorded under the master payment-run ticket.
@@ -294,28 +339,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return { id, ok: true };
+    sentIds.push(id);
   }
-
-  // Each self-bill is fully independent (own partner, own PDF, own email, own
-  // Zendesk side-conversation under the shared per-group ticket) — was a
-  // sequential for-loop, one self-bill fully processed after another, which
-  // is what made a 10-20 item bulk send lock the UI for minutes. Process in
-  // small concurrent batches instead of full unbounded Promise.all, so a
-  // large batch doesn't slam Resend/Zendesk with dozens of simultaneous
-  // requests at once.
-  const CONCURRENCY = 5;
-  const results: ItemResult[] = [];
-  for (let i = 0; i < selfBillIds.length; i += CONCURRENCY) {
-    const batch = selfBillIds.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map((id) => processSelfBill(id)));
-    results.push(...batchResults);
-  }
-
-  const sentIds = results.filter((r): r is Extract<ItemResult, { ok: true }> => r.ok).map((r) => r.id);
-  const skipped: Skipped[] = results
-    .filter((r): r is Extract<ItemResult, { ok: false }> => !r.ok)
-    .map((r) => ({ id: r.id, reference: r.reference, reason: r.reason }));
 
   return NextResponse.json({
     sent: sentIds.length,

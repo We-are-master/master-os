@@ -96,7 +96,6 @@ function CancelJobModalBody({
   const [detail, setDetail] = useState("");
   const [jobRow, setJobRow] = useState<Job | null>(null);
   const [feeDefaults, setFeeDefaults] = useState<OfficeCancelFeeDefaults | null>(null);
-  const [cancelFault, setCancelFault] = useState<CancelFault>("partner");
   const [chargeClient, setChargeClient] = useState(false);
   const [clientFeeInput, setClientFeeInput] = useState("");
   const [partnerFee, setPartnerFee] = useState(false);
@@ -140,16 +139,6 @@ function CancelJobModalBody({
       (displayJob.auto_assign_invited_partner_ids?.length ?? 0) > 0);
   const partnerLabel = displayJob?.partner_name?.trim() || null;
 
-  const handleFaultChange = (fault: CancelFault) => {
-    setCancelFault(fault);
-    if (!feeDefaults) return;
-    const preset = applyFaultPreset(fault, feeDefaults, hasClient, hasPartner);
-    setChargeClient(preset.chargeClient);
-    setClientFeeInput(preset.clientFeeInput);
-    setPartnerFee(preset.partnerFee);
-    setPartnerFlow(preset.partnerFlow);
-    setPartnerFeeInput(preset.partnerFeeInput);
-  };
 
   const buildFees = (): OfficeCancelFeeChoices => {
     const clientGbp = chargeClient && clientFeeInput.trim() ? Number(clientFeeInput) : null;
@@ -171,7 +160,10 @@ function CancelJobModalBody({
       detail,
       presets: officeCancellationPresets,
       fees,
-      cancellationFault: cancelFault,
+      // Derived from what was actually decided, not from a separate question:
+      // charging the partner is a partner-fault cancel, charging the client is
+      // an account-fault one, and anything else is neither.
+      cancellationFault: partnerFee && partnerFlow === "owes" ? "partner" : chargeClient ? "account" : "custom",
     });
     if (result.ok) {
       onCancelled?.(result.updated);
@@ -249,38 +241,10 @@ function CancelJobModalBody({
           />
         </div>
 
-        {(hasClient || hasPartner) && (
-          <div className="rounded-lg border border-border p-3 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Who is at fault?</p>
-            <div className="flex flex-col gap-2 text-sm">
-              {(
-                [
-                  ["partner", "Partner fault", "Deduct the fee from the partner"],
-                  ["account", "Account fault", "Pay the partner and charge the account"],
-                  ["custom", "Custom", "You choose below"],
-                ] as const
-              ).map(([id, label, sub]) => (
-                <label key={id} className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="cancelFault"
-                    checked={cancelFault === id}
-                    onChange={() => handleFaultChange(id)}
-                    disabled={isSubmitting}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    {label}
-                    <span className="block text-[11px] text-text-tertiary font-normal">{sub}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <p className="text-[11px] text-text-tertiary">
-              Presets only pre-fill. Everything below stays editable.
-            </p>
-          </div>
-        )}
+        {/* No fault selector. It only pre-filled the two boxes below, which are
+            the actual decision: does the client get charged, and does the
+            partner get paid or charged. Choosing a fault first, then editing
+            the boxes it filled, was two steps for one call. */}
 
         {hasClient && (
           <div className="rounded-lg border border-border p-3 space-y-2">

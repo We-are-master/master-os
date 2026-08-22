@@ -2,7 +2,17 @@
  * Catalog pricing floor (minimum sell) and ceiling (maximum partner pay).
  *
  * - Account sell rates must be >= catalog standard (floor).
- * - Partner pay rates must be <= catalog standard (ceiling).
+ * - Partner pay rates are COMPARED to the catalog standard, not capped by it.
+ *
+ * O teto deixou de cortar em 21/08/2026, por decisão do dono. Ele existia para
+ * impedir pagar acima do padrão, e a consequência era pior: o preço combinado
+ * com o parceiro não cabia no sistema. O London Safety Certificate cobra £98,99
+ * no EICR de studio contra £69 do padrão, e o OS guardava £98,99 e lia £69 — o
+ * número verdadeiro entrava e sumia calado.
+ *
+ * `isPartnerPayValid` continua existindo e dizendo que passou do padrão. A
+ * diferença é que agora isso é AVISO na tela (a margem que aparece na hora de
+ * alocar), não um corte silencioso no valor.
  */
 
 export type PricingDeltaKind = "sell" | "pay";
@@ -25,7 +35,8 @@ export function resolveAccountSell(floor: number, override: number | null | unde
 export function resolvePartnerPay(ceiling: number, override: number | null | undefined): number {
   const c = finiteNonNeg(ceiling);
   if (override == null || !Number.isFinite(Number(override))) return c;
-  return Math.min(c, finiteNonNeg(Number(override)));
+  // Sem `Math.min`: o combinado com o parceiro vale, mesmo acima do padrão.
+  return finiteNonNeg(Number(override));
 }
 
 export function isAccountSellValid(floor: number, rate: number): boolean {

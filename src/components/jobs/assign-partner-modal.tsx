@@ -78,7 +78,9 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
   const priceValue = Math.max(0, Number(clientPrice) || 0);
   const marginPct = priceValue > 0 && costValue > 0 ? Math.round(((priceValue - costValue) / priceValue) * 100) : null;
   const selected = partners.find((p) => p.id === selectedId) ?? null;
-  const canConfirm = !!job && !!selected && !saving && (hourly || (priceValue > 0 && costValue > 0));
+  // Zero is allowed: a return visit to finish paid work is worth nothing new.
+  // Picking the partner is the whole decision here.
+  const canConfirm = !!job && !!selected && !saving;
 
   const confirm = async () => {
     if (!job || !selected) return;

@@ -1,14 +1,21 @@
 import { fromZendeskTag } from "@/lib/zendesk-reason-tags";
 
 /** Preset reasons when the office cancels a job (shown in dashboard + sent to assigned partner). */
+/**
+ * Two words each, because this label is read twice: once by the operator
+ * picking it under time pressure, and once by the partner, who receives it as
+ * the reason their job disappeared. "Partner unavailable / reassignment needed"
+ * told the partner about our internal process; "Partner unavailable" tells them
+ * what happened. The detail box carries the specifics.
+ */
 export const OFFICE_JOB_CANCELLATION_REASONS = [
-  { id: "client_requested", label: "Client requested cancellation" },
-  { id: "scheduling_access", label: "Scheduling / property access issue" },
-  { id: "duplicate_error", label: "Duplicate job or created in error" },
-  { id: "pricing_scope", label: "Pricing or scope disagreement" },
-  { id: "partner_capacity", label: "Partner unavailable / reassignment needed" },
-  { id: "weather_external", label: "Weather or external factor" },
-  { id: "other", label: "Other (add details below)" },
+  { id: "client_requested", label: "Client cancelled" },
+  { id: "scheduling_access", label: "No access" },
+  { id: "duplicate_error", label: "Booking error" },
+  { id: "pricing_scope", label: "Price disputed" },
+  { id: "partner_capacity", label: "Partner unavailable" },
+  { id: "weather_external", label: "Weather" },
+  { id: "other", label: "Other" },
 ] as const;
 
 export type OfficeJobCancellationReasonId = (typeof OFFICE_JOB_CANCELLATION_REASONS)[number]["id"];

@@ -8,7 +8,7 @@ import { PageTransition, StaggerContainer } from "@/components/layout/page-trans
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DrawerSection } from "@/components/shared/drawer-section";
+import { DrawerFooter, DrawerSection, DrawerSectionList } from "@/components/shared/drawer-section";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { Avatar } from "@/components/ui/avatar";
@@ -1322,7 +1322,9 @@ function AccountDetailDrawer({
     try {
       const url = await uploadAccountLogo(account.id, file);
       const updated = await updateAccount(account.id, { logo_url: url });
-      onAccountUpdated(updated);
+      const fresh = await getAccount(account.id);
+      const next = fresh ?? updated;
+      onAccountUpdated(next);
       setEdit((p) => ({ ...p, logo_url: url }));
       toast.success("Logo uploaded and saved");
     } catch (err) {
@@ -1342,7 +1344,9 @@ function AccountDetailDrawer({
         /* folder may be empty or bucket missing */
       }
       const updated = await updateAccount(account.id, { logo_url: null });
-      onAccountUpdated(updated);
+      const fresh = await getAccount(account.id);
+      const next = fresh ?? updated;
+      onAccountUpdated(next);
       setEdit((p) => ({ ...p, logo_url: "" }));
       toast.success("Logo removed");
     } catch (err) {
@@ -1435,27 +1439,28 @@ function AccountDetailDrawer({
       width="w-[min(580px,calc(100vw-1rem))]"
       footer={
         isAdmin && (tab === "overview" || tab === "finance") ? (
-          <div className="flex items-center justify-between px-5 py-4">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
-              onClick={() => toast.info("Archive not yet implemented")}
-            >
-              <Archive className="h-3.5 w-3.5" />
-              Archive account
-            </button>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button
-                size="sm"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          <DrawerFooter
+            destructive={
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-[13px] font-medium text-text-tertiary transition-colors hover:text-fx-red"
+                onClick={() => toast.info("Archive not yet implemented")}
               >
-                {saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
-          </div>
+                <Archive className="h-3.5 w-3.5" />
+                Archive account
+              </button>
+            }
+          >
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => void handleSave()}
+              icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
+          </DrawerFooter>
         ) : undefined
       }
     >
@@ -1603,7 +1608,8 @@ function AccountDetailDrawer({
                       try {
                         const url = await uploadAccountContract(account.id, file);
                         const updated = await updateAccount(account.id, { contract_url: url });
-                        onAccountUpdated(updated);
+                        const fresh = await getAccount(account.id);
+                        onAccountUpdated(fresh ?? updated);
                         setEdit((p) => ({ ...p, contract_url: url }));
                         toast.success("Contract uploaded");
                       } catch (err) {
@@ -1638,7 +1644,8 @@ function AccountDetailDrawer({
                           try {
                             try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
                             const updated = await updateAccount(account.id, { contract_url: null });
-                            onAccountUpdated(updated);
+                            const fresh = await getAccount(account.id);
+                            onAccountUpdated(fresh ?? updated);
                             setEdit((p) => ({ ...p, contract_url: "" }));
                             toast.success("Contract removed");
                           } catch (err) {
@@ -1705,7 +1712,7 @@ function AccountDetailDrawer({
             </div>
 
             {account ? (
-              <div className="space-y-3">
+              <DrawerSectionList>
                 <DrawerSection
                   title="Services"
                   summary={
@@ -1751,7 +1758,7 @@ function AccountDetailDrawer({
                     </div>
                   </div>
                 </DrawerSection>
-              </div>
+              </DrawerSectionList>
             ) : null}
           </>
         )}

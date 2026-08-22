@@ -407,7 +407,7 @@ function collectAttentionWorklistRows(
       expectedPayYmd: dueYmd,
       accountKey,
       accountName: accId ? accountNameById[accId] ?? "Unknown account" : "Direct · Unlinked",
-      clientName: inv.client_name?.trim() || "—",
+      clientName: nomeDoClienteNaLinha(inv, jobsByRef),
       jobCount: inv.job_reference ? 1 : 0,
       paymentPlanLabel: paymentPlanProgressLabel(installments),
     });
@@ -415,6 +415,33 @@ function collectAttentionWorklistRows(
   rows.sort((a, b) => b.daysLate - a.daysLate || b.balanceDue - a.balanceDue);
   return rows;
 }
+
+/**
+ * O nome que a linha mostra vem do JOB quando a invoice não tem nome de verdade.
+ *
+ * A invoice guarda uma cópia do nome do dia em que nasceu, e ninguém volta para
+ * atualizá-la. Job do Checkatrade Express nasce sem nome (eles só mandam depois),
+ * a invoice nasce minutos depois copiando o vazio, e quando o nome aparece no job
+ * a invoice fica para trás. O JOB-9438 virou "Malcolm Kennedy" em 18/08 e a
+ * RCP-2026-674 continuou dizendo "Unnamed customer".
+ *
+ * Só substitui quando a cópia é vazia ou é o marcador de "sem nome": nome que
+ * alguém escreveu de propósito na invoice continua ganhando.
+ */
+const SEM_NOME = /^(unnamed customer|unnamed|no name|n\/a|—|-)$/i;
+
+function nomeDoClienteNaLinha(
+  inv: Invoice,
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+): string {
+  const daInvoice = inv.client_name?.trim() ?? "";
+  if (daInvoice && !SEM_NOME.test(daInvoice)) return daInvoice;
+  const ref = inv.job_reference?.trim();
+  const doJob = (ref ? jobsByRef[ref]?.client_name : null)?.trim() ?? "";
+  if (doJob && !SEM_NOME.test(doJob)) return doJob;
+  return daInvoice || "—";
+}
+
 
 export function buildAttentionWorklist(
   invoices: Invoice[],

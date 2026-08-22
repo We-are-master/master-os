@@ -1,5 +1,6 @@
 import { getSupabase } from "@/services/base";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+import { officeCancellationPartnerPayoutGbp } from "@/lib/job-cancel-economics";
 import {
   cancelSelfBillsByIds,
   isSelfBillPayoutVoided,
@@ -106,7 +107,23 @@ export function computeSelfBillAmountDue(
       let due = 0;
       for (const j of list) {
         if (!jobContributesToSelfBillPayout(j)) continue;
-        const cap = jobLinePartnerGross(j);
+        /**
+         * Job cancelado vale a COMPENSAÇÃO, não o `partner_cost`.
+         *
+         * `jobContributesToSelfBillPayout` deixa o cancelado entrar quando há
+         * compensação a pagar, e logo em seguida `jobLinePartnerGross` lia
+         * `partner_cost + materials`, que num job cancelado é £0. O job passava
+         * pelo filtro e valia zero.
+         *
+         * Medido em 21/08/2026 no G&M Services: o PDF dizia £500 (com os £200
+         * de compensação do JOB-9436) e a coluna "Outstanding" dizia £300. O
+         * parceiro receberia £200 a menos do que o próprio documento promete,
+         * no dia do pagamento.
+         */
+        const cap =
+          j.status === "cancelled"
+            ? officeCancellationPartnerPayoutGbp(j as Job)
+            : jobLinePartnerGross(j);
         const paid = partnerPaidByJobId[j.id] ?? 0;
         due += Math.max(0, cap - paid);
       }
