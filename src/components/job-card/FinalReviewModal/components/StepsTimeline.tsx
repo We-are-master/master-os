@@ -173,6 +173,20 @@ export function StepsTimeline({
               {r.name} · {r.uploaded ? "uploaded" : "missing"}
             </span>
           ))}
+          {/* Relatório faltando é o unico ponto do fluxo onde a pessoa tem algo
+              a fazer AGORA, e era o unico sem botao: o passo mostrava o chip
+              vermelho "missing" e parava ali, com a acao de preencher existindo
+              e escondida. `onEditReport` fecha esta revisao e abre o formulario
+              do relatorio, que e exatamente o que falta. */}
+          {!allUploaded && onEditReport ? (
+            <button
+              type="button"
+              onClick={onEditReport}
+              className="rounded-[6px] border border-[#ED4B00]/30 bg-[#FFF1EB] px-2.5 py-[3px] text-[11px] font-semibold text-[#ED4B00] transition-colors hover:bg-[#FFE4D8]"
+            >
+              Fill the report
+            </button>
+          ) : null}
           {/* Todo o envio externo — estado, conferência e ação — mora aqui.
               Antes o passo só falava depois que o envio já tinha acontecido,
               calado justamente quando havia algo a fazer. */}
