@@ -282,6 +282,19 @@ export type ExtracaoBooking = {
   jobNome: string | null;
   /** Bloco "Job details" inteiro do card, pronto pro scope (dono, 18/08). */
   detalhesJob: string | null;
+  /**
+   * Telefone do morador, como o card escreve.
+   *
+   * O e-mail da plataforma não traz nem o nome nem o telefone: os dados do
+   * cliente moram atrás do link do card, que é justamente o que já lemos
+   * aqui. Sem este campo o job nascia sem telefone nenhum, e em 22/08/2026
+   * eram 10 dos 26 jobs de Housekeep de agosto assim. Sem telefone não há
+   * confirmação por WhatsApp nem como avisar o morador de um atraso.
+   *
+   * Pode ser fixo, e vale mesmo assim: quem atende no escritório liga. Quem
+   * decide se dá para mandar WhatsApp é o `normalizarMobileUk`, depois.
+   */
+  contato: string | null;
   /** O link tokenizado do card — vira jobs.report_link. */
   cardUrl: string | null;
 };
@@ -328,6 +341,7 @@ JSON: {"is_confirmed_booking":bool,"client_name":str|null,"property_address":str
     // Detalhes ricos moram no card da plataforma, não no e-mail.
     jobNome: null,
     detalhesJob: null,
+    contato: null,
     cardUrl: null,
   };
 }
@@ -375,7 +389,7 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
           {
             role: "system",
             content:
-              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"visit_date_label":str|null,"arrival_window":"HH:MM - HH:MM"|null,"length":str|null,"price_gbp":num|null,"service_summary":str|null,"job":str|null,"property_type":str|null,"bedrooms":num|null,"bathrooms":num|null,"additional_rooms":num|null,"tasks":[str]|null}. "job" is the service name as the page writes it (e.g. "End-of-tenancy clean"); "visit_date_label" the date as written (e.g. "Thursday, 20 August 2026"); "length" the booked duration if shown; "tasks" the extra/additional tasks booked for the job (e.g. "Balcony cleaning") — NEVER workflow checklist steps like "Start job", "Before photos", "Finish job", "After photos".',
+              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"contact":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"visit_date_label":str|null,"arrival_window":"HH:MM - HH:MM"|null,"length":str|null,"price_gbp":num|null,"service_summary":str|null,"job":str|null,"property_type":str|null,"bedrooms":num|null,"bathrooms":num|null,"additional_rooms":num|null,"tasks":[str]|null}. "contact" is the customer\'s phone number as written on the page (the "Contact" line under customer details), digits and spaces exactly as shown, null if absent. "job" is the service name as the page writes it (e.g. "End-of-tenancy clean"); "visit_date_label" the date as written (e.g. "Thursday, 20 August 2026"); "length" the booked duration if shown; "tasks" the extra/additional tasks booked for the job (e.g. "Balcony cleaning") — NEVER workflow checklist steps like "Start job", "Before photos", "Finish job", "After photos".',
           },
           { role: "user", content: texto.slice(0, 6000) },
         ],
@@ -403,6 +417,7 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
 
     return {
       clientName: (j.client_name as string) || null,
+      contato: (j.contact as string) || null,
       propertyAddress: (j.property_address as string) || null,
       postcode: (j.postcode as string) || null,
       date: (j.date as string) || null,
@@ -614,6 +629,7 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       try {
         const card = await pescarCardHousekeep(link, apiKey);
         ex.clientName ||= card.clientName ?? null;
+        ex.contato ||= card.contato ?? null;
         ex.propertyAddress ||= card.propertyAddress ?? null;
         ex.postcode ||= card.postcode ?? null;
         ex.date ||= card.date ?? null;
@@ -623,7 +639,7 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
         ex.jobNome ||= card.jobNome ?? null;
         ex.detalhesJob ||= card.detalhesJob ?? null;
         ex.cardUrl ||= card.cardUrl ?? null;
-        if (ex.clientName && ex.propertyAddress && ex.date && ex.detalhesJob) break;
+        if (ex.clientName && ex.contato && ex.propertyAddress && ex.date && ex.detalhesJob) break;
       } catch {
         /* card fora do ar não derruba o fluxo: os portões decidem */
       }
@@ -684,6 +700,9 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       date: ex.date,
       arrival_time: arrivalTime,
       client_name: ex.clientName,
+      // Sem isto o morador nasce sem telefone e nunca recebe confirmação nem
+      // aviso de atraso. O card tem o número; o e-mail que abre o ticket não.
+      client_phone: ex.contato ?? undefined,
       property_address: ex.propertyAddress,
       postcode: ex.postcode ?? undefined,
       title: tituloCanonico(ex.jobNome ?? ex.serviceSummary ?? ticket.subject),
@@ -701,7 +720,7 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
        * na próxima varredura completa, casando por postcode + valor.
        */
       internal_notes: [
-        `Created by Harvey from Zendesk booking #${ticketId} (${conta!.nome}).`,
+        `Created by Harvey from Zendesk booking #${ticketId}.`,
         ex.cardUrl || ticket.linksHousekeep[0]
           ? null
           : "No card link in this email: report link and the customer's brief are still missing. Ruben fills them from the board on his next full sweep.",

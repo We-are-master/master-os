@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
+import { limparScope } from "@/lib/scope-limpo";
 import { isValidUUID } from "@/lib/auth-api";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import {
@@ -284,7 +285,7 @@ export async function POST(req: NextRequest) {
   // `let` because the catalog name can override this when the caller pinned a
   // catalog_service_id without sending a separate service_type.
   let serviceType       = str(body.service_type);
-  const description     = str(body.description) || null;
+  let description       = str(body.description) || null;
   // Accept bare values, Zendesk tags (`job_type_hourly` / `job_type_fixed`), or
   // Smart Price alias (`job_type_smart_price` → hourly).
   const rateTypeFromBody = normalizeWebhookRateType(body.rate_type);
@@ -536,6 +537,20 @@ export async function POST(req: NextRequest) {
   }
 
   const accountCompanyName = String((account as { company_name?: string }).company_name ?? "").trim();
+
+  /**
+   * O scope é limpo aqui, e não em cada agente.
+   *
+   * Todo job do OS nasce por esta rota, então este é o único lugar onde a
+   * regra não depende de alguém lembrar dela. Sai o horário solto que a
+   * plataforma imprime junto de uma mensagem, saem a data e a janela repetidas
+   * de campos que o job já tem (e que viram mentira na primeira remarcação), e
+   * sai o nome de quem nos passou o trabalho.
+   *
+   * Em 22/08/2026, com a regra existindo só nos agentes, havia 21 jobs com
+   * horário solto no scope e 19 nomeando a conta.
+   */
+  description = limparScope(description, { nomesProibidos: [accountCompanyName] });
   const catalogServiceIdBeforeReconcile = catalogServiceIdIn;
 
   if (ticketId) {

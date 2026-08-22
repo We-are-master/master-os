@@ -1,4 +1,5 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
+import { limparScope } from "@/lib/scope-limpo";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice, listInvoicesLinkedToJob } from "./invoices";
@@ -712,6 +713,16 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
+
+  /**
+   * A mesma limpeza da rota, porque esta é a outra porta.
+   *
+   * `/api/jobs` é por onde os agentes criam, e esta função é por onde a tela
+   * cria. Só uma das duas tendo a regra, a regra não existe: bastava alguém
+   * criar o job pelo OS para o nome da conta e o horário solto voltarem ao
+   * scope. Descoberto em 22/08/2026, depois de limpar 73 jobs pela rota.
+   */
+  input = { ...input, scope: limparScope(input.scope) ?? undefined };
   /**
    * Critical-path parallel kick-off:
    *   - 2 ref RPCs + due-date + nominal billing party are all data we need
