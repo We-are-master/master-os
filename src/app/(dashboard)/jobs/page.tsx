@@ -27,8 +27,8 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3,
-  ArrowRight, Briefcase, Receipt, Wallet,
+  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3, UserPlus,
+  Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
   Timer,
@@ -92,6 +92,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { MarginValue } from "@/components/shared/margin-value";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
@@ -760,6 +761,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Assign modal opened from the Partner column of the list. */
+  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -2473,9 +2476,19 @@ function JobsPageContent() {
                 Auto assign
               </Badge>
             ) : (
-              <span className="text-[11px] text-text-tertiary italic block">
+              <button
+                type="button"
+                title="Assign a partner"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setAssignTarget({ id: item.id, reference: item.reference });
+                }}
+                className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] italic text-text-tertiary transition-colors hover:bg-primary/10 hover:not-italic hover:text-primary"
+              >
+                <UserPlus className="h-3 w-3 shrink-0" aria-hidden />
                 Unassigned
-              </span>
+              </button>
             )}
           </div>
         );
@@ -2603,15 +2616,6 @@ function JobsPageContent() {
         const fs = item.finance_status ?? "unpaid";
         return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
       },
-    },
-    {
-      key: "actions",
-      label: "",
-      width: "44px",
-      minWidth: "44px",
-      cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
-      headerClassName: "w-11 normal-case",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
     },
   ];
 
@@ -2975,8 +2979,6 @@ function JobsPageContent() {
             <DataTable
               columns={tableColumns}
               data={sortedDataForTable}
-              columnConfigKey="jobs-columns"
-              columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={openJobDetail}
@@ -3320,6 +3322,26 @@ function JobsPageContent() {
           </div>
         </div>
       </Modal>
+      {assignTarget && (
+        <AssignPartnerModal
+          jobId={assignTarget.id}
+          jobReference={assignTarget.reference}
+          isOpen={assignTarget !== null}
+          onClose={() => setAssignTarget(null)}
+          onAssigned={() => {
+            setAssignTarget(null);
+            refresh();
+            void loadDashboardStats();
+          }}
+          onAutoAssign={() => {
+            const id = assignTarget.id;
+            setAssignTarget(null);
+            void fetch(`/api/jobs/${id}/dispatch-auto-assign-invites`, { method: "POST" })
+              .then(() => { toast.success("Invites sent to matching partners"); refresh(); })
+              .catch(() => toast.error("Could not send the invites"));
+          }}
+        />
+      )}
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
