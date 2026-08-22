@@ -111,6 +111,20 @@ export function createRespondIoClient(apiKey = process.env.RESPONDIO_API_KEY) {
 
     getContact: (id: ContactIdentifier) => call<Contact>("GET", `contact/${id}`),
 
+    /**
+     * Marca o contato. É por aqui que a fase do funil se mexe.
+     *
+     * O `lifecycle` vem no GET do contato mas NÃO tem escrita na API v2: todo
+     * caminho responde 404, e `contact/create_or_update` aceita o campo e o
+     * descarta em silêncio, devolvendo 200 (medido em 22/08/2026). Quem muda
+     * fase no respond.io é Workflow, e o gatilho que um Workflow enxerga vindo
+     * de fora é a tag.
+     *
+     * Some sozinha se já estiver lá; a API não duplica.
+     */
+    addTags: (id: ContactIdentifier, tags: string[]) =>
+      call<{ contactId: number }>("POST", `contact/${id}/tag`, tags),
+
     /** `firstName` é obrigatório: sem ele a API devolve 403, não 400. */
     createOrUpdateContact: (
       id: ContactIdentifier,

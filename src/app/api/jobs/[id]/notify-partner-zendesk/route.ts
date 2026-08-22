@@ -6,6 +6,8 @@ import {
   notifyPartnerJobZendesk,
   type NotifyKind,
 } from "@/lib/notify-partner-job-zendesk-server";
+import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
+import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -89,6 +91,33 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     skipPush: body.skipPush ?? false,
     actorUserId: auth.user.id,
   });
+
+  /**
+   * O parceiro entrou por atribuição direta: avisa os outros dois lados também.
+   *
+   * Este é o mesmo gesto que o aceite do parceiro em `job-partner-acceptance`,
+   * só que pela porta da frente — alguém do time escolheu o parceiro no OS em
+   * vez de esperar alguém aceitar a oferta. O job fica igualmente confirmado,
+   * então a conta e o morador merecem a mesma notícia.
+   *
+   * Só em "assigned". Cancelamento, hold e remarcação têm aviso próprio, e
+   * disparar uma confirmação de agendamento em cima de um cancelamento seria
+   * a pior mensagem possível.
+   *
+   * Sem depender de `payload.skipped`: os dois envios decidem sozinhos se têm
+   * o que fazer. A confirmação da conta não faz nada em job que não veio do
+   * Zendesk, e a do cliente é WhatsApp, que não depende do Zendesk. Se a parte
+   * do parceiro foi pulada porque o job não tem ticket, o morador ainda assim
+   * precisa saber que alguém vai bater na porta dele.
+   */
+  if ((body.kind ?? "assigned") === "assigned" && status < 400) {
+    void dispatchJobCreatedZendesk({ jobId, client: supabase }).catch((e) =>
+      console.error("[notify-partner-zendesk] confirmação da conta falhou:", e),
+    );
+    void enviarConfirmacaoDoCliente(supabase, jobId).catch((e) =>
+      console.error("[notify-partner-zendesk] confirmação do cliente falhou:", e),
+    );
+  }
 
   return NextResponse.json(payload, { status });
 }

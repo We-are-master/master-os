@@ -548,3 +548,26 @@ export async function listInvoicesForJobReferences(refs: string[]): Promise<Invo
   if (error) throw new Error(error.message);
   return (data ?? []) as Invoice[];
 }
+
+/** Minimal account shape for filter dropdowns. */
+export type FilterableAccount = { id: string; name: string };
+
+/**
+ * Active accounts for filter dropdowns, newest naming first.
+ * Callers used to query `accounts.select("id, name")` inline — a column that
+ * does not exist (`company_name` does), so the request 400'd and every account
+ * filter silently rendered as "All Accounts" with nothing to pick.
+ */
+export async function listActiveAccountsForFilter(): Promise<FilterableAccount[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("id, company_name")
+    .eq("status", "active")
+    .order("company_name", { ascending: true })
+    .limit(2000);
+  if (error) return [];
+  return ((data ?? []) as { id: string; company_name: string | null }[])
+    .map((r) => ({ id: r.id, name: r.company_name?.trim() ?? "" }))
+    .filter((a) => a.id && a.name);
+}

@@ -13,6 +13,7 @@ export type DateFilterMode =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "next_week"
   | "month"
   | "qtd"
   | "last_month"
@@ -37,27 +38,30 @@ export type DateFilterBounds = { fromIso: string; toIso: string };
 
 export type DateFilterQuickOption = { id: Exclude<DateFilterMode, "custom">; label: string };
 
-/** Chips always visible in the strip. */
-export const DATE_FILTER_PRIMARY_OPTIONS: DateFilterQuickOption[] = [
+/**
+ * Menu order for the compact picker. Every window lives in here, including
+ * Today: the chip beside the menu shows whichever one is active, so the menu
+ * stays the single place a period is chosen.
+ */
+export const DATE_FILTER_MENU_OPTIONS: DateFilterQuickOption[] = [
+  { id: "all", label: "All" },
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "tomorrow", label: "Tomorrow" },
-  { id: "week", label: "Week" },
-  { id: "month", label: "Month" },
-];
-
-/** Options tucked behind the "…" overflow (plus Custom range). */
-export const DATE_FILTER_OVERFLOW_OPTIONS: DateFilterQuickOption[] = [
-  { id: "all", label: "All" },
-  { id: "qtd", label: "QTD" },
-  { id: "last_month", label: "Last month" },
+  { id: "week", label: "This week" },
+  { id: "next_week", label: "Next week" },
+  { id: "month", label: "This month" },
   { id: "next_month", label: "Next month" },
 ];
 
-/** All non-custom quick options (primary + overflow) — useful for labels / lookups. */
-export const DATE_FILTER_QUICK_OPTIONS: DateFilterQuickOption[] = [
-  ...DATE_FILTER_PRIMARY_OPTIONS,
-  ...DATE_FILTER_OVERFLOW_OPTIONS,
+/**
+ * Modes the picker does not offer but callers can still hold (a saved filter,
+ * a link, another screen's preset). Kept so `dateFilterLabel` never renders an
+ * empty chip for a value the menu happens not to list.
+ */
+const DATE_FILTER_EXTRA_LABELS: DateFilterQuickOption[] = [
+  { id: "qtd", label: "Quarter to date" },
+  { id: "last_month", label: "Last month" },
 ];
 
 export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | null {
@@ -89,6 +93,16 @@ export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | nu
       const day = startOfToday.getDay() || 7;
       const s = new Date(startOfToday);
       s.setDate(s.getDate() - (day - 1));
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      e.setHours(23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "next_week": {
+      // Monday of next week through the Sunday that closes it.
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) + 7);
       const e = new Date(s);
       e.setDate(e.getDate() + 6);
       e.setHours(23, 59, 59, 999);
@@ -133,13 +147,19 @@ export function localYmd(d: Date): string {
 }
 
 export function dateFilterLabel(value: DateFilterValue): string {
-  if (value.mode === "all") return "All";
   if (value.mode === "custom") {
     const bounds = resolveDateFilter(value);
     if (!bounds) return "Custom";
     const a = new Date(bounds.fromIso).toLocaleDateString(undefined, { dateStyle: "medium" });
     const b = new Date(bounds.toIso).toLocaleDateString(undefined, { dateStyle: "medium" });
-    return `${a} – ${b}`;
+    // "On" (single day) is stored as from === to — show one date, not "x – x".
+    return a === b ? a : `${a} – ${b}`;
   }
-  return DATE_FILTER_QUICK_OPTIONS.find((o) => o.id === value.mode)?.label ?? "";
+  // The menu is the source of truth for labels, so the chip reads exactly like
+  // the row the operator picked.
+  return (
+    DATE_FILTER_MENU_OPTIONS.find((o) => o.id === value.mode)?.label ??
+    DATE_FILTER_EXTRA_LABELS.find((o) => o.id === value.mode)?.label ??
+    ""
+  );
 }

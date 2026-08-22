@@ -12,7 +12,6 @@ import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
 import {
   buildLiveMapJobPopupHtml,
   buildLiveMapPopupHtml,
-  liveMapJobStatusLegend,
   liveMapTradeIconKey,
   liveMapTradeIconKeys,
   renderLiveMapTradeIconSvg,
@@ -260,35 +259,6 @@ function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolea
 /** Shared with Schedule page for Refresh + map overlay buttons. */
 export const LIVE_MAP_TOOLBAR_BTN_CLASS =
   "inline-flex items-center gap-1 rounded-md border border-border bg-card px-[9px] py-[5px] text-[11px] font-medium text-text-primary shadow-sm transition-colors hover:bg-surface-hover dark:border-border dark:hover:bg-surface-tertiary";
-
-function LiveMapMarkerLegend() {
-  const jobSampleColor = liveMapJobStatusLegend().find((e) => e.key === "scheduled")?.color ?? "#0F6E56";
-  return (
-    <div
-      className="pointer-events-none flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[#E4E4E8] bg-white/95 px-2.5 py-1.5 text-[10px] font-semibold text-[#020040] shadow-sm backdrop-blur-sm"
-      aria-label="Map marker legend"
-    >
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 bg-[#020040] text-[7px] font-bold text-white shadow-sm"
-          style={{ borderColor: jobSampleColor }}
-          aria-hidden
-        >
-          HS
-        </span>
-        Partner
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-white shadow-sm"
-          style={{ backgroundColor: jobSampleColor }}
-          aria-hidden
-        />
-        Job
-      </span>
-    </div>
-  );
-}
 
 export function ScheduleLiveMap({
   points,
@@ -1143,7 +1113,8 @@ export function ScheduleLiveMap({
       aria-label={fullscreen ? "Live team map fullscreen" : undefined}
     >
       <div className="relative flex w-full min-h-0 flex-1 flex-col">
-        <div className="absolute left-3 right-3 top-3 z-[2] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:justify-between">
+        {/* Stops at right-14 so the bar never runs under Mapbox's +/- zoom. */}
+        <div className="absolute left-3 right-14 top-3 z-[2] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:justify-between">
           <div className="flex shrink-0 items-center gap-2">
             {toolbarExtra}
             {fullscreen ? (
@@ -1169,13 +1140,10 @@ export function ScheduleLiveMap({
             )}
           </div>
           {filterOverlay ? (
-            <div className="flex min-w-0 w-full flex-1 flex-wrap items-center justify-end gap-1.5 md:min-w-[200px] md:max-w-none sm:gap-2">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:gap-2">
               {filterOverlay}
             </div>
           ) : null}
-        </div>
-        <div className="absolute right-3 top-[3.75rem] z-[2] hidden sm:block">
-          <LiveMapMarkerLegend />
         </div>
         {bottomLeftOverlay || bottomRightOverlay ? (
           <>

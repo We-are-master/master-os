@@ -22,9 +22,18 @@ import {
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
-const TEMPLATE = process.env.RESPONDIO_REMINDER_TEMPLATE?.trim() || "24hrs_confirmation";
-const IDIOMA = process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const CANAL = Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+/**
+ * Lidos na hora da chamada, não no import.
+ *
+ * Como constante de módulo isto quebrava em script: `import` é içado para
+ * antes do corpo do arquivo, então a constante capturava o valor ANTES de o
+ * `loadEnvLocal()` do script rodar, e o canal chegava nulo. O agendador do
+ * lembrete de véspera pularia todo job com "nowhere to send from" sem que
+ * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
+ */
+const template = () => process.env.RESPONDIO_REMINDER_TEMPLATE?.trim() || "24hrs_confirmation";
+const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
+const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
 
 /** Status em que faz sentido dizer "chegamos amanhã". */
 const AGENDADOS = ["scheduled", "late"];
@@ -137,14 +146,14 @@ export async function varrerLembretesDeVespera(
     ];
 
     if (!enviar) {
-      anota("pulado", `dry run: ${TEMPLATE} → ${parametros.join(" | ")} → ${decisao.telefone}`);
+      anota("pulado", `dry run: ${template()} → ${parametros.join(" | ")} → ${decisao.telefone}`);
       continue;
     }
     if (!mensagensAoClienteLigadas()) {
       anota("pulado", "client messaging is off (CLIENT_MESSAGING_ENABLED)");
       continue;
     }
-    if (!CANAL || !respond) {
+    if (!canal() || !respond) {
       anota("pulado", "RESPONDIO_CONFIRMATION_CHANNEL_ID is not set");
       continue;
     }
@@ -154,10 +163,10 @@ export async function varrerLembretesDeVespera(
       await respond.createOrUpdateContact(id, { firstName: parametros[0], phone: decisao.telefone });
       await respond.sendTemplate(
         id,
-        { name: TEMPLATE, languageCode: IDIOMA, components: [
+        { name: template(), languageCode: idioma(), components: [
           { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
         ] },
-        CANAL,
+        canal()!,
       );
       await supabase
         .from("jobs")

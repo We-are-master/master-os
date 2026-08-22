@@ -24,9 +24,26 @@ import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
  * marca o cliente vê no perfil (539660 é Fixfy, 544116 é Master Services).
  * Mandar pelo canal errado entrega a mensagem certa com o remetente errado.
  */
-const TEMPLATE = process.env.RESPONDIO_CONFIRMATION_TEMPLATE?.trim() || "booking_confirmed";
-const IDIOMA = process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const CANAL = Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+/**
+ * Lidos na hora da chamada, não no import.
+ *
+ * Como constante de módulo isto quebrava em script: `import` é içado para
+ * antes do corpo do arquivo, então a constante capturava o valor ANTES de o
+ * `loadEnvLocal()` do script rodar, e o canal chegava nulo. O agendador do
+ * lembrete de véspera pularia todo job com "nowhere to send from" sem que
+ * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
+ */
+const template = () => process.env.RESPONDIO_CONFIRMATION_TEMPLATE?.trim() || "booking_confirmed";
+const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
+const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+
+/**
+ * A tag que o Workflow do respond.io escuta para mover a fase para Converted.
+ *
+ * O nome importa: é o gatilho configurado no painel deles. Mudar aqui sem
+ * mudar lá quebra o funil em silêncio, porque a tag continua sendo gravada.
+ */
+const TAG_CONFIRMADO = "booking_confirmed";
 
 /** Quanto esperar pela confirmação de entrega antes de desistir de esperar. */
 const TENTATIVAS_STATUS = 5;
@@ -165,7 +182,7 @@ export async function enviarConfirmacaoDoCliente(
   // Sem canal configurado NÃO se manda pelo canal padrão: o padrão pode ser o
   // canal de parceiro, e aí o cliente recebe a confirmação com a marca errada
   // no perfil. Melhor virar pendência visível.
-  if (!CANAL) {
+  if (!canal()) {
     return anotarPulo("RESPONDIO_CONFIRMATION_CHANNEL_ID is not set: nowhere to send from");
   }
 
@@ -186,7 +203,7 @@ export async function enviarConfirmacaoDoCliente(
   ];
 
   if (opcoes?.simular) {
-    return { estado: "pulado", motivo: `dry run: would send ${TEMPLATE} → ${parametros.join(" | ")}` };
+    return { estado: "pulado", motivo: `dry run: would send ${template()} → ${parametros.join(" | ")}` };
   }
 
   const respond = opcoes?.client ?? createRespondIoClient();
@@ -203,10 +220,10 @@ export async function enviarConfirmacaoDoCliente(
 
     const { messageId } = await respond.sendTemplate(
       id,
-      { name: TEMPLATE, languageCode: IDIOMA, components: [
+      { name: template(), languageCode: idioma(), components: [
         { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
       ] },
-      CANAL,
+      canal()!,
     );
 
     const entrega = await confirmarEntrega(respond, id, messageId);
@@ -221,6 +238,26 @@ export async function enviarConfirmacaoDoCliente(
       .from("jobs")
       .update({ client_confirmation_sent_at: new Date().toISOString(), client_confirmation_skipped: null })
       .eq("id", jobId);
+
+    /**
+     * A conversa sai do funil de venda: isto aqui é só confirmação.
+     *
+     * Quem recebe esta mensagem já é cliente, com job marcado. Deixá-lo em
+     * "New Lead" enche o funil de gente que não há o que vender, e o vendedor
+     * perde tempo com quem já comprou (pedido do dono, 22/08/2026).
+     *
+     * A fase se move por tag, e não direto, porque `lifecycle` não tem escrita
+     * na API v2: todo caminho responde 404 e o `create_or_update` aceita o
+     * campo e o descarta devolvendo 200. No respond.io quem muda fase é
+     * Workflow, e a tag é o gatilho que ele enxerga vindo de fora.
+     *
+     * Sem `await` e engolindo o erro: a mensagem já chegou ao morador, que é o
+     * que importa. Falhar em arrumar o funil não pode transformar um envio
+     * bem-sucedido em erro.
+     */
+    void respond
+      .addTags(id, [TAG_CONFIRMADO])
+      .catch((e) => console.error(`[confirmacao] ${jobId} tag ${TAG_CONFIRMADO} falhou:`, e));
 
     console.log(`[confirmacao] ${jobId} enviado para ${decisao.telefone} (${entrega.detalhe})`);
     return { estado: "enviado", telefone: decisao.telefone, messageId };

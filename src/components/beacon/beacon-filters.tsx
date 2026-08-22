@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { listAssignablePartners } from "@/services/partners";
+import { listActiveAccountsForFilter } from "@/services/accounts";
 import { MicroLabel } from "@/components/fx/primitives";
 
 export type BeaconDateMode =
@@ -11,6 +13,7 @@ export type BeaconDateMode =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "next_week"
   | "month"
   | "qtd"
   | "last_month"
@@ -45,51 +48,26 @@ export function BeaconFiltersButton({ filters, onChange }: Props) {
   const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  // Load partners from non-cancelled jobs (covers active partners only).
+  // Active partners only. This list used to be derived from job rows, which
+  // meant any partner who ever held a job stayed in the filter forever, long
+  // after they were off-boarded.
   useEffect(() => {
     void (async () => {
-      const supabase = getSupabase();
-      const { data } = await supabase
-        .from("jobs")
-        .select("partner_id, partner_name")
-        .not("partner_id", "is", null)
-        .not("partner_name", "is", null)
-        .neq("status", "cancelled")
-        .is("deleted_at", null)
-        .limit(2000);
-      type Row = { partner_id: string | null; partner_name: string | null };
-      const seen = new Map<string, string>();
-      for (const r of (data ?? []) as Row[]) {
-        const id = r.partner_id?.trim();
-        const name = r.partner_name?.trim();
-        if (!id || !name) continue;
-        if (!seen.has(id)) seen.set(id, name);
-      }
+      const rows = await listAssignablePartners();
       setPartners(
-        Array.from(seen.entries())
-          .map(([id, name]) => ({ id, name }))
+        rows
+          .map((p) => ({ id: p.id, name: p.company_name?.trim() || p.contact_name?.trim() || "Partner" }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
     })();
   }, []);
 
-  // Load corporate accounts directly from the `accounts` table — used for the
-  // account picker. Jobs link via clients.source_account_id, so the consumer
-  // (BeaconList/BeaconKanban) resolves account_id → client_ids before querying.
+  // Active corporate accounts. Jobs link via clients.source_account_id, so the
+  // consumer (BeaconList/BeaconKanban) resolves account_id → client_ids before
+  // querying.
   useEffect(() => {
     void (async () => {
-      const supabase = getSupabase();
-      const { data } = await supabase
-        .from("accounts")
-        .select("id, name")
-        .order("name", { ascending: true })
-        .limit(2000);
-      type Row = { id: string; name: string | null };
-      setAccounts(
-        (data ?? [])
-          .map((r) => ({ id: (r as Row).id, name: (r as Row).name?.trim() ?? "" }))
-          .filter((a) => a.id && a.name),
-      );
+      setAccounts(await listActiveAccountsForFilter());
     })();
   }, []);
 
@@ -248,6 +226,14 @@ export function getBeaconScheduleYmdRange(filters: BeaconFilters): { from: strin
       e.setDate(e.getDate() + 6);
       return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
     }
+    case "next_week": {
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) + 7);
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
     case "month": {
       const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 0, 0, 0, 0);
@@ -303,6 +289,15 @@ export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; 
       const day = startOfToday.getDay() || 7; // Mon=1..Sun=7
       const s = new Date(startOfToday);
       s.setDate(s.getDate() - (day - 1));
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      e.setHours(23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "next_week": {
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) + 7);
       const e = new Date(s);
       e.setDate(e.getDate() + 6);
       e.setHours(23, 59, 59, 999);

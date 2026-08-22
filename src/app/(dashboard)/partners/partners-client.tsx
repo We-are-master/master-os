@@ -25,11 +25,15 @@ import {
   ArrowRight, Mail, Phone, MessageCircle, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
-  Play, KeyRound, MailPlus, Share2,
+  Play, KeyRound, MailPlus, Share2, BarChart3,
   Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
+import { SegmentedControl } from "@/components/shared/segmented-control";
+import { DrawerSection } from "@/components/shared/drawer-section";
+import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
@@ -1148,6 +1152,7 @@ function InvitePartnerSplitButton({
 export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const { partnerDocumentRules, partnerRegistrationRules } = useFrontendSetup();
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
+  const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("partners_kpis_visible_v1");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -2292,16 +2297,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   return (
     <PageTransition>
       <div className="space-y-6">
-        <PageHeader title="Partners" subtitle="Manage your partner network and performance.">
+        <PageHeader title="Partners">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <Tabs
-              variant="pills"
+            <SegmentedControl
               className="max-w-full"
-              tabs={[
+              options={[
                 { id: "directory", label: "Directory", count: totalPartners },
                 { id: "team", label: "Team (App)", count: teamMembers.length },
               ]}
-              activeTab={viewMode}
+              value={viewMode}
               onChange={(id) => {
                 setViewMode(id as ViewMode);
                 setSelectedPartner(null);
@@ -2309,26 +2313,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 setPartnerDrawerInitialTab(undefined);
               }}
             />
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center shrink-0 w-full sm:w-auto">
-              <Button
-                size="sm"
-                variant="secondary"
-                className="shrink-0 whitespace-nowrap w-full sm:w-auto"
-                icon={<Share2 className="h-3.5 w-3.5 shrink-0" />}
-                onClick={() => setShareOpen(true)}
-              >
-                Share rate card
-              </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <ToolbarIconButton
+                icon={BarChart3}
+                label={kpisVisible ? "Hide KPIs" : "Show KPIs"}
+                active={kpisVisible}
+                onClick={toggleKpis}
+              />
+              <ToolbarIconButton icon={Share2} label="Share rate card" onClick={() => setShareOpen(true)} />
               {canSendPartnerLinks ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0 whitespace-nowrap w-full sm:w-auto"
-                  icon={<MailPlus className="h-3.5 w-3.5 shrink-0" />}
-                  onClick={() => setInviteOpen(true)}
-                >
-                  Invite Partner
-                </Button>
+                <ToolbarIconButton icon={MailPlus} label="Invite partner" onClick={() => setInviteOpen(true)} />
               ) : null}
               <Button
                 size="sm"
@@ -2348,10 +2342,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           variant="partner"
         />
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active" value={activeCount} format="number" description="Currently taking work" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Inactive" value={inactiveStageCount} format="number" description="Paused or off-boarded" icon={XCircle} accent="stone" />
-          <KpiCard title="Total" value={totalPartners} format="number" description="In directory" icon={Users} accent="blue" />
+        {kpisVisible ? (
+        <StaggerContainer className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <KpiCard compact title="Active" value={activeCount} format="number" description="Currently taking work" icon={Briefcase} accent="emerald" />
+          <KpiCard compact title="Inactive" value={inactiveStageCount} format="number" description="Paused or off-boarded" icon={XCircle} accent="stone" />
+          <KpiCard compact title="Total" value={totalPartners} format="number" description="In directory" icon={Users} accent="blue" />
           <KpiCard
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
@@ -2361,6 +2356,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
             accent="primary"
           />
         </StaggerContainer>
+        ) : null}
 
         {viewMode === "team" && (
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
@@ -2479,20 +2475,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                       className="w-[7.25rem] sm:w-[9rem] shrink-0"
                     />
                   ) : null}
-                  <SearchInput
-                    placeholder="Search partners…"
-                    className="min-w-0 flex-1"
+                  <ExpandingSearch
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={setSearch}
+                    placeholder="Search partners…"
+                    className="ml-auto"
                   />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    icon={<Filter className="h-3.5 w-3.5" />}
-                    className="shrink-0 px-2.5 sm:px-3"
-                  >
-                    <span className="hidden sm:inline">Filter</span>
-                  </Button>
+                  <ToolbarIconButton icon={Filter} label="Filter" />
                 </div>
               </div>
             </div>
@@ -4216,12 +4205,9 @@ function PartnerDetailDrawer({
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
   const [activateForceOpen, setActivateForceOpen] = useState(false);
-  const [activateAccountType, setActivateAccountType] = useState<"subscription" | "free">(
-    partner?.account_type ?? "subscription",
-  );
-  useEffect(() => {
-    setActivateAccountType(partner?.account_type ?? "subscription");
-  }, [partner?.account_type, partner?.id]);
+  // Every partner is free now, so activation no longer asks. The column stays
+  // for the rows already stamped "subscription"; nothing new is written to it.
+  const activateAccountType = "free" as const;
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deactivatePreset, setDeactivatePreset] = useState<"" | "missing_docs" | "low_score" | "on_break" | "other">("");
   const [deactivateOtherText, setDeactivateOtherText] = useState("");
@@ -5377,11 +5363,11 @@ function PartnerDetailDrawer({
     });
   }
 
+  // Four tabs. Trades, Rate Card, Coverage and Privacy became Overview
+  // sections: of the eleven active partners, rate cards were filled on five and
+  // the other three are read far more often than they are edited.
   const drawerTabs = [
     { id: "overview", label: "Overview" },
-    { id: "trades", label: "Trades & Skill" },
-    { id: "rates" as const, label: "Rate Card" },
-    { id: "coverage", label: "Coverage" },
     {
       id: "documents",
       label: "Documents",
@@ -5394,7 +5380,6 @@ function PartnerDetailDrawer({
     },
     { id: "financial", label: "Finance", count: selfBills.length },
     { id: "jobs", label: "Jobs", count: realJobsCount },
-    { id: "actions" as const, label: "Privacy & Permissions" },
   ];
 
   return (
@@ -5898,14 +5883,9 @@ function PartnerDetailDrawer({
                   {(formatPartnerCoverageSummary(partner) || "").trim() ? (
                     <div className="flex items-center gap-1.5 min-w-0 col-span-2 sm:col-span-1">
                       <MapPin className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                      {/* Coverage is a section further down this same tab now,
+                          so there is nowhere to send the reader. */}
                       <span className="truncate min-w-0">{formatPartnerCoverageSummary(partner)}</span>
-                      <button
-                        type="button"
-                        className="text-[10px] text-primary hover:underline shrink-0"
-                        onClick={() => setTab("coverage")}
-                      >
-                        Edit
-                      </button>
                     </div>
                   ) : null}
                   {partner.partner_address?.trim() ? (
@@ -5987,57 +5967,6 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            {/* ─── Account type — subscription vs free (admin-editable) ─────────────── */}
-            {isAdmin && (
-              <div className="mt-4 rounded-xl border border-border-light bg-surface-hover/40 px-3 py-3">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    Account type
-                  </p>
-                  {partner.account_type ? (
-                    <Badge
-                      variant={partner.account_type === "subscription" ? "primary" : "info"}
-                      size="sm"
-                      className="text-[10px]"
-                    >
-                      {partner.account_type === "subscription" ? "Subscription" : "Free account"}
-                    </Badge>
-                  ) : (
-                    <span className="text-[10px] text-text-tertiary">Not set</span>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {(["subscription", "free"] as const).map((option) => {
-                    const active = partner.account_type === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => {
-                          if (active) return;
-                          void onPartnerPatch({ account_type: option }).catch(() => {
-                            toast.error("Couldn't save account type — apply migration 247 first.");
-                          });
-                        }}
-                        className={cn(
-                          "rounded-lg border px-2.5 py-2 text-left transition-colors",
-                          active
-                            ? "border-primary bg-primary/5 ring-1 ring-primary/25 cursor-default"
-                            : "border-border-light bg-card hover:bg-surface-hover cursor-pointer",
-                        )}
-                      >
-                        <p className="text-xs font-semibold text-text-primary">
-                          {option === "subscription" ? "Subscription" : "Free"}
-                        </p>
-                        <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-                          {option === "subscription" ? "Stripe billing" : "Ops-managed"}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             {isAdmin && (partner.status !== "active" || !isPartnerInactiveStage(partner)) ? (
               <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border-light/60">
@@ -6070,21 +5999,269 @@ function PartnerDetailDrawer({
                 )}
               </div>
             ) : null}
+
+            {onPartnerUpdate ? (
+              <div className="space-y-3 px-4 pb-4 sm:px-6">
+                <DrawerSection title="Trades & skill" summary={(partner.trades ?? []).length > 0 ? (partner.trades ?? []).join(" · ") : partner.trade || "No trades set"}>
+                  <CatalogTradesSkillsTab
+                    kind="partner"
+                    partner={partner}
+                    onPartnerUpdate={onPartnerUpdate}
+                    canEdit={isAdmin}
+                  />
+                </DrawerSection>
+
+                <DrawerSection title="Coverage" summary={formatPartnerCoverageSummary(partner) || "Coverage TBC"}>
+                  <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
+                </DrawerSection>
+
+                <DrawerSection title="Rate card" summary="Prices agreed with this partner">
+                  <PartnerServiceRatesTabSection
+                    partnerId={partner.id}
+                    partner={{
+                      catalog_service_ids: partner.catalog_service_ids,
+                      trades: partner.trades,
+                      trade: partner.trade,
+                    }}
+                  />
+                </DrawerSection>
+
+                <DrawerSection title="Privacy & permissions" summary="Verification, portal access and data controls">
+        <div className="p-6 space-y-5">
+          <div className="rounded-xl border border-border-light bg-card p-4">
+            <div className="flex flex-col @sm:flex-row @sm:items-center @sm:justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Verification status</p>
+                <p className="text-sm text-text-secondary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
+              </div>
+              <Button
+                size="sm"
+                variant={partner.verified ? "outline" : "primary"}
+                className="shrink-0 self-start @sm:self-auto"
+                icon={partner.verified ? <XCircle className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                onClick={() => onVerify(partner)}
+              >
+                {partner.verified ? "Revoke" : "Verify"}
+              </Button>
+            </div>
           </div>
-        )}
 
-        {/* ========== TRADES & SKILL ========== */}
-        {tab === "trades" && onPartnerUpdate && (
-          <CatalogTradesSkillsTab
-            kind="partner"
-            partner={partner}
-            onPartnerUpdate={onPartnerUpdate}
-            canEdit={isAdmin}
-          />
-        )}
+          {isAdmin && (
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mobile app account</p>
+                <span
+                  title="Link this partner to their Fixfy app login so they show under Team (App) even before their first job"
+                  className="text-text-tertiary cursor-help"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+              </div>
+              {partner.auth_user_id ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-text-secondary">
+                    Linked to{" "}
+                    <span className="font-semibold text-text-primary">{linkedAppProfile?.full_name ?? "App user"}</span>
+                    {linkedAppProfile?.email && <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={linkBusy}
+                      onClick={() => {
+                        void (async () => {
+                          if (!partner.auth_user_id) return;
+                          setLinkBusy(true);
+                          try {
+                            await syncAppUserRow(partner.auth_user_id, partner.id);
+                            toast.success("App profile row updated in public.users.");
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Sync failed");
+                          } finally {
+                            setLinkBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      Sync app profile
+                    </Button>
+                    <span
+                      title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking."
+                      className="text-text-tertiary cursor-help"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </span>
+                    <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
+                      Remove app link
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col @sm:flex-row gap-2">
+                  <Input
+                    type="email"
+                    value={linkEmail}
+                    onChange={(e) => setLinkEmail(e.target.value)}
+                    placeholder="Email they use in the app"
+                    className="flex-1 min-w-0"
+                  />
+                  <Button size="sm" className="shrink-0" disabled={linkBusy || !linkEmail.trim()} onClick={() => void handleLinkAppUser()}>
+                    {linkBusy ? "Linking…" : "Link account"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
-        {tab === "coverage" && onPartnerUpdate && (
-          <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
+          {canSendPartnerLinks && (
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
+                <p className="text-xs text-text-secondary mt-1">
+                  Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
+                  partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
+                </p>
+                {!partner.email?.trim() ? (
+                  <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                  disabled={onboardingLinkBusy || sendingOnboardingLink || !partner.email?.trim()}
+                  onClick={() => void handleCopyOnboardingLink()}
+                >
+                  {onboardingLinkBusy ? "Creating…" : "Copy link"}
+                </Button>
+                <Button
+                  size="sm"
+                  icon={sendingOnboardingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                  disabled={sendingOnboardingLink || onboardingLinkBusy || !partner.email?.trim()}
+                  onClick={() => void handleSendOnboardingEmail()}
+                >
+                  {sendingOnboardingLink ? "Sending…" : "Send link"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Link2 className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setPortalLinkResult(null);
+                    setPortalLinkSendEmail(false);
+                    setPortalLinkModalOpen(true);
+                  }}
+                >
+                  Request specific documents…
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {partner.auth_user_id && isAdmin && (
+            <div className="pt-4 border-t border-border-light space-y-3">
+              <p className="text-sm font-semibold text-text-primary">Admin actions</p>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
+                <div className="flex gap-2">
+                  <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
+                  <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
+                    setActionSubmitting(true);
+                    try {
+                      const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id, newEmail: actionEmail.trim() }) });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      toast.success("Email updated");
+                      setActionEmail("");
+                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                  }}>Update</Button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    value={actionPassword}
+                    onChange={(e) => setActionPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="flex-1"
+                    autoComplete="new-password"
+                  />
+                  <Button
+                    size="sm"
+                    icon={<KeyRound className="h-3.5 w-3.5" />}
+                    disabled={actionSubmitting || actionPassword.length < 8}
+                    onClick={async () => {
+                      setActionSubmitting(true);
+                      try {
+                        const res = await fetch("/api/admin/partner/reset-password", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ userId: partner.auth_user_id, new_password: actionPassword }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || "Failed");
+                        toast.success("Password updated");
+                        setActionPassword("");
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Failed");
+                      } finally {
+                        setActionSubmitting(false);
+                      }
+                    }}
+                  >
+                    Set password
+                  </Button>
+                </div>
+                <p className="text-[11px] text-text-tertiary mt-1">
+                  Sets the password directly. Share it with the partner securely.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Or send a recovery link
+                </label>
+                <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                  setActionSubmitting(true);
+                  try {
+                    const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed");
+                    toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
+                    if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
+                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                }}>Generate reset link</Button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
+                <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                  setActionSubmitting(true);
+                  try {
+                    const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed");
+                    if (data.mailto) window.location.href = data.mailto;
+                    else toast.success("Email: " + data.email);
+                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                }}>Open mail client</Button>
+              </div>
+            </div>
+          )}
+
+          {!partner.auth_user_id && (
+            <p className="pt-4 border-t border-border-light text-xs text-text-tertiary">
+              No linked app user yet — admin account actions are unavailable.
+            </p>
+          )}
+
+        </div>
+                </DrawerSection>
+              </div>
+            ) : null}
+          </div>
         )}
 
         {/* ========== JOBS ========== */}
@@ -6742,19 +6919,6 @@ function PartnerDetailDrawer({
         )}
 
         {/* ========== RATE CARD ========== */}
-        {tab === "rates" && (
-          <div className="p-6">
-            <PartnerServiceRatesTabSection
-              partnerId={partner.id}
-              partner={{
-                catalog_service_ids: partner.catalog_service_ids,
-                trades: partner.trades,
-                trade: partner.trade,
-              }}
-            />
-          </div>
-        )}
-
         {/* ========== DOCUMENTS · CONTRACTS ========== */}
         {tab === "documents" && documentsSubTab === "contracts" && (
           <div className="p-4 sm:p-6">
@@ -6763,239 +6927,6 @@ function PartnerDetailDrawer({
         )}
 
         {/* ========== PRIVACY & PERMISSIONS ========== */}
-        {tab === "actions" && (
-          <div className="p-6 space-y-5">
-            <div className="rounded-xl border border-border-light bg-card p-4">
-              <div className="flex flex-col @sm:flex-row @sm:items-center @sm:justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Verification status</p>
-                  <p className="text-sm text-text-secondary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
-                </div>
-                <Button
-                  size="sm"
-                  variant={partner.verified ? "outline" : "primary"}
-                  className="shrink-0 self-start @sm:self-auto"
-                  icon={partner.verified ? <XCircle className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                  onClick={() => onVerify(partner)}
-                >
-                  {partner.verified ? "Revoke" : "Verify"}
-                </Button>
-              </div>
-            </div>
-
-            {isAdmin && (
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mobile app account</p>
-                  <span
-                    title="Link this partner to their Fixfy app login so they show under Team (App) even before their first job"
-                    className="text-text-tertiary cursor-help"
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-                {partner.auth_user_id ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-text-secondary">
-                      Linked to{" "}
-                      <span className="font-semibold text-text-primary">{linkedAppProfile?.full_name ?? "App user"}</span>
-                      {linkedAppProfile?.email && <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={linkBusy}
-                        onClick={() => {
-                          void (async () => {
-                            if (!partner.auth_user_id) return;
-                            setLinkBusy(true);
-                            try {
-                              await syncAppUserRow(partner.auth_user_id, partner.id);
-                              toast.success("App profile row updated in public.users.");
-                            } catch (e) {
-                              toast.error(e instanceof Error ? e.message : "Sync failed");
-                            } finally {
-                              setLinkBusy(false);
-                            }
-                          })();
-                        }}
-                      >
-                        Sync app profile
-                      </Button>
-                      <span
-                        title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking."
-                        className="text-text-tertiary cursor-help"
-                      >
-                        <Info className="h-3.5 w-3.5" />
-                      </span>
-                      <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
-                        Remove app link
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col @sm:flex-row gap-2">
-                    <Input
-                      type="email"
-                      value={linkEmail}
-                      onChange={(e) => setLinkEmail(e.target.value)}
-                      placeholder="Email they use in the app"
-                      className="flex-1 min-w-0"
-                    />
-                    <Button size="sm" className="shrink-0" disabled={linkBusy || !linkEmail.trim()} onClick={() => void handleLinkAppUser()}>
-                      {linkBusy ? "Linking…" : "Link account"}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {canSendPartnerLinks && (
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
-                  <p className="text-xs text-text-secondary mt-1">
-                    Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
-                    partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
-                  </p>
-                  {!partner.email?.trim() ? (
-                    <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    icon={onboardingLinkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
-                    disabled={onboardingLinkBusy || sendingOnboardingLink || !partner.email?.trim()}
-                    onClick={() => void handleCopyOnboardingLink()}
-                  >
-                    {onboardingLinkBusy ? "Creating…" : "Copy link"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    icon={sendingOnboardingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                    disabled={sendingOnboardingLink || onboardingLinkBusy || !partner.email?.trim()}
-                    onClick={() => void handleSendOnboardingEmail()}
-                  >
-                    {sendingOnboardingLink ? "Sending…" : "Send link"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<Link2 className="h-3.5 w-3.5" />}
-                    onClick={() => {
-                      setPortalLinkResult(null);
-                      setPortalLinkSendEmail(false);
-                      setPortalLinkModalOpen(true);
-                    }}
-                  >
-                    Request specific documents…
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {partner.auth_user_id && isAdmin && (
-              <div className="pt-4 border-t border-border-light space-y-3">
-                <p className="text-sm font-semibold text-text-primary">Admin actions</p>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
-                  <div className="flex gap-2">
-                    <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
-                    <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
-                      setActionSubmitting(true);
-                      try {
-                        const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id, newEmail: actionEmail.trim() }) });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || "Failed");
-                        toast.success("Email updated");
-                        setActionEmail("");
-                      } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                    }}>Update</Button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      value={actionPassword}
-                      onChange={(e) => setActionPassword(e.target.value)}
-                      placeholder="At least 8 characters"
-                      className="flex-1"
-                      autoComplete="new-password"
-                    />
-                    <Button
-                      size="sm"
-                      icon={<KeyRound className="h-3.5 w-3.5" />}
-                      disabled={actionSubmitting || actionPassword.length < 8}
-                      onClick={async () => {
-                        setActionSubmitting(true);
-                        try {
-                          const res = await fetch("/api/admin/partner/reset-password", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ userId: partner.auth_user_id, new_password: actionPassword }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || "Failed");
-                          toast.success("Password updated");
-                          setActionPassword("");
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed");
-                        } finally {
-                          setActionSubmitting(false);
-                        }
-                      }}
-                    >
-                      Set password
-                    </Button>
-                  </div>
-                  <p className="text-[11px] text-text-tertiary mt-1">
-                    Sets the password directly. Share it with the partner securely.
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">
-                    Or send a recovery link
-                  </label>
-                  <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
-                    setActionSubmitting(true);
-                    try {
-                      const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
-                      if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
-                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                  }}>Generate reset link</Button>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
-                  <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
-                    setActionSubmitting(true);
-                    try {
-                      const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || "Failed");
-                      if (data.mailto) window.location.href = data.mailto;
-                      else toast.success("Email: " + data.email);
-                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                  }}>Open mail client</Button>
-                </div>
-              </div>
-            )}
-
-            {!partner.auth_user_id && (
-              <p className="pt-4 border-t border-border-light text-xs text-text-tertiary">
-                No linked app user yet — admin account actions are unavailable.
-              </p>
-            )}
-
-          </div>
-        )}
 
         {/* ========== DOCUMENTS · FILES ========== */}
         {tab === "documents" && documentsSubTab === "files" && (
@@ -7758,38 +7689,6 @@ function PartnerDetailDrawer({
               recorded as force-activated.
             </div>
           )}
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">
-              Account type
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {(["subscription", "free"] as const).map((option) => {
-                const active = activateAccountType === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setActivateAccountType(option)}
-                    className={cn(
-                      "rounded-xl border px-3 py-3 text-left transition-colors",
-                      active
-                        ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                        : "border-border-light bg-card hover:bg-surface-hover",
-                    )}
-                  >
-                    <p className="text-sm font-semibold text-text-primary">
-                      {option === "subscription" ? "Subscription" : "Free account"}
-                    </p>
-                    <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                      {option === "subscription"
-                        ? "Billed monthly via Stripe (Pro / Team plans)."
-                        : "Ops-managed — no Stripe subscription; internal billing."}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" type="button" onClick={() => setActivateForceOpen(false)}>
               Cancel
@@ -7799,7 +7698,7 @@ function PartnerDetailDrawer({
               variant="primary"
               onClick={() => void runActivate(true, { accountType: activateAccountType })}
             >
-              Activate as {activateAccountType === "subscription" ? "Subscription" : "Free"}
+              Activate partner
             </Button>
           </div>
         </div>

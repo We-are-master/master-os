@@ -90,6 +90,56 @@ function compactHtml(html: string): string {
   return html.replace(/>\s+</g, "><").trim();
 }
 
+/**
+ * O casco do email da conta: cabeçalho, faixa laranja, corpo e rodapé.
+ *
+ * Existe para os dois avisos usarem a MESMA moldura. Confirmação e remarcação
+ * são o mesmo email com um rótulo e um miolo diferentes; deixar duas cópias do
+ * HTML é garantir que o próximo ajuste entre em uma e esqueça a outra.
+ *
+ * Hero e rodapé têm a mesma altura, 64px, e chegam lá pelo PADDING, nunca por
+ * `height` fixo: altura fixa com conteúdo inline transborda, e o
+ * `overflow:hidden` do cartão corta o que passou.
+ *
+ * O conteúdo é parágrafo, não tabela. O visualizador do Zendesk desenha borda
+ * em toda célula, então uma grade aqui vira dez linhas cortando o email na
+ * tela de quem lê pelo painel.
+ */
+function envelopeDaConta(args: { preheader: string; eyebrow: string; corpo: string }): string {
+  const logo = escapeHtml(FIXFY_LOGO_URL);
+  return compactHtml(`
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F7F7FB;">${escapeHtml(args.preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:#F7F7FB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<tr><td align="center" style="border:0;padding:32px 16px;">
+<div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:12px;overflow:hidden;text-align:left;">
+
+<div style="background:#020040;padding:16px 24px;">
+<img src="${logo}" alt="Fixfy" width="74" height="32" style="display:block;margin:0 auto;width:74px;height:32px;border:0;">
+</div>
+<div style="background:#ED4B00;height:4px;line-height:4px;font-size:4px;">&nbsp;</div>
+
+<div style="padding:22px 24px 20px 24px;">
+<p style="margin:0 0 10px 0;font-size:10px;font-weight:700;letter-spacing:2.5px;color:#ED4B00;text-transform:uppercase;">${args.eyebrow}</p>
+${args.corpo}
+<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#4A4A55;">Need to change it, or have a question? Reply to this email or write to <a href="mailto:support@getfixfy.com" style="color:#020040;font-weight:600;text-decoration:none;">support@getfixfy.com</a>.</p>
+</div>
+
+<div style="background:#020040;padding:24px;text-align:center;">
+<p style="margin:0;font-size:11px;line-height:16px;color:#AAAAD0;">Getfixfy Ltd &middot; 124 City Road, London EC1V 2NX &middot; <a href="https://getfixfy.com" style="color:#AAAAD0;text-decoration:none;">getfixfy.com</a></p>
+</div>
+
+</div>
+</td></tr>
+</table>
+  `);
+}
+
+/** Bloco de identificação do job: referência, título, e o serviço embaixo. */
+function blocoDoJob(ref: string, title: string): string {
+  return `<p style="margin:0 0 2px 0;font-size:11px;color:#9A9AA8;">#${ref}</p>
+<p style="margin:0 0 16px 0;font-size:19px;font-weight:700;line-height:24px;color:#020040;">${title}</p>`;
+}
+
 export function buildJobConfirmationHtml(args: JobConfirmationEmailArgs): string {
   const greeting = escapeHtml(args.greetingName || "there");
   const ref = escapeHtml(args.jobReference);
@@ -99,78 +149,67 @@ export function buildJobConfirmationHtml(args: JobConfirmationEmailArgs): string
   const address = escapeHtml(args.propertyAddress);
   const postcode = escapeHtml(args.propertyPostcode);
   const service = escapeHtml(args.typeOfWork);
-  const preheader = escapeHtml(`Your job is confirmed for ${args.jobDate} between ${args.arrivalWindow}.`);
-  const logo = escapeHtml(FIXFY_LOGO_URL);
 
   const postcodeLine = postcode
     ? `<br><span style="color:#4A4A55;">${postcode}</span>`
     : "";
 
-  const html = `
-<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F5F5F7;">${preheader}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(2,0,64,0.06);">
-<tr><td align="center" bgcolor="#020040" style="background:#020040;padding:24px 24px 18px 24px;"><img src="${logo}" alt="Fixfy" width="100" style="display:block;width:100px;height:auto;border:0;"></td></tr>
-<tr><td style="background:#ED4B00;line-height:5px;font-size:5px;height:5px;" height="5">&nbsp;</td></tr>
-<tr><td style="padding:32px 40px 8px 40px;"><p style="margin:0;font-size:11px;font-weight:700;letter-spacing:3px;color:#ED4B00;text-transform:uppercase;">✓ JOB CONFIRMED</p></td></tr>
-<tr><td style="padding:0 40px 8px 40px;"><h1 style="margin:0;font-size:26px;line-height:32px;font-weight:700;color:#020040;">Hi ${greeting},</h1></td></tr>
-<tr><td style="padding:0 40px 28px 40px;"><p style="margin:0;font-size:15px;line-height:24px;color:#4A4A55;">Good news — your job is confirmed and scheduled. Here are the details:</p></td></tr>
-<tr><td style="padding:0 40px 28px 40px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE;border-radius:8px;">
-<tr><td style="padding:18px 20px 14px 20px;border-bottom:1px solid #E8E8EE;">
-<p style="margin:0 0 4px 0;font-size:12px;color:#9A9AA8;">Job #${ref}</p>
-<p style="margin:0;font-size:18px;font-weight:700;color:#020040;line-height:24px;">${title}</p>
-</td></tr>
-<tr><td style="padding:14px 20px;border-top:1px solid #F2F0FA;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="38%" valign="top" style="padding:0 12px 0 0;font-size:12px;font-weight:700;color:#9A9AA8;text-transform:uppercase;letter-spacing:1px;">Date</td>
-<td valign="top" style="font-size:15px;color:#020040;font-weight:600;">${date}</td>
-</tr></table>
-</td></tr>
-<tr><td style="padding:14px 20px;border-top:1px solid #F2F0FA;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="38%" valign="top" style="padding:0 12px 0 0;font-size:12px;font-weight:700;color:#9A9AA8;text-transform:uppercase;letter-spacing:1px;">Arrival window</td>
-<td valign="top" style="font-size:15px;color:#020040;font-weight:600;">${window}</td>
-</tr></table>
-</td></tr>
-<tr><td style="padding:14px 20px;border-top:1px solid #F2F0FA;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="38%" valign="top" style="padding:0 12px 0 0;font-size:12px;font-weight:700;color:#9A9AA8;text-transform:uppercase;letter-spacing:1px;">Address</td>
-<td valign="top" style="font-size:14px;color:#1A1A1A;line-height:20px;">${address}${postcodeLine}</td>
-</tr></table>
-</td></tr>
-<tr><td style="padding:14px 20px 16px 20px;border-top:1px solid #F2F0FA;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="38%" valign="top" style="padding:0 12px 0 0;font-size:12px;font-weight:700;color:#9A9AA8;text-transform:uppercase;letter-spacing:1px;">Service</td>
-<td valign="top" style="font-size:14px;color:#1A1A1A;">${service}</td>
-</tr></table>
-</td></tr>
-</table>
-</td></tr>
-<tr><td style="padding:0 40px 8px 40px;"><p style="margin:0 0 12px 0;font-size:11px;font-weight:700;letter-spacing:2px;color:#020040;text-transform:uppercase;">WHAT HAPPENS NEXT</p></td></tr>
-<tr><td style="padding:0 40px 28px 40px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA;border-radius:8px;"><tr><td style="padding:18px 20px;">
-<p style="margin:0 0 10px 0;font-size:14px;line-height:22px;color:#020040;"><span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;background:#ED4B00;color:#fff;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">1</span>A vetted Fixfy professional has been assigned to your job.</p>
-<p style="margin:0 0 10px 0;font-size:14px;line-height:22px;color:#020040;"><span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;background:#ED4B00;color:#fff;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">2</span>They will arrive within the window above on the scheduled date.</p>
-<p style="margin:0;font-size:14px;line-height:22px;color:#020040;"><span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;background:#ED4B00;color:#fff;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px;">3</span>Once the work is complete, you'll receive a report by email.</p>
-</td></tr></table>
-</td></tr>
-<tr><td align="center" style="padding:0 40px 28px 40px;"><p style="margin:0;font-size:13px;color:#4A4A55;">Need to reschedule? Reply to this email and we'll sort it out.</p></td></tr>
-<tr><td style="padding:0 40px 32px 40px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA;border-radius:8px;"><tr><td style="padding:14px 18px;">
-<p style="margin:0 0 4px 0;font-size:12px;font-weight:700;color:#020040;">Questions?</p>
-<p style="margin:0;font-size:13px;line-height:20px;color:#4A4A55;">Reply to this email or message us at <a href="mailto:support@getfixfy.com" style="color:#020040;font-weight:600;text-decoration:none;">support@getfixfy.com</a> &middot; <a href="tel:+442045384668" style="color:#020040;font-weight:600;text-decoration:none;">020 4538 4668</a></p>
-</td></tr></table>
-</td></tr>
-<tr><td bgcolor="#020040" style="background:#020040;padding:24px 40px;text-align:center;">
-<img src="${logo}" alt="Fixfy" width="70" style="display:inline-block;width:70px;height:auto;margin-bottom:10px;border:0;">
-<p style="margin:0;font-size:11px;line-height:18px;color:#AAAAD0;">Getfixfy Ltd &middot; Co. No. 15406523<br>124 City Road, London EC1V 2NX, United Kingdom<br><a href="https://getfixfy.com" style="color:#AAAAD0;text-decoration:none;">getfixfy.com</a></p>
-</td></tr>
-</table>
-</td></tr>
-</table>
-  `;
+  return envelopeDaConta({
+    preheader: `Your job is confirmed for ${args.jobDate} between ${args.arrivalWindow}.`,
+    eyebrow: "&#10003; Job confirmed",
+    corpo: `<p style="margin:0 0 18px 0;font-size:15px;line-height:22px;color:#4A4A55;">Hi <strong style="color:#020040;">${greeting}</strong>, this job is booked and scheduled.</p>
+${blocoDoJob(ref, title)}
+<p style="margin:0 0 6px 0;font-size:15px;line-height:22px;color:#020040;">
+<strong style="font-weight:700;">${date}</strong><span style="color:#9A9AA8;"> &middot; </span><strong style="font-weight:700;">${window}</strong>
+</p>
+<p style="margin:0 0 4px 0;font-size:14px;line-height:20px;color:#1A1A1A;">${address}${postcodeLine}</p>
+<p style="margin:0;font-size:13px;line-height:20px;color:#9A9AA8;">${service}</p>`,
+  });
+}
 
-  return compactHtml(html);
+export interface JobRescheduledEmailArgs extends JobConfirmationEmailArgs {
+  /** A data que estava marcada antes, para aparecer riscada ao lado da nova. */
+  previousDate: string;
+  previousArrivalWindow?: string;
+}
+
+/**
+ * Aviso de REMARCAÇÃO para a conta, na mesma moldura do confirmado.
+ *
+ * As duas datas aparecem lado a lado, a antiga riscada. Mostrar só a nova
+ * obriga quem lê a lembrar qual era a anterior para entender o que mudou, e
+ * quem recebe um aviso de remarcação costuma estar prestes a ligar para o
+ * cliente dele.
+ *
+ * A conta é quem mais perde com o silêncio aqui: ela prometeu uma data ao
+ * morador. Se muda e ela não sabe, quem descobre é o cliente dela, e a
+ * reclamação volta para nós — foi o JOB-9466 em 20/08/2026.
+ */
+export function buildJobRescheduledHtml(args: JobRescheduledEmailArgs): string {
+  const greeting = escapeHtml(args.greetingName || "there");
+  const ref = escapeHtml(args.jobReference);
+  const title = escapeHtml(args.jobTitle);
+  const date = escapeHtml(args.jobDate);
+  const window = escapeHtml(args.arrivalWindow);
+  const antes = escapeHtml(args.previousDate);
+  const antesJanela = args.previousArrivalWindow ? escapeHtml(args.previousArrivalWindow) : "";
+  const address = escapeHtml(args.propertyAddress);
+  const postcode = escapeHtml(args.propertyPostcode);
+  const service = escapeHtml(args.typeOfWork);
+  const postcodeLine = postcode ? `<br><span style="color:#4A4A55;">${postcode}</span>` : "";
+
+  return envelopeDaConta({
+    preheader: `This job moved to ${args.jobDate} between ${args.arrivalWindow}.`,
+    eyebrow: "&#8635; Job rescheduled",
+    corpo: `<p style="margin:0 0 18px 0;font-size:15px;line-height:22px;color:#4A4A55;">Hi <strong style="color:#020040;">${greeting}</strong>, this job has moved to a new date.</p>
+${blocoDoJob(ref, title)}
+<p style="margin:0 0 4px 0;font-size:10px;font-weight:700;letter-spacing:1px;color:#9A9AA8;text-transform:uppercase;">Was</p>
+<p style="margin:0 0 12px 0;font-size:15px;line-height:22px;color:#9A9AA8;text-decoration:line-through;">${antes}${antesJanela ? ` &middot; ${antesJanela}` : ""}</p>
+<p style="margin:0 0 4px 0;font-size:10px;font-weight:700;letter-spacing:1px;color:#ED4B00;text-transform:uppercase;">Now</p>
+<p style="margin:0 0 12px 0;font-size:15px;line-height:22px;color:#020040;">
+<strong style="font-weight:700;">${date}</strong><span style="color:#9A9AA8;"> &middot; </span><strong style="font-weight:700;">${window}</strong>
+</p>
+<p style="margin:0 0 4px 0;font-size:14px;line-height:20px;color:#1A1A1A;">${address}${postcodeLine}</p>
+<p style="margin:0;font-size:13px;line-height:20px;color:#9A9AA8;">${service}</p>`,
+  });
 }
