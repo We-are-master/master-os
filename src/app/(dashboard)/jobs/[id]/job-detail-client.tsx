@@ -1236,7 +1236,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [financeHubBaseEditSide, setFinanceHubBaseEditSide] = useState<"client" | "partner" | null>(null);
   const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState("");
   const [savingFinanceHubBase, setSavingFinanceHubBase] = useState(false);
-  const [extraManagerFocusBucket, setExtraManagerFocusBucket] = useState<ExtraHistoryBucket | null>(null);
   const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
   const [editExtraAmount, setEditExtraAmount] = useState("");
   const [editExtraReason, setEditExtraReason] = useState("");
@@ -5140,18 +5139,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
 
-  const openFinanceHub = useCallback((side: "client" | "partner", focus?: ExtraHistoryBucket) => {
+  const openFinanceHub = useCallback((side: "client" | "partner") => {
     setFinanceHubTab(side);
-    setExtraManagerFocusBucket(focus ?? null);
     setFinanceHubOpen(true);
-  }, []);
-
-  const openMoneyFlowFromHub = useCallback((flow: JobMoneyDrawerFlow, extraType?: string) => {
-    setFinanceHubOpen(false);
-    setExtraManagerFocusBucket(null);
-    setMoneyDrawerInitialExtraType(extraType);
-    setMoneyDrawerFlow(flow);
-    setMoneyDrawerOpen(true);
   }, []);
 
   const bucketHasLedgerEntries = useCallback(
@@ -5414,7 +5404,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       await refreshJobFinance();
       toast.success("Extra updated");
       setEditExtraTarget(null);
-      setExtraManagerFocusBucket(null);
     } catch {
       toast.error("Could not update extra");
     } finally {
@@ -6377,132 +6366,164 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return { entries, groups, emptyText };
   };
 
-  const renderExtraManagerPanel = (side: "client" | "partner", focusBucket: ExtraHistoryBucket | null) => {
-    const { entries, groups, emptyText } = getExtraManagerData(side);
+  // Extras, one row at a time: the pencil turns the row itself into the editor,
+  // so fixing an amount never means opening a second modal on top of this one.
+  const renderExtraManagerPanel = (side: "client" | "partner") => {
+    const { entries, emptyText } = getExtraManagerData(side);
     const clientSide = side === "client";
+    const extrasTotal = entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
+    const amountClass = clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300";
+    const canEdit = job.status !== "cancelled" && job.status !== "deleted";
     return (
-      <div className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full sm:w-auto shrink-0 whitespace-nowrap !flex-nowrap"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            disabled={job.status === "cancelled" || job.status === "deleted"}
-            onClick={() => openMoneyFlowFromHub(clientSide ? "client_extra" : "partner_extra")}
-          >
-            {clientSide ? "Charge or discount" : "Extra & deduction"}
-          </Button>
+          {entries.length > 0 ? (
+            <span className={cn("text-[11px] font-semibold tabular-nums", amountClass)}>
+              {formatSignedCurrency(extrasTotal)}
+            </span>
+          ) : null}
         </div>
-        <div className="max-h-[36vh] space-y-3 overflow-y-auto pr-1">
-          {entries.length === 0 ? <p className="text-xs text-text-tertiary">{emptyText}</p> : null}
-          {entries.length > 0
-            ? groups
-                .filter((group) => group.entries.length > 0)
-                .map((group) => {
-                  const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
-                  const groupHasEditableEntries = group.entries.some((row) => !isFallbackExtraEntry(row));
-                  const groupFocused = focusBucket === group.key;
-                  return (
-                    <div
-                      key={group.key}
-                      className={cn(
-                        "rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]",
-                        groupFocused && "ring-2 ring-primary/35",
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2 pb-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
-                          {!groupHasEditableEntries ? (
-                            <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
-                          ) : null}
-                        </div>
-                        <span
-                          className={cn(
-                            "text-[11px] font-semibold tabular-nums",
-                            clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                          )}
-                        >
-                          {formatSignedCurrency(groupTotal)}
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {group.entries.map((entry) => (
-                          <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                                {entry.side === "client" && !isJobExtraDiscountExtraType(entry.extraType) ? (
-                                  <Badge
-                                    variant={
-                                      entry.clientConfirmed == null
-                                        ? "outline"
-                                        : entry.clientConfirmed
-                                          ? "success"
-                                          : "warning"
-                                    }
-                                    size="sm"
-                                  >
-                                    {entry.clientConfirmed == null
-                                      ? "Confirmation unknown"
-                                      : entry.clientConfirmed
-                                        ? "Client confirmed"
-                                        : "Not confirmed"}
-                                  </Badge>
-                                ) : null}
-                                {entry.createdAt ? (
-                                  <span className="text-[10px] text-text-tertiary">
-                                    · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                                  </span>
-                                ) : null}
-                                {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
-                              </div>
-                              {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
-                            </div>
-                            <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
-                              <span
-                                className={cn(
-                                  "text-xs font-semibold tabular-nums",
-                                  clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                                )}
-                              >
-                                {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                              </span>
-                              {!isFallbackExtraEntry(entry) ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditExtra(entry)}
-                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                    className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
-                                    title="Edit amount or reason"
-                                    aria-label="Edit extra"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteExtraEntry(entry)}
-                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                    className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
-                                    title="Remove this extra"
-                                    aria-label="Remove extra"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+        {entries.length === 0 ? <p className="text-xs text-text-tertiary">{emptyText}</p> : null}
+        {entries.length > 0 ? (
+          <div className="max-h-[42vh] space-y-1.5 overflow-y-auto pr-1">
+            {entries.map((entry) => {
+              const locked = isFallbackExtraEntry(entry);
+              const discount = isJobExtraDiscountExtraType(entry.extraType);
+              const busy = savingExtraEdit || deletingExtraId === entry.idRaw;
+
+              if (editExtraTarget?.idRaw === entry.idRaw) {
+                return (
+                  <div
+                    key={entry.id}
+                    className="space-y-2 rounded-md border border-primary/40 bg-background/70 px-2.5 py-2 dark:bg-[#101621]"
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
+                      {discount ? (
+                        <Badge variant="outline" size="sm" className="h-4 text-[9px]">Discount</Badge>
+                      ) : null}
                     </div>
-                  );
-                })
-            : null}
-        </div>
+                    <div className="grid gap-2 sm:grid-cols-[7.5rem_1fr]">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={editExtraAmount}
+                        onChange={(e) => setEditExtraAmount(e.target.value)}
+                        className="h-8 text-xs tabular-nums"
+                        aria-label="Amount"
+                        autoFocus
+                        disabled={savingExtraEdit}
+                      />
+                      <Input
+                        value={editExtraReason}
+                        onChange={(e) => setEditExtraReason(e.target.value)}
+                        className="h-8 text-xs"
+                        placeholder="Reason"
+                        aria-label="Reason"
+                        disabled={savingExtraEdit}
+                      />
+                    </div>
+                    {clientSide && !discount ? (
+                      <label className="inline-flex items-center gap-2 text-[11px] text-text-secondary">
+                        <input
+                          type="checkbox"
+                          checked={editExtraClientConfirmed}
+                          onChange={(e) => setEditExtraClientConfirmed(e.target.checked)}
+                          disabled={savingExtraEdit}
+                        />
+                        Client confirmed this extra
+                      </label>
+                    ) : null}
+                    <div className="flex justify-end gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        disabled={savingExtraEdit}
+                        onClick={() => setEditExtraTarget(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        loading={savingExtraEdit}
+                        onClick={() => void confirmEditExtraEntry()}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
+                      {locked ? (
+                        <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
+                      ) : null}
+                      {clientSide && !discount && !locked ? (
+                        <Badge
+                          variant={
+                            entry.clientConfirmed == null ? "outline" : entry.clientConfirmed ? "success" : "warning"
+                          }
+                          size="sm"
+                        >
+                          {entry.clientConfirmed == null
+                            ? "Confirmation unknown"
+                            : entry.clientConfirmed
+                              ? "Client confirmed"
+                              : "Not confirmed"}
+                        </Badge>
+                      ) : null}
+                      {entry.createdAt ? (
+                        <span className="text-[10px] text-text-tertiary">
+                          · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                        </span>
+                      ) : null}
+                      {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
+                    </div>
+                    {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
+                  </div>
+                  <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
+                    <span className={cn("text-xs font-semibold tabular-nums", amountClass)}>
+                      {formatSignedCurrency(extraHistorySignedAmount(entry))}
+                    </span>
+                    {!locked && canEdit ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditExtra(entry)}
+                          disabled={busy}
+                          className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
+                          title="Edit amount or reason"
+                          aria-label="Edit extra"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExtraEntry(entry)}
+                          disabled={busy}
+                          className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
+                          title="Remove this extra"
+                          aria-label="Remove extra"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -10577,328 +10598,85 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       <Modal
         open={financeHubOpen}
         onClose={() => {
+          if (savingExtraEdit || savingFinanceHubBase) return;
           setFinanceHubOpen(false);
-          setExtraManagerFocusBucket(null);
           setFinanceHubBaseEditSide(null);
           setFinanceHubBaseDraft("");
+          setEditExtraTarget(null);
         }}
         title="Edit job finances"
         size="lg"
       >
-        <div className="p-4 space-y-4">
+        <div className="space-y-3 p-4">
           <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]">
-            <button
-              type="button"
-              onClick={() => {
-                setFinanceHubTab("client");
-                setExtraManagerFocusBucket(null);
-                setFinanceHubBaseEditSide(null);
-                setFinanceHubBaseDraft("");
-              }}
-              className={cn(
-                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
-                financeHubTab === "client"
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              Cash in — client
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFinanceHubTab("partner");
-                setExtraManagerFocusBucket(null);
-                setFinanceHubBaseEditSide(null);
-                setFinanceHubBaseDraft("");
-              }}
-              className={cn(
-                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
-                financeHubTab === "partner"
-                  ? "bg-rose-600 text-white shadow-sm"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              Cash out — partner
-            </button>
-          </div>
-
-          {financeHubTab === "client" ? (
-            <div className="space-y-4 rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 dark:border-emerald-500/25 dark:bg-emerald-950/15">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Client total</span>
-                  <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm">
-                    {amountDue > 0.02 ? "Pending" : "Settled"}
-                  </Badge>
-                </div>
-                <span className="text-base font-bold tabular-nums">{formatCurrency(billableRevenue)}</span>
-              </div>
-              {renderFinanceHubInitialBalanceRow(
-                "client",
-                Math.max(0, Number(job.client_price ?? 0)),
-                Math.max(0, Number(job.client_price ?? 0)),
-              )}
-              {isAdmin ? (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="whitespace-nowrap !flex-nowrap"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  disabled={job.status === "cancelled" || job.status === "deleted"}
-                  onClick={() => openMoneyFlowFromHub("client_pay")}
-                >
-                  Record Received Payment
-                </Button>
-              ) : null}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
-                {renderExtraManagerPanel("client", extraManagerFocusBucket)}
-              </div>
-              <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
-                {customerPayments.length === 0 ? (
-                  <p className="text-xs text-text-tertiary">No payments recorded yet.</p>
-                ) : (
-                  customerPayments.map((p) => {
-                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">
-                              {ledgerTag ?? (p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance")}
-                            </span>
-                            <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                            </span>
-                          </div>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
-                              className="text-text-tertiary hover:text-red-500 transition-colors"
-                              aria-label="Remove payment"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div className="flex items-center justify-between pt-1 text-xs">
-                  <span className={cn("font-semibold", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
-                    {amountDue > 0.02 ? "Amount due" : "Fully collected"}
-                  </span>
-                  <span className={cn("font-bold tabular-nums", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
-                    {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4 rounded-lg border border-rose-200/80 bg-rose-50/40 p-3 dark:border-rose-500/25 dark:bg-rose-950/15">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Partner total</span>
-                  <Badge
-                    variant={
-                      partnerUsesClawbackUi
-                        ? partnerClawbackOwed > 0.02
-                          ? "warning"
-                          : "success"
-                        : partnerPayRemaining > 0.02
-                          ? "warning"
-                          : "success"
-                    }
-                    size="sm"
-                  >
-                    {partnerUsesClawbackUi
-                      ? partnerClawbackOwed > 0.02
-                        ? "Pending"
-                        : "Settled"
-                      : partnerPayRemaining > 0.02
-                        ? "Pending"
-                        : "Settled"}
-                  </Badge>
-                </div>
-                <span className="text-base font-bold tabular-nums">{formatCurrencyPrecise(partnerCashOutSummaryAmount)}</span>
-              </div>
-              {renderFinanceHubInitialBalanceRow(
-                "partner",
-                partnerInitialBalance,
-                Math.max(0, Number(job.partner_cost ?? 0)),
-              )}
-              {isAdmin ? (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="whitespace-nowrap !flex-nowrap"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                  onClick={() => openMoneyFlowFromHub("partner_pay")}
-                >
-                  Record partner payment
-                </Button>
-              ) : null}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
-                {renderExtraManagerPanel("partner", extraManagerFocusBucket)}
-              </div>
-              {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
-                <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
-                  {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
-                    <p className="text-xs text-text-tertiary">No payouts recorded yet.</p>
-                  ) : null}
-                  {partnerPayoutLedgerRows.map((p) => {
-                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">{ledgerTag ?? "Partner payout"}</span>
-                            <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                            </span>
-                          </div>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-rose-700 dark:text-rose-300">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
-                              className="text-text-tertiary hover:text-red-500 transition-colors"
-                              aria-label="Remove payment"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {partnerLegacyCostAsPayoutRows.map((p) => {
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md border border-orange-500/20 bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <Badge variant="warning" size="sm">Extra cost</Badge>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate mt-1">{noteRest}</p> : null}
-                        </div>
-                        <span className="text-xs font-semibold tabular-nums text-orange-700 dark:text-orange-400">
-                          +{formatCurrencyPrecise(Number(p.amount))}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {!partnerUsesClawbackUi ? (
-                    <div className="flex items-center justify-between pt-1 text-xs">
-                      <span className={cn("font-semibold", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
-                        {partnerPayRemaining > 0.02 ? "Amount due" : "Fully paid out"}
-                      </span>
-                      <span className={cn("font-bold tabular-nums", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
-                        {partnerPayRemaining > 0.02 ? formatCurrency(partnerPayRemaining) : formatCurrency(0)}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </Modal>
-
-      <Modal
-        open={editExtraTarget != null}
-        onClose={() => {
-          if (savingExtraEdit) return;
-          setEditExtraTarget(null);
-        }}
-        title="Edit extra"
-      >
-        {editExtraTarget ? (
-          <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{editExtraTarget.extraType}</p>
-              <p className="text-xs text-text-secondary">
-                {editExtraTarget.side === "client" ? "Client charge or discount" : "Partner payout or discount"}
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={editExtraAmount}
-                onChange={(e) => setEditExtraAmount(e.target.value)}
-                className="h-9 text-sm"
-                autoFocus
-              />
-              {isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
-                <p className="text-[10px] text-text-tertiary mt-1">Stored as a discount — enter the positive amount to reduce the bill.</p>
-              ) : null}
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
-              <textarea
-                value={editExtraReason}
-                onChange={(e) => setEditExtraReason(e.target.value)}
-                rows={3}
-                className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[80px]")}
-              />
-            </div>
-            {editExtraTarget.side === "client" && !isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
-              <label className="inline-flex items-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={editExtraClientConfirmed}
-                  onChange={(e) => setEditExtraClientConfirmed(e.target.checked)}
-                />
-                Client confirmed this extra
-              </label>
-            ) : null}
-            <div className="flex flex-wrap justify-end gap-2 pt-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={savingExtraEdit}
-                onClick={() => setEditExtraTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={savingExtraEdit}
+            {(["client", "partner"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
                 onClick={() => {
-                  handleDeleteExtraEntry(editExtraTarget);
+                  setFinanceHubTab(tab);
+                  setFinanceHubBaseEditSide(null);
+                  setFinanceHubBaseDraft("");
                   setEditExtraTarget(null);
                 }}
+                className={cn(
+                  "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
+                  financeHubTab !== tab
+                    ? "text-text-secondary hover:text-text-primary"
+                    : tab === "client"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-rose-600 text-white shadow-sm",
+                )}
               >
-                Remove
-              </Button>
-              <Button size="sm" loading={savingExtraEdit} onClick={() => void confirmEditExtraEntry()}>
-                Save changes
-              </Button>
-            </div>
+                {tab === "client" ? "Cash in — client" : "Cash out — partner"}
+              </button>
+            ))}
           </div>
-        ) : null}
+
+          {(() => {
+            const clientTab = financeHubTab === "client";
+            const pending = clientTab
+              ? amountDue > 0.02
+              : partnerUsesClawbackUi
+                ? partnerClawbackOwed > 0.02
+                : partnerPayRemaining > 0.02;
+            const clientBase = Math.max(0, Number(job.client_price ?? 0));
+            return (
+              <div
+                className={cn(
+                  "space-y-3 rounded-lg border p-3",
+                  clientTab
+                    ? "border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-500/25 dark:bg-emerald-950/15"
+                    : "border-rose-200/80 bg-rose-50/40 dark:border-rose-500/25 dark:bg-rose-950/15",
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                      {clientTab ? "Client total" : "Partner total"}
+                    </span>
+                    <Badge variant={pending ? "warning" : "success"} size="sm">
+                      {pending ? "Pending" : "Settled"}
+                    </Badge>
+                  </div>
+                  <span className="text-base font-bold tabular-nums">
+                    {clientTab ? formatCurrency(billableRevenue) : formatCurrencyPrecise(partnerCashOutSummaryAmount)}
+                  </span>
+                </div>
+                {renderFinanceHubInitialBalanceRow(
+                  financeHubTab,
+                  clientTab ? clientBase : partnerInitialBalance,
+                  clientTab ? clientBase : Math.max(0, Number(job.partner_cost ?? 0)),
+                )}
+                {renderExtraManagerPanel(financeHubTab)}
+              </div>
+            );
+          })()}
+
+          <p className="text-[10px] leading-snug text-text-tertiary">
+            Payments and new extras stay on the finance card: this modal only edits what is already there.
+          </p>
+        </div>
       </Modal>
 
       <Modal
