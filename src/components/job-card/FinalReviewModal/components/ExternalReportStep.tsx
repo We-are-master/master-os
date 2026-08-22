@@ -235,12 +235,30 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
 
   const bloqueio = envio.bloqueio ?? "";
 
-  // A fila do Express não é problema: o robô completa na próxima passada.
+  /**
+   * Fila do Express. O texto conta o que de fato aconteceu, em vez de prometer
+   * a próxima passada: em 22/08 havia quatro jobs nesta fila com ZERO
+   * tentativas, e o chip garantia a todos que o robô concluiria em seguida.
+   * Promessa que a tela não consegue verificar é promessa que ensina a não
+   * confiar na tela.
+   */
   if (/queued for the Express robot/i.test(bloqueio)) {
+    const tentativas = envio.attempts ?? 0;
+    const tentado = tentativas > 0;
     return (
-      <span className={chip} style={{ background: "#F1F5FB", color: "#020040" }}>
+      <span
+        className={chip}
+        style={
+          tentado
+            ? { background: "#FFF6E8", color: "#8A5A00" }
+            : { background: "#F1F5FB", color: "#020040" }
+        }
+      >
         <span aria-hidden>🤖</span>
-        Queued for the Express robot · it completes on the next pass, you can finalise now
+        {tentado
+          ? `Express robot tried ${tentativas} of 3 · it retries on the next pass`
+          : "Waiting for the Express robot · not picked up yet"}
+        {" · you can finalise now"}
       </span>
     );
   }
