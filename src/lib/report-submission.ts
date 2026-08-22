@@ -329,17 +329,15 @@ export async function persistReportSubmission(
   const now = new Date().toISOString();
   const failures = { count: 0 };
 
-  const startPhotos = input.writeStart
-    ? await uploadSlotPhotos(supabase, job.id, "start", input.photos, input.template, failures)
-    : null;
-  const finalPhotos = await uploadSlotPhotos(
-    supabase,
-    job.id,
-    "final",
-    input.photos,
-    input.template,
-    failures,
-  );
+  // Start and final photo sets are independent uploads (different JSONB
+  // columns, different storage paths) — was sequential, doubling the wait
+  // whenever a submission wrote both (input.writeStart).
+  const [startPhotos, finalPhotos] = await Promise.all([
+    input.writeStart
+      ? uploadSlotPhotos(supabase, job.id, "start", input.photos, input.template, failures)
+      : Promise.resolve(null),
+    uploadSlotPhotos(supabase, job.id, "final", input.photos, input.template, failures),
+  ]);
 
   const durationMs =
     typeof input.finalData.duration_ms === "number" ? input.finalData.duration_ms : null;
@@ -437,11 +435,15 @@ async function uploadSlotPhotos(
     return uploadFlat(supabase, jobId, kind, photoEntries[flatSlot] ?? [], failures);
   }
 
+  // Slots are independent (separate keys in the result object, separate
+  // storage paths) — was sequential, one slot's photos fully uploaded
+  // before the next slot started.
+  const entries = Object.entries(photoEntries).filter(([slot]) => allowed.has(slot));
+  const uploaded = await Promise.all(
+    entries.map(async ([slot, files]) => [slot, await uploadFlat(supabase, jobId, `${kind}-${slot}`, files, failures)] as const),
+  );
   const result: Record<string, string[]> = {};
-  for (const [slot, files] of Object.entries(photoEntries)) {
-    if (!allowed.has(slot)) continue;
-    result[slot] = await uploadFlat(supabase, jobId, `${kind}-${slot}`, files, failures);
-  }
+  for (const [slot, urls] of uploaded) result[slot] = urls;
   return result;
 }
 
@@ -452,25 +454,33 @@ async function uploadFlat(
   files: File[],
   failures: { count: number },
 ): Promise<string[]> {
-  const out: string[] = [];
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-    const ext = isPdf ? "pdf" : "jpg";
-    const path = `${jobId}/${prefix}-${i}-${ts}.${ext}`;
-    const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
-      contentType: isPdf ? "application/pdf" : f.type || "image/jpeg",
-      upsert: false,
-    });
-    if (error) {
-      console.error("[report-submission] photo upload failed:", error);
-      failures.count += 1;
-      continue;
-    }
-    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-    if (data?.publicUrl) out.push(data.publicUrl);
-  }
+  // Files in a slot are independent uploads — was one-at-a-time with await,
+  // meaning a report with several photos per slot did that many sequential
+  // Storage round trips before the submit button unblocked (partners often
+  // on-site, on mobile data). Promise.all preserves input order in its
+  // result regardless of which upload finishes first, so this keeps the
+  // exact same "$prefix-$index-$timestamp" naming and skip-on-failure
+  // behavior as the sequential version.
+  const results = await Promise.all(
+    files.map(async (f, i) => {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+      const ext = isPdf ? "pdf" : "jpg";
+      const path = `${jobId}/${prefix}-${i}-${ts}.${ext}`;
+      const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
+        contentType: isPdf ? "application/pdf" : f.type || "image/jpeg",
+        upsert: false,
+      });
+      if (error) {
+        console.error("[report-submission] photo upload failed:", error);
+        failures.count += 1;
+        return null;
+      }
+      const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      return data?.publicUrl ?? null;
+    }),
+  );
+  const out = results.filter((url): url is string => url != null);
   return out;
 }

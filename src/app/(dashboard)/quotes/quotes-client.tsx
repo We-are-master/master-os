@@ -2249,35 +2249,39 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const handleExport = useCallback(async (fields: string[], _rowScope?: string) => {
     try {
       const allRows: Quote[] = [];
-      let p = 1;
       const pageSize = 500;
-      while (true) {
-        const res =
-          status === "closed"
-            ? await listQuotes({
-                page: p,
+      const fetchPage = (page: number) =>
+        status === "closed"
+          ? listQuotes({
+              page,
+              pageSize,
+              search: search.trim() ? search : undefined,
+              status: undefined,
+              statusIn: ["converted_to_job", "rejected"],
+            })
+          : status === "bidding"
+            ? listQuotes({
+                page,
                 pageSize,
                 search: search.trim() ? search : undefined,
                 status: undefined,
-                statusIn: ["converted_to_job", "rejected"],
+                statusIn: ["bidding", "in_survey"],
               })
-            : status === "bidding"
-              ? await listQuotes({
-                  page: p,
-                  pageSize,
-                  search: search.trim() ? search : undefined,
-                  status: undefined,
-                  statusIn: ["bidding", "in_survey"],
-                })
-              : await listQuotes({
-                  page: p,
-                  pageSize,
-                  search: search.trim() ? search : undefined,
-                  status: status !== "all" ? status : undefined,
-                });
-        allRows.push(...res.data);
-        if (p >= res.totalPages) break;
-        p += 1;
+            : listQuotes({
+                page,
+                pageSize,
+                search: search.trim() ? search : undefined,
+                status: status !== "all" ? status : undefined,
+              });
+      // Page 1 tells us totalPages; the rest are independent and fetched
+      // together instead of one page at a time.
+      const first = await fetchPage(1);
+      allRows.push(...first.data);
+      if (first.totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: first.totalPages - 1 }, (_, i) => fetchPage(i + 2)),
+        );
+        for (const res of rest) allRows.push(...res.data);
       }
       if (allRows.length === 0) {
         toast.info("No quotes to export");

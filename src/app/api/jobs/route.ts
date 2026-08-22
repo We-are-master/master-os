@@ -970,26 +970,27 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Auto-assign invites (push + Zendesk Email 1 when ticket linked) ─
-  let partnersNotified: { sent: number; tokensFound: number } | undefined;
+  // Fire-and-forget, same treatment the job-created Zendesk webhook already
+  // gives this exact call (src/app/api/webhooks/desk/job-created/route.ts):
+  // per matched partner this does a DB lookup + Expo push + a Zendesk side-
+  // conversation API call, so awaiting it here blocked POST /api/jobs on
+  // every matched partner's outbound Zendesk email. The exact-count response
+  // field (`partners_notified`) is dropped in exchange — matched_partners_count
+  // (already known synchronously) still tells the caller how many partners
+  // were eligible.
   if (autoAssign && matchedPartnerIds.length > 0) {
-    try {
-      const { pushSent } = await dispatchAutoAssignJobInvites({
-        supabase,
-        jobId: String(inserted.id),
-        jobReference: String(inserted.reference),
-        jobTitle: titleResolved,
-        clientName,
-        propertyAddress,
-        scope: description || "(no scope provided)",
-        scheduledDate: isoDate,
-        partnerIds: matchedPartnerIds,
-        zendeskTicketId: ticketId,
-      });
-      partnersNotified = { sent: pushSent, tokensFound: pushSent };
-    } catch (err) {
-      console.error("[api/jobs] auto-assign invites failed:", err);
-      partnersNotified = { sent: 0, tokensFound: 0 };
-    }
+    void dispatchAutoAssignJobInvites({
+      supabase,
+      jobId: String(inserted.id),
+      jobReference: String(inserted.reference),
+      jobTitle: titleResolved,
+      clientName,
+      propertyAddress,
+      scope: description || "(no scope provided)",
+      scheduledDate: isoDate,
+      partnerIds: matchedPartnerIds,
+      zendeskTicketId: ticketId,
+    }).catch((err) => console.error("[api/jobs] auto-assign invites failed:", err));
   }
 
   return NextResponse.json(
@@ -1000,7 +1001,6 @@ export async function POST(req: NextRequest) {
       action:      convertingFromQuote ? "converted_from_quote" : "created",
       report_link: reportLinkIn ?? buildReportLink(String(inserted.reference)),
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
-      ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
       ...(routedPartner ? { routed_partner: routedPartner } : {}),
       ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),

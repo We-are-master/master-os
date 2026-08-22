@@ -33,6 +33,18 @@ export const dynamic = "force-dynamic";
 
 const ADMIN_ROLES = new Set(["admin", "manager"]);
 const CHUNK = 200;
+/** Concurrency cap for per-item write loops below — each item is a
+ *  multi-round-trip write (ensureWeeklySelfBillForJob does several queries
+ *  itself), so this is deliberately smaller than CHUNK (which just batches
+ *  simple .in() reads). */
+const WRITE_CONCURRENCY = 10;
+
+/** Run `fn` over `items` with at most WRITE_CONCURRENCY in flight at once. */
+async function runChunked<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += WRITE_CONCURRENCY) {
+    await Promise.all(items.slice(i, i + WRITE_CONCURRENCY).map(fn));
+  }
+}
 
 /** Self-bill statuses we can promote to ready_to_pay */
 const PROMOTABLE_STATUSES = new Set([
@@ -91,10 +103,13 @@ export async function POST(req: NextRequest) {
     .is("completed_date", null)
     .is("deleted_at", null);
 
-  for (const raw of missingCompleted ?? []) {
+  // Each job's completed_date backfill is independent — was one sequential
+  // UPDATE per job. Chunked concurrency (not unbounded Promise.all) so a
+  // large backlog doesn't open hundreds of simultaneous connections.
+  await runChunked(missingCompleted ?? [], async (raw) => {
     const job = raw as { id: string; scheduled_start_at?: string | null; scheduled_date?: string | null };
     const ymd = inferCompletedDateYmd(job);
-    if (!ymd) continue;
+    if (!ymd) return;
     try {
       const { error } = await admin.from("jobs").update({ completed_date: ymd }).eq("id", job.id);
       if (error) throw error;
@@ -103,7 +118,7 @@ export async function POST(req: NextRequest) {
       console.error("[full-sync] completed_date backfill", job.id, e);
       stats.errors++;
     }
-  }
+  });
 
   // ── 1. Backfill: jobs with partner but no self_bill_id ────────────────────
   const { data: orphanJobs } = await admin
@@ -117,8 +132,12 @@ export async function POST(req: NextRequest) {
 
   stats.orphansFound = (orphanJobs ?? []).length;
 
-  for (const job of orphanJobs ?? []) {
-    if (!canLinkJobToSelfBill(job as Parameters<typeof canLinkJobToSelfBill>[0])) continue;
+  // ensureWeeklySelfBillForJob already handles the concurrent-insert race
+  // (unique-constraint conflict → re-fetch the winning row — see
+  // src/services/self-bills.ts), so it's safe to run many jobs at once even
+  // when several land on the same new partner+week self-bill.
+  await runChunked(orphanJobs ?? [], async (job) => {
+    if (!canLinkJobToSelfBill(job as Parameters<typeof canLinkJobToSelfBill>[0])) return;
     try {
       const sbId = await ensureWeeklySelfBillForJob(job as unknown as Parameters<typeof ensureWeeklySelfBillForJob>[0]);
       if (sbId) {
@@ -129,7 +148,7 @@ export async function POST(req: NextRequest) {
       console.error("[full-sync] backfill error", job.id, e);
       stats.errors++;
     }
-  }
+  });
 
   // ── 2. Rebucket: jobs on wrong work-week self-bill ────────────────────────
   const { data: linkedJobs } = await admin
@@ -160,18 +179,18 @@ export async function POST(req: NextRequest) {
   }
 
   const refreshSbIds = new Set<string>();
-  for (const raw of linkedJobs ?? []) {
+  await runChunked(linkedJobs ?? [], async (raw) => {
     const job = raw as unknown as Parameters<typeof ensureWeeklySelfBillForJob>[0];
     const sbId = job.self_bill_id?.trim();
-    if (!sbId) continue;
+    if (!sbId) return;
     const meta = sbMetaById.get(sbId);
-    if (!meta || SKIP_STATUSES.has(meta.status)) continue;
-    if (!canLinkJobToSelfBill(job)) continue;
+    if (!meta || SKIP_STATUSES.has(meta.status)) return;
+    if (!canLinkJobToSelfBill(job)) return;
     const anchor = resolveJobSelfBillWeekAnchor(job);
-    if (!anchor) continue;
+    if (!anchor) return;
     const { weekStart: correctWeekStart } = getWeekBoundsForDate(anchor);
     const currentWeekStart = meta.week_start?.trim().slice(0, 10) ?? "";
-    if (!correctWeekStart || currentWeekStart === correctWeekStart) continue;
+    if (!correctWeekStart || currentWeekStart === correctWeekStart) return;
     try {
       const newSbId = await ensureWeeklySelfBillForJob(job, { weekAnchorDate: anchor });
       if (newSbId && newSbId !== sbId) {
@@ -183,16 +202,16 @@ export async function POST(req: NextRequest) {
       console.error("[full-sync] rebucket error", job.id, e);
       stats.errors++;
     }
-  }
+  });
 
-  for (const sbId of refreshSbIds) {
+  await runChunked([...refreshSbIds], async (sbId) => {
     try {
       await refreshSelfBillPayoutState(sbId);
     } catch (e) {
       console.error("[full-sync] refresh after rebucket", sbId, e);
       stats.errors++;
     }
-  }
+  });
 
   // ── 3. Load all non-paid self-bills with their jobs ───────────────────────
   const { data: allSelfBills } = await admin
