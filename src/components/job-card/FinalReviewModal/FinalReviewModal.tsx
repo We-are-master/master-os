@@ -40,7 +40,13 @@ function useEnvioExterno(
     const buscar = async () => {
       try {
         const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report`);
-        if (!r.ok || !vivo) return;
+        if (!vivo) return;
+        // Rota fora do ar não pode virar passo em branco: o estado indisponível
+        // é um estado, e a faixa diz isso em vez de sumir.
+        if (!r.ok) {
+          setEnvio({ estado: "nao_enviado", indisponivel: true });
+          return;
+        }
         const d = (await r.json()) as {
           estado: EnvioExterno["estado"];
           report_link?: string | null;
@@ -61,8 +67,9 @@ function useEnvioExterno(
           manualAt: (d as { manual_at?: string | null }).manual_at ?? null,
         });
       } catch {
-        // Falha de rede não pode derrubar o modal: sem estado, o passo 3 só não
-        // mostra o selo, e o resto da revisão continua utilizável.
+        // Falha de rede também é estado. O modal segue utilizável; o que muda é
+        // que o passo 3 para de fingir que não havia nada a mostrar ali.
+        if (vivo) setEnvio({ estado: "nao_enviado", indisponivel: true });
       }
     };
     buscarRef.current = () => void buscar();

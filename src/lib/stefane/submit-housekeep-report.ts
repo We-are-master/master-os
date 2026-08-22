@@ -11,7 +11,23 @@
  * dez jobs concluídos de semanas atrás, e submeter relatório retroativo em cima
  * de um que já foi entregue à mão cria confusão do lado deles.
  */
-import { chromium, type Page } from "playwright";
+import type { Page } from "playwright";
+
+/**
+ * O Playwright entra só na hora de abrir o browser.
+ *
+ * Com `import { chromium }` no topo, ele virava dependência de quem apenas
+ * IMPORTA este arquivo — e quem importa é a rota do passo 3, que na maior
+ * parte das vezes só responde um GET de estado. Em produção o pacote não está
+ * lá (é devDependency, ~100MB) e a rota inteira caía, GET junto: o passo 3 do
+ * Final review ficava mudo, sem "Try again", sem marcar à mão, sem erro na
+ * tela. O envio de verdade continua igual; o que muda é que ler o estado não
+ * precisa mais do browser.
+ */
+async function abrirChromium() {
+  const { chromium } = await import("playwright");
+  return chromium;
+}
 import {
   FEEDBACK,
   HOUSEKEEP_CAMPOS,
@@ -340,7 +356,7 @@ export async function submeterRelatorioHousekeep(args: {
   const t0 = Date.now();
   const seg = () => Math.round((Date.now() - t0) / 100) / 10;
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await (await abrirChromium()).launch({ headless: true });
   try {
     const page = await browser.newPage();
     /**

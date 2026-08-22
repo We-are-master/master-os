@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { InvoiceDisplayStatus, ReportItem, SelfBillDisplayStatus } from "../types";
 import { ExternalReportStep, type EstadoEnvioExterno } from "./ExternalReportStep";
 
@@ -27,6 +28,57 @@ type Props = {
   /** Abre o relatório para edição, oferecido quando o envio é recusado. */
   onEditReport?: () => void;
 };
+
+/**
+ * Marcar à mão, no passo em que a falta aparece.
+ *
+ * O botão existia só dentro do envio externo, e só em dois dos seus estados.
+ * Quem chega no passo 3 com "Final report · missing" via UMA saída, "Fill the
+ * report", e preencher formulário não é o que resolve quando o relatório já
+ * foi entregue por fora. Aqui a segunda saída fica visível junto da primeira:
+ * grava `external_report_manual_at`, que é o que desarma o robô do Express e
+ * libera o Finalise.
+ */
+function MarkSentManually({ jobUuid, onMarcado }: { jobUuid: string; onMarcado: () => void }) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const marcar = async () => {
+    setSalvando(true);
+    setErro(null);
+    try {
+      const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report?manual=1`, { method: "POST" });
+      if (!r.ok) {
+        const corpo = (await r.json().catch(() => null)) as { motivo?: string; error?: string } | null;
+        setErro(corpo?.motivo ?? corpo?.error ?? "Could not mark it. Try again in a moment.");
+        return;
+      }
+      onMarcado();
+    } catch {
+      setErro("Could not reach the server. Try again in a moment.");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void marcar()}
+        disabled={salvando}
+        className="rounded-[6px] border border-[#D8D8DD] bg-white px-2.5 py-[3px] text-[11px] font-semibold text-[#020040] transition-colors hover:bg-[#F4F4F6] disabled:opacity-50"
+      >
+        {salvando ? "Marking…" : "Sent Manually"}
+      </button>
+      {erro ? (
+        <span className="w-full text-[11px]" style={{ color: "#A32D2D" }}>
+          {erro}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 function fmtGBP(n: number) {
   return `£${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
@@ -107,7 +159,23 @@ export function StepsTimeline({
 
   const allUploaded = reports.length > 0 && reports.every((r) => r.uploaded);
   const allApproved = reports.length > 0 && reports.every((r) => r.approved);
-  const reportsUploadedState: StepState = allUploaded ? "issued" : "pending";
+  /**
+   * Entregue à mão também é entregue. Sem isto o passo ficava laranja para
+   * sempre depois de marcado, e a tela pedia de novo o que já tinha sido feito.
+   */
+  const entregueAMao = !!envioExterno?.manualAt;
+  /**
+   * Quando a plataforma recusa PORQUE o relatório não existe, ela não está
+   * contando nada novo: o chip vermelho ao lado já disse isso, e as duas saídas
+   * reais (preencher, ou marcar que já foi à mão) estão a dois centímetros
+   * dali. O bloco embaixo só acrescentava a mesma frase em outras palavras e um
+   * "Try again" que não tem como dar certo sem relatório — quatro botões para
+   * um passo que tem duas decisões.
+   */
+  const repeteAFaltaDoRelatorio =
+    !allUploaded && /has not sent the final report/i.test(envioExterno?.bloqueio ?? "");
+  const relatorioResolvido = allUploaded || entregueAMao;
+  const reportsUploadedState: StepState = relatorioResolvido ? "issued" : "pending";
   const reportsApprovedState: StepState = !allUploaded ? "blocked" : allApproved ? "approved" : "pending";
 
   const completedCount =
@@ -166,11 +234,14 @@ export function StepsTimeline({
               key={r.id}
               className="text-[11px] px-2 py-[3px] rounded-[5px]"
               style={{
-                background: r.uploaded ? "#F1F5FB" : "#FFF1EB",
-                color: r.uploaded ? "#020040" : "#ED4B00",
+                background: r.uploaded ? "#F1F5FB" : entregueAMao ? "#F4F4F6" : "#FFF1EB",
+                color: r.uploaded ? "#020040" : entregueAMao ? "#6B6B70" : "#ED4B00",
               }}
             >
-              {r.name} · {r.uploaded ? "uploaded" : "missing"}
+              {/* Depois de marcado à mão, "missing" em laranja pede uma ação que
+                  já foi feita por fora. O que sobra é um fato sem urgência: o
+                  OS não guarda cópia deste relatório. */}
+              {r.name} · {r.uploaded ? "uploaded" : entregueAMao ? "not in the OS" : "missing"}
             </span>
           ))}
           {/* Relatório faltando é o unico ponto do fluxo onde a pessoa tem algo
@@ -187,10 +258,17 @@ export function StepsTimeline({
               Fill the report
             </button>
           ) : null}
+          {/* Uma marcação manual só, e sempre no mesmo lugar. Antes ela vivia
+              lá embaixo, dentro do envio externo, e só em dois dos seus
+              estados: com o relatório faltando apareciam as duas ao mesmo
+              tempo, com nomes diferentes, fazendo a mesma coisa. */}
+          {!allUploaded && !entregueAMao && jobUuid && envioExterno && !envioExterno.indisponivel && envioExterno.estado !== "enviado" ? (
+            <MarkSentManually jobUuid={jobUuid} onMarcado={onEnvioDisparado} />
+          ) : null}
           {/* Todo o envio externo — estado, conferência e ação — mora aqui.
               Antes o passo só falava depois que o envio já tinha acontecido,
               calado justamente quando havia algo a fazer. */}
-          {jobUuid && envioExterno ? (
+          {jobUuid && envioExterno && !repeteAFaltaDoRelatorio ? (
             <div className="w-full">
               <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} relatorioEnviado={allUploaded} />
             </div>
@@ -209,7 +287,10 @@ export function StepsTimeline({
       state: reportsApprovedState,
       subtitle: !allUploaded ? (
         <span className="text-[12px]" style={{ color: "#9A9AA0" }}>
-          Available after upload
+          {/* Marcado à mão não deixa nada no OS para conferir. Dizer
+              "Available after upload" ali era esperar um upload que já foi
+              dispensado. */}
+          {entregueAMao ? "Nothing to review · sent manually" : "Available after upload"}
         </span>
       ) : null,
       trailing: (
