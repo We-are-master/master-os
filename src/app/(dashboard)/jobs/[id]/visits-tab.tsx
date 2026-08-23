@@ -68,11 +68,14 @@ export function VisitsTab({
   onJobStatusBumpRequested,
   /** Increment (e.g. from job header ⋮ menu) to open the “Add visit” modal when this tab is shown. */
   openCreateSignal = 0,
+  onVisitsChanged,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
   onJobStatusBumpRequested?: (suggestedStatus: Job["status"]) => void;
   openCreateSignal?: number;
+  /** Avisa o card para recarregar a próxima visita do topo. */
+  onVisitsChanged?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,6 +146,7 @@ export function VisitsTab({
       const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
       setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
       toast.success(`Visit ${visit.visit_index} completed`);
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to complete visit");
     }
@@ -154,6 +158,7 @@ export function VisitsTab({
       setVisits((rows) => [...rows, created]);
       setEditTarget(null);
       toast.success(`Visit ${created.visit_index} created`);
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create visit");
     }
@@ -165,6 +170,7 @@ export function VisitsTab({
       setVisits((rows) => rows.map((r) => r.id === id ? { ...r, ...updated } : r));
       setEditTarget(null);
       toast.success("Visit updated");
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update visit");
     }
@@ -176,6 +182,7 @@ export function VisitsTab({
       await apiDeleteJobVisit(job.id, visit.id);
       setVisits((rows) => rows.filter((r) => r.id !== visit.id));
       toast.success("Visit removed");
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remove visit");
     }

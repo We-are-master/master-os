@@ -80,7 +80,7 @@ import {
   Pencil,
   MoreVertical,
   XCircle,
-  UserX,
+  UserX, Layers,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -138,10 +138,13 @@ import type {
   JobExtraEntry,
   JobPayment,
   JobPaymentMethod,
+  JobVisit,
   Partner,
   QuoteLineItem,
   SelfBill,
 } from "@/types/database";
+import { listJobVisits } from "@/services/job-visits";
+import { nextVisitLine } from "@/lib/job-visit-rollup";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -1222,6 +1225,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     ) as JobPayment[]),
   );
   const [extraHistory, setExtraHistory] = useState<ExtraHistoryEntry[]>([]);
+  /** Visitas extras (mig 161) — o topo do card mostra a próxima que vem. */
+  const [jobVisits, setJobVisits] = useState<JobVisit[]>([]);
   const [deletingExtraId, setDeletingExtraId] = useState<string | null>(null);
   const [deleteExtraTarget, setDeleteExtraTarget] = useState<ExtraHistoryEntry | null>(null);
   const [deleteLinkedPartnerAlso, setDeleteLinkedPartnerAlso] = useState(true);
@@ -1407,6 +1412,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const jobMoreMenuRef = useRef<HTMLDivElement>(null);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
+  /** Bump feito pela aba de visitas para o topo do card recarregar a lista. */
+  const [visitsRefreshKey, setVisitsRefreshKey] = useState(0);
   /** ⋮ → “Reschedule & confirm” — one modal for date, partner, service, pricing. */
   const [quickRescheduleOpen, setQuickRescheduleOpen] = useState(false);
   const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
@@ -2429,6 +2436,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     void loadExtraHistory(job.id);
   }, [job?.id, loadExtraHistory]);
+
+  useEffect(() => {
+    const jobId = job?.id;
+    if (!jobId) {
+      setJobVisits([]);
+      return;
+    }
+    let cancelled = false;
+    void listJobVisits(jobId)
+      .then((rows) => { if (!cancelled) setJobVisits(rows); })
+      .catch(() => { if (!cancelled) setJobVisits([]); });
+    return () => { cancelled = true; };
+  }, [job?.id, visitsRefreshKey]);
 
   useEffect(() => {
     if (!job?.id || extraHistory.length === 0) return;
@@ -7384,6 +7404,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                      * gravada nenhuma.
                      */
                     const arrivalDisplay = agreedArrivalRange ?? slotLabel;
+                    /**
+                     * Com visitas extras, "visit date" tem que ser a próxima que
+                     * vem, não a primeira que aconteceu: quem abre o card quer
+                     * saber quando alguém pisa lá de novo.
+                     */
+                    const nextVisit = nextVisitLine(job, jobVisits, Date.now());
+                    const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
                         <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
@@ -7393,6 +7420,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
                           </span>
                         </div>
+                        {nextIsExtra && nextVisit ? (
+                          <button
+                            type="button"
+                            onClick={() => setDetailTab(6)}
+                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            title="Open the Visits tab"
+                          >
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <span>
+                              <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
+                              {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
+                              {nextVisit.partnerName ? (
+                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                              ) : null}
+                            </span>
+                          </button>
+                        ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
                           <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
                           <span>
@@ -7853,6 +7897,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <VisitsTab
                   job={job}
                   openCreateSignal={visitOpenCreateSignal}
+                  onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
                   onJobStatusBumpRequested={(suggestedStatus) => {
                     if (job.status !== suggestedStatus) {
                       void updateJob(job.id, { status: suggestedStatus });

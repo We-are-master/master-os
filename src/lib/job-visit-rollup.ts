@@ -189,3 +189,40 @@ export function partnerCapForScope(
   const agreed = money(job.partner_agreed_value);
   return agreed > 0 ? agreed : money(job.partner_cost);
 }
+
+/**
+ * A próxima visita que vem, contando a visita 1 (o job).
+ *
+ * Serve o topo do job card: com visitas extras, "visit date" tem que dizer a
+ * que está por vir, não a primeira que aconteceu. Visita fechada ou cancelada
+ * não conta. Sem nenhuma futura, devolve `null` e o topo volta ao job.
+ */
+export function nextVisitLine(
+  job: Pick<Job, "client_price" | "partner_cost" | "materials_cost" | "partner_id" | "partner_name" |
+    "scheduled_date" | "scheduled_start_at" | "status">,
+  visits: JobVisit[] | null | undefined,
+  nowMs: number,
+): VisitMoneyLine | null {
+  const startOf = (line: VisitMoneyLine): number | null => {
+    const iso = line.scheduledStartAt ?? (line.scheduledDate ? `${line.scheduledDate}T23:59:59` : null);
+    if (!iso) return null;
+    const ms = new Date(iso).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  };
+
+  const rollup = rollUpJobVisits(job, visits);
+  const openExtras = new Set(
+    (visits ?? [])
+      .filter((v) => visitCountsForMoney(v) && v.status !== "completed")
+      .map((v) => v.id),
+  );
+  const jobOpen = job.status !== "completed" && job.status !== "cancelled";
+
+  const upcoming = rollup.perVisit
+    .filter((line) => (line.visitId ? openExtras.has(line.visitId) : jobOpen))
+    .map((line) => ({ line, at: startOf(line) }))
+    .filter((row): row is { line: VisitMoneyLine; at: number } => row.at != null && row.at >= nowMs)
+    .sort((a, b) => a.at - b.at);
+
+  return upcoming[0]?.line ?? null;
+}
