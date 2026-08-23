@@ -78,6 +78,23 @@ export async function setVisitStatus(id: string, status: JobVisitStatus): Promis
 }
 
 /**
+ * Fecha a visita. É este carimbo, e não o relatório, que libera a próxima —
+ * e é ele que diz em qual período de pagamento a visita cai quando ela
+ * escorrega da data agendada.
+ */
+export async function completeJobVisit(id: string, completedAtIso?: string): Promise<JobVisit> {
+  return updateJobVisit(id, {
+    status: "completed",
+    completed_at: completedAtIso ?? new Date().toISOString(),
+  });
+}
+
+/** Reabre uma visita fechada por engano: sai o carimbo junto, senão o payout mira um período morto. */
+export async function reopenJobVisit(id: string): Promise<JobVisit> {
+  return updateJobVisit(id, { status: "in_progress", completed_at: null });
+}
+
+/**
  * Visit-1 representation (read-only): synthesises a "primary" visit row from
  * the parent job's primary fields. Used by the Visits tab UI to render the
  * primary card uniformly with the extra visits.

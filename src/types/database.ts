@@ -752,6 +752,10 @@ export interface JobVisit {
   partner_cost: number;
   materials_cost: number;
   status: JobVisitStatus;
+  /** Carimbo do botão "Complete visit" (mig 275). Libera a próxima visita e ancora o período do payout. */
+  completed_at?: string | null;
+  /** Thread do parceiro DESTA visita — a do job pertence ao parceiro primário (mig 275). */
+  zendesk_side_conversation_id?: string | null;
   scope?: string | null;
   notes?: string | null;
   created_at: string;

@@ -189,3 +189,46 @@ export function partnerCapForScope(
   const agreed = money(job.partner_agreed_value);
   return agreed > 0 ? agreed : money(job.partner_cost);
 }
+
+// ---------------------------------------------------------------- o gate
+//
+// "Só adiciona a próxima visita quando a anterior fechou" (decisão do dono).
+// A visita fecha por botão manual, e a visita 1 é o próprio job — então o que
+// fecha a visita 1 é a ação de status que o job já tem, não um botão novo.
+
+/** Ranks de `jobStatusRank` a partir dos quais o trabalho da visita 1 acabou. */
+const JOB_WORK_DONE_RANK = 40; // final_check
+
+export type AddVisitGate = { allowed: true } | { allowed: false; reason: string };
+
+/**
+ * A última visita viva precisa estar fechada para nascer a próxima.
+ *
+ * `jobStatusRankFn` entra por parâmetro para o módulo continuar puro e sem
+ * import de `job-phases` (que puxa meia UI junto).
+ */
+export function canAddAnotherVisit(
+  job: Pick<Job, "status">,
+  visits: JobVisit[] | null | undefined,
+  jobStatusRankFn: (status: Job["status"]) => number,
+): AddVisitGate {
+  if (job.status === "cancelled" || job.status === "deleted") {
+    return { allowed: false, reason: "This job is closed." };
+  }
+
+  const live = (visits ?? []).filter(visitCountsForMoney);
+  if (live.length > 0) {
+    const last = live.reduce((a, b) => (b.visit_index > a.visit_index ? b : a));
+    if (last.status !== "completed") {
+      return { allowed: false, reason: `Complete visit ${last.visit_index} before booking the next one.` };
+    }
+    return { allowed: true };
+  }
+
+  // Nenhuma visita extra ainda: quem tem que estar fechada é a visita 1, e ela
+  // fecha pelo próprio ciclo do job (Job completed → final_check em diante).
+  if (jobStatusRankFn(job.status) < JOB_WORK_DONE_RANK) {
+    return { allowed: false, reason: "Finish visit 1 (the job itself) before booking the next one." };
+  }
+  return { allowed: true };
+}

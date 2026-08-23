@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Loader2, Briefcase, AlertTriangle, ExternalLink, Layers, X, Save } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Briefcase, AlertTriangle, ExternalLink, Layers, X, Save, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -15,15 +15,19 @@ import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { listPartners } from "@/services/partners";
 import {
   listJobVisits,
-  createJobVisit,
-  updateJobVisit,
-  softDeleteJobVisit,
-  setVisitStatus,
   jobToPrimaryVisit,
   summariseVisits,
   type CreateJobVisitInput,
 } from "@/services/job-visits";
+import {
+  apiCreateJobVisit,
+  apiDeleteJobVisit,
+  apiUpdateJobVisit,
+} from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
+import { canAddAnotherVisit } from "@/lib/job-visit-rollup";
+import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+import { jobStatusRank } from "@/lib/job-phases";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { CatalogService, Job, JobVisit, JobVisitStatus, Partner } from "@/types/database";
@@ -123,9 +127,24 @@ export function VisitsTab({
     }
   }, [visits, job.status, onJobStatusBumpRequested]);
 
+  // "Só nasce a próxima quando a anterior fechou". A UI mostra o motivo em vez
+  // de deixar clicar e falhar; o servidor repete a checagem, que a UI não é a
+  // única porta pra job_visits.
+  const addGate = useMemo(() => canAddAnotherVisit(job, visits, jobStatusRank), [job, visits]);
+
+  async function handleComplete(visit: JobVisit) {
+    try {
+      const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
+      setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+      toast.success(`Visit ${visit.visit_index} completed`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to complete visit");
+    }
+  }
+
   async function handleCreate(input: CreateJobVisitInput) {
     try {
-      const created = await createJobVisit(input);
+      const created = await apiCreateJobVisit(input);
       setVisits((rows) => [...rows, created]);
       setEditTarget(null);
       toast.success(`Visit ${created.visit_index} created`);
@@ -136,7 +155,7 @@ export function VisitsTab({
 
   async function handleUpdate(id: string, patch: Partial<JobVisit>) {
     try {
-      const updated = await updateJobVisit(id, patch);
+      const updated = await apiUpdateJobVisit(job.id, id, patch);
       setVisits((rows) => rows.map((r) => r.id === id ? { ...r, ...updated } : r));
       setEditTarget(null);
       toast.success("Visit updated");
@@ -147,7 +166,7 @@ export function VisitsTab({
 
   async function handleStatusChange(visit: JobVisit, status: JobVisitStatus) {
     try {
-      const updated = await setVisitStatus(visit.id, status);
+      const updated = await apiUpdateJobVisit(job.id, visit.id, { status });
       setVisits((rows) => rows.map((r) => r.id === visit.id ? { ...r, ...updated } : r));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update status");
@@ -157,7 +176,7 @@ export function VisitsTab({
   async function handleDelete(visit: JobVisit) {
     if (!confirm(`Remove visit ${visit.visit_index}? This soft-deletes the row.`)) return;
     try {
-      await softDeleteJobVisit(visit.id);
+      await apiDeleteJobVisit(job.id, visit.id);
       setVisits((rows) => rows.filter((r) => r.id !== visit.id));
       toast.success("Visit removed");
     } catch (e) {
@@ -188,13 +207,20 @@ export function VisitsTab({
             Visit 1 = the job itself. Add extra visits when more partners/services are needed.
           </p>
         </div>
-        <Button
-          size="sm"
-          icon={<Plus className="h-3.5 w-3.5" />}
-          onClick={() => setEditTarget({ mode: "create" })}
-        >
-          Add visit
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            disabled={!addGate.allowed}
+            title={addGate.allowed ? undefined : addGate.reason}
+            onClick={() => setEditTarget({ mode: "create" })}
+          >
+            Add visit
+          </Button>
+          {!addGate.allowed ? (
+            <p className="text-[11px] text-text-tertiary text-right max-w-[16rem]">{addGate.reason}</p>
+          ) : null}
+        </div>
       </div>
 
       {/* Summary tiles */}
@@ -215,6 +241,7 @@ export function VisitsTab({
             visit={v}
             onEdit={() => setEditTarget({ mode: "edit", visit: v })}
             onDelete={() => handleDelete(v)}
+            onComplete={() => handleComplete(v)}
             onStatusChange={(s) => handleStatusChange(v, s)}
           />
         ))}
@@ -291,11 +318,12 @@ function PrimaryVisitCard({ primary, job }: { primary: ReturnType<typeof jobToPr
 }
 
 function VisitCard({
-  visit, onEdit, onDelete, onStatusChange,
+  visit, onEdit, onDelete, onComplete, onStatusChange,
 }: {
   visit: JobVisit;
   onEdit: () => void;
   onDelete: () => void;
+  onComplete: () => void;
   onStatusChange: (s: JobVisitStatus) => void;
 }) {
   const cfg = STATUS_BADGE[visit.status];
@@ -320,6 +348,9 @@ function VisitCard({
             {visit.scheduled_date ?? <span className="italic text-text-tertiary">No date</span>}
             {visit.scheduled_start_at ? ` · starts ${visit.scheduled_start_at.slice(11, 16)}` : ""}
             {visit.scheduled_end_at ? ` · ends ${visit.scheduled_end_at.slice(11, 16)}` : ""}
+            {visit.completed_at
+              ? ` · done ${new Date(visit.completed_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}`
+              : ""}
           </p>
           <p className="mt-1 text-[11px] text-text-tertiary">
             Client: <strong>{formatCurrency(visit.client_price)}</strong>
@@ -338,6 +369,17 @@ function VisitCard({
               <option key={s} value={s}>{STATUS_BADGE[s].label}</option>
             ))}
           </select>
+          {visit.status !== "completed" && visit.status !== "cancelled" ? (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Check className="h-3.5 w-3.5" />}
+              onClick={onComplete}
+              title="Marca a visita como feita. É isto que libera a próxima."
+            >
+              Complete visit
+            </Button>
+          ) : null}
           <Button variant="ghost" size="sm" icon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit}>Edit</Button>
           <Button variant="ghost" size="sm" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onDelete}>Remove</Button>
         </div>
@@ -480,8 +522,15 @@ function VisitEditModal({
     }
     setSaving(true);
     try {
-      const startIso = `${form.scheduled_date}T${form.scheduled_start_time}:00`;
-      const endIso = `${form.scheduled_date}T${form.scheduled_end_time}:00`;
+      // Hora de parede de Londres, não string crua: `scheduled_start_at` é
+      // timestamptz, e sem fuso a visita nascia deslocada no BST.
+      const startIso = ukWallClockToUtcIso(form.scheduled_date, form.scheduled_start_time);
+      const endIso = ukWallClockToUtcIso(form.scheduled_date, form.scheduled_end_time);
+      if (!startIso || !endIso) {
+        toast.error("Invalid date or time for this visit");
+        setSaving(false);
+        return;
+      }
       const payload: CreateJobVisitInput = {
         job_id: jobId,
         catalog_service_id: form.catalog_service_id || null,
