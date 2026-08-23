@@ -3,7 +3,7 @@
 import { Crown, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
-import { LiveIndicator, MicroLabel } from "@/components/fx/primitives";
+import { LiveIndicator } from "@/components/fx/primitives";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 import type { DateRangePreset } from "@/lib/dashboard-date-range";
@@ -69,7 +69,6 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
   return (
     <div className="flex items-end justify-between gap-6 flex-wrap">
       <div className="flex flex-col gap-1 min-w-0">
-        <MicroLabel>Pulse · Operations Overview</MicroLabel>
         <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
           {greeting}, {firstName}.
         </h1>
