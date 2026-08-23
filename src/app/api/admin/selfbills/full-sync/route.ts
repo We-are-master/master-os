@@ -342,12 +342,17 @@ export async function POST(req: NextRequest) {
       stats.promoted++;
     }
 
-    // Promote to ready_to_pay only if ALL payable jobs were explicitly approved
-    if (
-      PROMOTABLE_STATUSES.has(sb.status) &&
-      payable.length > 0 &&
-      payable.every((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status))
-    ) {
+    /**
+     * Promove a ready_to_pay quando TUDO que está no documento acabou.
+     *
+     * "Tudo" agora inclui as visitas (mig 161/276): documento só de visita
+     * jamais seria promovido enquanto a regra olhasse apenas jobs, e um
+     * documento misto não pode ser liberado com visita ainda por fazer.
+     */
+    const temTrabalho = payable.length > 0 || payableVisits.length > 0;
+    const jobsProntos = payable.every((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status));
+    const visitasPendentes = visits.some((v) => v.status !== "completed" && v.status !== "cancelled");
+    if (PROMOTABLE_STATUSES.has(sb.status) && temTrabalho && jobsProntos && !visitasPendentes) {
       patch.status = "ready_to_pay";
       stats.promoted++;
     }

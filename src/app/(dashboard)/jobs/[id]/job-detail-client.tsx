@@ -599,11 +599,17 @@ function JobDetailSelfBillPanel({
   sb,
   job,
   jobLineGross,
+  visitScope,
 }: {
   sb: SelfBill;
   job: Job;
   /** Matches Cash out — partner (cap + materials from ledger). */
   jobLineGross: number;
+  /**
+   * Documento de uma VISITA: as linhas e a nota vêm da visita, não do job.
+   * Sem isto o painel do eletricista mostrava a mão de obra do handyman.
+   */
+  visitScope?: { label: string; labour: number; materials: number };
 }) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
@@ -618,10 +624,13 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : weekLine;
-  const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
-  const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
+  const jobLabourOnBill = Math.round((visitScope ? visitScope.labour : partnerPaymentCap(job)) * 100) / 100;
+  const jobMaterialsOnBill = Math.round(
+    (visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) * 100,
+  ) / 100;
   const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
-  const payoutHoldNote = selfBillJobPayoutStateLabel(job);
+  /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
+  const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
@@ -2055,8 +2064,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, []);
 
   const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
-    if (!j.partner_id?.trim()) {
+    /**
+     * Job sem parceiro primário ainda pode ter documento: a visita 2 tem
+     * parceiro próprio. Sair aqui escondia o self-bill dela.
+     */
+    if (!j.partner_id?.trim() && !j.reference?.trim()) {
       setJobSelfBill(null);
+      setVisitSelfBills([]);
       return;
     }
     setLoadingSelfBill(true);
@@ -2068,8 +2082,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJob(synced.job);
           working = synced.job;
           if (synced.selfBill) {
+            // Não retorna aqui: o documento do parceiro da visita vem da
+            // consulta lá embaixo, e sair antes deixava o card mostrando só o
+            // do parceiro inicial.
             setJobSelfBill(synced.selfBill);
-            return;
           }
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
@@ -2095,11 +2111,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const linked = working.reference?.trim()
         ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
         : [];
-      const primary = working.self_bill_id?.trim()
-        ? linked.find((b) => b.id === working.self_bill_id) ?? (await getSelfBill(working.self_bill_id))
+      const primaryId = working.self_bill_id?.trim() || null;
+      const primary = primaryId
+        ? linked.find((b) => b.id === primaryId) ?? (await getSelfBill(primaryId))
         : null;
       setJobSelfBill(primary);
-      setVisitSelfBills(linked.filter((b) => b.id !== primary?.id));
+      setVisitSelfBills(linked.filter((b) => b.id !== primaryId));
     } catch {
       toast.error("Failed to load self-bill");
       setJobSelfBill(null);
@@ -9816,9 +9833,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
               ) : null}
               {visitSelfBills.length > 0 ? (
-                <div className="space-y-2">
+                /* Um documento por parceiro: cada bloco leva o nome de quem
+                   recebe, senão dois cartões seguidos viram um só na leitura. */
+                <div className="space-y-3">
                   {jobSelfBill ? (
-                    <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
+                      </p>
+                      <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                    </div>
                   ) : null}
                   {visitSelfBills.map((sb) => (
                     <div key={sb.id} className="space-y-1">
@@ -9826,7 +9850,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {sb.partner_name?.trim() || "Visit partner"}
                       </p>
                       {/* Linha do documento da visita: o valor dele, não o do job. */}
-                      <JobDetailSelfBillPanel sb={sb} job={job} jobLineGross={Number(sb.net_payout ?? 0)} />
+                      <JobDetailSelfBillPanel
+                        sb={sb}
+                        job={job}
+                        jobLineGross={Number(sb.net_payout ?? 0)}
+                        visitScope={{
+                          label: sb.partner_name?.trim() || "Visit partner",
+                          // O documento da visita já guarda os próprios totais.
+                          labour: Number(sb.job_value ?? 0),
+                          materials: Number(sb.materials ?? 0),
+                        }}
+                      />
                     </div>
                   ))}
                 </div>

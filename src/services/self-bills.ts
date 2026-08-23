@@ -417,6 +417,42 @@ export async function refreshSelfBillPayoutState(
     .eq("id", selfBillId);
   if (uErr) throw uErr;
 
+  /**
+   * Documento só de visita (nenhum job ligado) é classificado aqui, antes de
+   * qualquer ramo que olhe jobs.
+   *
+   * Estava depois deles e nunca era alcançado: com `netPayout > 0.02` o fluxo
+   * entrava no ramo de "cancelado com compensação", reescrevia como
+   * `accumulating` e voltava — então documento de visita jamais chegava a
+   * ready_to_pay.
+   */
+  if (jobs.length === 0 && visitLines.length > 0) {
+    const { data: openRows } = await supabase
+      .from("job_visits")
+      .select("id")
+      .eq("self_bill_id", selfBillId)
+      .is("deleted_at", null)
+      .not("status", "in", "(completed,cancelled)")
+      .limit(1);
+    const temVisitaAberta = (openRows ?? []).length > 0;
+    const promovivel = ["draft", "accumulating", "awaiting_payment"].includes(before.status);
+    const soVisitaPatch: Record<string, unknown> = {
+      jobs_count: jobsCount,
+      job_value: jobValue,
+      materials,
+      commission,
+      net_payout: netPayout,
+    };
+    if (temVisitaAberta) {
+      soVisitaPatch.status = before.status === "draft" ? "draft" : "accumulating";
+    } else if (promovivel) {
+      soVisitaPatch.status = "ready_to_pay";
+    }
+    const { error: soVisitaErr } = await supabase.from("self_bills").update(soVisitaPatch).eq("id", selfBillId);
+    if (soVisitaErr) throw soVisitaErr;
+    return;
+  }
+
   const paying = payable;
 
   if (paying.length > 0) {
@@ -859,6 +895,43 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
           .limit(1)
           .maybeSingle();
         sbId = (race as { id: string } | null)?.id;
+
+        /**
+         * Sobrou o caso do documento CANCELADO no mesmo balde.
+         *
+         * (parceiro, período) é único, então o insert acima colide com ele e
+         * não há como criar um segundo. Se esse documento cancelado está
+         * vazio, ele volta a valer — foi cancelado justamente por ter ficado
+         * sem linha, e agora tem trabalho de novo. Documento cancelado COM
+         * linha não se mexe: aquilo é histórico.
+         */
+        if (!sbId) {
+          const { data: terminal } = await supabase
+            .from("self_bills")
+            .select("id, status")
+            .eq("partner_id", partnerId)
+            .eq("week_start", weekStart)
+            .limit(1)
+            .maybeSingle();
+          const terminalId = (terminal as { id: string } | null)?.id;
+          if (terminalId) {
+            const linhas = await loadSelfBillPayoutLines(terminalId, supabase);
+            if (linhas.length === 0) {
+              const reopen: Record<string, unknown> = {
+                status: "accumulating",
+                payout_void_reason: null,
+                partner_status_label: null,
+              };
+              let { error: reErr } = await supabase.from("self_bills").update(reopen).eq("id", terminalId);
+              if (reErr && isSupabaseMissingColumnError(reErr)) {
+                delete reopen.payout_void_reason;
+                delete reopen.partner_status_label;
+                ({ error: reErr } = await supabase.from("self_bills").update(reopen).eq("id", terminalId));
+              }
+              if (!reErr) sbId = terminalId;
+            }
+          }
+        }
         if (!sbId) throw insErr;
       }
     } else {
@@ -933,6 +1006,7 @@ export async function ensureWeeklySelfBillForVisit(
 export async function detachVisitFromSelfBill(
   visitId: string,
   client?: SupabaseClient,
+  options?: { cancelIfEmpty?: boolean },
 ): Promise<void> {
   const supabase = client ?? getSupabase();
   const { data: row, error: readErr } = await supabase
@@ -960,7 +1034,15 @@ export async function detachVisitFromSelfBill(
   if (status === "paid" || SELF_BILL_TERMINAL_STATUSES.includes(status as SelfBillStatus)) return;
 
   const remaining = await loadSelfBillPayoutLines(sbId, supabase);
-  if (remaining.length === 0) {
+  /**
+   * Cancelar só quando o chamador pede (exclusão de visita).
+   *
+   * Reatar a mesma visita depois de uma edição passava por aqui, cancelava o
+   * documento vazio, e o ensure seguinte tentava criar outro para o MESMO
+   * parceiro e período — colidindo no índice único e derrubando o vínculo.
+   * Editar visita não pode encostar no ciclo de vida do documento.
+   */
+  if (options?.cancelIfEmpty && remaining.length === 0) {
     const { data: anyJob } = await supabase
       .from("jobs")
       .select("id")

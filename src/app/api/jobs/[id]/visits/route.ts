@@ -118,6 +118,22 @@ async function loadJobAndVisits(supabase: ServiceClient, jobId: string) {
   };
 }
 
+/** GET — visitas do job com o vínculo de pagamento, para conferência e suporte. */
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await authorize();
+  if ("error" in auth) return auth.error;
+  const { supabase } = auth;
+  const { id: jobId } = await ctx.params;
+  const { data, error } = await supabase
+    .from("job_visits")
+    .select("id, visit_index, partner_id, partner_name, status, completed_at, partner_cost, client_price, self_bill_id, scheduled_date")
+    .eq("job_id", jobId)
+    .is("deleted_at", null)
+    .order("visit_index", { ascending: true });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json({ ok: true, visits: data ?? [] });
+}
+
 /** POST — nova visita. O índice é do servidor, e o gate roda aqui também. */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const auth = await authorize();
@@ -263,16 +279,27 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const touchedPayout =
     "status" in patch || "partner_id" in patch || "scheduled_date" in patch || "partner_cost" in patch || "materials_cost" in patch;
   let selfBillId: string | null = null;
+  /** O erro volta na resposta: pagamento que falha em silêncio é dinheiro sem documento. */
+  let payoutError: string | null = null;
   if (touchedPayout) {
     try {
       await detachVisitFromSelfBill(updated.id, supabase);
       if (updated.partner_id && updated.status !== "cancelled") {
         const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
-        if (fullJob) {
+        if (!fullJob) {
+          payoutError = "job not found when linking the self-bill";
+        } else {
           selfBillId = await ensureWeeklySelfBillForVisit(fullJob as Job, updated, { client: supabase });
+          if (!selfBillId) payoutError = "ensureWeeklySelfBillForVisit returned null";
         }
       }
     } catch (e) {
+      // Erro do PostgREST não é `Error`: sem isto a resposta dizia
+      // "[object Object]" e escondia justamente a causa.
+      const err = e as { message?: string; code?: string; details?: string; hint?: string } | null;
+      payoutError = [err?.message, err?.code && `code=${err.code}`, err?.details, err?.hint]
+        .filter(Boolean)
+        .join(" · ") || String(e);
       console.error("visit payout sync failed", e);
     }
   }
@@ -283,7 +310,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     visit: updated, userId, userName,
     extra: { fields: Object.keys(patch) },
   });
-  return NextResponse.json({ ok: true, visit: updated, selfBillId });
+  return NextResponse.json({ ok: true, visit: updated, selfBillId, payoutError });
 }
 
 /** DELETE — soft delete, para o rollup e o payout pararem de contar a visita. */
@@ -316,7 +343,7 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
    * pagável.
    */
   try {
-    await detachVisitFromSelfBill(removed.id, supabase);
+    await detachVisitFromSelfBill(removed.id, supabase, { cancelIfEmpty: true });
   } catch (e) {
     console.error("detachVisitFromSelfBill on delete failed", e);
   }
