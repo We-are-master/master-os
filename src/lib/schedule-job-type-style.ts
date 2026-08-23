@@ -12,13 +12,13 @@ export const SCHEDULE_TYPE_ABBR: Record<string, string> = {
   Cleaning: "CL",
   Gardener: "GR",
   "Boiler Service": "BS",
-  "Electrical Installation Condition Report (EICR)": "EI",
-  "Portable Appliance Testing (PAT)": "PT",
-  "Gas Safety Certificate (GSC)": "GS",
-  "Fire Risk Assessment (FRA)": "FR",
+  "Electrical Safety Report": "EI",
+  "Appliance Testing": "PT",
+  "Gas Safety Certificate": "GS",
+  "Fire Risk Assessment": "FR",
   "Fire Alarm Certificate": "FA",
   "Emergency Lighting Certificate": "LG",
-  "Fire Extinguisher Service (FES)": "FE",
+  "Fire Extinguisher Service": "FE",
 };
 
 /** Bar colour follows job pipeline stage (status). */

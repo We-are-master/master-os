@@ -32,12 +32,12 @@ const CATALOG: CatalogService[] = [
   svc("Carpenter", { pricing_mode: "hourly", fixed_price: 0, hourly_rate: 0, partner_cost: 0 }),
   svc("Painter", { pricing_mode: "hourly", fixed_price: 0, hourly_rate: 0, partner_cost: 0 }),
   svc("Builder", { fixed_price: 0, partner_cost: 0 }),
-  svc("(EICR) Electrical Installation Condition Report", { fixed_price: 100, partner_cost: 69 }),
-  svc("(FRA) Fire Risk Assessment", { fixed_price: 99, partner_cost: 70 }),
-  svc("(PAT) Portable Appliance Testing", { fixed_price: 69, partner_cost: 50 }),
-  svc("(EOT) End of Tenancy", { fixed_price: 234, partner_cost: 130 }),
-  svc("(DC) Deep Cleaning", { fixed_price: 129.6, partner_cost: 87 }),
-  svc("(AB) After Builders Cleaning", { fixed_price: 234, partner_cost: 130 }),
+  svc("Electrical Safety Report", { fixed_price: 100, partner_cost: 69 }),
+  svc("Fire Risk Assessment", { fixed_price: 99, partner_cost: 70 }),
+  svc("Appliance Testing", { fixed_price: 69, partner_cost: 50 }),
+  svc("End of Tenancy Clean", { fixed_price: 234, partner_cost: 130 }),
+  svc("Deep Clean", { fixed_price: 129.6, partner_cost: 87 }),
+  svc("After Builders Clean", { fixed_price: 234, partner_cost: 130 }),
 ];
 
 function brief(over: Partial<LeadBrief> = {}): LeadBrief {
@@ -87,12 +87,12 @@ test("zerado significa quote-only, com preço significa cotável", () => {
 
 test("certificados e limpeza casam e são cotáveis", () => {
   for (const [text, name] of [
-    ["Need an EICR for a 2 bed flat", "(EICR) Electrical Installation Condition Report"],
-    ["Fire risk assessment for a HMO", "(FRA) Fire Risk Assessment"],
-    ["PAT testing for 15 items", "(PAT) Portable Appliance Testing"],
-    ["End of tenancy clean, 2 bed", "(EOT) End of Tenancy"],
-    ["Deep clean of the flat", "(DC) Deep Cleaning"],
-    ["After builders clean needed", "(AB) After Builders Cleaning"],
+    ["Need an EICR for a 2 bed flat", "Electrical Safety Report"],
+    ["Fire risk assessment for a HMO", "Fire Risk Assessment"],
+    ["PAT testing for 15 items", "Appliance Testing"],
+    ["End of tenancy clean, 2 bed", "End of Tenancy Clean"],
+    ["Deep clean of the flat", "Deep Clean"],
+    ["After builders clean needed", "After Builders Clean"],
   ] as const) {
     const m = matchService(text, CATALOG);
     assert.equal(m.kind, "quote_and_close", text);
@@ -145,14 +145,14 @@ test("hidráulica e gás viram outro time, não recusa", () => {
 
 test("serviço fora do catálogo ativo vira handoff, não recusa", () => {
   // Renomear uma linha não pode custar um lead bom.
-  const semEicr = CATALOG.filter((s) => !s.name.includes("EICR"));
+  const semEicr = CATALOG.filter((s) => s.name !== "Electrical Safety Report");
   assert.equal(matchService("Need an EICR", semEicr).kind, "other_team");
 });
 
 test("customerLabel fala a língua do cliente", () => {
   assert.equal(customerLabel(svc("General Maintenance")), "handyman work");
   assert.equal(customerLabel(svc("Carpenter")), "carpentry");
-  assert.equal(customerLabel(svc("(EICR) Electrical Installation Condition Report")), "electrical installation condition report");
+  assert.equal(customerLabel(svc("Electrical Safety Report")), "electrical safety report");
 });
 
 // ------------------------------------------------------------- lead brief
