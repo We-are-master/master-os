@@ -1455,6 +1455,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [invoiceDueDateDrafts, setInvoiceDueDateDrafts] = useState<Record<string, string>>({});
   const [savingInvoiceDueDateId, setSavingInvoiceDueDateId] = useState<string | null>(null);
   const [jobSelfBill, setJobSelfBill] = useState<SelfBill | null>(null);
+  /**
+   * Documentos das visitas (mig 161/276), abaixo do documento do parceiro
+   * inicial. Self-bill é por parceiro: um job com dois parceiros tem dois.
+   */
+  const [visitSelfBills, setVisitSelfBills] = useState<SelfBill[]>([]);
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
@@ -2087,15 +2092,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         }
       }
-      if (!working.self_bill_id?.trim()) {
-        setJobSelfBill(null);
-        return;
-      }
-      const sb = await getSelfBill(working.self_bill_id);
-      setJobSelfBill(sb);
+      const linked = working.reference?.trim()
+        ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
+        : [];
+      const primary = working.self_bill_id?.trim()
+        ? linked.find((b) => b.id === working.self_bill_id) ?? (await getSelfBill(working.self_bill_id))
+        : null;
+      setJobSelfBill(primary);
+      setVisitSelfBills(linked.filter((b) => b.id !== primary?.id));
     } catch {
       toast.error("Failed to load self-bill");
       setJobSelfBill(null);
+      setVisitSelfBills([]);
     } finally {
       setLoadingSelfBill(false);
     }
@@ -9807,7 +9815,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {!job.partner_id?.trim() ? (
                 <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
               ) : null}
-              {!job.partner_id?.trim() ? null : loadingSelfBill ? (
+              {visitSelfBills.length > 0 ? (
+                <div className="space-y-2">
+                  {jobSelfBill ? (
+                    <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                  ) : null}
+                  {visitSelfBills.map((sb) => (
+                    <div key={sb.id} className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {sb.partner_name?.trim() || "Visit partner"}
+                      </p>
+                      {/* Linha do documento da visita: o valor dele, não o do job. */}
+                      <JobDetailSelfBillPanel sb={sb} job={job} jobLineGross={Number(sb.net_payout ?? 0)} />
+                    </div>
+                  ))}
+                </div>
+              ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
                 <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />

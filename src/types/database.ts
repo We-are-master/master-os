@@ -756,6 +756,8 @@ export interface JobVisit {
   completed_at?: string | null;
   /** Thread do parceiro DESTA visita — a do job pertence ao parceiro primário (mig 275). */
   zendesk_side_conversation_id?: string | null;
+  /** Self-bill do parceiro DESTA visita (mig 276). O do job é do parceiro da visita 1. */
+  self_bill_id?: string | null;
   scope?: string | null;
   notes?: string | null;
   created_at: string;

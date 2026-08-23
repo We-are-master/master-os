@@ -214,7 +214,7 @@ export function VisitsTab({
   }
 
   async function handleDelete(visit: JobVisit) {
-    if (!confirm(`Remove visit ${visit.visit_index}? This soft-deletes the row.`)) return;
+    if (!confirm(`Remove visit ${visit.visit_index}? It comes off the partner self-bill too.`)) return;
     try {
       await apiDeleteJobVisit(job.id, visit.id);
       setVisits((rows) => rows.filter((r) => r.id !== visit.id));

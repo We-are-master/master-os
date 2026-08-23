@@ -127,7 +127,21 @@ export function computeSelfBillAmountDue(
         const paid = partnerPaidByJobId[j.id] ?? 0;
         due += Math.max(0, cap - paid);
       }
-      base = Math.round(due * 100) / 100;
+      /**
+       * O que o documento promete além das linhas de job é dinheiro de VISITA
+       * (mig 161/276): `net_payout` já soma as visitas, esta soma não.
+       *
+       * Sem isto a coluna Outstanding e o pagamento pelo Wise saem menores que
+       * o PDF — o mesmo buraco de £200 do G&M Services descrito acima, agora
+       * com visita no lugar da compensação.
+       */
+      const promised = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+      const jobCaps = list.reduce((acc, j) => {
+        if (!jobContributesToSelfBillPayout(j)) return acc;
+        return acc + (j.status === "cancelled" ? officeCancellationPartnerPayoutGbp(j as Job) : jobLinePartnerGross(j));
+      }, 0);
+      const beyondJobs = Math.max(0, Math.round((promised - jobCaps) * 100) / 100);
+      base = Math.round((due + beyondJobs) * 100) / 100;
     }
   }
   return selfBillWisePayAmount(sb, installments, base);

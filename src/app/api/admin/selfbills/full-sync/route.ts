@@ -259,6 +259,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  /** Visitas ligadas aos mesmos documentos (mig 161/276). Ambiente sem a coluna
+   *  devolve erro e o mapa fica vazio: o sync segue valendo só com os jobs. */
+  type SyncVisitRow = { self_bill_id: string; status: string; partner_cost: number; materials_cost: number };
+  const visitsBySb = new Map<string, SyncVisitRow[]>();
+  for (let i = 0; i < selfBillIds.length; i += CHUNK) {
+    const { data: visits, error: visitErr } = await admin
+      .from("job_visits")
+      .select("self_bill_id, status, partner_cost, materials_cost")
+      .in("self_bill_id", selfBillIds.slice(i, i + CHUNK))
+      .is("deleted_at", null);
+    if (visitErr) break;
+    for (const v of visits ?? []) {
+      const sbId = (v as { self_bill_id: string }).self_bill_id;
+      const list = visitsBySb.get(sbId) ?? [];
+      list.push(v as SyncVisitRow);
+      visitsBySb.set(sbId, list);
+    }
+  }
+
   // ── 5. Termos do parceiro ─────────────────────────────────────────────────
   /**
    * Parceiro não tem termo próprio: todos seguem o padrão da organização.
@@ -283,8 +302,23 @@ export async function POST(req: NextRequest) {
     const jobs = jobsBySb.get(sb.id) ?? [];
     const payable = jobs.filter((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status));
 
-    const jobValue = payable.reduce((s, j) => s + (Number(j.partner_cost) || 0), 0);
-    const materials = payable.reduce((s, j) => s + (Number(j.materials_cost) || 0), 0);
+    /**
+     * Visitas ligadas a este documento (mig 161/276).
+     *
+     * Sem isto um clique em Sync na tela de Billing zerava o dinheiro de
+     * visita: este recompute varria só `jobs`, e reescrevia `net_payout` por
+     * cima do valor certo. Mesma regra do recompute canônico — visita paga
+     * quando está `completed`.
+     */
+    const visits = visitsBySb.get(sb.id) ?? [];
+    const payableVisits = visits.filter((v) => v.status === "completed");
+
+    const jobValue =
+      payable.reduce((s, j) => s + (Number(j.partner_cost) || 0), 0) +
+      payableVisits.reduce((s, v) => s + (Number(v.partner_cost) || 0), 0);
+    const materials =
+      payable.reduce((s, j) => s + (Number(j.materials_cost) || 0), 0) +
+      payableVisits.reduce((s, v) => s + (Number(v.materials_cost) || 0), 0);
     const netPayout = jobValue + materials;
 
     const patch: Record<string, unknown> = {
@@ -295,8 +329,9 @@ export async function POST(req: NextRequest) {
       net_payout: netPayout,
     };
 
-    // Void self-bills whose every linked job is cancelled/lost (not merely on hold / in progress)
-    const allLinkedTerminal = jobs.length > 0 && jobs.every(
+    // Documento com visita viva não é órfão, mesmo que todo job dele tenha sido
+    // cancelado: o parceiro da visita continua tendo o que receber.
+    const allLinkedTerminal = visits.length === 0 && jobs.length > 0 && jobs.every(
       (j) => j.status === "cancelled" || j.status === "deleted" || Boolean(j.deleted_at),
     );
     if (payable.length === 0 && allLinkedTerminal) {

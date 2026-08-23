@@ -325,13 +325,22 @@ function computeSelfBillAmountDue(
     return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
   }
   let due = 0;
+  let jobCaps = 0;
   for (const j of list) {
     if (!jobContributesToSelfBillPayout(j)) continue;
     const cap = jobLinePartnerGross(j);
+    jobCaps += cap;
     const paid = partnerPaidByJobId[j.id] ?? 0;
     due += Math.max(0, cap - paid);
   }
-  return Math.round(due * 100) / 100;
+  /**
+   * O que o documento promete além das linhas de job é dinheiro de VISITA
+   * (mig 161/276): `net_payout` soma as visitas, esta conta não. Sem isto o
+   * Outstanding e o pagamento pelo Wise saem menores que o PDF.
+   */
+  const promised = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  const beyondJobs = Math.max(0, Math.round((promised - jobCaps) * 100) / 100);
+  return Math.round((due + beyondJobs) * 100) / 100;
 }
 
 function isPartnerFieldBill(sb: SelfBill): boolean {

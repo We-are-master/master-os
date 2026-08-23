@@ -668,7 +668,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const visitScope = options?.visit ?? null;
   if (!visitScope && !job.partner_id?.trim()) return null;
   if (visitScope && !visitScope.partnerId.trim()) return null;
-  if (!canDraftSelfBillForJob(job)) return null;
+  /**
+   * No escopo de visita o que vale é a visita: `canDraftSelfBillForJob` exige
+   * parceiro e agenda NO JOB, e job sem parceiro primário é justamente o caso
+   * que a mig 161 veio atender. Exigi-lo aqui deixaria o parceiro da visita
+   * sem documento, em silêncio.
+   */
+  if (!visitScope && !canDraftSelfBillForJob(job)) return null;
   const supabase = options?.client ?? getSupabase();
   let partnerId = (visitScope?.partnerId ?? job.partner_id ?? "").trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
@@ -767,7 +773,11 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   // Terminal self-bills (voided / rejected) belong to their own history.
   // New jobs always get a fresh self-bill so they have no link to cancelled/rejected ones.
   const isTerminal = existingRow
-    ? SELF_BILL_TERMINAL_STATUSES.includes(existingRow.status as SelfBillStatus)
+    ? SELF_BILL_TERMINAL_STATUSES.includes(existingRow.status as SelfBillStatus) ||
+      // `paid` não está na lista terminal, e pendurar trabalho novo num
+      // documento já pago esconde o dinheiro: o refresh sai cedo e ninguém
+      // recebe. Trabalho que chega depois do pagamento abre documento novo.
+      existingRow.status === "paid"
     : false;
   let sbId = existingRow && !isTerminal ? (existingRow.id as string) : undefined;
 
@@ -776,7 +786,9 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     const row = {
       reference: ref,
       partner_id: partnerId,
-      partner_name: job.partner_name?.trim() || "Partner",
+      // Documento da visita leva o nome do parceiro DELA: sair com o nome do
+      // handyman num self-bill do eletricista é erro que o parceiro vê no PDF.
+      partner_name: (visitScope?.partnerName ?? job.partner_name)?.trim() || "Partner",
       bill_origin: "partner" as const,
       period: weekStart.slice(0, 7),
       week_start: weekStart,
@@ -862,7 +874,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     : await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
 
-  void refreshSelfBillPayoutState(sbId).catch((e) => {
+  /**
+   * Passa o MESMO client. Sem isto o refresh caía no client de browser com a
+   * chave anon: rodando no servidor, ele lia zero linha de `job_visits` (RLS
+   * `TO authenticated`, mig 161) sem erro nenhum e reescrevia o `net_payout`
+   * sem o dinheiro da visita.
+   */
+  await refreshSelfBillPayoutState(sbId, supabase).catch((e) => {
     console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
   });
   return sbId;
@@ -883,12 +901,86 @@ export async function ensureWeeklySelfBillForVisit(
   const partnerId = visit.partner_id?.trim();
   if (!partnerId) return null;
   // Visita que escorregou da data agendada cai no período em que foi feita.
-  const anchorYmd = (visit.completed_at?.slice(0, 10) || visit.scheduled_date?.slice(0, 10) || "").trim();
-  if (!anchorYmd) return null;
+  /**
+   * Dia de Londres, não UTC: visita fechada 00:30 no BST gravaria o dia
+   * anterior, e num domingo de corte cairia na quinzena já paga. É o mesmo
+   * erro do "Checkatrade: data um dia atrás".
+   */
+  const completedYmd = visit.completed_at
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
+        .format(new Date(visit.completed_at))
+    : null;
+  const anchorYmd = (completedYmd || visit.scheduled_date?.slice(0, 10) || "").trim();
+  // Data suja vira `Invalid Date`, que é truthy: passaria o guard e estouraria
+  // em `toISOString()` dentro de um try/catch que engole o erro.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorYmd)) return null;
+  if (Number.isNaN(new Date(`${anchorYmd}T12:00:00`).getTime())) return null;
   return ensureWeeklySelfBillForJob(job, {
     ...options,
     visit: { id: visit.id, partnerId, partnerName: visit.partner_name ?? null, anchorYmd },
   });
+}
+
+/**
+ * Solta a visita do self-bill dela e acerta o documento.
+ *
+ * Usado ao excluir e ao reabrir uma visita. Duas coisas têm que acontecer na
+ * ordem: o vínculo sai (senão a linha continua sendo somada) e o documento é
+ * recalculado (senão o `net_payout` fica com dinheiro de trabalho que não
+ * existe mais). Se o documento ficar sem nenhuma linha, ele é cancelado — um
+ * self-bill de £0 aberto no Money Out é ruído que alguém acaba pagando.
+ */
+export async function detachVisitFromSelfBill(
+  visitId: string,
+  client?: SupabaseClient,
+): Promise<void> {
+  const supabase = client ?? getSupabase();
+  const { data: row, error: readErr } = await supabase
+    .from("job_visits")
+    .select("self_bill_id")
+    .eq("id", visitId)
+    .maybeSingle();
+  if (readErr) {
+    // Ambiente sem a mig 276 não tem a coluna: não há vínculo para soltar.
+    if (isSupabaseMissingColumnError(readErr, "self_bill_id")) return;
+    throw readErr;
+  }
+  const sbId = (row as { self_bill_id?: string | null } | null)?.self_bill_id ?? null;
+  if (!sbId) return;
+
+  const { error: unlinkErr } = await supabase
+    .from("job_visits")
+    .update({ self_bill_id: null })
+    .eq("id", visitId);
+  if (unlinkErr) throw unlinkErr;
+
+  const { data: sb } = await supabase.from("self_bills").select("status").eq("id", sbId).maybeSingle();
+  const status = (sb as { status?: string } | null)?.status ?? "";
+  // Documento pago ou já encerrado não se mexe: o dinheiro saiu.
+  if (status === "paid" || SELF_BILL_TERMINAL_STATUSES.includes(status as SelfBillStatus)) return;
+
+  const remaining = await loadSelfBillPayoutLines(sbId, supabase);
+  if (remaining.length === 0) {
+    const { data: anyJob } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("self_bill_id", sbId)
+      .limit(1)
+      .maybeSingle();
+    const { data: anyVisit } = await supabase
+      .from("job_visits")
+      .select("id")
+      .eq("self_bill_id", sbId)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+    // Vazio de verdade (nem linha pagável, nem trabalho ainda por fechar).
+    if (!anyJob && !anyVisit) {
+      await cancelSelfBillsByIds([sbId]);
+      return;
+    }
+  }
+  await refreshSelfBillPayoutState(sbId, supabase);
 }
 
 /** Office cancel: void self-bill(s) and unlink jobs so refresh/sync cannot reopen them. */
@@ -993,6 +1085,35 @@ export async function listSelfBillsLinkedToJob(
   const ids = new Set<string>();
   if (jobRow?.self_bill_id) ids.add(jobRow.self_bill_id as string);
   if (primarySelfBillId) ids.add(primarySelfBillId);
+
+  /**
+   * Documentos das VISITAS deste job (mig 161/276).
+   *
+   * Um job com dois parceiros tem dois self-bills, e o card precisa mostrar os
+   * dois — senão o parceiro da visita aparece sem documento na tela e o
+   * cancelamento do job deixa o payout dele vivo.
+   */
+  const { data: jobIdRow } = await supabase
+    .from("jobs")
+    .select("id")
+    .eq("reference", jobReference)
+    .is("deleted_at", null)
+    .maybeSingle();
+  const jobId = (jobIdRow as { id?: string } | null)?.id;
+  if (jobId) {
+    const { data: visitRows, error: visitErr } = await supabase
+      .from("job_visits")
+      .select("self_bill_id")
+      .eq("job_id", jobId)
+      .is("deleted_at", null)
+      .not("self_bill_id", "is", null);
+    // Ambiente sem a mig 276 devolve erro: o card segue com o documento do job.
+    if (!visitErr) {
+      for (const v of (visitRows ?? []) as { self_bill_id: string | null }[]) {
+        if (v.self_bill_id) ids.add(v.self_bill_id);
+      }
+    }
+  }
   if (ids.size === 0) return [];
   const { data, error } = await supabase.from("self_bills").select("*").in("id", [...ids]);
   if (error) throw error;

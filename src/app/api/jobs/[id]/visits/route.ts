@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
-import { ensureWeeklySelfBillForVisit } from "@/services/self-bills";
+import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +26,10 @@ const WRITABLE = [
   "client_price", "partner_cost", "materials_cost",
   "status", "scope", "notes",
 ] as const;
+
+/** No POST o status é do servidor: visita nasce agendada. Nascer `completed`
+ *  deixava a linha pagável na hora e com `completed_at` nulo para sempre. */
+const WRITABLE_ON_CREATE = WRITABLE.filter((k) => k !== "status");
 
 type VisitBody = Partial<Record<(typeof WRITABLE)[number], unknown>> & { visitId?: string };
 
@@ -64,9 +68,9 @@ async function authorize() {
   };
 }
 
-function pickWritable(body: VisitBody): Record<string, unknown> {
+function pickWritable(body: VisitBody, keys: readonly string[] = WRITABLE): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const k of WRITABLE) if (k in body) out[k] = body[k];
+  for (const k of keys) if (k in body) out[k] = (body as Record<string, unknown>)[k];
   return out;
 }
 
@@ -129,7 +133,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   // Sem gate: cada linha é um assignment por si. O escritório marca a anterior
   // como concluída quando ela acontecer, e isso não segura a fila.
-  const patch = pickWritable(body);
+  const patch: Record<string, unknown> = { ...pickWritable(body, WRITABLE_ON_CREATE), status: "scheduled" };
   if (!patch.scheduled_date) {
     return NextResponse.json({ error: "scheduled_date required" }, { status: 400 });
   }
@@ -248,16 +252,28 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
    * conclusão é o que decide o período. Parceiro diferente da visita 1 ganha
    * documento próprio; mesmo parceiro no mesmo período cai no mesmo.
    */
-  if (updated.status === "completed" && updated.partner_id) {
+  /**
+   * Qualquer mexida que muda o dinheiro ou o dono dele acerta o documento.
+   *
+   * Não basta reagir a "virou completed": reabrir uma visita, trocar o
+   * parceiro ou mover a data deixavam o valor pendurado no documento antigo.
+   * O detach solta do documento em que ela estava (recalculando ou cancelando
+   * se ficou vazio) e o ensure a coloca no documento certo.
+   */
+  const touchedPayout =
+    "status" in patch || "partner_id" in patch || "scheduled_date" in patch || "partner_cost" in patch || "materials_cost" in patch;
+  let selfBillId: string | null = null;
+  if (touchedPayout) {
     try {
-      const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
-      if (fullJob) {
-        await ensureWeeklySelfBillForVisit(fullJob as Job, updated, { client: supabase });
+      await detachVisitFromSelfBill(updated.id, supabase);
+      if (updated.partner_id && updated.status !== "cancelled") {
+        const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+        if (fullJob) {
+          selfBillId = await ensureWeeklySelfBillForVisit(fullJob as Job, updated, { client: supabase });
+        }
       }
     } catch (e) {
-      // Self-bill é recuperável pelo Sync do card; a visita fechada não pode
-      // depender disso para ser registrada.
-      console.error("ensureWeeklySelfBillForVisit failed", e);
+      console.error("visit payout sync failed", e);
     }
   }
 
@@ -267,7 +283,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     visit: updated, userId, userName,
     extra: { fields: Object.keys(patch) },
   });
-  return NextResponse.json({ ok: true, visit: updated });
+  return NextResponse.json({ ok: true, visit: updated, selfBillId });
 }
 
 /** DELETE — soft delete, para o rollup e o payout pararem de contar a visita. */
@@ -294,6 +310,16 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const removed = data as JobVisit;
+  /**
+   * Excluir sem soltar do documento deixava o parceiro recebendo por trabalho
+   * que não existe mais: o `net_payout` continuava com o valor, aprovável e
+   * pagável.
+   */
+  try {
+    await detachVisitFromSelfBill(removed.id, supabase);
+  } catch (e) {
+    console.error("detachVisitFromSelfBill on delete failed", e);
+  }
   await auditVisit({ supabase, job, action: "deleted", visit: removed, userId, userName });
   return NextResponse.json({ ok: true });
 }
