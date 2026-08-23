@@ -562,6 +562,19 @@ export interface Job {
   commission: number;
   vat: number;
   partner_agreed_value: number;
+  /**
+   * Rollup das visitas (mig 274). `client_price` / `partner_cost` /
+   * `materials_cost` são o dinheiro da **visita 1**; estes campos são a soma de
+   * todas as visitas vivas, mantida por trigger.
+   *
+   * `total_partner_cost` é exibição e margem. Nada que paga parceiro pode ler
+   * daqui: self-bill é por parceiro e visitas podem ter parceiros diferentes.
+   * Opcionais porque ambiente sem a migração não devolve as colunas.
+   */
+  visits_count?: number;
+  total_client_price?: number;
+  total_partner_cost?: number;
+  total_materials_cost?: number;
   finance_status: JobFinanceStatus;
   /**
    * Gêmea de `finance_status`, e a coluna que a checagem de coerência da Zia lê.

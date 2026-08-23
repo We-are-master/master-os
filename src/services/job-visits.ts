@@ -1,4 +1,5 @@
 import { getSupabase, softDeleteById } from "./base";
+import { rollUpJobVisits } from "@/lib/job-visit-rollup";
 import type { Job, JobVisit, JobVisitStatus } from "@/types/database";
 
 type ListRow = JobVisit & {
@@ -139,16 +140,22 @@ export function listAllVisitsAsRows(job: Job, extras: JobVisit[]): VisitRow[] {
   ];
 }
 
-/** Aggregate prices across primary + extras for the Visits-tab summary card. */
+/**
+ * Aggregate prices across primary + extras for the Visits-tab summary card.
+ *
+ * Casca fina sobre `rollUpJobVisits`: a aritmética do dinheiro de visita mora
+ * num lugar só (src/lib/job-visit-rollup.ts), senão a soma da aba e a soma do
+ * Finance Summary divergem sem ninguém perceber.
+ */
 export function summariseVisits(job: Job, extras: JobVisit[]): {
   count: number;
   totalClientPrice: number;
   totalPartnerCost: number;
 } {
-  const liveExtras = extras.filter((v) => !v.deleted_at && v.status !== "cancelled");
+  const rollup = rollUpJobVisits(job, extras);
   return {
-    count: 1 + liveExtras.length,
-    totalClientPrice: Number(job.client_price ?? 0) + liveExtras.reduce((s, v) => s + Number(v.client_price ?? 0), 0),
-    totalPartnerCost: Number(job.partner_cost ?? 0) + liveExtras.reduce((s, v) => s + Number(v.partner_cost ?? 0), 0),
+    count: rollup.visitCount,
+    totalClientPrice: rollup.clientPriceTotal,
+    totalPartnerCost: rollup.partnerCostTotal,
   };
 }
