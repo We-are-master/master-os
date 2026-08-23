@@ -7,9 +7,7 @@ import {
   jobMarginPercent,
   partnerPaymentCap,
 } from "./job-financials";
-import { jobStatusRank } from "./job-phases";
 import {
-  canAddAnotherVisit,
   jobHasExtraVisits,
   jobTotalBillableRevenue,
   jobTotalDirectCost,
@@ -165,41 +163,4 @@ test("teto por visita ignora o partner_agreed_value do job", () => {
   assert.equal(partnerCapForScope(j, v), 210);
   // sem visita, o override do job continua mandando na visita 1
   assert.equal(partnerCapForScope(j, null), 5000);
-});
-
-// ------------------------------------------------------------------ o gate
-
-test("visita 1 aberta bloqueia a proxima, e o motivo diz qual", () => {
-  const g = canAddAnotherVisit(job({ status: "in_progress" }), [], jobStatusRank);
-  assert.equal(g.allowed, false);
-  assert.match(g.allowed === false ? g.reason : "", /visit 1/i);
-});
-
-test("visita 1 fechada libera a segunda", () => {
-  for (const status of ["final_check", "awaiting_payment", "completed"] as const) {
-    assert.equal(canAddAnotherVisit(job({ status }), [], jobStatusRank).allowed, true, status);
-  }
-});
-
-test("ultima visita aberta bloqueia, e o motivo aponta o indice certo", () => {
-  const j = job({ status: "completed" });
-  const g = canAddAnotherVisit(j, [visit({ visit_index: 2, status: "completed" }), visit({ id: "v-3", visit_index: 3, status: "in_progress" })], jobStatusRank);
-  assert.equal(g.allowed, false);
-  assert.match(g.allowed === false ? g.reason : "", /visit 3/);
-});
-
-test("todas as visitas fechadas libera a proxima", () => {
-  const j = job({ status: "completed" });
-  const g = canAddAnotherVisit(j, [visit({ visit_index: 2, status: "completed" })], jobStatusRank);
-  assert.equal(g.allowed, true);
-});
-
-test("visita cancelada nao segura a fila", () => {
-  const j = job({ status: "completed" });
-  const g = canAddAnotherVisit(j, [visit({ visit_index: 2, status: "cancelled" })], jobStatusRank);
-  assert.equal(g.allowed, true);
-});
-
-test("job cancelado nao aceita visita nova", () => {
-  assert.equal(canAddAnotherVisit(job({ status: "cancelled" }), [], jobStatusRank).allowed, false);
 });

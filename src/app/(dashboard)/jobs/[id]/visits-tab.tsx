@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Loader2, Briefcase, AlertTriangle, ExternalLink, Layers, X, Save, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, X, Save, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,6 @@ import { TimeSelect } from "@/components/ui/time-select";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
-import { mergeCatalogWithPricingPreset } from "@/lib/catalog-pricing-presets";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { listPartners } from "@/services/partners";
 import {
@@ -25,10 +24,8 @@ import {
   apiUpdateJobVisit,
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
-import { canAddAnotherVisit } from "@/lib/job-visit-rollup";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
-import { jobStatusRank } from "@/lib/job-phases";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { CatalogService, Job, JobVisit, JobVisitStatus, Partner } from "@/types/database";
 
@@ -127,11 +124,6 @@ export function VisitsTab({
     }
   }, [visits, job.status, onJobStatusBumpRequested]);
 
-  // "Só nasce a próxima quando a anterior fechou". A UI mostra o motivo em vez
-  // de deixar clicar e falhar; o servidor repete a checagem, que a UI não é a
-  // única porta pra job_visits.
-  const addGate = useMemo(() => canAddAnotherVisit(job, visits, jobStatusRank), [job, visits]);
-
   async function handleComplete(visit: JobVisit) {
     try {
       const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
@@ -164,15 +156,6 @@ export function VisitsTab({
     }
   }
 
-  async function handleStatusChange(visit: JobVisit, status: JobVisitStatus) {
-    try {
-      const updated = await apiUpdateJobVisit(job.id, visit.id, { status });
-      setVisits((rows) => rows.map((r) => r.id === visit.id ? { ...r, ...updated } : r));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update status");
-    }
-  }
-
   async function handleDelete(visit: JobVisit) {
     if (!confirm(`Remove visit ${visit.visit_index}? This soft-deletes the row.`)) return;
     try {
@@ -196,71 +179,57 @@ export function VisitsTab({
   const primary = jobToPrimaryVisit(job);
 
   return (
-    <div className="space-y-4 px-4 sm:px-5 py-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-            <Layers className="h-4 w-4 text-text-tertiary" />
-            All visits booked under this job
-          </h3>
-          <p className="text-xs text-text-tertiary mt-0.5">
-            Visit 1 = the job itself. Add extra visits when more partners/services are needed.
+    <div className="space-y-3 px-4 sm:px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Visits</p>
+          <p className="text-xs text-text-secondary">
+            {summary.count} {summary.count === 1 ? "visit" : "visits"}
+            {" · "}client {formatCurrency(summary.totalClientPrice)}
+            {" · "}partner {formatCurrency(summary.totalPartnerCost)}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <Button
-            size="sm"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            disabled={!addGate.allowed}
-            title={addGate.allowed ? undefined : addGate.reason}
-            onClick={() => setEditTarget({ mode: "create" })}
-          >
-            Add visit
-          </Button>
-          {!addGate.allowed ? (
-            <p className="text-[11px] text-text-tertiary text-right max-w-[16rem]">{addGate.reason}</p>
-          ) : null}
-        </div>
+        <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setEditTarget({ mode: "create" })}>
+          Add visit
+        </Button>
       </div>
 
-      {/* Summary tiles */}
-      <div className="grid grid-cols-3 gap-2">
-        <SummaryTile label="Visits" value={`${summary.count}`} />
-        <SummaryTile label="Total client" value={formatCurrency(summary.totalClientPrice)} />
-        <SummaryTile label="Total partner cost" value={formatCurrency(summary.totalPartnerCost)} />
-      </div>
-
-      <div className="space-y-2">
-        {/* Primary card (read-only) */}
-        <PrimaryVisitCard primary={primary} job={job} />
-
-        {/* Extras */}
+      <div className="divide-y divide-border-light rounded-lg border border-border-light">
+        <VisitRow
+          index={1}
+          title={primary.partner_name ?? "No partner"}
+          service={job.title ?? null}
+          date={primary.scheduled_date}
+          startAt={primary.scheduled_start_at}
+          clientPrice={primary.client_price}
+          partnerCost={primary.partner_cost}
+          statusLabel="From job"
+          statusVariant="primary"
+          note="Edit in Details"
+        />
         {visits.map((v) => (
-          <VisitCard
+          <VisitRow
             key={v.id}
-            visit={v}
+            index={v.visit_index}
+            title={v.partner_name ?? "No partner"}
+            service={v.catalog_service_name ?? null}
+            date={v.scheduled_date ?? null}
+            startAt={v.scheduled_start_at ?? null}
+            clientPrice={v.client_price}
+            partnerCost={v.partner_cost}
+            statusLabel={STATUS_BADGE[v.status].label}
+            statusVariant={STATUS_BADGE[v.status].variant}
             onEdit={() => setEditTarget({ mode: "edit", visit: v })}
             onDelete={() => handleDelete(v)}
-            onComplete={() => handleComplete(v)}
-            onStatusChange={(s) => handleStatusChange(v, s)}
+            onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
           />
         ))}
-
-        {visits.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border-light p-6 text-center text-xs text-text-tertiary">
-            No extra visits yet. Click <strong>Add visit</strong> when you need another partner, service, or visit slot under this job.
-          </div>
-        ) : null}
       </div>
 
-      {/* Self-bill caveat */}
-      <div className="rounded-lg border border-amber-300/40 bg-amber-50/60 dark:bg-amber-950/15 p-3 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <p>
-          <strong>Heads-up:</strong> partners on extra visits are NOT yet wired into self-bills.
-          For now, track those payouts manually until the rollup ships next sprint.
-        </p>
-      </div>
+      <p className="text-[11px] text-text-tertiary">
+        Each line is its own assignment: own partner, own price, own confirmation email. Payouts for extra
+        visits are not in self-bills yet.
+      </p>
 
       {editTarget ? (
         <VisitEditModal
@@ -278,112 +247,65 @@ export function VisitsTab({
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary">{label}</p>
-      <p className="text-sm font-bold tabular-nums text-text-primary mt-0.5">{value}</p>
-    </div>
-  );
-}
-
-function PrimaryVisitCard({ primary, job }: { primary: ReturnType<typeof jobToPrimaryVisit>; job: Job }) {
-  return (
-    <div className="rounded-xl border border-primary/30 bg-primary/[0.04] p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Briefcase className="h-4 w-4 text-primary shrink-0" />
-            <p className="text-sm font-bold text-text-primary">Visit 1 — Primary</p>
-            <Badge variant="primary" size="sm">From job</Badge>
-          </div>
-          <p className="mt-1 text-xs text-text-secondary">
-            {primary.partner_name ?? <span className="italic text-text-tertiary">No partner</span>}
-            {" · "}
-            {primary.scheduled_date ?? <span className="italic text-text-tertiary">No date</span>}
-            {primary.scheduled_start_at ? ` · starts ${primary.scheduled_start_at.slice(11, 16)}` : ""}
-          </p>
-          <p className="mt-1 text-[11px] text-text-tertiary">
-            Client: <strong>{formatCurrency(primary.client_price)}</strong>
-            {" · "}Partner: <strong>{formatCurrency(primary.partner_cost)}</strong>
-            {primary.materials_cost > 0 ? ` · Materials: ${formatCurrency(primary.materials_cost)}` : ""}
-          </p>
-        </div>
-        <span className="text-[10px] text-text-tertiary shrink-0 italic">
-          Edit in <strong>Details</strong> tab
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function VisitCard({
-  visit, onEdit, onDelete, onComplete, onStatusChange,
+/** Uma visita = uma linha. Parceiro, quando, quanto entra, quanto sai. */
+function VisitRow({
+  index, title, service, date, startAt, clientPrice, partnerCost,
+  statusLabel, statusVariant, note, onEdit, onDelete, onComplete,
 }: {
-  visit: JobVisit;
-  onEdit: () => void;
-  onDelete: () => void;
-  onComplete: () => void;
-  onStatusChange: (s: JobVisitStatus) => void;
+  index: number;
+  title: string;
+  service: string | null;
+  date: string | null;
+  startAt: string | null;
+  clientPrice: number;
+  partnerCost: number;
+  statusLabel: string;
+  statusVariant: "info" | "warning" | "success" | "default" | "primary";
+  note?: string;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onComplete?: () => void;
 }) {
-  const cfg = STATUS_BADGE[visit.status];
+  const when = [
+    date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : null,
+    startAt ? startAt.slice(11, 16) : null,
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={cn(
-      "rounded-xl border bg-surface p-3",
-      visit.status === "cancelled" ? "border-border-light opacity-60" : "border-border-light",
-    )}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Layers className="h-4 w-4 text-text-tertiary shrink-0" />
-            <p className="text-sm font-semibold text-text-primary">Visit {visit.visit_index}</p>
-            <Badge variant={cfg.variant} size="sm">{cfg.label}</Badge>
-            {visit.catalog_service_name ? (
-              <Badge variant="default" size="sm">{visit.catalog_service_name}</Badge>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-text-secondary">
-            {visit.partner_name ?? <span className="italic text-text-tertiary">No partner</span>}
-            {" · "}
-            {visit.scheduled_date ?? <span className="italic text-text-tertiary">No date</span>}
-            {visit.scheduled_start_at ? ` · starts ${visit.scheduled_start_at.slice(11, 16)}` : ""}
-            {visit.scheduled_end_at ? ` · ends ${visit.scheduled_end_at.slice(11, 16)}` : ""}
-            {visit.completed_at
-              ? ` · done ${new Date(visit.completed_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}`
-              : ""}
-          </p>
-          <p className="mt-1 text-[11px] text-text-tertiary">
-            Client: <strong>{formatCurrency(visit.client_price)}</strong>
-            {" · "}Partner: <strong>{formatCurrency(visit.partner_cost)}</strong>
-            {visit.materials_cost > 0 ? ` · Materials: ${formatCurrency(visit.materials_cost)}` : ""}
-          </p>
-          {visit.scope ? <p className="mt-1 text-[11px] text-text-tertiary line-clamp-2">{visit.scope}</p> : null}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <select
-            className="h-7 rounded-md border border-border-light bg-card px-2 text-[11px]"
-            value={visit.status}
-            onChange={(e) => onStatusChange(e.target.value as JobVisitStatus)}
-          >
-            {(Object.keys(STATUS_BADGE) as JobVisitStatus[]).map((s) => (
-              <option key={s} value={s}>{STATUS_BADGE[s].label}</option>
-            ))}
-          </select>
-          {visit.status !== "completed" && visit.status !== "cancelled" ? (
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<Check className="h-3.5 w-3.5" />}
-              onClick={onComplete}
-              title="Marca a visita como feita. É isto que libera a próxima."
-            >
-              Complete visit
-            </Button>
-          ) : null}
-          <Button variant="ghost" size="sm" icon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit}>Edit</Button>
-          <Button variant="ghost" size="sm" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onDelete}>Remove</Button>
-        </div>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
+      <span className="w-12 shrink-0 font-mono text-[10px] uppercase tracking-wide text-text-tertiary">V{index}</span>
+      <span className="min-w-0 flex-1 truncate font-medium text-text-primary">
+        {title}
+        {service ? <span className="font-normal text-text-tertiary"> · {service}</span> : null}
+      </span>
+      <span className="w-24 shrink-0 whitespace-nowrap text-text-secondary tabular-nums">{when || "No date"}</span>
+      <span className="w-32 shrink-0 whitespace-nowrap text-right tabular-nums">
+        <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)}</span>
+        <span className="text-text-tertiary"> / </span>
+        <span className="text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)}</span>
+      </span>
+      <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+      <span className="flex w-20 shrink-0 items-center justify-end gap-1.5">
+        {note ? <span className="text-[10px] italic text-text-tertiary">{note}</span> : null}
+        {onComplete ? (
+          <button type="button" onClick={onComplete} title="Mark this visit done" aria-label="Complete visit"
+            className="text-text-tertiary transition-colors hover:text-emerald-600">
+            <Check className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+        {onEdit ? (
+          <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
+            className="text-text-tertiary transition-colors hover:text-text-primary">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+        {onDelete ? (
+          <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
+            className="text-text-tertiary transition-colors hover:text-red-500">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </span>
     </div>
   );
 }

@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { canAddAnotherVisit } from "@/lib/job-visit-rollup";
-import { jobStatusRank } from "@/lib/job-phases";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
 import type { Job, JobVisit } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -124,14 +123,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!jobId) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   const body = (await req.json().catch(() => ({}))) as VisitBody;
-  const { job, visits } = await loadJobAndVisits(supabase, jobId);
+  const { job } = await loadJobAndVisits(supabase, jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  const gate = canAddAnotherVisit(job, visits, jobStatusRank);
-  if (!gate.allowed) {
-    return NextResponse.json({ error: gate.reason }, { status: 409 });
-  }
-
+  // Sem gate: cada linha é um assignment por si. O escritório marca a anterior
+  // como concluída quando ela acontecer, e isso não segura a fila.
   const patch = pickWritable(body);
   if (!patch.scheduled_date) {
     return NextResponse.json({ error: "scheduled_date required" }, { status: 400 });
@@ -162,7 +158,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         supabase, job, action: "created", visit: created, userId, userName,
         extra: { client_price: created.client_price, partner_cost: created.partner_cost },
       });
-      return NextResponse.json({ ok: true, visit: created });
+      // Confirmação de trabalho para o parceiro DESTA visita. Não derruba a
+      // criação: visita registrada com email falhando é recuperável, o inverso
+      // não — o botão de reenviar existe no card.
+      const notified = created.partner_id
+        ? await notifyVisitPartner(supabase, jobId, created.id).catch((e) => ({
+            ok: false,
+            error: e instanceof Error ? e.message : "notify failed",
+          }))
+        : { ok: false, skipped: "no_partner" as const };
+      return NextResponse.json({ ok: true, visit: created, notified });
     }
     if (error.code !== "23505") {
       return NextResponse.json({ error: error.message }, { status: 400 });
