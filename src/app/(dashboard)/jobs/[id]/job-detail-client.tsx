@@ -144,7 +144,7 @@ import type {
   SelfBill,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
-import { nextVisitLine } from "@/lib/job-visit-rollup";
+import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -331,7 +331,7 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
   "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
 
 /** Details tab — collapsed scope read view (~7 lines). */
-const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "10rem";
+const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "26rem";
 const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
 const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
 
@@ -8097,77 +8097,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 pt-2 border-t border-border">
                 <div className="flex items-center justify-between gap-2">
                   <JobCardTitleWithHint
-                    title="Notes"
-                    hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
-                    titleClassName="text-xs font-semibold text-text-primary"
-                  />
-                  {!additionalNotesEditing ? (
-                    <button
-                      type="button"
-                      onClick={() => setAdditionalNotesEditing(true)}
-                      className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                      title="Edit additional notes"
-                      aria-label="Edit additional notes"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </div>
-                {!additionalNotesEditing ? (
-                  additionalNotesReadText ? (
-                    <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap">{additionalNotesReadText}</p>
-                  ) : (
-                    <p className="text-sm text-text-tertiary italic">No additional notes yet — use the pencil to add some.</p>
-                  )
-                ) : (
-                  <>
-                    <textarea
-                      value={additionalNotesDraft}
-                      onChange={(e) => setAdditionalNotesDraft(e.target.value)}
-                      rows={3}
-                      placeholder="Parking, entry, preferences…"
-                      className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                      autoFocus
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        loading={savingAdditionalNotes}
-                        onClick={async () => {
-                          if (!job) return;
-                          setSavingAdditionalNotes(true);
-                          try {
-                            await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
-                            setAdditionalNotesEditing(false);
-                          } finally {
-                            setSavingAdditionalNotes(false);
-                          }
-                        }}
-                      >
-                        Save additional notes
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={savingAdditionalNotes}
-                        onClick={() => {
-                          setAdditionalNotesDraft(job.additional_notes ?? "");
-                          setAdditionalNotesEditing(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-border">
-                <div className="flex items-center justify-between gap-2">
-                  <JobCardTitleWithHint
                     title="Report link (optional)"
                     hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
                     titleClassName="text-xs font-semibold text-text-primary"
@@ -8204,12 +8133,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         href={reportLinkReadHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block text-sm text-primary break-all hover:underline"
+                        className="block truncate text-sm text-primary hover:underline"
+                        title={reportLinkReadRaw}
                       >
                         {reportLinkReadRaw}
                       </a>
                     ) : (
-                      <p className="text-sm text-text-primary break-all">{reportLinkReadRaw}</p>
+                      <p className="truncate text-sm text-text-primary" title={reportLinkReadRaw}>{reportLinkReadRaw}</p>
                     )
                   ) : (
                     <p className="text-sm text-text-tertiary italic">No report link yet — use the pencil to add one.</p>
@@ -8270,6 +8200,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
+              {jobVisits.length > 0 ? (
+                <div className="space-y-1.5 pt-2 border-t border-border">
+                  <div className="flex items-center justify-between gap-2">
+                    <JobCardTitleWithHint
+                      title="Visits"
+                      hint="Cada linha é um assignment: parceiro, data e valor próprios. Editar na aba Visits."
+                      titleClassName="text-xs font-semibold text-text-primary"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDetailTab(6)}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Open Visits
+                    </button>
+                  </div>
+                  <div className="divide-y divide-border-light rounded-lg border border-border-light">
+                    {rollUpJobVisits(job, jobVisits).perVisit.map((line) => (
+                      <div key={line.visitId ?? "primary"} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 py-1.5 text-xs">
+                        <span className="w-8 shrink-0 font-mono text-[10px] uppercase text-text-tertiary">V{line.visitIndex}</span>
+                        <span className="min-w-0 flex-1 truncate text-text-primary">{line.partnerName ?? "No partner"}</span>
+                        <span className="w-20 shrink-0 whitespace-nowrap text-text-secondary tabular-nums">
+                          {line.scheduledDate
+                            ? new Date(`${line.scheduledDate}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
+                            : "No date"}
+                        </span>
+                        <span className="w-28 shrink-0 whitespace-nowrap text-right tabular-nums">
+                          <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(line.clientPrice)}</span>
+                          <span className="text-text-tertiary"> / </span>
+                          <span className="text-rose-700 dark:text-rose-300">{formatCurrency(line.partnerCost)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               </div>
               ) : null}
 
