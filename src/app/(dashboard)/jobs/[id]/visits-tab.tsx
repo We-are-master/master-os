@@ -374,7 +374,10 @@ function VisitEditModal({
         scope: v.scope ?? "",
       };
     }
-    return EMPTY_FORM;
+    // Visita nova herda o serviço do job: quase sempre é o mesmo trabalho, e
+    // já vindo escolhido o resolver de preço tem a tripla completa assim que
+    // o parceiro entrar. Trocar é um clique.
+    return { ...EMPTY_FORM, catalog_service_id: parentCatalogServiceId ?? "" };
   });
   const [catalog, setCatalog] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
