@@ -56,18 +56,41 @@ insert into _tow_rename (old_name, new_name) values
   ('(EPC-C) Commercial Energy Performance Certificate','Commercial Energy Performance Certificate');
 
 -- 1) Catálogo: a fonte da verdade.
--- Só renomeia quando o nome novo ainda não existe, pra nunca criar duas linhas
--- com o mesmo nome (ex.: catálogo com "(GSC) Gas Safety Certificate" e
--- "Gas Safety Certificate" ao mesmo tempo). O que sobrar aparece no relatório
--- do final e se resolve à mão, com merge de preço.
+-- Duas guardas, porque `uq_service_catalog_name_active` é sobre
+-- lower(trim(name)) e não perdoa:
+--   a) duas linhas velhas que caem no MESMO nome novo (o catálogo tem
+--      "(CP12)Gas Safety Check" e "Gas Safety Check (CP12)") — só a primeira
+--      é renomeada, escolhida por ativa > mais antiga;
+--   b) o nome novo já ocupado por outra linha viva.
+-- O que sobrar aparece no notice do final e se resolve à mão, com merge de preço.
+with candidate as (
+  select
+    sc.id,
+    r.new_name,
+    row_number() over (
+      partition by lower(trim(r.new_name))
+      order by sc.is_active desc, sc.created_at, sc.id
+    ) as rn
+  from public.service_catalog sc
+  join _tow_rename r on lower(trim(sc.name)) = lower(trim(r.old_name))
+  where sc.deleted_at is null
+),
+eligible as (
+  select c.id, c.new_name
+  from candidate c
+  where c.rn = 1
+    and not exists (
+      select 1
+      from public.service_catalog dup
+      where dup.id <> c.id
+        and dup.deleted_at is null
+        and lower(trim(dup.name)) = lower(trim(c.new_name))
+    )
+)
 update public.service_catalog sc
-set name = r.new_name
-from _tow_rename r
-where sc.name = r.old_name
-  and not exists (
-    select 1 from public.service_catalog dup
-    where dup.name = r.new_name and dup.id <> sc.id
-  );
+set name = e.new_name
+from eligible e
+where sc.id = e.id;
 
 -- 2) Cópias desnormalizadas do nome. Todas por igualdade exata: título escrito
 -- à mão ("EOT clean flat 3") não é tocado.
@@ -111,7 +134,8 @@ declare
 begin
   select string_agg(sc.name, ', ' order by sc.name) into leftover
   from public.service_catalog sc
-  join _tow_rename r on r.old_name = sc.name;
+  join _tow_rename r on lower(trim(r.old_name)) = lower(trim(sc.name))
+  where sc.deleted_at is null;
 
   if leftover is not null then
     raise notice 'service_catalog: nomes nao renomeados por colisao: %', leftover;
