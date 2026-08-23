@@ -25,6 +25,7 @@ import {
   apiUpdateJobVisit,
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
+import { jobStatusRank } from "@/lib/job-phases";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -69,6 +70,8 @@ export function VisitsTab({
   /** Increment (e.g. from job header ⋮ menu) to open the “Add visit” modal when this tab is shown. */
   openCreateSignal = 0,
   onVisitsChanged,
+  onCompletePrimary,
+  completePrimaryLabel,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
@@ -76,6 +79,14 @@ export function VisitsTab({
   openCreateSignal?: number;
   /** Avisa o card para recarregar a próxima visita do topo. */
   onVisitsChanged?: () => void;
+  /**
+   * Fecha a VISITA 1, que é o próprio job. Vem do card porque quem sabe
+   * avançar status é ele (`handleStatusChange` + as regras de `canAdvanceJob`).
+   * `undefined` quando o job não está num estágio que aceite fechar.
+   */
+  onCompletePrimary?: () => void;
+  /** Rótulo da ação da visita 1, para a linha dizer o que o botão faz. */
+  completePrimaryLabel?: string;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,6 +209,19 @@ export function VisitsTab({
   }
 
   const primary = jobToPrimaryVisit(job);
+  /**
+   * A visita 1 é o job, então o status dela é o estágio do job traduzido:
+   * de Final checks em diante o trabalho aconteceu, e a linha diz "Completed"
+   * em vez de um "From job" que não informa nada.
+   */
+  const primaryStatus: { label: string; variant: "info" | "warning" | "success" | "default" | "primary" } =
+    job.status === "cancelled"
+      ? { label: "Cancelled", variant: "default" }
+      : jobStatusRank(job.status) >= 40
+        ? { label: "Completed", variant: "success" }
+        : job.status === "in_progress"
+          ? { label: "In progress", variant: "warning" }
+          : { label: "Scheduled", variant: "info" };
 
   return (
     <div className="space-y-3 px-4 sm:px-5 py-4">
@@ -215,36 +239,51 @@ export function VisitsTab({
         </Button>
       </div>
 
-      <div className="divide-y divide-border-light rounded-lg border border-border-light">
-        <VisitRow
-          index={1}
-          title={primary.partner_name ?? "No partner"}
-          service={job.title ?? null}
-          date={primary.scheduled_date}
-          startAt={primary.scheduled_start_at}
-          clientPrice={primary.client_price}
-          partnerCost={primary.partner_cost}
-          statusLabel="From job"
-          statusVariant="primary"
-          note="Edit in Details"
-        />
-        {visits.map((v) => (
-          <VisitRow
-            key={v.id}
-            index={v.visit_index}
-            title={v.partner_name ?? "No partner"}
-            service={v.catalog_service_name ?? null}
-            date={v.scheduled_date ?? null}
-            startAt={v.scheduled_start_at ?? null}
-            clientPrice={v.client_price}
-            partnerCost={v.partner_cost}
-            statusLabel={STATUS_BADGE[v.status].label}
-            statusVariant={STATUS_BADGE[v.status].variant}
-            onEdit={() => setEditTarget({ mode: "edit", visit: v })}
-            onDelete={() => handleDelete(v)}
-            onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
-          />
-        ))}
+      <div className="overflow-hidden rounded-lg border border-border-light">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-surface-hover/50 text-left text-[10px] uppercase tracking-wide text-text-tertiary">
+              <th className="w-10 px-2.5 py-1.5 font-semibold">#</th>
+              <th className="px-2.5 py-1.5 font-semibold">Partner</th>
+              <th className="w-24 whitespace-nowrap px-2.5 py-1.5 font-semibold">When</th>
+              <th className="w-32 whitespace-nowrap px-2.5 py-1.5 text-right font-semibold">In / out</th>
+              <th className="w-24 px-2.5 py-1.5 font-semibold">Status</th>
+              <th className="w-20 px-2.5 py-1.5" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-light">
+            <VisitRow
+              index={1}
+              title={primary.partner_name ?? "No partner"}
+              service={job.title ?? null}
+              date={primary.scheduled_date}
+              startAt={primary.scheduled_start_at}
+              clientPrice={primary.client_price}
+              partnerCost={primary.partner_cost}
+              statusLabel={primaryStatus.label}
+              statusVariant={primaryStatus.variant}
+              onComplete={onCompletePrimary}
+              completeTitle={completePrimaryLabel ?? "Mark this visit done"}
+            />
+            {visits.map((v) => (
+              <VisitRow
+                key={v.id}
+                index={v.visit_index}
+                title={v.partner_name ?? "No partner"}
+                service={v.catalog_service_name ?? null}
+                date={v.scheduled_date ?? null}
+                startAt={v.scheduled_start_at ?? null}
+                clientPrice={v.client_price}
+                partnerCost={v.partner_cost}
+                statusLabel={STATUS_BADGE[v.status].label}
+                statusVariant={STATUS_BADGE[v.status].variant}
+                onEdit={() => setEditTarget({ mode: "edit", visit: v })}
+                onDelete={() => handleDelete(v)}
+                onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {editTarget ? (
@@ -263,10 +302,10 @@ export function VisitsTab({
   );
 }
 
-/** Uma visita = uma linha. Parceiro, quando, quanto entra, quanto sai. */
+/** Uma visita = uma linha da tabela. A visita 1 é o job e entra aqui igual às outras. */
 function VisitRow({
   index, title, service, date, startAt, clientPrice, partnerCost,
-  statusLabel, statusVariant, note, onEdit, onDelete, onComplete,
+  statusLabel, statusVariant, onEdit, onDelete, onComplete, completeTitle,
 }: {
   index: number;
   title: string;
@@ -277,10 +316,10 @@ function VisitRow({
   partnerCost: number;
   statusLabel: string;
   statusVariant: "info" | "warning" | "success" | "default" | "primary";
-  note?: string;
   onEdit?: () => void;
   onDelete?: () => void;
   onComplete?: () => void;
+  completeTitle?: string;
 }) {
   const when = [
     date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : null,
@@ -288,41 +327,51 @@ function VisitRow({
   ].filter(Boolean).join(" ");
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
-      <span className="w-12 shrink-0 font-mono text-[10px] uppercase tracking-wide text-text-tertiary">V{index}</span>
-      <span className="min-w-0 flex-1 truncate font-medium text-text-primary">
-        {title}
-        {service ? <span className="font-normal text-text-tertiary"> · {service}</span> : null}
-      </span>
-      <span className="w-24 shrink-0 whitespace-nowrap text-text-secondary tabular-nums">{when || "No date"}</span>
-      <span className="w-32 shrink-0 whitespace-nowrap text-right tabular-nums">
+    <tr className="align-middle">
+      <td className="px-2.5 py-2 font-mono text-[10px] uppercase text-text-tertiary">V{index}</td>
+      <td className="max-w-0 px-2.5 py-2">
+        <span className="block truncate font-medium text-text-primary">
+          {title}
+          {service ? <span className="font-normal text-text-tertiary"> · {service}</span> : null}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-2.5 py-2 text-text-secondary tabular-nums">{when || "No date"}</td>
+      <td className="whitespace-nowrap px-2.5 py-2 text-right tabular-nums">
         <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)}</span>
         <span className="text-text-tertiary"> / </span>
         <span className="text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)}</span>
-      </span>
-      <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
-      <span className="flex w-20 shrink-0 items-center justify-end gap-1.5">
-        {note ? <span className="text-[10px] italic text-text-tertiary">{note}</span> : null}
-        {onComplete ? (
-          <button type="button" onClick={onComplete} title="Mark this visit done" aria-label="Complete visit"
-            className="text-text-tertiary transition-colors hover:text-emerald-600">
-            <Check className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
-        {onEdit ? (
-          <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
-            className="text-text-tertiary transition-colors hover:text-text-primary">
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
-        {onDelete ? (
-          <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
-            className="text-text-tertiary transition-colors hover:text-red-500">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
-      </span>
-    </div>
+      </td>
+      <td className="px-2.5 py-2">
+        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+      </td>
+      <td className="px-2.5 py-2">
+        <span className="flex items-center justify-end gap-1.5">
+          {onComplete ? (
+            <button
+              type="button"
+              onClick={onComplete}
+              title={completeTitle ?? "Mark this visit done"}
+              className="inline-flex items-center gap-1 rounded-md border border-border-light px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
+            >
+              <Check className="h-3 w-3" />
+              Done
+            </button>
+          ) : null}
+          {onEdit ? (
+            <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
+              className="text-text-tertiary transition-colors hover:text-text-primary">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
+              className="text-text-tertiary transition-colors hover:text-red-500">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </span>
+      </td>
+    </tr>
   );
 }
 

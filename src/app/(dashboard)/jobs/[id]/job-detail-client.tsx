@@ -144,7 +144,7 @@ import type {
   SelfBill,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
-import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { nextVisitLine } from "@/lib/job-visit-rollup";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -3094,7 +3094,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [isAdmin, detailTab]);
 
   useEffect(() => {
-    if (!JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6) {
+    if (detailTab === 6) {
       setDetailTab(0);
     }
   }, [detailTab]);
@@ -6511,6 +6511,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const finalLabour = finalSplitRemain;
 
   const statusActions = getJobStatusActions(job);
+  /**
+   * "Done" da visita 1 na tabela de visitas. A visita 1 é o job, então quem
+   * fecha ela é a mesma transição do topo (Job completed -> final_check), com
+   * as regras de `handleStatusChange` intactas. Sem essa ação disponível no
+   * estágio atual, a linha não mostra botão.
+   */
+  const primaryVisitDoneAction = statusActions.find((a) => a.status === "final_check" && !a.special);
+  /**
+   * Job ainda em campo mostra "Done" na visita 1 mesmo quando a barra de topo
+   * oferece outra coisa (em `scheduled` ela oferece "Start Job"): marcar a
+   * visita como feita é dizer que o trabalho aconteceu. `handleStatusChange`
+   * roda `canAdvanceJob` e recusa com mensagem se o estágio não permitir, então
+   * o botão não fura regra nenhuma.
+   */
+  const primaryVisitDoneTarget: Job["status"] | null =
+    primaryVisitDoneAction
+      ? "final_check"
+      : (["scheduled", "late", "in_progress"] as const).includes(job.status as "scheduled")
+        ? "final_check"
+        : null;
   /** Primary bar: keep cancel out of the strip — it lives under ⋮. */
   const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled");
   const showCancelInJobMoreMenu = statusActions.some((a) => a.status === "cancelled");
@@ -6977,8 +6997,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
                           onClick={() => {
                             setJobMoreMenuOpen(false);
+                            setDetailTab(0);
                             setVisitOpenCreateSignal((k) => k + 1);
-                            setDetailTab(6);
                           }}
                         >
                           <Plus className="h-3.5 w-3.5 shrink-0" />
@@ -7423,7 +7443,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
-                            onClick={() => setDetailTab(6)}
+                            onClick={() => setDetailTab(0)}
                             className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
                             title="Open the Visits tab"
                           >
@@ -7869,7 +7889,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 6 as const }] : []),
                     { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
@@ -7893,18 +7912,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
-              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6 ? (
-                <VisitsTab
-                  job={job}
-                  openCreateSignal={visitOpenCreateSignal}
-                  onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
-                  onJobStatusBumpRequested={(suggestedStatus) => {
-                    if (job.status !== suggestedStatus) {
-                      void updateJob(job.id, { status: suggestedStatus });
-                    }
-                  }}
-                />
-              ) : null}
               {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -8200,40 +8207,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
-              {jobVisits.length > 0 ? (
-                <div className="space-y-1.5 pt-2 border-t border-border">
-                  <div className="flex items-center justify-between gap-2">
-                    <JobCardTitleWithHint
-                      title="Visits"
-                      hint="Cada linha é um assignment: parceiro, data e valor próprios. Editar na aba Visits."
-                      titleClassName="text-xs font-semibold text-text-primary"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setDetailTab(6)}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Open Visits
-                    </button>
-                  </div>
-                  <div className="divide-y divide-border-light rounded-lg border border-border-light">
-                    {rollUpJobVisits(job, jobVisits).perVisit.map((line) => (
-                      <div key={line.visitId ?? "primary"} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 py-1.5 text-xs">
-                        <span className="w-8 shrink-0 font-mono text-[10px] uppercase text-text-tertiary">V{line.visitIndex}</span>
-                        <span className="min-w-0 flex-1 truncate text-text-primary">{line.partnerName ?? "No partner"}</span>
-                        <span className="w-20 shrink-0 whitespace-nowrap text-text-secondary tabular-nums">
-                          {line.scheduledDate
-                            ? new Date(`${line.scheduledDate}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
-                            : "No date"}
-                        </span>
-                        <span className="w-28 shrink-0 whitespace-nowrap text-right tabular-nums">
-                          <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(line.clientPrice)}</span>
-                          <span className="text-text-tertiary"> / </span>
-                          <span className="text-rose-700 dark:text-rose-300">{formatCurrency(line.partnerCost)}</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
+                <div className="pt-2 border-t border-border">
+                  <VisitsTab
+                    job={job}
+                    openCreateSignal={visitOpenCreateSignal}
+                    onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
+                    onCompletePrimary={
+                      primaryVisitDoneTarget
+                        ? () => { void handleStatusChange(job, primaryVisitDoneTarget); }
+                        : undefined
+                    }
+                    completePrimaryLabel={primaryVisitDoneAction?.label ?? "Mark visit 1 done"}
+                    onJobStatusBumpRequested={(suggestedStatus) => {
+                      void handleStatusChange(job, suggestedStatus);
+                    }}
+                  />
                 </div>
               ) : null}
               </div>
