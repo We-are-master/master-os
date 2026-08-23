@@ -1,5 +1,6 @@
 "use client";
 
+import { pulseMoney } from "@/lib/pulse-money-display";
 import { useEffect, useState } from "react";
 import { startOfDay, endOfDay, formatISO } from "date-fns";
 import { getSupabase } from "@/services/base";
@@ -174,10 +175,7 @@ export function KpiRibbon() {
   );
 }
 
+/** Segue a lente de moeda do Pulse (GBP por padrão, BRL quando o usuário troca). */
 function formatGbp(n: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(n);
+  return pulseMoney(n);
 }

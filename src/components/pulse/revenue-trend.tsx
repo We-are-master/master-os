@@ -1,5 +1,6 @@
 "use client";
 
+import { pulseMoney } from "@/lib/pulse-money-display";
 import { useEffect, useMemo, useState } from "react";
 import { Area, ResponsiveContainer, Tooltip, XAxis, Line, ComposedChart } from "recharts";
 import { startOfWeek, endOfWeek, subWeeks, format, formatISO } from "date-fns";
@@ -151,10 +152,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
+/** Segue a lente de moeda do Pulse (GBP por padrão, BRL quando o usuário troca). */
 function formatGbp(n: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(n);
+  return pulseMoney(n);
 }
