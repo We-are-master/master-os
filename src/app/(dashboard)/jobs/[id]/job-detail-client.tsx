@@ -145,6 +145,7 @@ import type {
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
 import { nextVisitLine } from "@/lib/job-visit-rollup";
+import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -8215,10 +8216,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
                     onCompletePrimary={
                       primaryVisitDoneTarget
-                        ? () => { void handleStatusChange(job, primaryVisitDoneTarget); }
+                        ? async () => {
+                            const updated = await handleStatusChange(job, primaryVisitDoneTarget);
+                            return !!updated;
+                          }
                         : undefined
                     }
                     completePrimaryLabel={primaryVisitDoneAction?.label ?? "Mark visit 1 done"}
+                    onFinishJob={() => {
+                      /**
+                       * Fechar o trabalho pela tabela de visitas é o mesmo
+                       * caminho do topo: leva para Final checks quando ainda
+                       * não está lá (com `canAdvanceJob` valendo) e abre a
+                       * revisão. Job já em Final checks em diante só abre.
+                       */
+                      void (async () => {
+                        if (jobStatusRank(job.status) < 40) {
+                          const updated = await handleStatusChange(job, "final_check");
+                          if (!updated) return;
+                        }
+                        openFinalReview();
+                      })();
+                    }}
                     onJobStatusBumpRequested={(suggestedStatus) => {
                       void handleStatusChange(job, suggestedStatus);
                     }}

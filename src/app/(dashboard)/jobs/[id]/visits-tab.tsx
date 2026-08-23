@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Plus, Pencil, Trash2, Loader2, X, Save, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +52,21 @@ function arrivalFromStored(startAt?: string | null, endAt?: string | null): {
   return { arrival_from: slot.from, arrival_window_mins: slot.mins };
 }
 
+/**
+ * Modal da seção de visitas vai para o `body`.
+ *
+ * A seção agora mora dentro do card de Details, e algum ancestral carrega
+ * `transform` (a animação de página). Com isso, `position: fixed` passa a se
+ * ancorar nesse ancestral em vez da janela, e o modal abria mil pixels abaixo
+ * da tela. O portal tira a árvore do modal de baixo do transform.
+ */
+function SectionPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
 type EditTarget = { mode: "create" } | { mode: "edit"; visit: JobVisit } | null;
 
 /**
@@ -72,6 +88,7 @@ export function VisitsTab({
   onVisitsChanged,
   onCompletePrimary,
   completePrimaryLabel,
+  onFinishJob,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
@@ -84,13 +101,20 @@ export function VisitsTab({
    * avançar status é ele (`handleStatusChange` + as regras de `canAdvanceJob`).
    * `undefined` quando o job não está num estágio que aceite fechar.
    */
-  onCompletePrimary?: () => void;
+  onCompletePrimary?: () => Promise<boolean>;
   /** Rótulo da ação da visita 1, para a linha dizer o que o botão faz. */
   completePrimaryLabel?: string;
+  /**
+   * Fecha o trabalho: leva o job para Final checks quando ainda não está lá e
+   * abre a revisão. Vem do card, que é quem tem o modal e as regras.
+   */
+  onFinishJob?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
+  /** Índice da visita recém-fechada: abre o "e agora?" logo depois do Done. */
+  const [justCompleted, setJustCompleted] = useState<number | null>(null);
   /** Account ID resolved from the job's client (clients.source_account_id). Used by the pricing resolver. */
   const [accountId, setAccountId] = useState<string | null>(null);
 
@@ -156,8 +180,10 @@ export function VisitsTab({
     try {
       const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
       setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+      setJustCompleted(visit.visit_index);
       toast.success(`Visit ${visit.visit_index} completed`);
       onVisitsChanged?.();
+      setJustCompleted(visit.visit_index);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to complete visit");
     }
@@ -262,7 +288,16 @@ export function VisitsTab({
               partnerCost={primary.partner_cost}
               statusLabel={primaryStatus.label}
               statusVariant={primaryStatus.variant}
-              onComplete={onCompletePrimary}
+              onComplete={
+                onCompletePrimary
+                  ? () => {
+                      // Só pergunta "e agora?" se a visita fechou mesmo: a regra
+                      // do job pode recusar (ex.: precisa passar pelo on-site) e
+                      // aí a mensagem de recusa é a resposta, não um menu.
+                      void onCompletePrimary().then((ok) => { if (ok) setJustCompleted(1); });
+                    }
+                  : undefined
+              }
               completeTitle={completePrimaryLabel ?? "Mark this visit done"}
             />
             {visits.map((v) => (
@@ -286,7 +321,37 @@ export function VisitsTab({
         </table>
       </div>
 
+      {justCompleted != null ? (
+        <SectionPortal>
+        <Modal open onClose={() => setJustCompleted(null)} title={`Visit ${justCompleted} done`} size="sm">
+          <div className="space-y-4 p-4">
+            <p className="text-sm text-text-secondary">What happens next on this job?</p>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                icon={<Plus className="h-3.5 w-3.5" />}
+                onClick={() => { setJustCompleted(null); setEditTarget({ mode: "create" }); }}
+              >
+                Add another visit
+              </Button>
+              <Button
+                icon={<Check className="h-3.5 w-3.5" />}
+                disabled={!onFinishJob}
+                onClick={() => { setJustCompleted(null); onFinishJob?.(); }}
+              >
+                Finish the job
+              </Button>
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              Finishing moves the job to Final checks and opens the review.
+            </p>
+          </div>
+        </Modal>
+        </SectionPortal>
+      ) : null}
+
       {editTarget ? (
+        <SectionPortal>
         <VisitEditModal
           target={editTarget}
           jobId={job.id}
@@ -297,6 +362,7 @@ export function VisitsTab({
           onCreate={handleCreate}
           onUpdate={handleUpdate}
         />
+        </SectionPortal>
       ) : null}
     </div>
   );
