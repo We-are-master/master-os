@@ -497,8 +497,8 @@ export type ResultadoBooking =
  */
 function tituloCanonico(nomeServico: string | null): string {
   const nome = (nomeServico ?? "").toLowerCase();
-  if (/eicr|electrical installation/.test(nome)) return "Electrical Installation Condition Report (EICR)";
-  if (/gas safety|cp12/.test(nome)) return "Gas Safety Certificate (GSC)";
+  if (/eicr|electrical installation/.test(nome)) return "Electrical Safety Report";
+  if (/gas safety|cp12/.test(nome)) return "Gas Safety Certificate";
   if (/epc|energy performance/.test(nome)) return "General Maintenance";
   if (/clean/.test(nome)) return "Cleaning";
   if (/paint/.test(nome)) return "Painter";

@@ -41,12 +41,12 @@ const TRADE_TO_ICON: Record<string, LucideIcon> = {
   Cleaning: Sparkles,
   Gardener: Sprout,
   "Boiler Service": Flame,
-  "Electrical Installation Condition Report (EICR)": FileCheck,
-  "Portable Appliance Testing (PAT)": ClipboardCheck,
-  "Gas Safety Certificate (GSC)": ShieldAlert,
-  "Fire Risk Assessment (FRA)": FileCheck,
+  "Electrical Safety Report": FileCheck,
+  "Appliance Testing": ClipboardCheck,
+  "Gas Safety Certificate": ShieldAlert,
+  "Fire Risk Assessment": FileCheck,
   "Fire Alarm Certificate": FileCheck,
-  "Fire Extinguisher Service (FES)": ShieldAlert,
+  "Fire Extinguisher Service": ShieldAlert,
 };
 
 const FALLBACK_TRADE_KEY = "general-maintenance";
