@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { TimeSelect } from "@/components/ui/time-select";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
+import { canonicalArrivalSlotValues } from "@/lib/job-arrival-window";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
@@ -36,14 +37,27 @@ const STATUS_BADGE: Record<JobVisitStatus, { label: string; variant: "info" | "w
   cancelled:   { label: "Cancelled",   variant: "default" },
 };
 
+/** Timestamps guardados -> par (from, mins) que o slot picker entende. */
+function arrivalFromStored(startAt?: string | null, endAt?: string | null): {
+  arrival_from: string;
+  arrival_window_mins: string;
+} {
+  const from = startAt ? startAt.slice(11, 16) : "09:00";
+  const mins = startAt && endAt
+    ? Math.max(30, Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60_000))
+    : 180;
+  const slot = canonicalArrivalSlotValues(from, mins);
+  return { arrival_from: slot.from, arrival_window_mins: slot.mins };
+}
+
 type EditTarget = { mode: "create" } | { mode: "edit"; visit: JobVisit } | null;
 
 /**
  * "Visits" tab — additional visits booked under one job (mig 161).
  *
- *   • Visit 1 (primary) — read-only card synthesised from the parent job's
+ *   • Visit 1 (primary): linha de leitura montada a partir do job
  *     fields. To edit, the operator goes to the Details tab.
- *   • Visit 2+ — CRUD on `job_visits` rows. Each can have its own partner,
+ *   • Visit 2+: CRUD em `job_visits`. Cada uma com seu parceiro,
  *     service, schedule, and prices (resolved via mig 159/160 overrides).
  *
  * Status of the parent job is auto-derived in Etapa 5 (this tab triggers it
@@ -226,11 +240,6 @@ export function VisitsTab({
         ))}
       </div>
 
-      <p className="text-[11px] text-text-tertiary">
-        Each line is its own assignment: own partner, own price, own confirmation email. Payouts for extra
-        visits are not in self-bills yet.
-      </p>
-
       {editTarget ? (
         <VisitEditModal
           target={editTarget}
@@ -317,11 +326,10 @@ interface FormState {
   partner_id: string;
   partner_name: string;
   scheduled_date: string;
-  scheduled_start_time: string;
-  scheduled_end_time: string;
+  arrival_from: string;
+  arrival_window_mins: string;
   client_price: string;
   partner_cost: string;
-  materials_cost: string;
   scope: string;
 }
 
@@ -330,11 +338,10 @@ const EMPTY_FORM: FormState = {
   partner_id: "",
   partner_name: "",
   scheduled_date: "",
-  scheduled_start_time: "09:00",
-  scheduled_end_time: "12:00",
+  arrival_from: "09:00",
+  arrival_window_mins: "180",
   client_price: "",
   partner_cost: "",
-  materials_cost: "0",
   scope: "",
 };
 
@@ -361,11 +368,9 @@ function VisitEditModal({
         partner_id: v.partner_id ?? "",
         partner_name: v.partner_name ?? "",
         scheduled_date: v.scheduled_date ?? "",
-        scheduled_start_time: v.scheduled_start_at ? v.scheduled_start_at.slice(11, 16) : "09:00",
-        scheduled_end_time: v.scheduled_end_at ? v.scheduled_end_at.slice(11, 16) : "12:00",
+        ...arrivalFromStored(v.scheduled_start_at, v.scheduled_end_at),
         client_price: v.client_price?.toString() ?? "",
         partner_cost: v.partner_cost?.toString() ?? "",
-        materials_cost: v.materials_cost?.toString() ?? "0",
         scope: v.scope ?? "",
       };
     }
@@ -446,8 +451,10 @@ function VisitEditModal({
     try {
       // Hora de parede de Londres, não string crua: `scheduled_start_at` é
       // timestamptz, e sem fuso a visita nascia deslocada no BST.
-      const startIso = ukWallClockToUtcIso(form.scheduled_date, form.scheduled_start_time);
-      const endIso = ukWallClockToUtcIso(form.scheduled_date, form.scheduled_end_time);
+      const startIso = ukWallClockToUtcIso(form.scheduled_date, form.arrival_from);
+      const endIso = startIso
+        ? new Date(new Date(startIso).getTime() + (Number(form.arrival_window_mins) || 180) * 60_000).toISOString()
+        : null;
       if (!startIso || !endIso) {
         toast.error("Invalid date or time for this visit");
         setSaving(false);
@@ -464,7 +471,9 @@ function VisitEditModal({
         expected_finish_at: endIso,
         client_price: Number(form.client_price) || 0,
         partner_cost: Number(form.partner_cost) || 0,
-        materials_cost: Number(form.materials_cost) || 0,
+        // Materiais não são campo da visita: entram como extra no job, onde o
+        // ledger já sabe alocá-los.
+        materials_cost: target.mode === "edit" ? target.visit.materials_cost : 0,
         status: target.mode === "edit" ? target.visit.status : "scheduled",
         scope: form.scope.trim() || null,
         notes: null,
@@ -497,33 +506,29 @@ function VisitEditModal({
             value={form.partner_id}
             onChange={(e) => pickPartner(e.target.value)}
           >
-            <option value="">— No partner yet —</option>
+            <option value="">No partner yet</option>
             {partners.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
+                {p.company_name?.trim() || p.contact_name}{p.trade ? ` · ${p.trade}` : ""}
               </option>
             ))}
           </select>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1">Date *</label>
             <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
           </div>
-          <TimeSelect
-            label="Start time"
-            value={form.scheduled_start_time}
-            onChange={(v) => setForm((p) => ({ ...p, scheduled_start_time: v }))}
-          />
-          <TimeSelect
-            label="End time"
-            value={form.scheduled_end_time}
-            onChange={(v) => setForm((p) => ({ ...p, scheduled_end_time: v }))}
+          <ArrivalSlotPicker
+            arrivalFrom={form.arrival_from}
+            arrivalWindowMins={form.arrival_window_mins}
+            onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
+            rowLayout
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1">
               Client price (£)
@@ -554,12 +559,6 @@ function VisitEditModal({
               onChange={(e) => setForm((p) => ({ ...p, partner_cost: e.target.value }))}
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">Materials (£)</label>
-            <Input type="number" step="0.01" min={0} value={form.materials_cost}
-              onChange={(e) => setForm((p) => ({ ...p, materials_cost: e.target.value }))}
-            />
-          </div>
         </div>
 
         <div>
@@ -569,7 +568,7 @@ function VisitEditModal({
             onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
             rows={2}
             className="w-full rounded-lg border border-border-light bg-surface px-3 py-2 text-sm"
-            placeholder="What this visit covers — surfaced to the partner."
+            placeholder="What this visit covers. The partner sees this."
           />
         </div>
 
