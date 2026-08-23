@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
+import { ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -167,7 +168,25 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             error: e instanceof Error ? e.message : "notify failed",
           }))
         : { ok: false, skipped: "no_partner" as const };
-      return NextResponse.json({ ok: true, visit: created, notified });
+
+      /**
+       * Self-bill do parceiro desta visita nasce junto com ela.
+       *
+       * Mesmo parceiro num período já aberto cai no documento existente;
+       * parceiro diferente ganha o seu. O valor só entra no total quando a
+       * visita for marcada como concluída — igual ao job, que também fica em
+       * rascunho até virar pagável.
+       */
+      let selfBillId: string | null = null;
+      if (created.partner_id) {
+        try {
+          const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+          if (fullJob) selfBillId = await ensureWeeklySelfBillForVisit(fullJob as Job, created, { client: supabase });
+        } catch (e) {
+          console.error("ensureWeeklySelfBillForVisit on create failed", e);
+        }
+      }
+      return NextResponse.json({ ok: true, visit: created, notified, selfBillId });
     }
     if (error.code !== "23505") {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -221,6 +240,27 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const updated = data as JobVisit;
+
+  /**
+   * Visita fechada entra no self-bill do parceiro DELA.
+   *
+   * É aqui e não na criação porque o que paga é trabalho feito, e a data de
+   * conclusão é o que decide o período. Parceiro diferente da visita 1 ganha
+   * documento próprio; mesmo parceiro no mesmo período cai no mesmo.
+   */
+  if (updated.status === "completed" && updated.partner_id) {
+    try {
+      const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+      if (fullJob) {
+        await ensureWeeklySelfBillForVisit(fullJob as Job, updated, { client: supabase });
+      }
+    } catch (e) {
+      // Self-bill é recuperável pelo Sync do card; a visita fechada não pode
+      // depender disso para ser registrada.
+      console.error("ensureWeeklySelfBillForVisit failed", e);
+    }
+  }
+
   await auditVisit({
     supabase, job,
     action: patch.status === "completed" ? "completed" : "updated",

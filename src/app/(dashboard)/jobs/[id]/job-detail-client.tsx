@@ -144,7 +144,7 @@ import type {
   SelfBill,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
-import { nextVisitLine } from "@/lib/job-visit-rollup";
+import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
 import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -6046,10 +6046,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerExtrasFromLedgerRounded = Math.round(partnerExtrasFromLedger * 100) / 100;
   const clientPriceClamp = Math.max(0, Number(job.client_price ?? 0));
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
+  /**
+   * Dinheiro das visitas 2+ (mig 161). `job.client_price` e `job.partner_cost`
+   * são a VISITA 1; o que as outras visitas cobram e custam entra por aqui,
+   * senão a tabela de visitas soma £70 e o Finance Summary insiste em £50.
+   */
+  const visitRollup = rollUpJobVisits(job, jobVisits);
+  const extraVisitsClient = Math.max(0, Math.round((visitRollup.clientPriceTotal - Number(job.client_price ?? 0)) * 100) / 100);
+  const extraVisitsPartner = Math.max(0, Math.round((visitRollup.partnerCostTotal - Number(job.partner_cost ?? 0)) * 100) / 100);
+  const extraVisitsMaterials = Math.max(0, Math.round((visitRollup.materialsCostTotal - Number(job.materials_cost ?? 0)) * 100) / 100);
+  const extraVisitsCount = Math.max(0, visitRollup.visitCount - 1);
+
   const billableRevenue = Math.max(
     jobCustomerBillableRevenueForCollections(job),
     clientPriceClamp + clientExtrasFromLedgerRounded,
-  );
+  ) + extraVisitsClient;
   const partnerStoredExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
   /**
    * Bump partnerCap by any ledger extras that exceed `partner_extras_amount`
@@ -6098,11 +6109,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerMaterialsLine = partnerHasMaterialsLedger
     ? partnerMaterialsLedgerRounded
     : Math.max(0, Number(job.materials_cost ?? 0));
-  const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
+  /**
+   * O que ESTE self-bill contém: só a visita 1, que é o job. Visitas 2+ têm
+   * parceiro próprio e documento próprio — misturar aqui faria o painel
+   * prometer ao parceiro da visita 1 um valor que não é dele.
+   */
+  const partnerCashOutJobLine = Math.max(0, partnerCap + partnerMaterialsLine);
+  /** Custo total do job com todas as visitas: painel e margem, nunca pagamento. */
+  const partnerCashOutTotal = Math.max(0, partnerCashOutJobLine + extraVisitsPartner + extraVisitsMaterials);
   const directCost =
-    job.job_type === "hourly" && hourlyAutoBilling
+    (job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + partnerMaterialsLine
-      : partnerPaymentCap(job) + partnerMaterialsLine;
+      : partnerPaymentCap(job) + partnerMaterialsLine) + extraVisitsPartner + extraVisitsMaterials;
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -8905,6 +8923,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsClient > 0.005 ? `+${formatCurrency(extraVisitsClient)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   {(job.customer_deposit ?? 0) > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
@@ -9145,6 +9173,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {formatCurrency(partnerInitialBalance)}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsPartner > 0.005 ? `+${formatCurrency(extraVisitsPartner)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
                     <div className="flex items-center gap-1.5">
                       <JobCardHint
@@ -9772,7 +9810,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutTotal} />
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">

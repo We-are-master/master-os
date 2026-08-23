@@ -201,25 +201,93 @@ export function selfBillJobPayoutStateLabel(
   return null;
 }
 
+export type SelfBillPayoutLine = {
+  kind: "job" | "visit";
+  /** `job_id` na linha de job; `job_visits.id` na linha de visita. */
+  id: string;
+  jobId: string;
+  visitIndex: number | null;
+  labour: number;
+  materials: number;
+};
+
+/**
+ * Linhas pagáveis de um self-bill, de UMA fonte só.
+ *
+ * Totais e PDF chamam esta função. Não pode haver duas consultas: o rodapé do
+ * PDF já divergiu das linhas uma vez (£1.055 nas linhas contra £430 no total),
+ * e agora que existem duas origens de linha o risco dobra.
+ *
+ * A visita entra quando está `completed` — o botão manual do escritório —,
+ * diferente do job, que entra em `awaiting_payment` ou `completed`. A
+ * assimetria é de propósito: visita fecha por decisão de quem viu o trabalho.
+ */
+export async function loadSelfBillPayoutLines(
+  selfBillId: string,
+  client?: SupabaseClient,
+): Promise<SelfBillPayoutLine[]> {
+  const supabase = client ?? getSupabase();
+  const lines: SelfBillPayoutLine[] = [];
+
+  const { data: jobRows, error: jobErr } = await supabase
+    .from("jobs")
+    .select("id, partner_cost, materials_cost, status, deleted_at")
+    .eq("self_bill_id", selfBillId);
+  if (jobErr) throw jobErr;
+  for (const row of (jobRows ?? []) as (JobPayoutRow & { id: string })[]) {
+    if (!isJobApprovedForSelfBillPayout(row as Job)) continue;
+    lines.push({
+      kind: "job",
+      id: row.id,
+      jobId: row.id,
+      visitIndex: null,
+      labour: Number(row.partner_cost) || 0,
+      materials: Number(row.materials_cost) || 0,
+    });
+  }
+
+  const { data: visitRows, error: visitErr } = await supabase
+    .from("job_visits")
+    .select("id, job_id, visit_index, partner_cost, materials_cost, status, deleted_at")
+    .eq("self_bill_id", selfBillId)
+    .is("deleted_at", null);
+  // Ambiente sem a mig 161/275 não tem tabela nem coluna: o self-bill segue
+  // valendo com as linhas de job.
+  if (visitErr && !isSupabaseMissingColumnError(visitErr) && (visitErr as { code?: string }).code !== "42P01") {
+    throw visitErr;
+  }
+  for (const row of (visitRows ?? []) as {
+    id: string; job_id: string; visit_index: number; partner_cost: number | null;
+    materials_cost: number | null; status: string; deleted_at: string | null;
+  }[]) {
+    if (row.status !== "completed") continue;
+    lines.push({
+      kind: "visit",
+      id: row.id,
+      jobId: row.job_id,
+      visitIndex: row.visit_index,
+      labour: Number(row.partner_cost) || 0,
+      materials: Number(row.materials_cost) || 0,
+    });
+  }
+
+  return lines;
+}
+
 /**
  * Recompute labour/materials/net from linked jobs that are still payable (not archived, not cancelled).
  * Does not assign payout-void status — use `refreshSelfBillPayoutState` after job lifecycle changes.
  */
 export async function recomputeSelfBillTotals(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
-  const { data: rows, error: selErr } = await supabase
-    .from("jobs")
-    .select("partner_cost, materials_cost, status, deleted_at")
-    .eq("self_bill_id", selfBillId);
-  if (selErr) throw selErr;
-  const list = (rows ?? []) as JobPayoutRow[];
-  const payable = list.filter((r) => isJobApprovedForSelfBillPayout(r as Job));
-  const jobsCount = payable.length;
+  const lines = await loadSelfBillPayoutLines(selfBillId, supabase);
+  /** Jobs distintos, não linhas: um parceiro em duas visitas do mesmo job é 1 job. */
+  const jobsCount = new Set(lines.map((l) => l.jobId)).size;
   let jobValue = 0;
   let materials = 0;
-  for (const r of payable) {
-    jobValue += Number(r.partner_cost) || 0;
-    materials += Number(r.materials_cost) || 0;
+  for (const l of lines) {
+    jobValue += l.labour;
+    materials += l.materials;
   }
   const commission = 0;
   const netPayout = jobValue + materials - commission;
@@ -303,13 +371,28 @@ export async function refreshSelfBillPayoutState(
   }
 
   const payable = jobs.filter((r) => isJobApprovedForSelfBillPayout(r as Job));
-  const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
   for (const r of payable) {
     jobValue += Number(r.partner_cost) || 0;
     materials += Number(r.materials_cost) || 0;
   }
+  /**
+   * Visitas ligadas a este documento (mig 161). O clawback e as taxas de
+   * cancelamento abaixo continuam por job: visita não tem cancelamento próprio
+   * nesta fase.
+   */
+  const visitLines = (await loadSelfBillPayoutLines(selfBillId, supabase)).filter((l) => l.kind === "visit");
+  for (const l of visitLines) {
+    jobValue += l.labour;
+    materials += l.materials;
+  }
+  /**
+   * Continua contando JOBS no documento, não linhas: é o número que o parceiro
+   * já lê na lista de self-bills. O PDF pode legitimamente ter mais linhas que
+   * isto quando há visitas.
+   */
+  const jobsCount = payable.length;
   const commission = 0;
   let clawAdjustAll = 0;
   let officePayoutAdjustAll = 0;
@@ -564,13 +647,30 @@ export type EnsureWeeklySelfBillOptions = {
   weekAnchorDate?: Date;
   dueCtx?: SelfBillDueResolveContext;
   client?: SupabaseClient;
+  /**
+   * Quando presente, o documento é da VISITA e não do job (mig 161).
+   *
+   * Self-bill é por parceiro: a visita 2 pode ser de outro parceiro e nunca
+   * pode cair no documento do parceiro da visita 1. Com isto, o parceiro, a
+   * data-âncora e o destino do vínculo vêm da visita, e o link é escrito em
+   * `job_visits.self_bill_id` em vez de `jobs.self_bill_id`.
+   */
+  visit?: {
+    id: string;
+    partnerId: string;
+    partnerName?: string | null;
+    /** Data que decide o período de pagamento: conclusão, senão agendamento. */
+    anchorYmd: string;
+  };
 };
 
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
-  if (!job.partner_id?.trim()) return null;
+  const visitScope = options?.visit ?? null;
+  if (!visitScope && !job.partner_id?.trim()) return null;
+  if (visitScope && !visitScope.partnerId.trim()) return null;
   if (!canDraftSelfBillForJob(job)) return null;
   const supabase = options?.client ?? getSupabase();
-  let partnerId = job.partner_id.trim();
+  let partnerId = (visitScope?.partnerId ?? job.partner_id ?? "").trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
   const { data: partnerRowInit, error: partnerLookupErr } = await supabase
     .from("partners")
@@ -580,7 +680,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   if (partnerLookupErr) throw partnerLookupErr;
   let partnerRow = partnerRowInit;
   if (!partnerRow?.id) {
-    const partnerName = (job.partner_name ?? "").trim();
+    const partnerName = (visitScope?.partnerName ?? job.partner_name ?? "").trim();
     if (partnerName) {
       const byCompany = await supabase
         .from("partners")
@@ -608,10 +708,14 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       );
     }
     partnerId = String(partnerRow.id).trim();
-    const { error: repairErr } = await supabase.from("jobs").update({ partner_id: partnerId }).eq("id", job.id);
-    if (repairErr) throw repairErr;
+    if (!visitScope) {
+      const { error: repairErr } = await supabase.from("jobs").update({ partner_id: partnerId }).eq("id", job.id);
+      if (repairErr) throw repairErr;
+    }
   }
-  const anchor = options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(job);
+  const anchor = visitScope
+    ? new Date(`${visitScope.anchorYmd}T12:00:00`)
+    : options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(job);
   if (!anchor) return null;
   const orgTerms = options?.dueCtx?.orgStandardTerms ?? null;
   const cadence = partnerPayoutCadenceFromTerms(orgTerms);
@@ -753,13 +857,38 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
 
   if (!sbId) throw new Error("Failed to create or find weekly self-bill");
 
-  const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
+  const { error: linkErr } = visitScope
+    ? await supabase.from("job_visits").update({ self_bill_id: sbId }).eq("id", visitScope.id)
+    : await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
 
   void refreshSelfBillPayoutState(sbId).catch((e) => {
     console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
   });
   return sbId;
+}
+
+/**
+ * Self-bill do parceiro de UMA visita (mig 161).
+ *
+ * Mesmo balde de sempre — parceiro x período de pagamento — só que a âncora é
+ * a data da visita e o vínculo mora em `job_visits.self_bill_id`. Job com dois
+ * parceiros passa a ter dois documentos, cada um com o valor do seu.
+ */
+export async function ensureWeeklySelfBillForVisit(
+  job: Job,
+  visit: { id: string; partner_id?: string | null; partner_name?: string | null; scheduled_date?: string | null; completed_at?: string | null },
+  options?: Omit<EnsureWeeklySelfBillOptions, "visit">,
+): Promise<string | null> {
+  const partnerId = visit.partner_id?.trim();
+  if (!partnerId) return null;
+  // Visita que escorregou da data agendada cai no período em que foi feita.
+  const anchorYmd = (visit.completed_at?.slice(0, 10) || visit.scheduled_date?.slice(0, 10) || "").trim();
+  if (!anchorYmd) return null;
+  return ensureWeeklySelfBillForJob(job, {
+    ...options,
+    visit: { id: visit.id, partnerId, partnerName: visit.partner_name ?? null, anchorYmd },
+  });
 }
 
 /** Office cancel: void self-bill(s) and unlink jobs so refresh/sync cannot reopen them. */
