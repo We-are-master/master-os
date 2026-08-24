@@ -1,5 +1,6 @@
 "use client";
 
+import { pulseMoney } from "@/lib/pulse-money-display";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FileWarning, TrendingDown, Wallet } from "lucide-react";
@@ -202,10 +203,7 @@ function AttentionList({ items, loading }: { items: AlertItem[]; loading: boolea
   );
 }
 
+/** Segue a lente de moeda do Pulse (GBP por padrão, BRL quando o usuário troca). */
 function formatGbp(n: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(n);
+  return pulseMoney(n);
 }

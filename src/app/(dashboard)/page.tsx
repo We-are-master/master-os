@@ -8,6 +8,7 @@ import { DashboardDateRangeProvider } from "@/hooks/use-dashboard-date-range";
 import { useProfile } from "@/hooks/use-profile";
 import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 import { PulseHead } from "@/components/pulse/pulse-head";
+import { PulseCurrencyProvider } from "@/lib/pulse-currency";
 import { LiveOperations } from "@/components/pulse/live-operations";
 import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
@@ -33,6 +34,7 @@ function PulseInner() {
 
   return (
     <PageTransition>
+      <PulseCurrencyProvider>
       <div className="pulse-dark">
         <div className="space-y-6">
           <PulseHead
@@ -60,6 +62,7 @@ function PulseInner() {
           )}
         </div>
       </div>
+      </PulseCurrencyProvider>
     </PageTransition>
   );
 }

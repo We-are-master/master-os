@@ -4,6 +4,7 @@ import { Crown, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { LiveIndicator } from "@/components/fx/primitives";
+import { usePulseMoney } from "@/lib/pulse-currency";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 import type { DateRangePreset } from "@/lib/dashboard-date-range";
@@ -97,16 +98,43 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
             CEO
           </button>
         )}
+        <CurrencyToggle />
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 px-3 py-[7px] rounded-md text-[13px] font-medium bg-card border border-fx-line text-text-primary hover:bg-fx-paper transition-colors"
+          className="inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border border-fx-line bg-card text-text-primary transition-colors hover:bg-fx-paper"
+          title="Export"
+          aria-label="Export"
         >
           <Download className="h-3.5 w-3.5" />
-          Export
         </button>
         <LiveIndicator />
       </div>
     </div>
+  );
+}
+
+/** Libra é a moeda do negócio; real é só a lente de leitura desta tela. */
+function CurrencyToggle() {
+  const { currency, toggle, rate, rateSource } = usePulseMoney();
+  const title =
+    currency === "GBP"
+      ? `Ver em real (£1 = R$ ${rate.toFixed(2)}${rateSource === "fallback" ? ", cotação de referência" : ""})`
+      : `Voltar para libra (£1 = R$ ${rate.toFixed(2)}${rateSource === "fallback" ? ", cotação de referência" : ""})`;
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      title={title}
+      aria-label={title}
+      className={cn(
+        "inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border text-[13px] font-semibold transition-colors",
+        currency === "BRL"
+          ? "border-fx-navy bg-fx-navy text-white"
+          : "border-fx-line bg-card text-text-primary hover:bg-fx-paper",
+      )}
+    >
+      {currency === "GBP" ? "£" : "R$"}
+    </button>
   );
 }
 
