@@ -26,8 +26,16 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function firstName(full: string): string {
-  return (full.trim().split(/\s+/)[0] ?? "").trim();
+/**
+ * A saudação chega PRONTA de `resolveCustomerGreetingName`.
+ *
+ * Aplicar `firstName` aqui truncava nome de empresa: um aviso para a conta
+ * "Fantastic Services" saía como "Hi Fantastic". Quem sabe se o nome é de
+ * pessoa ou de organização é o resolver, que já corta o primeiro nome quando é
+ * cliente final.
+ */
+function escapeHtmlSafeName(name: string): string {
+  return name.trim() || "there";
 }
 
 function compactHtml(html: string): string {
@@ -58,7 +66,7 @@ function shell(args: { tone: "success" | "warn" | "neutral"; eyebrow: string; he
 }
 
 export function buildJobCompletedHtml(args: CommonArgs): string {
-  const fname = firstName(args.customerName) || "there";
+  const fname = escapeHtmlSafeName(args.customerName);
   const body = `
   <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
     Hi ${escapeHtml(fname)}, your job <strong>#${escapeHtml(args.reference)}</strong>
@@ -76,7 +84,7 @@ export function buildJobCompletedHtml(args: CommonArgs): string {
 }
 
 export function buildJobCancelledHtml(args: CommonArgs): string {
-  const fname = firstName(args.customerName) || "there";
+  const fname = escapeHtmlSafeName(args.customerName);
   const reasonBlock = args.reason?.trim()
     ? `
   <div style="background:#F7F7FB;border:1px solid #E4E4EC;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
@@ -99,7 +107,7 @@ export function buildJobCancelledHtml(args: CommonArgs): string {
 }
 
 export function buildQuoteRejectedHtml(args: CommonArgs): string {
-  const fname = firstName(args.customerName) || "there";
+  const fname = escapeHtmlSafeName(args.customerName);
   const reasonBlock = args.reason?.trim()
     ? `
   <div style="background:#F7F7FB;border:1px solid #E4E4EC;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
