@@ -162,6 +162,22 @@ function previewRowFromPayoutFriday(payYmd: string): PartnerPayoutSchedulePrevie
   };
 }
 
+/**
+ * Sexta de pagamento usada quando a org nao gravou `partner_payout_reference_ymd`.
+ *
+ * A grade quinzenal precisa de UMA ancora para todo mundo. Ancorar na proxima
+ * sexta do proprio job dava uma grade por data de inicio: em agosto/2026, 22
+ * dias seguidos produziram 5 janelas sobrepostas (03-16, 10-23, 17-30, 24-06,
+ * 31-13) e nem monotonicas eram — 22 e 23/08 caiam numa grade anterior a de
+ * 17/08. Dai saiam dois self-bills abertos para o mesmo parceiro no mesmo dia,
+ * e o trabalho caia no balde que pagava duas semanas depois.
+ *
+ * 2026-08-21 e uma sexta de pagamento real observada em producao, entao a grade
+ * derivada dela reproduz as janelas que o OS ja usa (…03-16, 17-30, 31-13…).
+ * Assim que a org gravar a propria referencia, ela manda.
+ */
+export const FALLBACK_PAYOUT_FRIDAY_YMD = "2026-08-21";
+
 /** Job start date → pay period (org biweekly Friday schedule). */
 export function workPeriodForJobStartYmd(
   startYmd: string,
@@ -173,8 +189,8 @@ export function workPeriodForJobStartYmd(
   const normalized = normalizePartnerPayoutStandardTerms(orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS);
 
   if (isBiweeklyFridayTerms(normalized)) {
-    const ref = normalizePartnerPayoutReferenceYmd(orgReferenceYmd);
-    let pay = ref ?? nextFridayOnOrAfter(parseISO(`${ymd}T12:00:00`));
+    const ref = normalizePartnerPayoutReferenceYmd(orgReferenceYmd) ?? FALLBACK_PAYOUT_FRIDAY_YMD;
+    let pay = ref;
     for (let i = 0; i < 104; i++) {
       const period = workPeriodBoundsForPayoutFriday(pay);
       if (jobStartYmdInWorkPeriod(ymd, period)) return period;
