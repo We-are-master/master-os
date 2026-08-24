@@ -5,6 +5,7 @@
 
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { extractUkPostcode } from "@/lib/uk-postcode";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const FIXFY_LOGO_URL = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 
@@ -41,6 +42,42 @@ export function resolveCustomerGreetingName(
   const org = organizationName?.trim();
   if (org) return org;
   return firstName(clientDisplayName) || "there";
+}
+
+/**
+ * Nome da organização de uma conta, para a saudação.
+ *
+ * Existe para os avisos do ciclo de vida não repetirem esta consulta cada um do
+ * seu jeito. Em 24/08/2026 o cancelamento do JOB-9491 saiu com "Hi Julian" — o
+ * morador — numa nota pública cujo destinatário era hello@housekeep.com: o
+ * aviso de criação já resolvia a organização, os terminais não.
+ *
+ * Nunca derruba o aviso: conta apagada ou consulta que falha devolve `null` e a
+ * saudação cai no cliente, que é o comportamento antigo.
+ */
+export async function loadAccountOrganizationName(
+  supabase: SupabaseClient,
+  accountId: string | null | undefined,
+): Promise<string | null> {
+  const id = accountId?.trim();
+  if (!id) return null;
+  try {
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("company_name, contact_name")
+      .eq("id", id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (error) {
+      console.error("loadAccountOrganizationName:", error);
+      return null;
+    }
+    const row = data as { company_name?: string | null; contact_name?: string | null } | null;
+    return row?.company_name?.trim() || row?.contact_name?.trim() || null;
+  } catch (e) {
+    console.error("loadAccountOrganizationName:", e);
+    return null;
+  }
 }
 
 /** Format YYYY-MM-DD as "11 Jun" — same short date as partner job email subjects. */

@@ -36,6 +36,7 @@ import {
   buildJobConfirmationHtml,
   formatJobConfirmationArrivalWindow,
   formatJobConfirmationLongDate,
+  loadAccountOrganizationName,
   resolveCustomerGreetingName,
   splitPropertyAddressAndPostcode,
 } from "@/lib/zendesk-job-confirmation";
@@ -177,17 +178,7 @@ export async function dispatchJobCreatedZendesk(args: {
   const clientEmail = billing.documentEmail?.trim() ?? "";
   const clientAccountId = billing.sourceAccountId?.trim() ?? "";
 
-  let organizationName: string | null = null;
-  if (clientAccountId) {
-    const { data: acct } = await supabase
-      .from("accounts")
-      .select("company_name, contact_name")
-      .eq("id", clientAccountId)
-      .is("deleted_at", null)
-      .maybeSingle();
-    const row = acct as { company_name?: string | null; contact_name?: string | null } | null;
-    organizationName = row?.company_name?.trim() || row?.contact_name?.trim() || null;
-  }
+  const organizationName = await loadAccountOrganizationName(supabase, clientAccountId);
 
   const greetingName = resolveCustomerGreetingName(organizationName, clientName);
   const { propertyAddress, propertyPostcode } = splitPropertyAddressAndPostcode(
@@ -326,7 +317,7 @@ async function dispatchJobTerminalNotice(args: {
       id, reference, title, status,
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
-      clients ( full_name )
+      clients ( full_name, source_account_id )
     `)
     .eq("id", args.jobId)
     .maybeSingle();
@@ -340,9 +331,18 @@ async function dispatchJobTerminalNotice(args: {
   if (job.status !== args.status) return { ok: true }; // status drifted — skip
   if ((job as Record<string, unknown>)[sentColumn]) return { ok: true };
 
-  const clientRow = (job as unknown as { clients?: { full_name?: string | null } | { full_name?: string | null }[] | null }).clients;
-  const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.full_name ?? "") : (clientRow?.full_name ?? "");
+  /**
+   * A nota é pública: quem recebe é o requester do ticket, que num job de conta
+   * é a CONTA. Cumprimentar o morador aqui manda o nome dele para o parceiro
+   * B2B e trata a conta como cliente final. Ver `zendesk-notice-addressee`.
+   */
+  const clientRowRaw = (job as unknown as {
+    clients?: { full_name?: string | null; source_account_id?: string | null }
+      | { full_name?: string | null; source_account_id?: string | null }[] | null;
+  }).clients;
+  const clientRow = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
+  const orgName = await loadAccountOrganizationName(supabase, clientRow?.source_account_id);
+  const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
 
   const html =
     args.status === "completed"
@@ -394,7 +394,7 @@ export async function dispatchQuoteRejectedZendesk(
       id, reference, status,
       external_source, external_ref,
       rejection_reason, rejection_notice_sent_at,
-      clients ( full_name )
+      clients ( full_name, source_account_id )
     `)
     .eq("id", quoteId)
     .maybeSingle();
@@ -410,9 +410,14 @@ export async function dispatchQuoteRejectedZendesk(
     return { ok: true };
   }
 
-  const clientRow = (quote as unknown as { clients?: { full_name?: string | null } | { full_name?: string | null }[] | null }).clients;
-  const clientName =
-    Array.isArray(clientRow) ? (clientRow[0]?.full_name ?? "") : (clientRow?.full_name ?? "");
+  // Mesma razão do aviso de job: a nota pública fala com a conta, não com o morador.
+  const clientRowRaw = (quote as unknown as {
+    clients?: { full_name?: string | null; source_account_id?: string | null }
+      | { full_name?: string | null; source_account_id?: string | null }[] | null;
+  }).clients;
+  const clientRow = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
+  const orgName = await loadAccountOrganizationName(supabase, clientRow?.source_account_id);
+  const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
 
   const html = buildQuoteRejectedHtml({
     customerName: clientName,
