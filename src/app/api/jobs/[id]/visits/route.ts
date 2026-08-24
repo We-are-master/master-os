@@ -314,8 +314,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   let payoutError: string | null = null;
   if (touchedPayout) {
     try {
-      await detachVisitFromSelfBill(updated.id, supabase);
-      if (updated.partner_id && updated.status !== "cancelled") {
+      const solta = await detachVisitFromSelfBill(updated.id, supabase);
+      /**
+       * Documento já pago não solta a visita, e por isso ela também não pode
+       * ser religada: o `ensure` criaria um documento novo com o valor CHEIO
+       * e o parceiro receberia duas vezes pelo mesmo trabalho.
+       */
+      if (!solta.detached) {
+        payoutError =
+          "this visit is on a self-bill that was already paid; the change was saved but the payout was not moved. Settle the difference as a manual adjustment.";
+      } else if (updated.partner_id && updated.status !== "cancelled") {
         const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
         if (!fullJob) {
           payoutError = "job not found when linking the self-bill";

@@ -11,6 +11,8 @@ import {
   refreshSelfBillPayoutState,
   resolveJobSelfBillWeekAnchor,
   SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES,
+  listVisitPayoutLinesBySelfBillId,
+  type SelfBillPayoutLine,
 } from "@/services/self-bills";
 
 const JOB_SELECT_FIELDS =
@@ -259,8 +261,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  /** Visitas ligadas aos mesmos documentos (mig 161/276). Ambiente sem a coluna
-   *  devolve erro e o mapa fica vazio: o sync segue valendo só com os jobs. */
+  /**
+   * Visitas ligadas aos mesmos documentos (mig 161/276).
+   *
+   * Duas leituras de propósito, e elas respondem perguntas diferentes:
+   *
+   *   - `linhasDeVisita` é DINHEIRO, e vem de `listVisitPayoutLinesBySelfBillId`
+   *     porque é a fonte única que o recompute e o PDF usam. Somar aqui de novo
+   *     por conta própria foi o que fez o Sync reinflar `net_payout` com visita
+   *     de job deletado: a linha some da tela e volta pelo botão de sincronizar,
+   *     direto para o Wise;
+   *   - `visitsBySb` é ESTADO ("ainda existe visita por fazer?"), e para isso
+   *     precisa enxergar também a visita que não vale dinheiro.
+   *
+   * Ambiente sem a coluna devolve erro e os dois ficam vazios: o sync segue
+   * valendo só com os jobs.
+   */
+  const linhasDeVisita = await listVisitPayoutLinesBySelfBillId(selfBillIds, admin).catch((e) => {
+    console.error("full-sync: listVisitPayoutLinesBySelfBillId", e);
+    return {} as Record<string, SelfBillPayoutLine[]>;
+  });
   type SyncVisitRow = { self_bill_id: string; status: string; partner_cost: number; materials_cost: number };
   const visitsBySb = new Map<string, SyncVisitRow[]>();
   for (let i = 0; i < selfBillIds.length; i += CHUNK) {
@@ -314,13 +334,15 @@ export async function POST(req: NextRequest) {
     // Mesma regra do recompute: valor entra assim que a visita existe viva; o
     // "done" governa a promoção a ready_to_pay, não o valor.
     const payableVisits = visits.filter((v) => v.status !== "cancelled");
+    // O dinheiro sai da fonte única, que já descarta visita de job morto.
+    const pagaveisDeVisita = linhasDeVisita[sb.id] ?? [];
 
     const jobValue =
       payable.reduce((s, j) => s + (Number(j.partner_cost) || 0), 0) +
-      payableVisits.reduce((s, v) => s + (Number(v.partner_cost) || 0), 0);
+      pagaveisDeVisita.reduce((s, v) => s + (Number(v.labour) || 0), 0);
     const materials =
       payable.reduce((s, j) => s + (Number(j.materials_cost) || 0), 0) +
-      payableVisits.reduce((s, v) => s + (Number(v.materials_cost) || 0), 0);
+      pagaveisDeVisita.reduce((s, v) => s + (Number(v.materials) || 0), 0);
     const netPayout = jobValue + materials;
 
     const patch: Record<string, unknown> = {
@@ -351,7 +373,7 @@ export async function POST(req: NextRequest) {
      * jamais seria promovido enquanto a regra olhasse apenas jobs, e um
      * documento misto não pode ser liberado com visita ainda por fazer.
      */
-    const temTrabalho = payable.length > 0 || payableVisits.length > 0;
+    const temTrabalho = payable.length > 0 || pagaveisDeVisita.length > 0;
     const jobsProntos = payable.every((j) => SELF_BILL_PAYOUT_APPROVED_JOB_STATUSES.has(j.status));
     const visitasPendentes = visits.some((v) => v.status !== "completed" && v.status !== "cancelled");
     if (PROMOTABLE_STATUSES.has(sb.status) && temTrabalho && jobsProntos && !visitasPendentes) {

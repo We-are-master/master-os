@@ -78,11 +78,15 @@ export function useBillingStandaloneData() {
   );
 
   const mergeSelfBillJobEnrichment = useCallback(
-    (partial: Pick<BillingEnrichmentState, "jobsBySelfBillId" | "partnerPaidByJobId">, sbIds: string[]) => {
+    (
+      partial: Pick<BillingEnrichmentState, "jobsBySelfBillId" | "visitsBySelfBillId" | "partnerPaidByJobId">,
+      sbIds: string[],
+    ) => {
       for (const id of sbIds) selfBillJobsLoadedRef.current.add(id);
       setEnrichment((prev) => ({
         ...prev,
         jobsBySelfBillId: { ...prev.jobsBySelfBillId, ...partial.jobsBySelfBillId },
+        visitsBySelfBillId: { ...prev.visitsBySelfBillId, ...partial.visitsBySelfBillId },
         partnerPaidByJobId: { ...prev.partnerPaidByJobId, ...partial.partnerPaidByJobId },
       }));
     },
@@ -492,6 +496,7 @@ export function useBillingStandaloneData() {
     pipelineJobs,
     clientIdToAccountId,
     jobsBySelfBillId,
+    visitsBySelfBillId,
     partnerPaidByJobId,
     accountNameById,
     accountTermsById,
@@ -533,6 +538,7 @@ export function useBillingStandaloneData() {
       pipelineJobs,
       clientIdToAccountId,
       jobsBySelfBillId,
+      visitsBySelfBillId,
       partnerPaidByJobId,
       accountNameById,
       accountTermsById,
@@ -567,6 +573,7 @@ export function useBillingStandaloneData() {
       pipelineJobs,
       clientIdToAccountId,
       jobsBySelfBillId,
+      visitsBySelfBillId,
       partnerPaidByJobId,
       accountNameById,
       accountTermsById,

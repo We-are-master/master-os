@@ -216,6 +216,50 @@ export function selfBillJobPayoutStateLabel(
  */
 export const SELF_BILL_REUSABLE_STATUSES = new Set(["draft", "accumulating"]);
 
+/** O índice único da mig 277 recusando um segundo balde aberto. */
+export function isDuplicateOpenBucketError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  const msg = String((error as { message?: string } | null)?.message ?? "");
+  return code === "23505" || msg.includes("uq_self_bills_partner_period_open");
+}
+
+/**
+ * Update que pode devolver o documento a um estado ABERTO.
+ *
+ * Existe por causa do índice da mig 277. Quando um documento é promovido e o
+ * trabalho volta atrás (job que retorna a `in_progress`, visita reaberta,
+ * compensação de cancelamento), o refresh reabre o documento para
+ * `accumulating`. Se nesse meio-tempo já nasceu outro balde para o mesmo
+ * parceiro e período, essa escrita colide.
+ *
+ * Reabrir à força não é opção: seriam dois baldes abertos, que é justamente o
+ * que o índice proíbe. Então o documento cai em `needs_attention` — não é o
+ * balde, mas também não fica parado em `ready_to_pay` com valor cheio esperando
+ * pagamento. É o estado que aparece no Money Out para alguém olhar.
+ *
+ * O silêncio é o risco real aqui: quase todo chamador deste caminho faz
+ * `.catch(console.error)`.
+ */
+async function updateSelfBillPossiblyReopening(
+  supabase: SupabaseClient,
+  selfBillId: string,
+  patch: Record<string, unknown>,
+): Promise<{ error: unknown | null }> {
+  const { error } = await supabase.from("self_bills").update(patch).eq("id", selfBillId);
+  if (!error || !isDuplicateOpenBucketError(error)) return { error };
+
+  const rebaixado = { ...patch, status: "needs_attention" };
+  const retry = await supabase.from("self_bills").update(rebaixado).eq("id", selfBillId);
+  if (!retry.error) {
+    console.error(
+      `self-bill ${selfBillId}: já existe um documento aberto para este parceiro e período; ` +
+        `este ficou em needs_attention em vez de reabrir.`,
+    );
+    return { error: null };
+  }
+  return { error: retry.error };
+}
+
 export type SelfBillPayoutLine = {
   kind: "job" | "visit";
   /** `job_id` na linha de job; `job_visits.id` na linha de visita. */
@@ -241,6 +285,74 @@ export type SelfBillPayoutLine = {
  * só promove a ready_to_pay quando não há visita em aberto, e a rota de aprovar
  * recusa documento com visita pendente.
  */
+/**
+ * Linhas de VISITA de um ou mais self-bills, com as regras de pagamento
+ * aplicadas. Fonte única: o PDF, o recompute e a coluna Outstanding leem daqui,
+ * porque o dia em que uma delas consultar por conta própria elas divergem — já
+ * aconteceu (linhas de £1.055 contra rodapé de £430).
+ */
+async function loadVisitPayoutLinesForSelfBills(
+  supabase: SupabaseClient,
+  selfBillIds: string[],
+): Promise<(SelfBillPayoutLine & { selfBillId: string })[]> {
+  if (selfBillIds.length === 0) return [];
+
+  const { data: visitRows, error: visitErr } = await supabase
+    .from("job_visits")
+    .select("id, job_id, self_bill_id, visit_index, partner_cost, materials_cost, status, deleted_at")
+    .in("self_bill_id", selfBillIds)
+    .is("deleted_at", null);
+  // Ambiente sem a mig 161/276 não tem tabela nem coluna: o self-bill segue
+  // valendo com as linhas de job.
+  if (visitErr) {
+    if (isSupabaseMissingColumnError(visitErr) || (visitErr as { code?: string }).code === "42P01") return [];
+    throw visitErr;
+  }
+
+  const vivas = ((visitRows ?? []) as {
+    id: string; job_id: string; self_bill_id: string; visit_index: number;
+    partner_cost: number | null; materials_cost: number | null; status: string;
+  }[]).filter((row) => row.status !== "cancelled");
+  if (vivas.length === 0) return [];
+
+  /**
+   * Visita de job morto não vale dinheiro.
+   *
+   * Não existe cascata: apagar ou cancelar o job não mexe em `job_visits`. Sem
+   * este filtro, o parceiro da visita 2 continuava a ser pago por um job
+   * deletado — a linha some da tela e permanece no documento que ele assina. A
+   * linha de job já tinha essa proteção em `isJobApprovedForSelfBillPayout`; a
+   * de visita não tinha nenhuma.
+   */
+  const jobIds = [...new Set(vivas.map((v) => v.job_id))];
+  const { data: donos, error: donoErr } = await supabase
+    .from("jobs")
+    .select("id, status, deleted_at")
+    .in("id", jobIds);
+  if (donoErr) throw donoErr;
+  const vivosPorId = new Map(
+    ((donos ?? []) as { id: string; status: string; deleted_at: string | null }[]).map((j) => [j.id, j]),
+  );
+  const jobVivo = (id: string): boolean => {
+    const j = vivosPorId.get(id);
+    // Job que sumiu da tabela conta como morto.
+    if (!j) return false;
+    return !j.deleted_at && j.status !== "cancelled" && j.status !== "deleted";
+  };
+
+  return vivas
+    .filter((row) => jobVivo(row.job_id))
+    .map((row) => ({
+      kind: "visit" as const,
+      id: row.id,
+      jobId: row.job_id,
+      selfBillId: row.self_bill_id,
+      visitIndex: row.visit_index,
+      labour: Number(row.partner_cost) || 0,
+      materials: Number(row.materials_cost) || 0,
+    }));
+}
+
 export async function loadSelfBillPayoutLines(
   selfBillId: string,
   client?: SupabaseClient,
@@ -265,33 +377,87 @@ export async function loadSelfBillPayoutLines(
     });
   }
 
-  const { data: visitRows, error: visitErr } = await supabase
-    .from("job_visits")
-    .select("id, job_id, visit_index, partner_cost, materials_cost, status, deleted_at")
-    .eq("self_bill_id", selfBillId)
-    .is("deleted_at", null);
-  // Ambiente sem a mig 161/275 não tem tabela nem coluna: o self-bill segue
-  // valendo com as linhas de job.
-  if (visitErr && !isSupabaseMissingColumnError(visitErr) && (visitErr as { code?: string }).code !== "42P01") {
-    throw visitErr;
-  }
-  for (const row of (visitRows ?? []) as {
-    id: string; job_id: string; visit_index: number; partner_cost: number | null;
-    materials_cost: number | null; status: string; deleted_at: string | null;
-  }[]) {
-    // Cancelada não vale dinheiro; agendada e em andamento valem, como no job.
-    if (row.status === "cancelled") continue;
-    lines.push({
-      kind: "visit",
-      id: row.id,
-      jobId: row.job_id,
-      visitIndex: row.visit_index,
-      labour: Number(row.partner_cost) || 0,
-      materials: Number(row.materials_cost) || 0,
-    });
+  for (const v of await loadVisitPayoutLinesForSelfBills(supabase, [selfBillId])) {
+    const { selfBillId: _sb, ...linha } = v;
+    lines.push(linha);
   }
 
   return lines;
+}
+
+/**
+ * As linhas de visita de vários documentos de uma vez, agrupadas por self-bill.
+ * É o que a tela do Financeiro usa para somar o Outstanding sem uma consulta
+ * por documento.
+ */
+export async function listVisitPayoutLinesBySelfBillId(
+  selfBillIds: string[],
+  client?: SupabaseClient,
+): Promise<Record<string, SelfBillPayoutLine[]>> {
+  const ids = [...new Set(selfBillIds.filter((x) => Boolean(x && String(x).trim())))];
+  if (ids.length === 0) return {};
+  const supabase = client ?? getSupabase();
+  /**
+   * Toda chave consultada volta, mesmo vazia.
+   *
+   * A tela funde o resultado com spread. Sem a chave presente, um documento que
+   * PERDEU as visitas (cancelada, excluída, job deletado) mantinha o valor
+   * antigo em cima da tela até alguém recarregar a página.
+   */
+  const out: Record<string, SelfBillPayoutLine[]> = {};
+  for (const id of ids) out[id] = [];
+  for (let i = 0; i < ids.length; i += SELF_BILL_JOB_QUERY_CHUNK) {
+    const chunk = ids.slice(i, i + SELF_BILL_JOB_QUERY_CHUNK);
+    for (const v of await loadVisitPayoutLinesForSelfBills(supabase, chunk)) {
+      const { selfBillId, ...linha } = v;
+      (out[selfBillId] ??= []).push(linha);
+    }
+  }
+  return out;
+}
+
+/**
+ * Todo self-bill que este job toca: o dele e o de cada visita.
+ *
+ * `jobs.self_bill_id` é escalar e só conhece o documento do parceiro da visita
+ * 1. Job com visitas de outros parceiros tem dinheiro em VÁRIOS documentos, e
+ * quem só lê a coluna do job deixa os outros para trás — deletar o job pela
+ * tela mantinha o parceiro da visita 2 sendo pago.
+ */
+export async function selfBillIdsTouchedByJob(
+  jobIds: string[],
+  client?: SupabaseClient,
+): Promise<string[]> {
+  const ids = jobIds.filter((x) => Boolean(x && String(x).trim()));
+  if (ids.length === 0) return [];
+  const supabase = client ?? getSupabase();
+  const encontrados = new Set<string>();
+
+  const { data: jobRows, error: jobErr } = await supabase
+    .from("jobs")
+    .select("self_bill_id")
+    .in("id", ids);
+  if (jobErr) throw jobErr;
+  for (const r of (jobRows ?? []) as { self_bill_id: string | null }[]) {
+    if (r.self_bill_id?.trim()) encontrados.add(r.self_bill_id.trim());
+  }
+
+  // Banco sem a mig 276 não tem a coluna: o job segue valendo pelo documento dele.
+  const { data: visitRows, error: visitErr } = await supabase
+    .from("job_visits")
+    .select("self_bill_id")
+    .in("job_id", ids);
+  if (visitErr) {
+    if (!isSupabaseMissingColumnError(visitErr) && (visitErr as { code?: string }).code !== "42P01") {
+      throw visitErr;
+    }
+  } else {
+    for (const r of (visitRows ?? []) as { self_bill_id: string | null }[]) {
+      if (r.self_bill_id?.trim()) encontrados.add(r.self_bill_id.trim());
+    }
+  }
+
+  return [...encontrados];
 }
 
 /**
@@ -468,7 +634,7 @@ export async function refreshSelfBillPayoutState(
     } else if (promovivel) {
       soVisitaPatch.status = "ready_to_pay";
     }
-    const { error: soVisitaErr } = await supabase.from("self_bills").update(soVisitaPatch).eq("id", selfBillId);
+    const { error: soVisitaErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, soVisitaPatch);
     if (soVisitaErr) throw soVisitaErr;
     return;
   }
@@ -484,17 +650,11 @@ export async function refreshSelfBillPayoutState(
           payout_void_reason: null,
           partner_status_label: null,
         };
-        let { error: up } = await supabase
-          .from("self_bills")
-          .update(reopenPaidPatch)
-          .eq("id", selfBillId);
+        let { error: up } = await updateSelfBillPossiblyReopening(supabase, selfBillId, reopenPaidPatch);
         if (up && isSupabaseMissingColumnError(up)) {
           delete reopenPaidPatch.payout_void_reason;
           delete reopenPaidPatch.partner_status_label;
-          ({ error: up } = await supabase
-            .from("self_bills")
-            .update(reopenPaidPatch)
-            .eq("id", selfBillId));
+          ({ error: up } = await updateSelfBillPossiblyReopening(supabase, selfBillId, reopenPaidPatch));
         }
         if (up) throw up;
       }
@@ -514,12 +674,12 @@ export async function refreshSelfBillPayoutState(
       payout_void_reason: null,
       partner_status_label: null,
     };
-    const { error: reopenErr } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+    const { error: reopenErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, reopenPatch);
     if (!reopenErr) return;
     if (isSupabaseMissingColumnError(reopenErr)) {
       delete reopenPatch.payout_void_reason;
       delete reopenPatch.partner_status_label;
-      const { error: retry } = await supabase.from("self_bills").update(reopenPatch).eq("id", selfBillId);
+      const { error: retry } = await updateSelfBillPossiblyReopening(supabase, selfBillId, reopenPatch);
       if (!retry) return;
     }
   }
@@ -546,11 +706,11 @@ export async function refreshSelfBillPayoutState(
       payout_void_reason: null,
       partner_status_label: null,
     };
-    let { error: holdErr } = await supabase.from("self_bills").update(holdPatch).eq("id", selfBillId);
+    let { error: holdErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, holdPatch);
     if (holdErr && isSupabaseMissingColumnError(holdErr)) {
       delete holdPatch.payout_void_reason;
       delete holdPatch.partner_status_label;
-      ({ error: holdErr } = await supabase.from("self_bills").update(holdPatch).eq("id", selfBillId));
+      ({ error: holdErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, holdPatch));
     }
     if (holdErr) throw holdErr;
     return;
@@ -845,11 +1005,26 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         )
       : null;
 
+  /**
+   * A busca é pelo balde ABERTO, não por "uma linha qualquer deste período".
+   *
+   * Sem o filtro de status esta consulta pegava uma linha arbitrária: o
+   * esquema antigo era um self-bill POR JOB, e há parceiro com dez documentos
+   * `paid` na mesma semana. Vinha um `paid`, o código concluía "terminal" e
+   * criava outro aberto ao lado — em silêncio, um segundo balde.
+   *
+   * A ordem existe para ser determinística e para casar com a reconciliação
+   * pós-insert e com o índice único da mig 277: os três têm que eleger o mesmo
+   * documento, senão discordam sobre quem é o balde.
+   */
+  const REUSAVEIS = [...SELF_BILL_REUSABLE_STATUSES];
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
     .select("id, status")
     .eq("partner_id", partnerId)
     .eq("week_start", weekStart)
+    .in("status", REUSAVEIS)
+    .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 
@@ -915,8 +1090,19 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
           "Partner is not in the directory (self_bills require a valid partners row). Re-assign the partner on the job, then try again.",
         );
       }
+      /**
+       * 23505 = o índice único da mig 277 recusou um segundo balde aberto para
+       * este parceiro e período. Não é erro: é a garantia funcionando. Alguém
+       * criou o balde entre a nossa busca e o nosso insert, e a recuperação
+       * abaixo lê o vencedor e segue com ele.
+       */
+      const isDuplicateBucket =
+        code === "23505" ||
+        msg.includes("uq_self_bills_partner_period_open") ||
+        msg.includes("duplicate key value");
       const isStatusCheck =
-        code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint");
+        !isDuplicateBucket &&
+        (code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint"));
       if (isStatusCheck) {
         const { data: ins2, error: insErr2 } = await supabase
           .from("self_bills")
@@ -931,7 +1117,8 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
             .select("id, status")
             .eq("partner_id", partnerId)
             .eq("week_start", weekStart)
-            .not("status", "in", `(${SELF_BILL_TERMINAL_STATUSES.join(",")})`)
+            .in("status", REUSAVEIS)
+            .order("created_at", { ascending: true })
             .limit(1)
             .maybeSingle();
           sbId = (race as { id: string } | null)?.id;
@@ -943,7 +1130,8 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
           .select("id, status")
           .eq("partner_id", partnerId)
           .eq("week_start", weekStart)
-          .not("status", "in", `(${SELF_BILL_TERMINAL_STATUSES.join(",")})`)
+          .in("status", REUSAVEIS)
+          .order("created_at", { ascending: true })
           .limit(1)
           .maybeSingle();
         sbId = (race as { id: string } | null)?.id;
@@ -951,11 +1139,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         /**
          * Sobrou o caso do documento CANCELADO no mesmo balde.
          *
-         * (parceiro, período) é único, então o insert acima colide com ele e
-         * não há como criar um segundo. Se esse documento cancelado está
-         * vazio, ele volta a valer — foi cancelado justamente por ter ficado
-         * sem linha, e agora tem trabalho de novo. Documento cancelado COM
-         * linha não se mexe: aquilo é histórico.
+         * O índice da mig 277 é PARCIAL — cobre só os estados abertos — então
+         * um documento cancelado não barra o insert e este ramo praticamente
+         * não é alcançado hoje. Fica de pé para o banco que ainda não tem o
+         * índice e para colisão vinda de outra constraint: se o cancelado está
+         * vazio, ele volta a valer, porque foi cancelado justamente por ter
+         * ficado sem linha. Cancelado COM linha não se mexe: aquilo é
+         * histórico.
          */
         if (!sbId) {
           const { data: terminal } = await supabase
@@ -1093,11 +1283,20 @@ export async function ensureWeeklySelfBillForVisit(
  * existe mais). Se o documento ficar sem nenhuma linha, ele é cancelado — um
  * self-bill de £0 aberto no Money Out é ruído que alguém acaba pagando.
  */
+export type DetachVisitResult =
+  /** Soltou (ou não havia vínculo): o chamador pode religar a visita. */
+  | { detached: true }
+  /**
+   * O documento já foi pago ou encerrado. O vínculo NÃO foi solto e a visita
+   * não pode ser religada em lugar nenhum.
+   */
+  | { detached: false; lockedSelfBillId: string; status: string };
+
 export async function detachVisitFromSelfBill(
   visitId: string,
   client?: SupabaseClient,
   options?: { cancelIfEmpty?: boolean },
-): Promise<void> {
+): Promise<DetachVisitResult> {
   const supabase = client ?? getSupabase();
   const { data: row, error: readErr } = await supabase
     .from("job_visits")
@@ -1106,22 +1305,35 @@ export async function detachVisitFromSelfBill(
     .maybeSingle();
   if (readErr) {
     // Ambiente sem a mig 276 não tem a coluna: não há vínculo para soltar.
-    if (isSupabaseMissingColumnError(readErr, "self_bill_id")) return;
+    if (isSupabaseMissingColumnError(readErr, "self_bill_id")) return { detached: true };
     throw readErr;
   }
   const sbId = (row as { self_bill_id?: string | null } | null)?.self_bill_id ?? null;
-  if (!sbId) return;
+  if (!sbId) return { detached: true };
+
+  /**
+   * O status vem ANTES de soltar o vínculo.
+   *
+   * Soltar primeiro e só depois olhar o status pagava a mesma visita duas
+   * vezes: o vínculo saía do documento PAGO (que não é recalculado, o dinheiro
+   * já saiu), e o `ensure` seguinte não enxerga documento pago como balde
+   * reutilizável, então nascia um documento novo com o valor CHEIO da visita.
+   * Visita de £70 já paga, corrigida para £80, virava £70 + £80.
+   *
+   * Documento pago é histórico: a visita fica presa nele e a diferença tem que
+   * virar ajuste explícito, nunca reemissão.
+   */
+  const { data: sb } = await supabase.from("self_bills").select("status").eq("id", sbId).maybeSingle();
+  const status = (sb as { status?: string } | null)?.status ?? "";
+  if (status === "paid" || SELF_BILL_TERMINAL_STATUSES.includes(status as SelfBillStatus)) {
+    return { detached: false, lockedSelfBillId: sbId, status };
+  }
 
   const { error: unlinkErr } = await supabase
     .from("job_visits")
     .update({ self_bill_id: null })
     .eq("id", visitId);
   if (unlinkErr) throw unlinkErr;
-
-  const { data: sb } = await supabase.from("self_bills").select("status").eq("id", sbId).maybeSingle();
-  const status = (sb as { status?: string } | null)?.status ?? "";
-  // Documento pago ou já encerrado não se mexe: o dinheiro saiu.
-  if (status === "paid" || SELF_BILL_TERMINAL_STATUSES.includes(status as SelfBillStatus)) return;
 
   const remaining = await loadSelfBillPayoutLines(sbId, supabase);
   /**
@@ -1149,10 +1361,11 @@ export async function detachVisitFromSelfBill(
     // Vazio de verdade (nem linha pagável, nem trabalho ainda por fechar).
     if (!anyJob && !anyVisit) {
       await cancelSelfBillsByIds([sbId]);
-      return;
+      return { detached: true };
     }
   }
   await refreshSelfBillPayoutState(sbId, supabase);
+  return { detached: true };
 }
 
 /** Office cancel: void self-bill(s) and unlink jobs so refresh/sync cannot reopen them. */
@@ -1198,13 +1411,43 @@ export async function cancelSelfBillsByIds(ids: string[]): Promise<void> {
 
   const { error: unlinkErr } = await supabase.from("jobs").update({ self_bill_id: null }).in("self_bill_id", ids);
   if (unlinkErr) throw unlinkErr;
+
+  /**
+   * A visita também solta.
+   *
+   * Sem isto ela ficava apontando para um documento cancelado para sempre:
+   * `detachVisitFromSelfBill` se recusa a mexer em documento terminal, então
+   * ninguém mais desfazia o vínculo, e o `ensure` seguinte criava um documento
+   * novo deixando o ponteiro velho pendurado.
+   */
+  const { error: unlinkVisitErr } = await supabase
+    .from("job_visits")
+    .update({ self_bill_id: null })
+    .in("self_bill_id", ids);
+  if (unlinkVisitErr) {
+    const code = (unlinkVisitErr as { code?: string }).code;
+    if (!isSupabaseMissingColumnError(unlinkVisitErr) && code !== "42P01") throw unlinkVisitErr;
+  }
 }
 
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
   const tasks: Promise<void>[] = [];
-  if (job.self_bill_id) {
+  /**
+   * Todos os documentos do job, não só o da coluna: com visita de outro
+   * parceiro, mudar o job mexia num documento e deixava o outro parado com
+   * valor velho.
+   */
+  const alvos = job.id
+    ? await selfBillIdsTouchedByJob([job.id]).catch((e) => {
+        console.error("syncSelfBillAfterJobChange: falha ao listar documentos do job", e);
+        return job.self_bill_id ? [job.self_bill_id] : [];
+      })
+    : job.self_bill_id
+      ? [job.self_bill_id]
+      : [];
+  for (const sbId of alvos) {
     tasks.push(
-      refreshSelfBillPayoutState(job.self_bill_id).catch((e) => {
+      refreshSelfBillPayoutState(sbId).catch((e) => {
         console.error("syncSelfBillAfterJobChange partner refresh failed:", e);
       }),
     );
@@ -1225,19 +1468,14 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
 /** After bulk job updates that bypass `updateJob`, refresh every linked weekly self-bill. */
 export async function refreshSelfBillPayoutStatesForJobIds(jobIds: string[]): Promise<void> {
   if (jobIds.length === 0) return;
-  const supabase = getSupabase();
-  const { data, error } = await supabase.from("jobs").select("self_bill_id").in("id", jobIds);
-  if (error) {
+  // Inclui os documentos das visitas: ver `selfBillIdsTouchedByJob`.
+  let sbIds: string[];
+  try {
+    sbIds = await selfBillIdsTouchedByJob(jobIds);
+  } catch (error) {
     console.error("refreshSelfBillPayoutStatesForJobIds:", error);
     return;
   }
-  const sbIds = [
-    ...new Set(
-      (data ?? [])
-        .map((r) => (r as { self_bill_id?: string | null }).self_bill_id)
-        .filter((x): x is string => Boolean(x && String(x).trim())),
-    ),
-  ];
   await Promise.all(sbIds.map((bid) => refreshSelfBillPayoutState(bid).catch((e) => console.error("refreshSelfBillPayoutState", bid, e))));
 }
 
@@ -1330,6 +1568,16 @@ export async function cancelOpenSelfBillsForJobCancellation(
       .is("deleted_at", null)
       .limit(1);
     if (activeJobs?.length) return; // other active jobs remain — leave self-bill intact
+    /**
+     * Visita viva também segura o documento.
+     *
+     * Sem isto, cancelar um job zerava um documento que carrega a visita de
+     * OUTRO job do mesmo parceiro no mesmo período — dinheiro de trabalho que
+     * ninguém cancelou. `loadSelfBillPayoutLines` já descarta visita de job
+     * morto, então o que sobra aqui é trabalho vivo de verdade.
+     */
+    const linhasVivas = await loadSelfBillPayoutLines(sb.id, supabase).catch(() => []);
+    if (linhasVivas.some((l) => l.kind === "visit")) return;
     const patch: Record<string, unknown> = {
       status: "payout_cancelled" as const,
       partner_status_label: "Cancelled",
