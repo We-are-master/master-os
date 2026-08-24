@@ -930,19 +930,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ─── Confirmação de agendamento para o cliente final ─────────────────
-  // FORA do `if (ticketId)` de propósito: job direto do Fixfy pode nascer sem
-  // ticket, e o cliente dele quer o aviso do mesmo jeito. Quem decide se
-  // manda é a política da conta (mig 259); a Fantastic está desligada porque
-  // ela paga o call-out quando o cliente não está.
-  //
-  // Fire-and-forget: a checagem de entrega no WhatsApp leva segundos e quem
-  // criou o job não pode esperar por ela. O resultado, inclusive o motivo de
-  // não ter mandado, fica em `client_confirmation_sent_at` / `_skipped`.
-  void enviarConfirmacaoDoCliente(supabase, String(inserted.id)).catch((err) => {
-    console.error("[api/jobs] client confirmation failed:", err);
-  });
-
   // ─── Rota fixa: atribui o parceiro do serviço e avisa na hora ────────
   // Roda antes do leilão e o dispensa: onde há parceiro nomeado para o
   // serviço, não há o que leiloar. Fica atrás de PARTNER_ROUTING_ENABLED
@@ -958,7 +945,33 @@ export async function POST(req: NextRequest) {
         jobId: String(inserted.id),
         partnerId: rota.partnerId,
       });
-      if (r.assigned) routedPartner = { partner_id: rota.partnerId, email_sent: Boolean(r.emailSent) };
+      if (r.assigned) {
+        routedPartner = { partner_id: rota.partnerId, email_sent: Boolean(r.emailSent) };
+        /**
+         * Confirmação do morador: só agora, porque só agora existe parceiro.
+         *
+         * Antes ela saía na criação, incondicional. Só que `/api/jobs` não
+         * aceita parceiro no corpo, então o job SEMPRE nascia sem ninguém
+         * designado: todo job novo mandava um "está confirmado" para o morador
+         * antes de haver quem batesse na porta dele. Com
+         * `CLIENT_MESSAGING_ENABLED=1` isso era WhatsApp de verdade, e job de
+         * teste virava mensagem para gente de verdade.
+         *
+         * Esta é a única porta de criação que atribui parceiro. As outras duas
+         * (`notify-partner-zendesk` e a aceitação do convite) já disparam no
+         * mesmo momento, pelo mesmo motivo. O envio é idempotente por
+         * `client_confirmation_sent_at`, então job que passa por mais de uma
+         * delas não manda duas vezes.
+         *
+         * Fire-and-forget: a checagem de entrega no WhatsApp leva segundos e
+         * quem criou o job não pode esperar por ela. O resultado, inclusive o
+         * motivo de não ter mandado, fica em `client_confirmation_sent_at` /
+         * `client_confirmation_skipped`.
+         */
+        void enviarConfirmacaoDoCliente(supabase, String(inserted.id)).catch((err) => {
+          console.error("[api/jobs] client confirmation failed:", err);
+        });
+      }
     } else if (rota.reason === "cap_reached") {
       // Sem parceiro de propósito: o dono aloca à mão o que passa do teto.
       console.warn("[api/jobs] rota: teto diário atingido", {
