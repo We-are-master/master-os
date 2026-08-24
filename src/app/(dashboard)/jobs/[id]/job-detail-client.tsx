@@ -80,7 +80,7 @@ import {
   Pencil,
   MoreVertical,
   XCircle,
-  UserX,
+  UserX, Layers,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -138,10 +138,14 @@ import type {
   JobExtraEntry,
   JobPayment,
   JobPaymentMethod,
+  JobVisit,
   Partner,
   QuoteLineItem,
   SelfBill,
 } from "@/types/database";
+import { listJobVisits } from "@/services/job-visits";
+import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -328,7 +332,7 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
   "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
 
 /** Details tab — collapsed scope read view (~7 lines). */
-const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "10rem";
+const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "26rem";
 const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
 const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
 
@@ -595,11 +599,17 @@ function JobDetailSelfBillPanel({
   sb,
   job,
   jobLineGross,
+  visitScope,
 }: {
   sb: SelfBill;
   job: Job;
   /** Matches Cash out — partner (cap + materials from ledger). */
   jobLineGross: number;
+  /**
+   * Documento de uma VISITA: as linhas e a nota vêm da visita, não do job.
+   * Sem isto o painel do eletricista mostrava a mão de obra do handyman.
+   */
+  visitScope?: { label: string; labour: number; materials: number };
 }) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
@@ -614,10 +624,13 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : weekLine;
-  const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
-  const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
+  const jobLabourOnBill = Math.round((visitScope ? visitScope.labour : partnerPaymentCap(job)) * 100) / 100;
+  const jobMaterialsOnBill = Math.round(
+    (visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) * 100,
+  ) / 100;
   const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
-  const payoutHoldNote = selfBillJobPayoutStateLabel(job);
+  /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
+  const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
@@ -1222,6 +1235,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     ) as JobPayment[]),
   );
   const [extraHistory, setExtraHistory] = useState<ExtraHistoryEntry[]>([]);
+  /** Visitas extras (mig 161) — o topo do card mostra a próxima que vem. */
+  const [jobVisits, setJobVisits] = useState<JobVisit[]>([]);
   const [deletingExtraId, setDeletingExtraId] = useState<string | null>(null);
   const [deleteExtraTarget, setDeleteExtraTarget] = useState<ExtraHistoryEntry | null>(null);
   const [deleteLinkedPartnerAlso, setDeleteLinkedPartnerAlso] = useState(true);
@@ -1407,6 +1422,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const jobMoreMenuRef = useRef<HTMLDivElement>(null);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
+  /** Bump feito pela aba de visitas para o topo do card recarregar a lista. */
+  const [visitsRefreshKey, setVisitsRefreshKey] = useState(0);
   /** ⋮ → “Reschedule & confirm” — one modal for date, partner, service, pricing. */
   const [quickRescheduleOpen, setQuickRescheduleOpen] = useState(false);
   const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
@@ -1447,6 +1464,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [invoiceDueDateDrafts, setInvoiceDueDateDrafts] = useState<Record<string, string>>({});
   const [savingInvoiceDueDateId, setSavingInvoiceDueDateId] = useState<string | null>(null);
   const [jobSelfBill, setJobSelfBill] = useState<SelfBill | null>(null);
+  /**
+   * Documentos das visitas (mig 161/276), abaixo do documento do parceiro
+   * inicial. Self-bill é por parceiro: um job com dois parceiros tem dois.
+   */
+  const [visitSelfBills, setVisitSelfBills] = useState<SelfBill[]>([]);
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
@@ -2042,8 +2064,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, []);
 
   const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
-    if (!j.partner_id?.trim()) {
+    /**
+     * Job sem parceiro primário ainda pode ter documento: a visita 2 tem
+     * parceiro próprio. Sair aqui escondia o self-bill dela.
+     */
+    if (!j.partner_id?.trim() && !j.reference?.trim()) {
       setJobSelfBill(null);
+      setVisitSelfBills([]);
       return;
     }
     setLoadingSelfBill(true);
@@ -2055,8 +2082,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJob(synced.job);
           working = synced.job;
           if (synced.selfBill) {
+            // Não retorna aqui: o documento do parceiro da visita vem da
+            // consulta lá embaixo, e sair antes deixava o card mostrando só o
+            // do parceiro inicial.
             setJobSelfBill(synced.selfBill);
-            return;
           }
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
@@ -2079,15 +2108,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         }
       }
-      if (!working.self_bill_id?.trim()) {
-        setJobSelfBill(null);
-        return;
-      }
-      const sb = await getSelfBill(working.self_bill_id);
-      setJobSelfBill(sb);
+      const linked = working.reference?.trim()
+        ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
+        : [];
+      const primaryId = working.self_bill_id?.trim() || null;
+      const primary = primaryId
+        ? linked.find((b) => b.id === primaryId) ?? (await getSelfBill(primaryId))
+        : null;
+      setJobSelfBill(primary);
+      setVisitSelfBills(linked.filter((b) => b.id !== primaryId));
     } catch {
       toast.error("Failed to load self-bill");
       setJobSelfBill(null);
+      setVisitSelfBills([]);
     } finally {
       setLoadingSelfBill(false);
     }
@@ -2429,6 +2462,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     void loadExtraHistory(job.id);
   }, [job?.id, loadExtraHistory]);
+
+  useEffect(() => {
+    const jobId = job?.id;
+    if (!jobId) {
+      setJobVisits([]);
+      return;
+    }
+    let cancelled = false;
+    void listJobVisits(jobId)
+      .then((rows) => { if (!cancelled) setJobVisits(rows); })
+      .catch(() => { if (!cancelled) setJobVisits([]); });
+    return () => { cancelled = true; };
+  }, [job?.id, visitsRefreshKey]);
 
   useEffect(() => {
     if (!job?.id || extraHistory.length === 0) return;
@@ -3074,7 +3120,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [isAdmin, detailTab]);
 
   useEffect(() => {
-    if (!JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6) {
+    if (detailTab === 6) {
       setDetailTab(0);
     }
   }, [detailTab]);
@@ -6025,10 +6071,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerExtrasFromLedgerRounded = Math.round(partnerExtrasFromLedger * 100) / 100;
   const clientPriceClamp = Math.max(0, Number(job.client_price ?? 0));
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
+  /**
+   * Dinheiro das visitas 2+ (mig 161). `job.client_price` e `job.partner_cost`
+   * são a VISITA 1; o que as outras visitas cobram e custam entra por aqui,
+   * senão a tabela de visitas soma £70 e o Finance Summary insiste em £50.
+   */
+  const visitRollup = rollUpJobVisits(job, jobVisits);
+  const extraVisitsClient = Math.max(0, Math.round((visitRollup.clientPriceTotal - Number(job.client_price ?? 0)) * 100) / 100);
+  const extraVisitsPartner = Math.max(0, Math.round((visitRollup.partnerCostTotal - Number(job.partner_cost ?? 0)) * 100) / 100);
+  const extraVisitsMaterials = Math.max(0, Math.round((visitRollup.materialsCostTotal - Number(job.materials_cost ?? 0)) * 100) / 100);
+  const extraVisitsCount = Math.max(0, visitRollup.visitCount - 1);
+
   const billableRevenue = Math.max(
     jobCustomerBillableRevenueForCollections(job),
     clientPriceClamp + clientExtrasFromLedgerRounded,
-  );
+  ) + extraVisitsClient;
   const partnerStoredExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
   /**
    * Bump partnerCap by any ledger extras that exceed `partner_extras_amount`
@@ -6077,11 +6134,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerMaterialsLine = partnerHasMaterialsLedger
     ? partnerMaterialsLedgerRounded
     : Math.max(0, Number(job.materials_cost ?? 0));
-  const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
+  /**
+   * O que ESTE self-bill contém: só a visita 1, que é o job. Visitas 2+ têm
+   * parceiro próprio e documento próprio — misturar aqui faria o painel
+   * prometer ao parceiro da visita 1 um valor que não é dele.
+   */
+  const partnerCashOutJobLine = Math.max(0, partnerCap + partnerMaterialsLine);
+  /** Custo total do job com todas as visitas: painel e margem, nunca pagamento. */
+  const partnerCashOutTotal = Math.max(0, partnerCashOutJobLine + extraVisitsPartner + extraVisitsMaterials);
   const directCost =
-    job.job_type === "hourly" && hourlyAutoBilling
+    (job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + partnerMaterialsLine
-      : partnerPaymentCap(job) + partnerMaterialsLine;
+      : partnerPaymentCap(job) + partnerMaterialsLine) + extraVisitsPartner + extraVisitsMaterials;
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -6491,6 +6555,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const finalLabour = finalSplitRemain;
 
   const statusActions = getJobStatusActions(job);
+  /**
+   * "Done" da visita 1 na tabela de visitas. A visita 1 é o job, então quem
+   * fecha ela é a mesma transição do topo (Job completed -> final_check), com
+   * as regras de `handleStatusChange` intactas. Sem essa ação disponível no
+   * estágio atual, a linha não mostra botão.
+   */
+  const primaryVisitDoneAction = statusActions.find((a) => a.status === "final_check" && !a.special);
+  /**
+   * Job ainda em campo mostra "Done" na visita 1 mesmo quando a barra de topo
+   * oferece outra coisa (em `scheduled` ela oferece "Start Job"): marcar a
+   * visita como feita é dizer que o trabalho aconteceu. `handleStatusChange`
+   * roda `canAdvanceJob` e recusa com mensagem se o estágio não permitir, então
+   * o botão não fura regra nenhuma.
+   */
+  const primaryVisitDoneTarget: Job["status"] | null =
+    primaryVisitDoneAction
+      ? "final_check"
+      : (["scheduled", "late", "in_progress"] as const).includes(job.status as "scheduled")
+        ? "final_check"
+        : null;
   /** Primary bar: keep cancel out of the strip — it lives under ⋮. */
   const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled");
   const showCancelInJobMoreMenu = statusActions.some((a) => a.status === "cancelled");
@@ -6957,8 +7041,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
                           onClick={() => {
                             setJobMoreMenuOpen(false);
+                            setDetailTab(0);
                             setVisitOpenCreateSignal((k) => k + 1);
-                            setDetailTab(6);
                           }}
                         >
                           <Plus className="h-3.5 w-3.5 shrink-0" />
@@ -7384,6 +7468,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                      * gravada nenhuma.
                      */
                     const arrivalDisplay = agreedArrivalRange ?? slotLabel;
+                    /**
+                     * Com visitas extras, "visit date" tem que ser a próxima que
+                     * vem, não a primeira que aconteceu: quem abre o card quer
+                     * saber quando alguém pisa lá de novo.
+                     */
+                    const nextVisit = nextVisitLine(job, jobVisits, Date.now());
+                    const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
                         <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
@@ -7393,6 +7484,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
                           </span>
                         </div>
+                        {nextIsExtra && nextVisit ? (
+                          <button
+                            type="button"
+                            onClick={() => setDetailTab(0)}
+                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            title="Open the Visits tab"
+                          >
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <span>
+                              <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
+                              {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
+                              {nextVisit.partnerName ? (
+                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                              ) : null}
+                            </span>
+                          </button>
+                        ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
                           <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
                           <span>
@@ -7825,7 +7933,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 6 as const }] : []),
                     { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
@@ -7849,17 +7956,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
-              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6 ? (
-                <VisitsTab
-                  job={job}
-                  openCreateSignal={visitOpenCreateSignal}
-                  onJobStatusBumpRequested={(suggestedStatus) => {
-                    if (job.status !== suggestedStatus) {
-                      void updateJob(job.id, { status: suggestedStatus });
-                    }
-                  }}
-                />
-              ) : null}
               {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -8052,77 +8148,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 pt-2 border-t border-border">
                 <div className="flex items-center justify-between gap-2">
                   <JobCardTitleWithHint
-                    title="Notes"
-                    hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
-                    titleClassName="text-xs font-semibold text-text-primary"
-                  />
-                  {!additionalNotesEditing ? (
-                    <button
-                      type="button"
-                      onClick={() => setAdditionalNotesEditing(true)}
-                      className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                      title="Edit additional notes"
-                      aria-label="Edit additional notes"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </div>
-                {!additionalNotesEditing ? (
-                  additionalNotesReadText ? (
-                    <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap">{additionalNotesReadText}</p>
-                  ) : (
-                    <p className="text-sm text-text-tertiary italic">No additional notes yet — use the pencil to add some.</p>
-                  )
-                ) : (
-                  <>
-                    <textarea
-                      value={additionalNotesDraft}
-                      onChange={(e) => setAdditionalNotesDraft(e.target.value)}
-                      rows={3}
-                      placeholder="Parking, entry, preferences…"
-                      className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                      autoFocus
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        loading={savingAdditionalNotes}
-                        onClick={async () => {
-                          if (!job) return;
-                          setSavingAdditionalNotes(true);
-                          try {
-                            await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
-                            setAdditionalNotesEditing(false);
-                          } finally {
-                            setSavingAdditionalNotes(false);
-                          }
-                        }}
-                      >
-                        Save additional notes
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={savingAdditionalNotes}
-                        onClick={() => {
-                          setAdditionalNotesDraft(job.additional_notes ?? "");
-                          setAdditionalNotesEditing(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-border">
-                <div className="flex items-center justify-between gap-2">
-                  <JobCardTitleWithHint
                     title="Report link (optional)"
                     hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
                     titleClassName="text-xs font-semibold text-text-primary"
@@ -8159,12 +8184,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         href={reportLinkReadHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block text-sm text-primary break-all hover:underline"
+                        className="block truncate text-sm text-primary hover:underline"
+                        title={reportLinkReadRaw}
                       >
                         {reportLinkReadRaw}
                       </a>
                     ) : (
-                      <p className="text-sm text-text-primary break-all">{reportLinkReadRaw}</p>
+                      <p className="truncate text-sm text-text-primary" title={reportLinkReadRaw}>{reportLinkReadRaw}</p>
                     )
                   ) : (
                     <p className="text-sm text-text-tertiary italic">No report link yet — use the pencil to add one.</p>
@@ -8225,6 +8251,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
+              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
+                <div className="pt-2 border-t border-border">
+                  <VisitsTab
+                    job={job}
+                    openCreateSignal={visitOpenCreateSignal}
+                    onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
+                    onCompletePrimary={
+                      primaryVisitDoneTarget
+                        ? async () => {
+                            const updated = await handleStatusChange(job, primaryVisitDoneTarget);
+                            return !!updated;
+                          }
+                        : undefined
+                    }
+                    completePrimaryLabel={primaryVisitDoneAction?.label ?? "Mark visit 1 done"}
+                    onFinishJob={() => {
+                      /**
+                       * Fechar o trabalho pela tabela de visitas é o mesmo
+                       * caminho do topo: leva para Final checks quando ainda
+                       * não está lá (com `canAdvanceJob` valendo) e abre a
+                       * revisão. Job já em Final checks em diante só abre.
+                       */
+                      void (async () => {
+                        if (jobStatusRank(job.status) < 40) {
+                          const updated = await handleStatusChange(job, "final_check");
+                          if (!updated) return;
+                        }
+                        openFinalReview();
+                      })();
+                    }}
+                    onJobStatusBumpRequested={(suggestedStatus) => {
+                      void handleStatusChange(job, suggestedStatus);
+                    }}
+                  />
+                </div>
+              ) : null}
               </div>
               ) : null}
 
@@ -8886,6 +8948,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsClient > 0.005 ? `+${formatCurrency(extraVisitsClient)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   {(job.customer_deposit ?? 0) > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
@@ -9126,6 +9198,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {formatCurrency(partnerInitialBalance)}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsPartner > 0.005 ? `+${formatCurrency(extraVisitsPartner)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
                     <div className="flex items-center gap-1.5">
                       <JobCardHint
@@ -9750,10 +9832,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {!job.partner_id?.trim() ? (
                 <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
               ) : null}
-              {!job.partner_id?.trim() ? null : loadingSelfBill ? (
+              {visitSelfBills.length > 0 ? (
+                /* Um documento por parceiro: cada bloco leva o nome de quem
+                   recebe, senão dois cartões seguidos viram um só na leitura. */
+                <div className="space-y-3">
+                  {jobSelfBill ? (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
+                      </p>
+                      <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                    </div>
+                  ) : null}
+                  {visitSelfBills.map((sb) => (
+                    <div key={sb.id} className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {sb.partner_name?.trim() || "Visit partner"}
+                      </p>
+                      {/* Linha do documento da visita: o valor dele, não o do job. */}
+                      <JobDetailSelfBillPanel
+                        sb={sb}
+                        job={job}
+                        jobLineGross={Number(sb.net_payout ?? 0)}
+                        visitScope={{
+                          label: sb.partner_name?.trim() || "Visit partner",
+                          // O documento da visita já guarda os próprios totais.
+                          labour: Number(sb.job_value ?? 0),
+                          materials: Number(sb.materials ?? 0),
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutTotal} />
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">

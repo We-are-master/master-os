@@ -111,8 +111,16 @@ import {
   jobContributesToSelfBillPayout,
   listJobsForSelfBill,
   listJobsLinkedToSelfBillIds,
+  listVisitPayoutLinesBySelfBillId,
   selfBillJobPayoutStateLabel,
+  type SelfBillPayoutLine,
 } from "@/services/self-bills";
+/**
+ * A conta do Outstanding vem de `billing-selfbill-actions`, não de uma cópia
+ * local. Esta tela tinha a sua própria versão, e duas fontes para o número que
+ * sai pelo Wise é exatamente como o PDF e o rodapé passaram a discordar.
+ */
+import { computeSelfBillAmountDue, type SelfBillJobLine } from "@/lib/billing-selfbill-actions";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 import {
   selfBillCancellationFeeTotals,
@@ -311,55 +319,21 @@ function jobLinePartnerGross(j: Pick<Job, "partner_cost" | "materials_cost" | "p
   return Math.round(partnerSelfBillGrossAmount(j as Job) * 100) / 100;
 }
 
-function computeSelfBillAmountDue(
-  sb: SelfBill,
-  jobs: JobLine[] | undefined,
-  partnerPaidByJobId: Record<string, number>,
-): number {
-  if (isSelfBillPayoutVoided(sb)) return 0;
-  if (sb.bill_origin === "internal") {
-    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
-  }
-  const list = jobs ?? [];
-  if (list.length === 0) {
-    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
-  }
-  let due = 0;
-  for (const j of list) {
-    if (!jobContributesToSelfBillPayout(j)) continue;
-    const cap = jobLinePartnerGross(j);
-    const paid = partnerPaidByJobId[j.id] ?? 0;
-    due += Math.max(0, cap - paid);
-  }
-  return Math.round(due * 100) / 100;
-}
-
 function isPartnerFieldBill(sb: SelfBill): boolean {
   return sb.bill_origin !== "internal";
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type JobLine = Pick<
-  Job,
-  | "id"
-  | "reference"
-  | "title"
-  | "partner_cost"
-  | "partner_agreed_value"
-  | "materials_cost"
-  | "status"
-  | "property_address"
-  | "self_bill_id"
-  | "deleted_at"
-  | "partner_cancelled_at"
->;
+/** As linhas vêm de `listJobsLinkedToSelfBillIds`, então é o mesmo shape de lá. */
+type JobLine = SelfBillJobLine;
 
 async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{
   map: Record<string, JobLine[]>;
   partnerPaidByJobId: Record<string, number>;
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>;
 }> {
-  if (ids.length === 0) return { map: {}, partnerPaidByJobId: {} };
+  if (ids.length === 0) return { map: {}, partnerPaidByJobId: {}, visitsBySelfBillId: {} };
   const rows = await listJobsLinkedToSelfBillIds(ids);
   const map: Record<string, JobLine[]> = {};
   for (const j of rows) {
@@ -368,8 +342,15 @@ async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{
     map[sid].push(j);
   }
   const jobIds = [...new Set(rows.map((r) => r.id))];
-  const partnerPaidByJobId = await fetchPartnerPaidTotalsByJobIds(jobIds);
-  return { map, partnerPaidByJobId };
+  const [partnerPaidByJobId, visitsBySelfBillId] = await Promise.all([
+    fetchPartnerPaidTotalsByJobIds(jobIds),
+    // Banco sem a mig 276 não tem a coluna: o documento vale pelas linhas de job.
+    listVisitPayoutLinesBySelfBillId(ids).catch((e) => {
+      console.error("listVisitPayoutLinesBySelfBillId:", e);
+      return {} as Record<string, SelfBillPayoutLine[]>;
+    }),
+  ]);
+  return { map, partnerPaidByJobId, visitsBySelfBillId };
 }
 
 // ── Page component ─────────────────────────────────────────────────────────────
@@ -408,6 +389,8 @@ function SelfBillPageInner() {
   const [drawerJobs, setDrawerJobs] = useState<Awaited<ReturnType<typeof listJobsForSelfBill>>>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobsBySelfBillId, setJobsBySelfBillId] = useState<Record<string, JobLine[]>>({});
+  /** Linhas de visita por documento: entram no Outstanding junto com as de job. */
+  const [visitsBySelfBillId, setVisitsBySelfBillId] = useState<Record<string, SelfBillPayoutLine[]>>({});
   const [partnerPaidByJobId, setPartnerPaidByJobId] = useState<Record<string, number>>({});
   const [editSelfBill, setEditSelfBill] = useState<SelfBill | null>(null);
   const [editForm, setEditForm] = useState({ job_value: "", materials: "", commission: "" });
@@ -607,7 +590,7 @@ function SelfBillPageInner() {
     let totalOverdueCount = 0;
     for (const sb of selfBills) {
       if (isSelfBillPayoutVoided(sb)) continue;
-      const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+      const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]);
       const ready = selfBillCountsAsReady(sb) && !isSelfBillOverdue(sb, todayYmd);
       const overdue = isSelfBillOverdue(sb, todayYmd);
       if (ready) {
@@ -673,7 +656,7 @@ function SelfBillPageInner() {
 
   const handleMarkPaid = async (sb: SelfBill) => {
     try {
-      const amount = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+      const amount = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]);
       await markSelfBillsPaid([sb.id]);
       toast.success(`Marked paid · ${formatCurrency(amount)}`);
       refreshDrawer(sb.id, "paid");
@@ -705,7 +688,7 @@ function SelfBillPageInner() {
         const totalDue = eligible.reduce((sum, id) => {
           const sb = selfBills.find((s) => s.id === id);
           if (!sb) return sum;
-          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]);
         }, 0);
         await markSelfBillsPaid(eligible);
         toast.success(`Marked ${eligible.length} paid · ${formatCurrency(totalDue)}`);
@@ -747,7 +730,7 @@ function SelfBillPageInner() {
         const totalDue = eligible.reduce((sum, id) => {
           const sb = selfBills.find((s) => s.id === id);
           if (!sb) return sum;
-          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+          return sum + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]);
         }, 0);
         await markSelfBillsPaid(eligible);
         toast.success(`Marked ${eligible.length} paid · ${formatCurrency(totalDue)}`);
@@ -876,13 +859,16 @@ function SelfBillPageInner() {
   const reloadLinkedJobsAndPartnerPaid = useCallback(async () => {
     const ids = selfBills.map((sb) => sb.id);
     try {
-      const { map, partnerPaidByJobId: paid } = await computeLinkedJobsMapsForSelfBillIds(ids);
+      const { map, partnerPaidByJobId: paid, visitsBySelfBillId: vis } =
+        await computeLinkedJobsMapsForSelfBillIds(ids);
       setJobsBySelfBillId(map);
       setPartnerPaidByJobId(paid);
+      setVisitsBySelfBillId(vis);
     } catch (e) {
       console.error("Self-bill linked jobs load failed", e);
       setJobsBySelfBillId({});
       setPartnerPaidByJobId({});
+      setVisitsBySelfBillId({});
       toast.error(e instanceof Error ? e.message : "Failed to load jobs");
     }
   }, [selfBills]);
@@ -898,10 +884,12 @@ function SelfBillPageInner() {
       ];
       if (ids.length === 0) return;
       try {
-        const { map, partnerPaidByJobId: paid } = await computeLinkedJobsMapsForSelfBillIds(ids);
+        const { map, partnerPaidByJobId: paid, visitsBySelfBillId: vis } =
+          await computeLinkedJobsMapsForSelfBillIds(ids);
         if (cancelled) return;
         setJobsBySelfBillId((prev) => ({ ...prev, ...map }));
         setPartnerPaidByJobId((prev) => ({ ...prev, ...paid }));
+        setVisitsBySelfBillId((prev) => ({ ...prev, ...vis }));
 
         const partnerIds = [
           ...new Set(
@@ -937,7 +925,7 @@ function SelfBillPageInner() {
   const handleExportCsv = useCallback(() => {
     const headers = ["Reference", "Partner", "Origin", "Week label", "Week start", "Status", "Net payout", "Amount due", "Jobs count", "Created at"];
     const rows = filtered.map((sb) => {
-      const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+      const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]);
       return [sb.reference, sb.partner_name, sb.bill_origin ?? "", sb.week_label ?? "", sb.week_start ?? "", sb.status, String(sb.net_payout ?? ""), String(due), String(sb.jobs_count ?? ""), sb.created_at ?? ""];
     });
     const csv = [headers, ...rows].map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -1108,7 +1096,7 @@ function SelfBillPageInner() {
       minWidth: "112px",
       render: (item) => {
         if (isSelfBillPayoutVoided(item)) return <span className="text-sm text-text-tertiary">—</span>;
-        const due = computeSelfBillAmountDue(item, jobsBySelfBillId[item.id], partnerPaidByJobId);
+        const due = computeSelfBillAmountDue(item, jobsBySelfBillId[item.id], partnerPaidByJobId, null, visitsBySelfBillId[item.id]);
         return (
           <span className={`text-sm font-semibold tabular-nums ${due > 0.02 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
             {formatCurrency(due)}
@@ -1405,7 +1393,7 @@ function SelfBillPageInner() {
               <div className="text-right">
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount Due</p>
                 <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">
-                  {formatCurrency(filtered.reduce((s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId), 0))}
+                  {formatCurrency(filtered.reduce((s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]), 0))}
                 </p>
               </div>
               <div className="text-right">
@@ -1441,6 +1429,7 @@ function SelfBillPageInner() {
                     key={sb.id}
                     sb={sb}
                     jobs={jobsBySelfBillId[sb.id] ?? []}
+                    visits={visitsBySelfBillId[sb.id]}
                     partnerPaidByJobId={partnerPaidByJobId}
                     todayYmd={todayYmd}
                     onOpenDrawer={() => void openDrawer(sb)}
@@ -1477,6 +1466,7 @@ function SelfBillPageInner() {
               handleMarkPaidForIds={handleMarkPaidForIds}
               groupBy={usesDueDatePeriod ? "due_date" : "created_at"}
               jobsBySelfBillId={jobsBySelfBillId}
+              visitsBySelfBillId={visitsBySelfBillId}
               partnerPaidByJobId={partnerPaidByJobId}
             />
           ) : (
@@ -1521,6 +1511,7 @@ function SelfBillPageInner() {
         onReopen={() => drawerSelfBill && void handleReopenSelfBill(drawerSelfBill)}
         onRefresh={() => loadData()}
         onEditTotals={() => drawerSelfBill && openEdit(drawerSelfBill)}
+        visits={drawerSelfBill ? visitsBySelfBillId[drawerSelfBill.id] : undefined}
         onPartnerPaymentsRecorded={reloadLinkedJobsAndPartnerPaid}
       />
 
@@ -1570,6 +1561,7 @@ export function SelfBillDetailDrawer({
   onReopen,
   onRefresh,
   onEditTotals,
+  visits,
   onPartnerPaymentsRecorded,
 }: {
   sb: SelfBill | null;
@@ -1584,6 +1576,8 @@ export function SelfBillDetailDrawer({
   /** Reload parent data after cancel / due-date edit (must not reopen the self-bill). */
   onRefresh?: () => void | Promise<void>;
   onEditTotals: () => void;
+  /** Linhas de visita deste documento: entram no valor a pagar. */
+  visits?: SelfBillPayoutLine[];
   /** Refresh job↔partner paid rollup after inserting `job_payments` (partner). */
   onPartnerPaymentsRecorded?: () => void | Promise<void>;
 }) {
@@ -1923,17 +1917,15 @@ export function SelfBillDetailDrawer({
   const overdue = !voided && isSelfBillOverdue(sb, todayYmd);
   const disp = getSelfBillDisplayStatus(sb, todayYmd);
   const totalPaidToDate = jobs.reduce((sum, j) => sum + Number(partnerPaidByJobId[j.id] ?? 0), 0);
-  const sheetDue = voided ? 0 : (() => {
-    if (sb.bill_origin === "internal") return Math.max(0, Number(sb.net_payout ?? 0));
-    let due = 0;
-    for (const j of jobs) {
-      if (!jobContributesToSelfBillPayout(j)) continue;
-      const cap = jobLinePartnerGross(j);
-      const paid = partnerPaidByJobId[j.id] ?? 0;
-      due += Math.max(0, cap - paid);
-    }
-    return Math.round(due * 100) / 100;
-  })();
+  /**
+   * O mesmo número da lista, pela mesma função.
+   *
+   * A gaveta tinha a própria conta e ela ignorava tanto a compensação de job
+   * cancelado quanto o dinheiro de visita: o documento dizia £70 na lista e £0
+   * aqui dentro. `null` em installments é de propósito, para bater exatamente
+   * com o que a lista mostra.
+   */
+  const sheetDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId, null, visits);
   const grossTotal = Math.round((Number(sb.job_value ?? 0) + Number(sb.materials ?? 0)) * 100) / 100;
   const cancelFeeTotals = selfBillCancellationFeeTotals(jobs);
   const workforceBreakdown = sb.bill_origin === "internal" ? sb.payout_breakdown : null;
@@ -2780,6 +2772,7 @@ export function SelfBillDetailDrawer({
 function SelfBillCard({
   sb,
   jobs,
+  visits,
   partnerPaidByJobId,
   todayYmd,
   onOpenDrawer,
@@ -2789,6 +2782,7 @@ function SelfBillCard({
 }: {
   sb: SelfBill;
   jobs: JobLine[];
+  visits?: SelfBillPayoutLine[];
   partnerPaidByJobId: Record<string, number>;
   todayYmd: string;
   onOpenDrawer: () => void;
@@ -2799,7 +2793,7 @@ function SelfBillCard({
   const voided = isSelfBillPayoutVoided(sb);
   const disp = getSelfBillDisplayStatus(sb, todayYmd);
   const dueYmd = selfBillDueYmd(sb);
-  const amountDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId);
+  const amountDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId, null, visits);
 
   return (
     <div
@@ -3038,6 +3032,7 @@ function SelfBillWeekGroupedTable({
   handleMarkPaidForIds,
   groupBy,
   jobsBySelfBillId,
+  visitsBySelfBillId,
   partnerPaidByJobId,
 }: {
   columns: Column<SelfBill>[];
@@ -3051,6 +3046,7 @@ function SelfBillWeekGroupedTable({
   handleMarkPaidForIds: (ids: string[]) => Promise<void>;
   groupBy: "created_at" | "due_date";
   jobsBySelfBillId: Record<string, JobLine[]>;
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>;
   partnerPaidByJobId: Record<string, number>;
 }) {
   const groups = useMemo(() => {
@@ -3101,7 +3097,7 @@ function SelfBillWeekGroupedTable({
     <div className="space-y-6">
       {groups.map(({ key: weekKey, title, subtitle, rows }) => {
         const weekTotal = rows.reduce(
-          (s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId),
+          (s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]),
           0,
         );
         const groupIds = new Set(rows.map((r) => r.id));

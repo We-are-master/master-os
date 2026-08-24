@@ -29,6 +29,7 @@ import {
   type InvoiceListJobSnapshot,
 } from "@/lib/billing-invoice-list-data";
 import { computeSelfBillAmountDue, type SelfBillJobLine } from "@/lib/billing-selfbill-actions";
+import type { SelfBillPayoutLine } from "@/services/self-bills";
 import { startOfWeekMondayFromYmd, weekRangeLabel } from "@/lib/dashboard-cashflow-buckets";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
 import {
@@ -150,6 +151,7 @@ export function computeBillingKpis(args: {
   jobsByRef: Record<string, InvoiceListJobSnapshot>;
   customerPaidByJobId: Record<string, number>;
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
+  visitsBySelfBillId?: Record<string, SelfBillPayoutLine[]>;
   partnerPaidByJobId: Record<string, number>;
   dueCtx: SelfBillDueResolveContext;
   periodBounds: YmdBounds | null;
@@ -191,7 +193,7 @@ export function computeBillingKpis(args: {
   for (const sb of args.selfBills) {
     if (!selfBillCountsAsApprovedForPayout(sb)) continue;
     if (!sbInPeriod(sb)) continue;
-    const amt = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+    const amt = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId, null, args.visitsBySelfBillId?.[sb.id]);
     if (amt <= 0.02) continue;
     toPaySelfBills += amt;
     if (sb.partner_id?.trim()) partnerIds.add(sb.partner_id.trim());
@@ -212,7 +214,7 @@ export function computeBillingKpis(args: {
   for (const sb of args.selfBills) {
     if (!selfBillCountsAsApprovedForPayout(sb)) continue;
     if (!sbInPeriod(sb)) continue;
-    weekOut += computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+    weekOut += computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId, null, args.visitsBySelfBillId?.[sb.id]);
   }
 
   let collectedMtd = 0;
@@ -558,6 +560,7 @@ export type BuildCashflowWeeklyArgs = {
   jobsByRef: Record<string, InvoiceListJobSnapshot>;
   customerPaidByJobId: Record<string, number>;
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
+  visitsBySelfBillId?: Record<string, SelfBillPayoutLine[]>;
   partnerPaidByJobId: Record<string, number>;
   dueCtx: SelfBillDueResolveContext;
   bills?: Pick<Bill, "id" | "description" | "amount" | "due_date" | "status" | "archived_at" | "paid_at">[];
@@ -583,7 +586,7 @@ function moneyOutForSelfBillInWeek(
   if (sb.payment_plan_active) return 0;
   const dueYmd = selfBillDueYmd(sb, args.dueCtx);
   if (!dueYmd || !ymdInWeekBounds(dueYmd, weekStart)) return 0;
-  return computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+  return computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId, null, args.visitsBySelfBillId?.[sb.id]);
 }
 
 function moneyInForInvoiceInWeek(
@@ -671,7 +674,7 @@ export function buildCashflowWeekBreakdown(
     if (sb.payment_plan_active) continue;
     const dueYmd = selfBillDueYmd(sb, args.dueCtx);
     if (!ymdInWeekBounds(dueYmd, weekStart)) continue;
-    const amount = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId);
+    const amount = computeSelfBillAmountDue(sb, args.jobsBySelfBillId[sb.id], args.partnerPaidByJobId, null, args.visitsBySelfBillId?.[sb.id]);
     if (amount <= 0.02) continue;
     const label =
       sb.bill_origin === "internal"

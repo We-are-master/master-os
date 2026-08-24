@@ -37,7 +37,7 @@ function optionLabelForCatalog(c: CatalogService, compact: boolean): string {
 
 export function ServiceCatalogSelect({
   label = "From catalog (optional)",
-  emptyOptionLabel = "— Custom only (no template) —",
+  emptyOptionLabel = "Custom only (no template)",
   compactOptionLabels = false,
   catalog,
   value,

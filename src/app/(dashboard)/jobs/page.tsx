@@ -68,7 +68,11 @@ import {
   buildZendeskCustomFields,
 } from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
-import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
+import {
+  refreshSelfBillPayoutState,
+  refreshSelfBillPayoutStatesForJobIds,
+  selfBillIdsTouchedByJob,
+} from "@/services/self-bills";
 import { refreshWorkforceSelfBillsForJobIds } from "@/services/workforce-self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { computeOfficeTimerElapsedSeconds, formatOfficeTimer, statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
@@ -2184,11 +2188,19 @@ function JobsPageContent() {
         return false;
       }
       const forInvoices = eligible.map((j) => ({ reference: j.reference, invoice_id: j.invoice_id }));
-      const selfBillIds = [
-        ...new Set(
-          eligible.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
-        ),
-      ];
+      /**
+       * Todos os documentos que o job toca, não só o da coluna.
+       *
+       * `jobs.self_bill_id` conhece só o parceiro da visita 1. Job com visita
+       * de outro parceiro deixava o documento DELE vivo com o valor cheio: o
+       * job some da tela e o parceiro continua a ser pago por ele.
+       */
+      const selfBillIds = await selfBillIdsTouchedByJob(eligible.map((j) => j.id)).catch((err) => {
+        console.error("selfBillIdsTouchedByJob (delete):", err);
+        return eligible
+          .map((r) => r.self_bill_id)
+          .filter((x): x is string => Boolean(x && String(x).trim()));
+      });
       await softDeleteInvoicesForArchivedJobs(forInvoices, profile?.id);
       const ts = new Date().toISOString();
       const uid = profile?.id ?? null;
@@ -2238,11 +2250,13 @@ function JobsPageContent() {
         toast.message("No deleted jobs selected.");
         return false;
       }
-      const selfBillIds = [
-        ...new Set(
-          rows.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
-        ),
-      ];
+      // Mesma razão do delete: o recover tem que reacertar todos os documentos.
+      const selfBillIds = await selfBillIdsTouchedByJob(rows.map((j) => j.id)).catch((err) => {
+        console.error("selfBillIdsTouchedByJob (recover):", err);
+        return rows
+          .map((r) => r.self_bill_id)
+          .filter((x): x is string => Boolean(x && String(x).trim()));
+      });
       await Promise.all(
         rows.map((j) => {
           const next = parseRestoredJobStatus(j.deleted_previous_status);

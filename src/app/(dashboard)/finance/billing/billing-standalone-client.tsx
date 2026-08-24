@@ -89,6 +89,8 @@ import {
   isSelfBillPayoutVoided,
   jobContributesToSelfBillPayout,
   listJobsForSelfBill,
+  isDuplicateOpenBucketError,
+  type SelfBillPayoutLine,
 } from "@/services/self-bills";
 import { getSupabase } from "@/services/base";
 import { BillingBulkBar, StatusPill } from "@/components/finance/billing-bulk-bar";
@@ -314,14 +316,37 @@ function BillingStandaloneInner() {
       setBulkSaving(true);
       try {
         const supabase = getSupabase();
-        const { error } = await supabase
-          .from("self_bills")
-          .update({ status: "accumulating", approved_at: null, approved_by: null })
-          .in("id", eligible);
-        if (error) throw error;
-        toast.success(
-          eligible.length === 1 ? "Moved back to Draft" : `${eligible.length} moved back to Draft`,
-        );
+        /**
+         * Um UPDATE por documento, não `.in("id", eligible)`.
+         *
+         * O índice da mig 277 permite um único documento ABERTO por parceiro e
+         * período. Se dois selecionados caem no mesmo balde, ou se o parceiro
+         * já tem um rascunho aberto naquele período, o Postgres recusa a linha
+         * — e numa declaração só isso derrubava a ação inteira, inclusive as
+         * linhas que estavam certas.
+         */
+        const recusados: string[] = [];
+        for (const id of eligible) {
+          const { error } = await supabase
+            .from("self_bills")
+            .update({ status: "accumulating", approved_at: null, approved_by: null })
+            .eq("id", id);
+          if (!error) continue;
+          if (isDuplicateOpenBucketError(error)) {
+            recusados.push(billingSelfBills.find((s) => s.id === id)?.reference ?? id);
+            continue;
+          }
+          throw error;
+        }
+        const movidos = eligible.length - recusados.length;
+        if (recusados.length > 0) {
+          toast.error(
+            `${recusados.join(", ")}: this partner already has an open draft for that period. Use that one.`,
+          );
+        }
+        if (movidos > 0) {
+          toast.success(movidos === 1 ? "Moved back to Draft" : `${movidos} moved back to Draft`);
+        }
         setMoneyOutSelectedIds(new Set());
         setSelectedSbIds(new Set());
         await loadData();
@@ -646,6 +671,7 @@ function BillingStandaloneInner() {
         jobsByRef: data.jobsByRef,
         customerPaidByJobId: data.customerPaidByJobId,
         jobsBySelfBillId: data.jobsBySelfBillId,
+        visitsBySelfBillId: data.visitsBySelfBillId,
         partnerPaidByJobId: data.partnerPaidByJobId,
         dueCtx: data.dueCtx,
         periodBounds: kpiMonthBounds,
@@ -657,6 +683,7 @@ function BillingStandaloneInner() {
       data.jobsByRef,
       data.customerPaidByJobId,
       data.jobsBySelfBillId,
+      data.visitsBySelfBillId,
       data.partnerPaidByJobId,
       data.dueCtx,
       kpiMonthBounds,
@@ -884,10 +911,11 @@ function BillingStandaloneInner() {
             data.jobsBySelfBillId[sb.id],
             data.partnerPaidByJobId,
             data.installmentsBySelfBillId[sb.id],
+            data.visitsBySelfBillId[sb.id],
           )
         );
       }, 0),
-    [data.selfBills, data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
+    [data.selfBills, data.jobsBySelfBillId, data.visitsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
   );
 
   const handleMarkInvoiceReceived = useCallback(
@@ -956,6 +984,7 @@ function BillingStandaloneInner() {
         jobsByRef: data.jobsByRef,
         customerPaidByJobId: data.customerPaidByJobId,
         jobsBySelfBillId: data.jobsBySelfBillId,
+        visitsBySelfBillId: data.visitsBySelfBillId,
         partnerPaidByJobId: data.partnerPaidByJobId,
         dueCtx: data.dueCtx,
         customerPaymentRows: data.customerPaymentRows,
@@ -985,6 +1014,7 @@ function BillingStandaloneInner() {
       data.clientIdToAccountId,
       data.accountTermsById,
       data.jobsBySelfBillId,
+      data.visitsBySelfBillId,
       data.partnerPaidByJobId,
       data.dueCtx,
       paymentOrgCtx,
@@ -1016,6 +1046,7 @@ function BillingStandaloneInner() {
       accountTermsById: data.accountTermsById,
       paymentOrgCtx,
       jobsBySelfBillId: data.jobsBySelfBillId,
+      visitsBySelfBillId: data.visitsBySelfBillId,
       partnerPaidByJobId: data.partnerPaidByJobId,
       dueCtx: data.dueCtx,
     }),
@@ -1034,6 +1065,7 @@ function BillingStandaloneInner() {
       data.accountTermsById,
       paymentOrgCtx,
       data.jobsBySelfBillId,
+      data.visitsBySelfBillId,
       data.partnerPaidByJobId,
       data.dueCtx,
     ],
@@ -1090,10 +1122,11 @@ function BillingStandaloneInner() {
           data.jobsBySelfBillId[sb.id],
           data.partnerPaidByJobId,
           data.installmentsBySelfBillId[sb.id],
+          data.visitsBySelfBillId[sb.id],
         );
         return amt > 0.02;
       }),
-    [periodSelfBills, data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
+    [periodSelfBills, data.jobsBySelfBillId, data.visitsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
   );
 
   /** Draft / accumulating — not yet ready for payment. */
@@ -1133,6 +1166,7 @@ function BillingStandaloneInner() {
         },
         data.dueCtx,
         data.jobsBySelfBillId,
+        data.visitsBySelfBillId,
         data.partnerPaidByJobId,
         data.installmentsBySelfBillId,
       ),
@@ -1143,6 +1177,7 @@ function BillingStandaloneInner() {
       paidPeriodSelfBills,
       data.dueCtx,
       data.jobsBySelfBillId,
+      data.visitsBySelfBillId,
       data.partnerPaidByJobId,
       data.installmentsBySelfBillId,
     ],
@@ -1162,10 +1197,11 @@ function BillingStandaloneInner() {
             data.jobsBySelfBillId[sb.id],
             data.partnerPaidByJobId,
             data.installmentsBySelfBillId[sb.id],
+            data.visitsBySelfBillId[sb.id],
           ),
         0,
       ),
-    [data.jobsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
+    [data.jobsBySelfBillId, data.visitsBySelfBillId, data.partnerPaidByJobId, data.installmentsBySelfBillId],
   );
   const ledgerSbDraftTotal = useMemo(
     () =>
@@ -1826,6 +1862,7 @@ function BillingStandaloneInner() {
                         partnerDueCtx={data.partnerDueCtx}
                         partnerAvatarById={data.partnerAvatarById}
                         jobsBySelfBillId={data.jobsBySelfBillId}
+                        visitsBySelfBillId={data.visitsBySelfBillId}
                         partnerPaidByJobId={data.partnerPaidByJobId}
                         installmentsBySelfBillId={data.installmentsBySelfBillId}
                         onOpen={(sb) => void openSelfBill(sb)}
@@ -1871,6 +1908,7 @@ function BillingStandaloneInner() {
                             partnerDueCtx={data.partnerDueCtx}
                             partnerAvatarById={data.partnerAvatarById}
                             jobsBySelfBillId={data.jobsBySelfBillId}
+                          visitsBySelfBillId={data.visitsBySelfBillId}
                             partnerPaidByJobId={data.partnerPaidByJobId}
                             installmentsBySelfBillId={data.installmentsBySelfBillId}
                             onOpen={(sb) => void openSelfBill(sb)}
@@ -1966,6 +2004,7 @@ function BillingStandaloneInner() {
                             partnerDueCtx={data.partnerDueCtx}
                             partnerAvatarById={data.partnerAvatarById}
                             jobsBySelfBillId={data.jobsBySelfBillId}
+                          visitsBySelfBillId={data.visitsBySelfBillId}
                             partnerPaidByJobId={data.partnerPaidByJobId}
                             installmentsBySelfBillId={data.installmentsBySelfBillId}
                             onOpen={(sb) => void openSelfBill(sb)}
@@ -2011,6 +2050,7 @@ function BillingStandaloneInner() {
                           partnerDueCtx={data.partnerDueCtx}
                           partnerAvatarById={data.partnerAvatarById}
                           jobsBySelfBillId={data.jobsBySelfBillId}
+                          visitsBySelfBillId={data.visitsBySelfBillId}
                           partnerPaidByJobId={data.partnerPaidByJobId}
                           installmentsBySelfBillId={data.installmentsBySelfBillId}
                           onOpen={(sb) => void openSelfBill(sb)}
@@ -2305,6 +2345,7 @@ function buildSelfBillLedgerSectionMap<K extends string>(
   buckets: Record<K, SelfBill[]>,
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>,
   partnerPaidByJobId: Record<string, number>,
   installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): Record<K, SelfBillLedgerSections> {
@@ -2314,6 +2355,7 @@ function buildSelfBillLedgerSectionMap<K extends string>(
       buckets[key]!,
       dueCtx,
       jobsBySelfBillId,
+      visitsBySelfBillId,
       partnerPaidByJobId,
       installmentsBySelfBillId,
     );
@@ -2325,6 +2367,7 @@ function buildSelfBillLedgerSections(
   selfBills: SelfBill[],
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>,
   partnerPaidByJobId: Record<string, number>,
   installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): SelfBillLedgerSections {
@@ -2335,6 +2378,7 @@ function buildSelfBillLedgerSections(
       workforceBills,
       dueCtx,
       jobsBySelfBillId,
+      visitsBySelfBillId,
       partnerPaidByJobId,
       installmentsBySelfBillId,
     ).map((week) => ({
@@ -2345,6 +2389,7 @@ function buildSelfBillLedgerSections(
       partnerBills,
       dueCtx,
       jobsBySelfBillId,
+      visitsBySelfBillId,
       partnerPaidByJobId,
       installmentsBySelfBillId,
     ),
@@ -2355,6 +2400,7 @@ function buildSelfBillWeekPartnerGroups(
   selfBills: SelfBill[],
   dueCtx: SelfBillDueResolveContext,
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>,
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>,
   partnerPaidByJobId: Record<string, number>,
   installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>,
 ): SelfBillWeekPartnerGroup[] {
@@ -2378,6 +2424,7 @@ function buildSelfBillWeekPartnerGroups(
       jobsBySelfBillId[sb.id],
       partnerPaidByJobId,
       installmentsBySelfBillId[sb.id],
+      visitsBySelfBillId?.[sb.id],
     );
     partner.partnerTotal = Math.round((partner.partnerTotal + amt) * 100) / 100;
     week.weekTotal = Math.round((week.weekTotal + amt) * 100) / 100;
@@ -2444,10 +2491,13 @@ function selfBillLedgerAmounts(
   sb: SelfBill,
   jobs: SelfBillJobLine[] | undefined,
   partnerPaidByJobId: Record<string, number>,
-  installments?: SelfBillPaymentInstallment[] | null,
+  installments: SelfBillPaymentInstallment[] | null | undefined,
+  /** Obrigatório de propósito: esta função tem um chamador só, e esquecer as
+   *  visitas aqui tira dinheiro da linha do Money Out sem ninguém notar. */
+  visits: SelfBillPayoutLine[] | undefined,
 ) {
   const total = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
-  const outstanding = computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId, installments);
+  const outstanding = computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId, installments, visits);
   let paid = 0;
   if (!isSelfBillPayoutVoided(sb)) {
     if (sb.bill_origin === "internal") {
@@ -2779,6 +2829,7 @@ function SelfBillGroupedLedger({
   partnerDueCtx,
   partnerAvatarById,
   jobsBySelfBillId,
+  visitsBySelfBillId,
   partnerPaidByJobId,
   installmentsBySelfBillId,
   onOpen,
@@ -2807,6 +2858,9 @@ function SelfBillGroupedLedger({
   partnerDueCtx: (partnerId: string | null | undefined) => SelfBillDueResolveContext;
   partnerAvatarById: Record<string, string | null>;
   jobsBySelfBillId: Record<string, SelfBillJobLine[]>;
+  /** Linhas de visita por documento. Sem isto a linha some do Outstanding
+   *  enquanto o cabeçalho do grupo já soma: dois números para o mesmo dinheiro. */
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>;
   partnerPaidByJobId: Record<string, number>;
   installmentsBySelfBillId: Record<string, SelfBillPaymentInstallment[]>;
   onOpen: (sb: SelfBill) => void;
@@ -3076,6 +3130,7 @@ function SelfBillGroupedLedger({
                         jobsBySelfBillId[sb.id],
                         partnerPaidByJobId,
                         installments,
+                        visitsBySelfBillId[sb.id],
                       );
                       const nextDue = ledgerNextDueLabel(
                         selfBillEffectiveDueYmd(sb, installments, partnerDueCtx(sb.partner_id)),

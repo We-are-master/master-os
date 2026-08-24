@@ -61,8 +61,12 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   jobType: "hourly" | "fixed";
   /** £ display value (e.g. "£45.00/hr" or "£280.00"). */
   priceDisplay: string;
-  /** Where the partner submits the report — typically the partner app deep link. */
-  reportUrl: string;
+  /**
+   * Onde o parceiro envia o relatório. `null` esconde o botão inteiro: o token
+   * de relatório é ligado a (job, parceiro do job), então o parceiro de uma
+   * visita extra receberia 403 se clicasse.
+   */
+  reportUrl: string | null;
   /** Support email (defaults to support@getfixfy.com). */
   supportEmail?: string;
   /** Support phone (defaults to +44 20 4538 4668). */
@@ -199,7 +203,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     scope: escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 36),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
-    url: escapeHtml(data.reportUrl),
+    url: escapeHtml(data.reportUrl ?? ""),
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
@@ -298,13 +302,14 @@ ${partnerEmailLogoHeaderRow()}
       ${notesBlock}
 
       <!-- CTA -->
+      ${data.reportUrl ? `
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-mobile">
           <tr><td align="center" style="border-radius:8px; background-color:#ED4B00;">
             <a href="${safe.url}" target="_blank" style="display:inline-block; padding:16px 36px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:600; color:#FFFFFF; text-decoration:none; border-radius:8px;">Submit job report</a>
           </td></tr>
         </table>
-      </td></tr>
+      </td></tr>` : ""}
 
       <!-- Helper text -->
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
@@ -341,8 +346,7 @@ Scope of work
 ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
-
-Submit job report: ${data.reportUrl}
+${data.reportUrl ? `\nSubmit job report: ${data.reportUrl}` : ""}
 
 Need help? Email ${supportEmail} or call ${supportPhone}.
 
@@ -454,7 +458,7 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     telefone: data.clientPhone?.trim() ? escapeHtml(data.clientPhone.trim()) : "",
     telefoneHref: data.clientPhone?.trim() ? escapeHtml(telHref(data.clientPhone.trim())) : "",
     reason: data.reason ? escapeHtml(data.reason) : null,
-    url: escapeHtml(data.reportUrl),
+    url: escapeHtml(data.reportUrl ?? ""),
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
