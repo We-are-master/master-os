@@ -16,6 +16,11 @@ import {
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { parseFrontendSetup } from "@/lib/frontend-setup";
+import {
+  normalizePartnerPayoutReferenceYmd,
+  resolveOrgPartnerPayoutStandardTerms,
+} from "@/lib/partner-payout-schedule";
 import {
   isPostgresCheckViolationError,
   isSupabaseMissingColumnError,
@@ -201,6 +206,16 @@ export function selfBillJobPayoutStateLabel(
   return null;
 }
 
+/**
+ * Documentos que ainda aceitam trabalho novo.
+ *
+ * Fora daqui — `awaiting_payment`, `ready_to_pay`, `paid`, cancelados — o
+ * documento já saiu da mesa: pendurar uma visita nele é somar dinheiro a um
+ * papel que já está em pagamento. Aconteceu no teste de 23/08/2026: uma visita
+ * de £70 entrou num self-bill de £248 em awaiting_payment de OUTRO job.
+ */
+export const SELF_BILL_REUSABLE_STATUSES = new Set(["draft", "accumulating"]);
+
 export type SelfBillPayoutLine = {
   kind: "job" | "visit";
   /** `job_id` na linha de job; `job_visits.id` na linha de visita. */
@@ -218,9 +233,13 @@ export type SelfBillPayoutLine = {
  * PDF já divergiu das linhas uma vez (£1.055 nas linhas contra £430 no total),
  * e agora que existem duas origens de linha o risco dobra.
  *
- * A visita entra quando está `completed` — o botão manual do escritório —,
- * diferente do job, que entra em `awaiting_payment` ou `completed`. A
- * assimetria é de propósito: visita fecha por decisão de quem viu o trabalho.
+ * A visita entra pelo VALOR assim que existe e está viva, igual ao job, que
+ * aparece no rascunho antes de ser pagável. Documento zerado com visita de £70
+ * marcada esconde o que o parceiro tem a receber.
+ *
+ * O que espera o "done" é a LIBERAÇÃO, não o valor: `refreshSelfBillPayoutState`
+ * só promove a ready_to_pay quando não há visita em aberto, e a rota de aprovar
+ * recusa documento com visita pendente.
  */
 export async function loadSelfBillPayoutLines(
   selfBillId: string,
@@ -260,7 +279,8 @@ export async function loadSelfBillPayoutLines(
     id: string; job_id: string; visit_index: number; partner_cost: number | null;
     materials_cost: number | null; status: string; deleted_at: string | null;
   }[]) {
-    if (row.status !== "completed") continue;
+    // Cancelada não vale dinheiro; agendada e em andamento valem, como no job.
+    if (row.status === "cancelled") continue;
     lines.push({
       kind: "visit",
       id: row.id,
@@ -759,7 +779,37 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     ? new Date(`${visitScope.anchorYmd}T12:00:00`)
     : options?.weekAnchorDate ?? resolveJobSelfBillWeekAnchor(job);
   if (!anchor) return null;
-  const orgTerms = options?.dueCtx?.orgStandardTerms ?? null;
+
+  /**
+   * A grade de quinzenas precisa de âncora fixa, senão ela FLUTUA.
+   *
+   * Sem `orgReferenceYmd`, `workPeriodForJobStartYmd` começa a contar a partir
+   * da sexta seguinte à data de entrada e caminha de 14 em 14 — ou seja, cada
+   * data gera sua própria grade. Medido em 23/08/2026: 26/08 caía no período
+   * 24/08–06/09 e 29/08 no período 17/08–30/08, dois baldes sobrepostos. Foi
+   * assim que uma visita de 29/08 foi parar num self-bill de outro job que já
+   * estava em `awaiting_payment`.
+   *
+   * Ninguém passava `dueCtx`, então a leitura do Setup vem para cá.
+   */
+  let dueCtx = options?.dueCtx ?? null;
+  if (!dueCtx) {
+    try {
+      const { data: cs } = await supabase
+        .from("company_settings")
+        .select("frontend_setup")
+        .limit(1)
+        .maybeSingle();
+      const setup = parseFrontendSetup((cs as { frontend_setup?: unknown } | null)?.frontend_setup);
+      dueCtx = {
+        orgStandardTerms: resolveOrgPartnerPayoutStandardTerms(setup),
+        orgReferenceYmd: normalizePartnerPayoutReferenceYmd(setup?.partner_payout_reference_ymd),
+      };
+    } catch {
+      dueCtx = null;
+    }
+  }
+  const orgTerms = dueCtx?.orgStandardTerms ?? null;
   const cadence = partnerPayoutCadenceFromTerms(orgTerms);
 
   /**
@@ -778,7 +828,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    * fora do padrão), para nenhum job ficar sem self-bill por causa disto.
    */
   const anchorYmd = anchor.toISOString().slice(0, 10);
-  const periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, options?.dueCtx?.orgReferenceYmd ?? null);
+  const periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, dueCtx?.orgReferenceYmd ?? null);
   const semana = getWeekBoundsForDate(anchor);
   const weekStart = periodo?.periodStartYmd ?? semana.weekStart;
   const weekEnd = periodo?.periodEndYmd ?? semana.weekEnd;
@@ -786,12 +836,12 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   // semana num documento que cobre duas.
   const weekLabel = periodo ? `${periodo.periodStartYmd} a ${periodo.periodEndYmd}` : semana.weekLabel;
   const dueDate =
-    options?.dueCtx && weekEnd
+    dueCtx && weekEnd
       ? computePartnerSelfBillDueIso(
           weekEnd,
-          options.dueCtx.partnerTerms ?? null,
-          options.dueCtx.orgStandardTerms,
-          options.dueCtx.orgReferenceYmd,
+          dueCtx.partnerTerms ?? null,
+          dueCtx.orgStandardTerms,
+          dueCtx.orgReferenceYmd,
         )
       : null;
 
@@ -808,13 +858,15 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const existingRow = existing as { id: string; status: string } | null;
   // Terminal self-bills (voided / rejected) belong to their own history.
   // New jobs always get a fresh self-bill so they have no link to cancelled/rejected ones.
-  const isTerminal = existingRow
-    ? SELF_BILL_TERMINAL_STATUSES.includes(existingRow.status as SelfBillStatus) ||
-      // `paid` não está na lista terminal, e pendurar trabalho novo num
-      // documento já pago esconde o dinheiro: o refresh sai cedo e ninguém
-      // recebe. Trabalho que chega depois do pagamento abre documento novo.
-      existingRow.status === "paid"
-    : false;
+  /**
+   * Só documento AINDA EM ABERTO recebe trabalho novo.
+   *
+   * `SELF_BILL_TERMINAL_STATUSES` não cobre `paid` nem `awaiting_payment`, e
+   * pendurar uma visita num documento já em pagamento é dinheiro que some: o
+   * refresh sai cedo e ninguém recebe. Aconteceu de verdade no teste — uma
+   * visita entrou num self-bill de £248 já em awaiting_payment.
+   */
+  const isTerminal = existingRow ? !SELF_BILL_REUSABLE_STATUSES.has(existingRow.status) : false;
   let sbId = existingRow && !isTerminal ? (existingRow.id as string) : undefined;
 
   if (!sbId) {
@@ -937,6 +989,44 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     } else {
       if (!ins?.id) throw new Error("Self-bill insert returned no id");
       sbId = ins.id as string;
+
+      /**
+       * Reconciliação pós-insert: não existe índice único em
+       * (partner_id, week_start).
+       *
+       * Duas criações simultâneas para o mesmo parceiro e período — duas
+       * visitas adicionadas em sequência rápida — não encontram nada na busca
+       * e inserem as duas. Medido em 23/08/2026: o LandLord ficou com
+       * SB-14460 e SB-14461, mesmo parceiro, mesma quinzena.
+       *
+       * Aqui o documento mais antigo vence e o recém-criado (vazio) é
+       * cancelado. Determinístico: quem chegar depois converge para o mesmo.
+       */
+      const { data: mesmos } = await supabase
+        .from("self_bills")
+        .select("id, created_at, status")
+        .eq("partner_id", partnerId)
+        .eq("week_start", weekStart)
+        .order("created_at", { ascending: true });
+      /**
+       * Só concorre quem ainda aceita trabalho. Filtrar por
+       * `SELF_BILL_TERMINAL_STATUSES` aqui era o furo: `awaiting_payment` não
+       * está nessa lista, então o documento em pagamento "ganhava" a
+       * reconciliação e recebia a visita — anulando a guarda de cima.
+       */
+      const lista = ((mesmos ?? []) as { id: string; status: string }[])
+        .filter((r) => SELF_BILL_REUSABLE_STATUSES.has(r.status));
+      if (lista.length > 1 && lista[0].id !== sbId) {
+        const vencedor = lista[0].id;
+        const meu = sbId;
+        const linhasDoMeu = await loadSelfBillPayoutLines(meu, supabase);
+        if (linhasDoMeu.length === 0) {
+          await cancelSelfBillsByIds([meu]).catch((e) => {
+            console.error("could not cancel duplicate self-bill", e);
+          });
+          sbId = vencedor;
+        }
+      }
     }
   }
 

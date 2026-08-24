@@ -109,11 +109,11 @@ async function auditVisit(input: AuditInput) {
 
 async function loadJobAndVisits(supabase: ServiceClient, jobId: string) {
   const [{ data: job }, { data: visits }] = await Promise.all([
-    supabase.from("jobs").select("id, reference, status").eq("id", jobId).maybeSingle(),
+    supabase.from("jobs").select("id, reference, status, partner_id, partner_name").eq("id", jobId).maybeSingle(),
     supabase.from("job_visits").select("*").eq("job_id", jobId).is("deleted_at", null),
   ]);
   return {
-    job: job as Pick<Job, "id" | "reference" | "status"> | null,
+    job: job as Pick<Job, "id" | "reference" | "status" | "partner_id" | "partner_name"> | null,
     visits: (visits ?? []) as JobVisit[],
   };
 }
@@ -131,7 +131,17 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     .is("deleted_at", null)
     .order("visit_index", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json({ ok: true, visits: data ?? [] });
+
+  /** O documento de cada visita junto: sem isto, diagnosticar payout exige ir ao banco. */
+  const visits = (data ?? []) as (JobVisit & { self_bill_id?: string | null })[];
+  const billIds = [...new Set(visits.map((v) => v.self_bill_id).filter(Boolean))] as string[];
+  const bills = billIds.length
+    ? ((await supabase
+        .from("self_bills")
+        .select("id, reference, partner_id, partner_name, week_start, week_end, status, net_payout")
+        .in("id", billIds)).data ?? [])
+    : [];
+  return NextResponse.json({ ok: true, visits, bills });
 }
 
 /** POST — nova visita. O índice é do servidor, e o gate roda aqui também. */
@@ -147,8 +157,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { job } = await loadJobAndVisits(supabase, jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
-  // Sem gate: cada linha é um assignment por si. O escritório marca a anterior
-  // como concluída quando ela acontecer, e isso não segura a fila.
+  /**
+   * A visita 1 precisa ter parceiro antes de existir uma segunda.
+   *
+   * A visita 1 é o próprio job: sem parceiro nela, o job não tem dono, o
+   * self-bill dela não existe e o dinheiro da visita 2 fica pendurado num job
+   * órfão. Não é sobre ordem de execução — é sobre ter a quem pagar.
+   */
+  if (!job.partner_id?.trim()) {
+    return NextResponse.json(
+      { error: "Assign a partner to visit 1 (the job) before adding another visit." },
+      { status: 409 },
+    );
+  }
+
+  // Fora isso não há fila: cada linha é um assignment por si, e a anterior não
+  // precisa estar concluída.
   const patch: Record<string, unknown> = { ...pickWritable(body, WRITABLE_ON_CREATE), status: "scheduled" };
   if (!patch.scheduled_date) {
     return NextResponse.json({ error: "scheduled_date required" }, { status: 400 });
@@ -198,15 +222,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
        * rascunho até virar pagável.
        */
       let selfBillId: string | null = null;
+      let payoutError: string | null = null;
       if (created.partner_id) {
         try {
           const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
           if (fullJob) selfBillId = await ensureWeeklySelfBillForVisit(fullJob as Job, created, { client: supabase });
+          if (!selfBillId) payoutError = "self-bill not created for this visit";
         } catch (e) {
+          const err = e as { message?: string; code?: string; details?: string } | null;
+          payoutError = [err?.message, err?.code && `code=${err.code}`, err?.details].filter(Boolean).join(" · ") || String(e);
           console.error("ensureWeeklySelfBillForVisit on create failed", e);
         }
+      } else {
+        // Visita sem parceiro não gera documento: quem vai receber ainda não existe.
+        payoutError = "visit has no partner yet, so no self-bill";
       }
-      return NextResponse.json({ ok: true, visit: created, notified, selfBillId });
+      return NextResponse.json({ ok: true, visit: created, notified, selfBillId, payoutError });
     }
     if (error.code !== "23505") {
       return NextResponse.json({ error: error.message }, { status: 400 });

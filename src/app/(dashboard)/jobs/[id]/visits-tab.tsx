@@ -62,7 +62,9 @@ function arrivalFromStored(startAt?: string | null, endAt?: string | null): {
  */
 function SectionPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  // Microtask como no resto do arquivo: setState direto no efeito é recusado
+  // pela regra de render em cascata.
+  useEffect(() => { queueMicrotask(() => setMounted(true)); }, []);
   if (!mounted) return null;
   return createPortal(children, document.body);
 }
@@ -236,6 +238,12 @@ export function VisitsTab({
 
   const primary = jobToPrimaryVisit(job);
   /**
+   * Sem parceiro na visita 1 não nasce visita 2: a visita 1 é o job, e sem
+   * dono não há a quem pagar nem documento onde pendurar o resto. O servidor
+   * repete a regra com 409.
+   */
+  const jobHasPartner = Boolean(job.partner_id?.trim());
+  /**
    * A visita 1 é o job, então o status dela é o estágio do job traduzido:
    * de Final checks em diante o trabalho aconteceu, e a linha diz "Completed"
    * em vez de um "From job" que não informa nada.
@@ -260,9 +268,22 @@ export function VisitsTab({
             {" · "}partner {formatCurrency(summary.totalPartnerCost)}
           </p>
         </div>
-        <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setEditTarget({ mode: "create" })}>
-          Add visit
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            disabled={!jobHasPartner}
+            title={jobHasPartner ? undefined : "Assign a partner to visit 1 first"}
+            onClick={() => setEditTarget({ mode: "create" })}
+          >
+            Add visit
+          </Button>
+          {!jobHasPartner ? (
+            <p className="max-w-[15rem] text-right text-[11px] text-text-tertiary">
+              Assign a partner to visit 1 before adding another.
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-light">

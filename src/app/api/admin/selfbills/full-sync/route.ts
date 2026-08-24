@@ -311,7 +311,9 @@ export async function POST(req: NextRequest) {
      * quando está `completed`.
      */
     const visits = visitsBySb.get(sb.id) ?? [];
-    const payableVisits = visits.filter((v) => v.status === "completed");
+    // Mesma regra do recompute: valor entra assim que a visita existe viva; o
+    // "done" governa a promoção a ready_to_pay, não o valor.
+    const payableVisits = visits.filter((v) => v.status !== "cancelled");
 
     const jobValue =
       payable.reduce((s, j) => s + (Number(j.partner_cost) || 0), 0) +
