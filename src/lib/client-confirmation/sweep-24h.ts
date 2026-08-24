@@ -45,6 +45,40 @@ export type LinhaDaVarredura = {
   detalhe: string;
 };
 
+/** Hora do relógio de Londres (0-23) num instante qualquer. */
+export function horaEmLondres(agora: Date): number {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London", hour: "2-digit", hour12: false,
+    }).format(agora),
+  );
+}
+
+/** Cedo demais para prometer "chegamos amanhã", e tarde demais para incomodar. */
+export const LEMBRETE_HORA_INICIO = 18;
+export const LEMBRETE_HORA_FIM = 22;
+
+/**
+ * O lembrete só sai das 18h aos 22h de Londres.
+ *
+ * Antes disso o dia ainda está sendo arrumado: alocação muda, parceiro cai,
+ * horário anda. Mandar "chegamos amanhã às 9h" às 10h da manhã da véspera
+ * promete um plano que ainda vai mudar, e o cliente recebe a correção depois —
+ * ou pior, não recebe. Às 18h o dia seguinte já está fechado.
+ *
+ * A janela é do relógio de LONDRES, não do relógio da máquina. O launchd dispara
+ * no horário local do Mac (São Paulo), e a diferença para Londres muda de 3 para
+ * 4 horas duas vezes por ano: um horário fixo no plist andaria sozinho. Quem
+ * decide é esta função; o plist só precisa acordar o processo perto da hora.
+ *
+ * O limite das 22h existe para o Mac que acordou tarde: um WhatsApp à meia-noite
+ * não vale o susto. Nesse caso ninguém recebe, e é melhor assim.
+ */
+export function dentroDaJanelaDoLembrete(agora: Date): boolean {
+  const h = horaEmLondres(agora);
+  return h >= LEMBRETE_HORA_INICIO && h < LEMBRETE_HORA_FIM;
+}
+
 /** `2026-08-21`, no fuso de Londres, a partir de um instante qualquer. */
 export function amanhaEmLondres(agora: Date): string {
   const amanha = new Date(agora.getTime() + 24 * 60 * 60 * 1000);
@@ -59,11 +93,21 @@ const SELECT =
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
-  opcoes?: { agora?: Date; enviarDeVerdade?: boolean; client?: RespondIoClient },
-): Promise<{ dia: string; linhas: LinhaDaVarredura[] }> {
+  opcoes?: {
+    agora?: Date;
+    enviarDeVerdade?: boolean;
+    client?: RespondIoClient;
+    /** Para envio manual fora da janela. O agendador nunca passa isto. */
+    ignorarJanela?: boolean;
+  },
+): Promise<{ dia: string; linhas: LinhaDaVarredura[]; foraDaJanela: boolean }> {
   const agora = opcoes?.agora ?? new Date();
   const dia = amanhaEmLondres(agora);
-  const enviar = opcoes?.enviarDeVerdade === true;
+  const naJanela = opcoes?.ignorarJanela === true || dentroDaJanelaDoLembrete(agora);
+  // Fora da hora a varredura continua LISTANDO, só não manda: quem roda à mão
+  // no meio da tarde quer ver o que sairia hoje à noite.
+  const enviar = opcoes?.enviarDeVerdade === true && naJanela;
+  const foraDaJanela = opcoes?.enviarDeVerdade === true && !naJanela;
 
   const { data: jobs, error } = await supabase
     .from("jobs")
@@ -146,7 +190,10 @@ export async function varrerLembretesDeVespera(
     ];
 
     if (!enviar) {
-      anota("pulado", `dry run: ${template()} → ${parametros.join(" | ")} → ${decisao.telefone}`);
+      const motivo = foraDaJanela
+        ? `fora da janela (${LEMBRETE_HORA_INICIO}h-${LEMBRETE_HORA_FIM}h de Londres, agora são ${horaEmLondres(agora)}h)`
+        : "dry run";
+      anota("pulado", `${motivo}: ${template()} → ${parametros.join(" | ")} → ${decisao.telefone}`);
       continue;
     }
     if (!mensagensAoClienteLigadas()) {
@@ -178,5 +225,5 @@ export async function varrerLembretesDeVespera(
     }
   }
 
-  return { dia, linhas };
+  return { dia, linhas, foraDaJanela };
 }

@@ -1,8 +1,12 @@
 /**
  * Lembrete de véspera para os clientes com job amanhã.
  *
- *   npx tsx scripts/confirmacao-24h.mts             ← dry run, não manda nada
- *   npx tsx scripts/confirmacao-24h.mts --enviar    ← manda de verdade
+ *   npx tsx scripts/confirmacao-24h.mts                       ← dry run, não manda nada
+ *   npx tsx scripts/confirmacao-24h.mts --enviar              ← manda, se estiver na janela
+ *   npx tsx scripts/confirmacao-24h.mts --enviar --agora      ← manda fora da janela também
+ *
+ * A janela é 18h-22h de LONDRES: antes disso o dia seguinte ainda está sendo
+ * arrumado e a promessa muda. `--agora` é a saída para o envio manual.
  *
  * Dry run é o PADRÃO, e é assim de propósito. Em 20/08/2026 duas chamadas de
  * teste numa rota de cron deste repo soltaram o parceiro de 15 jobs e
@@ -20,14 +24,24 @@ import { varrerLembretesDeVespera } from "../src/lib/client-confirmation/sweep-2
 loadEnvLocal();
 
 const enviar = process.argv.includes("--enviar");
+/** Envio manual fora da janela de 18h-22h de Londres. */
+const ignorarJanela = process.argv.includes("--agora");
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   (process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)!,
 );
 
-const { dia, linhas } = await varrerLembretesDeVespera(supabase, { enviarDeVerdade: enviar });
+const { dia, linhas, foraDaJanela } = await varrerLembretesDeVespera(supabase, {
+  enviarDeVerdade: enviar,
+  ignorarJanela,
+});
 
-console.log(`\n${enviar ? "ENVIO REAL" : "DRY RUN (nada foi enviado)"} · jobs de ${dia}\n`);
+const cabecalho = foraDaJanela
+  ? `FORA DA JANELA (18h-22h de Londres) · nada enviado · use --agora para forçar`
+  : enviar
+    ? "ENVIO REAL"
+    : "DRY RUN (nada foi enviado)";
+console.log(`\n${cabecalho} · jobs de ${dia}\n`);
 if (linhas.length === 0) {
   console.log("  nenhum job agendado para amanhã que ainda não tenha recebido lembrete.\n");
 } else {
@@ -43,4 +57,7 @@ console.log(
 );
 if (!enviar && linhas.length > 0) {
   console.log("Para mandar de verdade: --enviar, e CLIENT_MESSAGING_ENABLED=1 no ambiente.\n");
+}
+if (foraDaJanela) {
+  console.log("Para mandar agora mesmo, fora da janela: --enviar --agora\n");
 }
