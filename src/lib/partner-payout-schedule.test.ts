@@ -125,3 +125,66 @@ describe("workPeriodForJobStartYmd — a quinzena do dono", () => {
     assert.equal(b.periodStartYmd, diaSeguinte.toISOString().slice(0, 10));
   });
 });
+
+describe("workPeriodForJobStartYmd — sem sexta de referência gravada", () => {
+  const TERMS = "Every 2 weeks on Friday";
+
+  /**
+   * Producao roda assim: `partner_payout_reference_ymd` nunca foi gravado, entao
+   * `orgReferenceYmd` chega null. Antes, a grade era ancorada na proxima sexta do
+   * PROPRIO job, e cada data de inicio inventava a sua — 22 dias seguidos de
+   * agosto/2026 produziram 5 janelas sobrepostas, e o mesmo parceiro terminava
+   * com dois self-bills abertos, um deles pagando duas semanas depois.
+   */
+  const janelasDe = (dias: string[]) =>
+    new Set(
+      dias.map((d) => {
+        const p = workPeriodForJobStartYmd(d, TERMS, null);
+        assert.ok(p, `sem período para ${d}`);
+        return `${p!.periodStartYmd}→${p!.periodEndYmd}`;
+      }),
+    );
+
+  it("agosto inteiro cai em janelas que se encaixam, sem sobrepor", () => {
+    const dias = Array.from({ length: 22 }, (_, i) => `2026-08-${String(i + 10).padStart(2, "0")}`);
+    const janelas = [...janelasDe(dias)].sort();
+    assert.deepEqual(janelas, [
+      "2026-08-03→2026-08-16",
+      "2026-08-17→2026-08-30",
+      "2026-08-31→2026-09-13",
+    ]);
+  });
+
+  it("bate com a grade que o OS ja usa: 24/08 paga na sexta 04/09", () => {
+    const p = workPeriodForJobStartYmd("2026-08-24", TERMS, null);
+    assert.equal(p!.periodStartYmd, "2026-08-17");
+    assert.equal(p!.periodEndYmd, "2026-08-30");
+    assert.equal(p!.payoutDueYmd, "2026-09-04");
+  });
+
+  it("dias vizinhos nunca voltam para uma janela anterior", () => {
+    let anterior = "";
+    for (let i = 1; i <= 120; i++) {
+      const d = new Date(Date.UTC(2026, 5, 1) + i * 86_400_000).toISOString().slice(0, 10);
+      const p = workPeriodForJobStartYmd(d, TERMS, null);
+      assert.ok(p, `sem período para ${d}`);
+      assert.ok(p!.periodStartYmd >= anterior, `${d} voltou de ${anterior} para ${p!.periodStartYmd}`);
+      anterior = p!.periodStartYmd;
+    }
+  });
+
+  it("cut-off em domingo e pagamento na sexta, como no caso com referência", () => {
+    const dow = (ymd: string) => new Date(`${ymd}T12:00:00Z`).getUTCDay();
+    for (const dia of ["2026-08-05", "2026-08-19", "2026-09-02", "2026-12-01"]) {
+      const p = workPeriodForJobStartYmd(dia, TERMS, null);
+      assert.equal(dow(p!.periodEndYmd), 0, `cut-off não é domingo para ${dia}`);
+      assert.equal(dow(p!.payoutDueYmd), 5, `pagamento não é sexta para ${dia}`);
+    }
+  });
+
+  it("a referência da org, quando existe, continua mandando", () => {
+    const p = workPeriodForJobStartYmd("2026-05-28", TERMS, "2026-06-12");
+    assert.equal(p!.payoutDueYmd, "2026-06-12");
+    assert.equal(p!.periodStartYmd, "2026-05-25");
+  });
+});
