@@ -357,9 +357,16 @@ export function buildInvoiceClientEmailHTML(
     ? buildPaymentMethodBlock(resolvePaymentMethod(invoice), resolveTransactionId(invoice))
     : "";
 
-  const payLink = !paid && invoice.stripe_payment_link_url?.trim()
+  const payLinkBase = !paid && invoice.stripe_payment_link_url?.trim()
     ? invoice.stripe_payment_link_url.trim()
     : "";
+  // Partial requests charge the requested % through the OS /pay link; legacy
+  // fixed Stripe Payment Links can't vary the amount, so they keep the full link.
+  const requestPct = Math.round(Number(options?.requestPercent ?? 0));
+  const payLink =
+    payLinkBase && isPartialRequest && payLinkBase.includes("/pay/") && requestPct >= 1 && requestPct <= 99
+      ? `${payLinkBase.split("?")[0]}?pct=${requestPct}`
+      : payLinkBase;
   const payNowBlock = payLink ? buildPayNowBlock(payLink) : "";
   const bankDetailsBlock = paid ? "" : buildBankDetailsBlock();
 

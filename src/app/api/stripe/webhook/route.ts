@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
+import { applyOsPayLinkPayment } from "@/lib/stripe-pay-link-payment";
 
 export async function POST(req: NextRequest) {
   const supabaseAdmin = createServiceClient();
@@ -39,20 +40,31 @@ export async function POST(req: NextRequest) {
       const inv = (invRow ?? {}) as { amount?: number; invoice_kind?: string | null; job_reference?: string | null };
       const invAmt = Number(inv.amount ?? 0);
 
-      await supabaseAdmin.from("invoices").update({
-        stripe_payment_status: "paid",
-        stripe_paid_at: new Date().toISOString(),
-        status: "paid",
-        paid_date: new Date().toISOString().split("T")[0],
-        amount_paid: invAmt,
-      }).eq("id", invoiceId);
+      let fullyPaid = true;
+      if (event.type === "checkout.session.completed" && metadata.pay_link === "os") {
+        // OS pay-link sessions can be partial (?pct= deposit): credit only the
+        // charged amount instead of force-marking the invoice fully paid.
+        fullyPaid = await applyOsPayLinkPayment(supabaseAdmin, invoiceId, {
+          id: String(session.id ?? ""),
+          payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
+          amount_total: Number(session.amount_total ?? 0),
+        });
+      } else {
+        await supabaseAdmin.from("invoices").update({
+          stripe_payment_status: "paid",
+          stripe_paid_at: new Date().toISOString(),
+          status: "paid",
+          paid_date: new Date().toISOString().split("T")[0],
+          amount_paid: invAmt,
+        }).eq("id", invoiceId);
 
-      await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);
+        await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);
+      }
 
       // When a deposit invoice is paid, advance the originating quote from
       // `awaiting_payment` to `converted_to_job`. Safe no-op if the invoice
       // isn't a deposit or the job/quote can't be resolved.
-      if (inv.invoice_kind === "deposit" && inv.job_reference) {
+      if (fullyPaid && inv.invoice_kind === "deposit" && inv.job_reference) {
         try {
           const { data: jobRow } = await supabaseAdmin
             .from("jobs")
