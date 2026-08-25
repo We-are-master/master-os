@@ -75,3 +75,54 @@ export function formatDistanceMiles(metres: number): string {
   if (miles < 0.1) return "< 0.1 mi";
   return `${miles.toFixed(1)} mi`;
 }
+
+export type DrivingRouteMulti = DrivingRoute & {
+  /** Duração/distância de cada perna (waypoint N → N+1), na ordem. */
+  legs: Array<{ durationSec: number; distanceM: number }>;
+};
+
+/**
+ * Rota de carro por VÁRIAS paradas na ordem dada (casa do parceiro → job 1 →
+ * job 2…). Directions aceita até 25 waypoints — um dia de parceiro nunca chega
+ * perto. Mesmo contrato do single: null em vez de throw, o caller decide.
+ */
+export async function getDrivingRouteMulti(points: Coord[]): Promise<DrivingRouteMulti | null> {
+  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  if (!token) return null;
+  const valid = points.filter(
+    (p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude),
+  );
+  if (valid.length < 2) return null;
+
+  const path = valid
+    .slice(0, 25)
+    .map((p) => `${p.longitude.toFixed(6)},${p.latitude.toFixed(6)}`)
+    .join(";");
+  const url = `${ENDPOINT}/${path}?geometries=geojson&overview=full&access_token=${encodeURIComponent(token)}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      routes?: Array<{
+        geometry?: { type: string; coordinates: [number, number][] };
+        duration?: number;
+        distance?: number;
+        legs?: Array<{ duration?: number; distance?: number }>;
+      }>;
+    };
+    const route = json.routes?.[0];
+    if (!route?.geometry || !Array.isArray(route.geometry.coordinates)) return null;
+    return {
+      geometry: { type: "LineString", coordinates: route.geometry.coordinates },
+      durationSec: Number(route.duration ?? 0),
+      distanceM: Number(route.distance ?? 0),
+      legs: (route.legs ?? []).map((l) => ({
+        durationSec: Number(l.duration ?? 0),
+        distanceM: Number(l.distance ?? 0),
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
