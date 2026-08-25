@@ -84,7 +84,22 @@ export async function assignPartnerToJob(job: Job, input: PartnerAssignInput): P
   const updated = await updateJob(job.id, buildPartnerAssignPatch(job, input));
 
   if (previousPartnerId && previousPartnerId !== input.partnerId) {
-    notifyAssignedPartnerAboutJob({ partnerId: previousPartnerId, job: updated, kind: "job_unassigned" });
+    // Swap: para quem sai, a notícia é "job cancelado", sem motivo (dono,
+    // 24/08). O novo dono do job não é assunto do antigo.
+    notifyAssignedPartnerAboutJob({
+      partnerId: previousPartnerId,
+      job: updated,
+      kind: "job_cancelled_by_office",
+    });
+    void notifyPartnerJobChange({
+      jobId: updated.id,
+      jobReference: updated.reference,
+      kind: "cancelled",
+      newStatusLabel: "Cancelled",
+      skipPush: true,
+      silent: true,
+      targetPartnerId: previousPartnerId,
+    });
   }
   notifyAssignedPartnerAboutJob({ partnerId: input.partnerId, job: updated, kind: "job_assigned" });
   // Zendesk side conversation to the partner. No-op server-side when the job

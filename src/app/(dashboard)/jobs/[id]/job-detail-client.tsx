@@ -3228,7 +3228,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const newPid = updated.partner_id ?? null;
         const partnerKeyTouched = updates.partner_id !== undefined;
         if (partnerKeyTouched && prevPid && prevPid !== newPid) {
-          notifyAssignedPartnerAboutJob({ partnerId: prevPid, job: updated, kind: "job_unassigned" });
+          // Do lado de quem sai, unassign e swap são a mesma notícia: "o job
+          // foi cancelado" — sem motivo (dono, 24/08). O que acontece com o
+          // job depois (outro parceiro, vitrine) não é assunto dele.
+          notifyAssignedPartnerAboutJob({
+            partnerId: prevPid,
+            job: updated,
+            kind: "job_cancelled_by_office",
+          });
+          void notifyPartnerJobChange({
+            jobId: updated.id,
+            jobReference: updated.reference,
+            kind: "cancelled",
+            newStatusLabel: "Cancelled",
+            skipPush: true,
+            silent: true,
+            targetPartnerId: prevPid,
+          });
         }
         if (newPid) {
           const assignedFresh = Boolean(partnerKeyTouched && newPid !== prevPid);

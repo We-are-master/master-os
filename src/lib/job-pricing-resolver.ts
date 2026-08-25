@@ -178,11 +178,19 @@ export function resolvePartnerHourlyForJob(input: {
   return { ...hourly, fixedPartnerTotal: null };
 }
 
+/** Rótulo humano do acordo (mig 281): só daily/half_day ganham sufixo. */
+export function rateBasisLabel(basis: string | null | undefined): string | null {
+  if (basis === "daily") return "Day rate";
+  if (basis === "half_day") return "Half day";
+  return null;
+}
+
 export function formatPartnerJobPriceDisplay(
   jobType: "hourly" | "fixed" | null | undefined,
   hourlyPartnerRate: number | null | undefined,
   partnerCost: number | null | undefined,
   fixedBandTotal?: number | null,
+  rateBasis?: string | null,
 ): string {
   if (jobType === "hourly" && fixedBandTotal != null && fixedBandTotal > 0) {
     return `£${fixedBandTotal.toFixed(2)}`;
@@ -190,7 +198,9 @@ export function formatPartnerJobPriceDisplay(
   if (jobType === "hourly") {
     return `£${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
   }
-  return `£${Number(partnerCost ?? 0).toFixed(2)}`;
+  const base = `£${Number(partnerCost ?? 0).toFixed(2)}`;
+  const label = rateBasisLabel(rateBasis);
+  return label ? `${base} · ${label}` : base;
 }
 
 export function resolveJobPricing(input: {
