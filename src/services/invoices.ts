@@ -3,6 +3,7 @@ import { getSupabase, queryList, type ListParams, type ListResult } from "./base
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { syncJobAfterInvoiceCreated } from "@/lib/sync-invoices-from-job-payments";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 
 /** Payload for creating an invoice (collection fields default when omitted). */
 export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at" | "collection_stage"> & {
@@ -116,6 +117,11 @@ export async function createInvoice(
     }
   }
 
+  // Every invoice is born payable: the stable /pay/<ref> link computes the
+  // open balance at click time, so it never goes stale and the invoice email's
+  // "Pay now" button works from day one.
+  const payLinkUrl = input.stripe_payment_link_url?.trim() || invoicePayLinkUrl(ref as string);
+
   const row = {
     ...input,
     ...(sourceAccountId ? { source_account_id: sourceAccountId } : {}),
@@ -123,6 +129,7 @@ export async function createInvoice(
     collection_stage,
     collection_stage_locked: input.collection_stage_locked ?? false,
     invoice_kind: input.invoice_kind ?? "other",
+    stripe_payment_link_url: payLinkUrl,
   };
   const { data, error } = await supabase
     .from("invoices")
@@ -153,6 +160,7 @@ export async function createInvoice(
     ...input,
     amount_paid: input.amount_paid ?? 0,
     invoice_kind: input.invoice_kind === "combined" ? "final" : (input.invoice_kind ?? "other"),
+    stripe_payment_link_url: payLinkUrl,
   } as Record<string, unknown>;
   delete legacyRow.collection_stage;
   delete legacyRow.collection_stage_locked;
