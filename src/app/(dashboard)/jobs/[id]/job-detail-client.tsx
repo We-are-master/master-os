@@ -9691,25 +9691,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                       <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
                                     ) : null}
                                   </div>
-                                  <div className="ml-auto flex items-center gap-1.5">
-                                    <p className="text-lg font-bold tabular-nums text-primary tracking-tight">
+                                  <div className="ml-auto flex min-w-0 items-center gap-1.5">
+                                    <p className="truncate text-lg font-bold tabular-nums text-primary tracking-tight">
                                       {formatCurrency(inv.amount)}
                                     </p>
-                                    {inv.status !== "paid" && inv.status !== "cancelled" ? (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        icon={<Copy className="h-3 w-3" />}
-                                        title="Copy payment link (Stripe)"
-                                        aria-label="Copy payment link"
-                                        onClick={() => void copyInvoicePayLink(inv.reference)}
-                                      />
-                                    ) : null}
                                     <Button
                                       type="button"
                                       size="sm"
                                       variant="outline"
+                                      className="shrink-0"
                                       icon={<FileText className="h-3 w-3" />}
                                       title="Download receipt PDF"
                                       onClick={() =>
@@ -9876,8 +9866,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         title="Request payment: email the invoice or share a Stripe pay link"
                         onClick={() => setRequestPaymentMenuOpen((o) => !o)}
                       >
-                        Request payment
-                        <ChevronDown className={cn("ml-1 h-3.5 w-3.5 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                          Request payment
+                          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
+                        </span>
                       </Button>
                       {requestPaymentMenuOpen ? (
                         <div
