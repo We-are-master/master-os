@@ -1221,7 +1221,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     patch: Partial<Job>;
     sequenceIndex: number | null;
     actionLabel: string;
-  } | null>(null);
+      /** false = remarcação silenciosa (checkbox desmarcado no modal). */
+    notify?: boolean;
+} | null>(null);
   /** Preset minutes after arrival-from for window end (replaces manual “arrival to” time). */
   const [scheduleWindowMins, setScheduleWindowMins] = useState("");
   /** Civil end day for calendar (`scheduled_finish_date`). */
@@ -1427,6 +1429,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** ⋮ → “Reschedule & confirm” — one modal for date, partner, service, pricing. */
   const [quickRescheduleOpen, setQuickRescheduleOpen] = useState(false);
   const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
+  /** Padrão LIGADO: remarcar avisa cliente e parceiro; desmarcar silencia os dois. */
+  const [qrNotify, setQrNotify] = useState(true);
   const [qrDate, setQrDate] = useState("");
   const [qrTime, setQrTime] = useState("");
   const [qrWindowMins, setQrWindowMins] = useState("");
@@ -4756,6 +4760,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setQrCatalogServiceId(job.catalog_service_id ?? "");
     setQrClientPrice(String(job.client_price ?? 0));
     setQrPartnerCost(String(job.partner_cost ?? 0));
+    setQrNotify(true);
     setQuickRescheduleOpen(true);
   }, [job, isOneOffScheduleUi]);
 
@@ -4802,6 +4807,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         patch: merged,
         sequenceIndex: job.recurrence_sequence_index ?? null,
         actionLabel: "reschedule",
+        notify: qrNotify,
       });
       setQuickRescheduleOpen(false);
       toast.success("Choose how to apply this change to the series.");
@@ -4811,7 +4817,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setQuickRescheduleSaving(true);
     try {
       const prev = job;
-      const updated = await handleJobUpdate(job.id, merged, { silent: true });
+      const updated = await handleJobUpdate(job.id, merged, { silent: true, notifyPartner: qrNotify });
       if (!updated) return;
       await logFieldChanges(
         "job",
@@ -4839,7 +4845,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setScheduleWindowMins(qrWindowMins.trim());
       setScheduleExpectedFinishDate(isOneOffScheduleUi ? "" : qrExpectedFinish.trim());
       setQuickRescheduleOpen(false);
-      toast.success("Booking updated — partner notified when assigned.");
+      toast.success(qrNotify ? "Booking updated — customer and partner notified." : "Booking updated silently — nobody was notified.");
     } finally {
       setQuickRescheduleSaving(false);
     }
@@ -4853,6 +4859,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     qrCatalogServiceId,
     qrClientPrice,
     qrPartnerCost,
+    qrNotify,
     partners,
     catalogServicesJobType,
     buildSchedulePatchForInputs,
@@ -11576,24 +11583,36 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               />
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 border-t border-border-light pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={quickRescheduleSaving}
-              onClick={() => setQuickRescheduleOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              loading={quickRescheduleSaving}
-              onClick={() => void confirmQuickReschedule()}
-            >
-              Confirm &amp; Update
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-light pt-2">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={qrNotify}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrNotify(e.target.checked)}
+              />
+              Notify customer &amp; partner
+            </label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={quickRescheduleSaving}
+                onClick={() => setQuickRescheduleOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                loading={quickRescheduleSaving}
+                onClick={() => void confirmQuickReschedule()}
+              >
+                Confirm &amp; Update
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -11635,7 +11654,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               const scheduleChanged = SCHEDULE_KEYS.some(
                 (k) => k in patch && (before[k] ?? null) !== (refreshed[k] ?? null),
               );
-              if (partnerChanged) {
+              if (recurringScopePending.notify === false) {
+                /* remarcação silenciosa: escolha explícita no modal */
+              } else if (partnerChanged) {
                 notifyAssignedPartnerAboutJob({
                   partnerId: refreshed.partner_id,
                   job: refreshed,
