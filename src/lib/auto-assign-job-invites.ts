@@ -70,6 +70,7 @@ function partnerPriceDisplayForInvite(
   catalog: CatalogService | null,
   partnerOverride: PartnerServicePrice | null | undefined,
   presetId?: string | null,
+  rateBasis?: string | null,
 ): string {
   if (jobType === "hourly" && catalog) {
     const { value, fixedPartnerTotal } = resolvePartnerHourlyForJob({
@@ -81,7 +82,7 @@ function partnerPriceDisplayForInvite(
       return formatPartnerJobPriceDisplay("hourly", value, null, fixedPartnerTotal);
     }
   }
-  return formatPartnerJobPriceDisplay(jobType, jobHourlyPartnerRate, jobPartnerCost);
+  return formatPartnerJobPriceDisplay(jobType, jobHourlyPartnerRate, jobPartnerCost, null, rateBasis);
 }
 
 export interface BroadcastAutoAssignInvitesParams {
@@ -178,13 +179,14 @@ export async function broadcastAutoAssignInvites(
 
   const { data: jobInfo } = await supabase
     .from("jobs")
-    .select(
-      "job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id, title, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date",
-    )
+    // "*" de propósito: rate_basis (mig 281) pode ainda não existir no banco,
+    // e um select explícito com coluna ausente derruba o fetch inteiro.
+    .select("*")
     .eq("id", params.jobId)
     .maybeSingle();
   const ji = jobInfo as {
     job_type: "hourly" | "fixed" | null;
+    rate_basis?: string | null;
     hourly_partner_rate: number | null;
     partner_cost: number | null;
     catalog_service_id: string | null;
@@ -218,6 +220,7 @@ export async function broadcastAutoAssignInvites(
       smartPriceCtx.catalog,
       smartPriceCtx.overridesByPartnerId.get(row.id),
       presetId,
+      ji?.rate_basis ?? null,
     );
 
     let sideConversationId: string | null = null;
@@ -320,11 +323,12 @@ export async function dispatchAutoAssignJobInvites(
   if (args.sendPush !== false) {
     const { data: jobInfo } = await supabase
       .from("jobs")
-      .select("job_type, hourly_partner_rate, partner_cost, catalog_service_id, catalog_pricing_preset_id")
+      .select("*")
       .eq("id", args.jobId)
       .maybeSingle();
     const ji = jobInfo as {
       job_type: "hourly" | "fixed" | null;
+      rate_basis?: string | null;
       hourly_partner_rate: number | null;
       partner_cost: number | null;
       catalog_service_id: string | null;
@@ -349,6 +353,7 @@ export async function dispatchAutoAssignJobInvites(
           smartPriceCtx.catalog,
           smartPriceCtx.overridesByPartnerId.get(partnerId),
           presetId,
+          ji?.rate_basis ?? null,
         );
         pushSent += await sendPushToPartners(supabase, [partnerId], {
           title: "New job available",
@@ -361,6 +366,8 @@ export async function dispatchAutoAssignJobInvites(
         ji?.job_type ?? null,
         ji?.hourly_partner_rate,
         ji?.partner_cost,
+        null,
+        ji?.rate_basis ?? null,
       );
       pushSent = await sendPushToPartners(supabase, args.partnerIds, {
         title: "New job available",
