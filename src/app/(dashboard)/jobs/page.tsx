@@ -82,7 +82,9 @@ import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
 import { getAccountIdsForBu } from "@/services/business-units";
 import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
-import { patchOfficeCancelZeroJobEconomics } from "@/lib/job-cancel-economics";
+import { patchOfficeCancelZeroJobEconomics, patchOfficeCancelLostSnapshot } from "@/lib/job-cancel-economics";
+import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
+import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
@@ -103,6 +105,7 @@ import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
 import {
+  clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
@@ -618,6 +621,23 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   cancelled: { label: "Lost & Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
+
+/**
+ * Bolinha da aba Final check: verde = report entregue, âmbar = report
+ * dispensado, vermelho = ainda nada. `report_submitted` (legado) conta como
+ * entregue para os jobs de antes da mig 168.
+ */
+function FinalCheckReportDot({ job }: { job: Job }) {
+  const done = Boolean(job.final_report_submitted || job.report_submitted);
+  const skipped = !done && Boolean(job.final_report_skipped);
+  const cls = done ? "bg-emerald-500" : skipped ? "bg-amber-400" : "bg-red-400";
+  const label = done ? "Report submitted" : skipped ? "Report skipped" : "No report yet";
+  return (
+    <span className="inline-flex h-4 w-4 items-center justify-center" title={label} aria-label={label} role="img">
+      <span className={`h-2.5 w-2.5 rounded-full ${cls}`} />
+    </span>
+  );
+}
 
 const JOB_SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
 
@@ -2087,6 +2107,8 @@ function JobsPageContent() {
         }
         const patch: Record<string, unknown> = {
           ...patchOfficeCancelZeroJobEconomics(),
+          ...patchOfficeCancelLostSnapshot(j),
+          ...clearAutoAssignQueuePatch(),
           status: "cancelled",
           cancellation_reason: reason,
           // Mesmo motivo do cancelamento individual: o id é o que faz o
@@ -2104,6 +2126,9 @@ function JobsPageContent() {
         }
         if (upErr) throw upErr;
         updatedCount += 1;
+        void fetch(`/api/jobs/${encodeURIComponent(j.id)}/auto-assign-cancel-cleanup`, {
+          method: "POST",
+        }).catch((e) => console.error("auto-assign-cancel-cleanup", j.reference, e));
         const mergedForBump = { ...j, ...patch } as Job;
         void bumpLinkedInvoiceAmountsToJobSchedule(mergedForBump).catch((e) =>
           console.error("bumpLinkedInvoiceAmountsToJobSchedule", j.reference, e),
@@ -2138,11 +2163,20 @@ function JobsPageContent() {
       }
       await Promise.all(
         cancelledForInvoices.map((j) =>
-          cancelOpenInvoicesForJobCancellation({
-            jobReference: j.reference,
-            cancellationReason: reason,
-            primaryInvoiceId: j.invoice_id,
-          }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
+          Promise.all([
+            cancelOpenInvoicesForJobCancellation({
+              jobReference: j.reference,
+              cancellationReason: reason,
+              primaryInvoiceId: j.invoice_id,
+            }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
+            cancelOpenSelfBillsForJobCancellation({
+              jobReference: j.reference,
+              primarySelfBillId: j.self_bill_id,
+            }).catch((e) => console.error("cancelOpenSelfBillsForJobCancellation", j.reference, e)),
+            cancelOpenVisitsForJobCancellation(j.id).catch((e) =>
+              console.error("cancelOpenVisitsForJobCancellation", j.reference, e),
+            ),
+          ]),
         ),
       );
       await Promise.all([
@@ -2638,7 +2672,15 @@ function JobsPageContent() {
       minWidth: "44px",
       cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
       headerClassName: "w-11 normal-case",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
+      // Na aba Final check a seta vira a bolinha do report: o que a revisão
+      // quer saber de cada linha é "tem report para revisar?". Atualiza em
+      // tempo real via o realtimeTable:"jobs" que esta lista já assina.
+      render: (item) =>
+        status === "final_check" ? (
+          <FinalCheckReportDot job={item} />
+        ) : (
+          <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
+        ),
     },
   ];
 
