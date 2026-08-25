@@ -1,5 +1,6 @@
 "use client";
 
+import { pulseMoney, pulseMoneyCompact } from "@/lib/pulse-money-display";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { startOfMonth, endOfMonth, startOfDay, endOfDay, formatISO, format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -943,22 +944,14 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** Segue a lente de moeda do Pulse (GBP por padrão, BRL quando o usuário troca). */
 function formatGbp(n: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(n);
+  return pulseMoney(n);
 }
 
+/** Segue a lente de moeda do Pulse (GBP por padrão, BRL quando o usuário troca). */
 function formatGbpCompact(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1000) {
-    const k = n / 1000;
-    const rounded = Math.abs(k) >= 10 ? k.toFixed(0) : k.toFixed(1);
-    return `£${rounded}k`;
-  }
-  return formatGbp(n);
+  return pulseMoneyCompact(n);
 }
 
 function formatGbpSigned(n: number): string {

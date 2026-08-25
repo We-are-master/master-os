@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, softDeleteById } from "./base";
 import { rollUpJobVisits } from "@/lib/job-visit-rollup";
 import type { Job, JobVisit, JobVisitStatus } from "@/types/database";
@@ -71,6 +72,29 @@ export async function updateJobVisit(id: string, patch: Partial<JobVisit>): Prom
 
 export async function softDeleteJobVisit(id: string, deletedBy?: string): Promise<void> {
   await softDeleteById("job_visits", id, deletedBy);
+}
+
+/**
+ * Cancela as visitas ainda abertas (scheduled/in_progress) de um job que foi
+ * cancelado. Não existe cascata no banco: sem esta chamada, as visitas de um
+ * job cancelado continuam aparecendo como agendadas. Visitas já completed
+ * ficam como estão (trabalho feito conta).
+ */
+export async function cancelOpenVisitsForJobCancellation(
+  jobId: string,
+  client?: SupabaseClient,
+): Promise<number> {
+  if (!jobId?.trim()) return 0;
+  const supabase = client ?? getSupabase();
+  const { data, error } = await supabase
+    .from("job_visits")
+    .update({ status: "cancelled" })
+    .eq("job_id", jobId.trim())
+    .in("status", ["scheduled", "in_progress"])
+    .is("deleted_at", null)
+    .select("id");
+  if (error) throw new Error(error.message);
+  return data?.length ?? 0;
 }
 
 export async function setVisitStatus(id: string, status: JobVisitStatus): Promise<JobVisit> {
