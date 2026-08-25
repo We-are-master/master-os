@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
+import { enviarRescheduleDoCliente } from "@/lib/client-confirmation/reschedule-whatsapp";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth } from "@/lib/auth-api";
 import { buildClientJobRescheduledEmail } from "@/lib/emails/client-job-rescheduled";
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: job } = await supabase
     .from("jobs")
-    .select("id, reference, title, property_address, client_id, client_name, client_reschedule_notified_at")
+    .select("id, reference, title, property_address, client_id, client_name, client_reschedule_notified_at, scheduled_date, scheduled_start_at, scheduled_end_at")
     .eq("id", id)
     .maybeSingle();
   if (!job) return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
@@ -162,6 +163,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       { status: 502 },
     );
   }
+
+  // O WhatsApp é o canal que o morador de fato lê: template aprovado
+  // `reschedule` com a data NOVA. Fire-and-forget: o email já saiu, e falhar o
+  // WhatsApp não pode transformar a remarcação avisada em erro.
+  void enviarRescheduleDoCliente(supabase, {
+    id: String(j.id),
+    client_id: clientId,
+    client_name: (j.client_name as string) ?? null,
+    title: (j.title as string) ?? null,
+    scheduled_date: (j.scheduled_date as string) ?? null,
+    scheduled_start_at: (j.scheduled_start_at as string) ?? null,
+    scheduled_end_at: (j.scheduled_end_at as string) ?? null,
+  }).catch((e) => console.error("[notify-client-reschedule] whatsapp:", e));
 
   // O lembrete de véspera precisa valer para a data NOVA, então o carimbo dele
   // é zerado aqui. Sem isto, um job remarcado nunca receberia lembrete: a
