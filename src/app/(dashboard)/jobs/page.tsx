@@ -3508,6 +3508,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     end_date: "",
     end_time: "17:00",
     job_type: "fixed",
+    rate_basis: "fixed",
     scope: "",
     report_link: "",
     hourly_client_rate: "",
@@ -3663,6 +3664,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       setForm((prev) => ({
         ...prev,
         job_type: "fixed",
+    rate_basis: "fixed",
         client_price: String(resolved.clientTotal),
         partner_cost: String(resolved.partnerTotal),
       }));
@@ -3972,6 +3974,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
       partner_name: isAutoAssign ? null : (selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined),
       status: isAutoAssign ? "auto_assigning" : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
+      rate_basis:
+        form.job_type === "fixed" && (form.rate_basis === "daily" || form.rate_basis === "half_day")
+          ? (form.rate_basis as Job["rate_basis"])
+          : null,
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
@@ -4031,6 +4037,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       end_date: "",
       end_time: "17:00",
       job_type: "fixed",
+    rate_basis: "fixed",
       scope: "",
       report_link: "",
       hourly_client_rate: "",
@@ -4230,7 +4237,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 title="Set prices on this job"
                 onClick={() => {
                   lastAutoPartnerCost.current = null;
-                  setForm((p) => ({ ...p, job_type: "fixed", partner_cost: "" }));
+                  setForm((p) => ({ ...p, job_type: "fixed", rate_basis: "fixed", partner_cost: "" }));
                 }}
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
@@ -4257,6 +4264,31 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <span className="truncate">{pricingModeLabel("hourly")}</span>
               </button>
             </div>
+            {form.job_type === "fixed" ? (
+              // O acordo por trás do preço fixo (mig 281): Day rate e Half day
+              // são o MESMO fixed; o rótulo é o que o parceiro lê no email.
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { id: "fixed", label: "Fixed price" },
+                  { id: "daily", label: "Day rate" },
+                  { id: "half_day", label: "Half day" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => update("rate_basis", b.id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                      (form.rate_basis ?? "fixed") === b.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border-light text-text-secondary hover:bg-surface-hover",
+                    )}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div
               className={cn(
                 "grid gap-2 min-w-0",
