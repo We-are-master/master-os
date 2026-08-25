@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -256,7 +257,7 @@ type RowData = Record<string, unknown>;
 function formatCell(value: unknown, field: string, table?: CustomTable): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string" && value.match(/^\d{4}-\d{2}-\d{2}/)) {
-    return new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    return formatBritishDate(new Date(value));
   }
   const resolved = table === "jobs" ? resolveJobsNumericField(field) : field;
   const num = typeof value === "number" ? value : Number(value);

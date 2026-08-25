@@ -5,6 +5,7 @@
 // /api/leads/[id]/offers. Shows an empty hint while a lead has no responses yet.
 
 import { useEffect, useState } from "react";
+import { formatBritishDateTime } from "@/lib/utils/date";
 import { Phone, Mail, Loader2, Users } from "lucide-react";
 
 interface Offer {
@@ -18,7 +19,7 @@ interface Offer {
 
 function when(iso: string | null): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return formatBritishDateTime(iso);
 }
 
 export function LeadOffersCard({ leadId, published }: { leadId: string; published: boolean }) {

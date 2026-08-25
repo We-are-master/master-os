@@ -1,6 +1,7 @@
 "use client";
 
 import type { JobDetailBundle } from "@/services/jobs";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -879,11 +880,7 @@ function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string
   return entries
     .slice(0, 25)
     .map((entry) => {
-      const when = new Date(entry.createdAt).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
+      const when = formatBritishDate(entry.createdAt);
       const by = entry.userName ? ` · ${entry.userName}` : "";
       const reason = entry.reason?.trim() ? `\nReason: ${entry.reason.trim()}` : "";
       const line = `${when} · ${entry.extraType} · ${formatSignedCurrency(extraHistorySignedAmount(entry))}${by}${reason}`;
@@ -9040,7 +9037,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               </span>
                             )}
                             <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              · {formatBritishDate(p.payment_date)}
                             </span>
                           </div>
                           {ledgerTag ? (
@@ -9305,11 +9302,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     )}
                                     <span className="text-[10px] text-text-tertiary">
                                       ·{" "}
-                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
-                                        day: "2-digit",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}
+                                      {formatBritishDate(p.payment_date)}
                                     </span>
                                   </div>
                                   {ledgerTag ? (
@@ -9361,11 +9354,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     </Badge>
                                     <span className="text-[10px] text-text-tertiary">
                                       ·{" "}
-                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
-                                        day: "2-digit",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}
+                                      {formatBritishDate(p.payment_date)}
                                     </span>
                                   </div>
                                   {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}

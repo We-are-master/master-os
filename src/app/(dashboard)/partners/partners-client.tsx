@@ -1,6 +1,7 @@
 "use client";
 
 import type { ListResult } from "@/services/base";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -3199,7 +3200,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                         </div>
                         {doc?.expires_at && (
                           <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                            Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                            Expires: {formatBritishDate(doc.expires_at)}
                           </p>
                         )}
                         {req.docType === "certification" && matchedDocs.length > 0 && (
@@ -3293,7 +3294,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                             </div>
                             {doc?.expires_at && (
                               <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                                Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                                Expires: {formatBritishDate(doc.expires_at)}
                               </p>
                             )}
                             {matchedDocs.length > 0 && (
@@ -3886,7 +3887,7 @@ function PartnerDocumentDetailModal({
           <div className="rounded-lg bg-surface-hover p-3">
             <p className="text-text-tertiary">Expiration date</p>
             <p className={`font-medium mt-0.5 ${isExpired ? "text-red-500" : "text-text-primary"}`}>
-              {doc.expires_at ? new Date(doc.expires_at).toLocaleDateString() : "No expiry"}
+              {doc.expires_at ? formatBritishDate(doc.expires_at) : "No expiry"}
             </p>
           </div>
           <div className="rounded-lg bg-surface-hover p-3">
@@ -5901,7 +5902,7 @@ function PartnerDetailDrawer({
               )}
               <div className="flex items-center gap-1.5 text-text-tertiary col-span-2 sm:col-span-1">
                 <Calendar className="h-3.5 w-3.5 shrink-0" />
-                <span>Joined {new Date(partner.joined_at).toLocaleDateString()}</span>
+                <span>Joined {formatBritishDate(partner.joined_at)}</span>
               </div>
             </div>
 
@@ -6603,7 +6604,7 @@ function PartnerDetailDrawer({
                           }}
                         >
                           <span className="font-medium">{d.name}</span>
-                          <span className="text-text-tertiary"> · expired {new Date(d.expires_at!).toLocaleDateString()}</span>
+                          <span className="text-text-tertiary"> · expired {formatBritishDate(d.expires_at!)}</span>
                         </button>
                       </li>
                     ))}
@@ -7035,7 +7036,7 @@ function PartnerDetailDrawer({
                       </div>
                       {doc?.expires_at && (
                         <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                          Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                          Expires: {formatBritishDate(doc.expires_at)}
                         </p>
                       )}
                       {req.docType === "certification" && matchedDocs.length > 0 && (
@@ -7139,7 +7140,7 @@ function PartnerDetailDrawer({
                           </div>
                           {doc?.expires_at && (
                             <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                              Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                              Expires: {formatBritishDate(doc.expires_at)}
                             </p>
                           )}
                           {matchedDocs.length > 0 && (
@@ -7219,7 +7220,7 @@ function PartnerDetailDrawer({
                           Certificate no: {extractCertificateNumber(doc)}
                         </p>
                       )}
-                      {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {new Date(doc.expires_at).toLocaleDateString()}</p>}
+                      {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {formatBritishDate(doc.expires_at)}</p>}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {doc.file_path && (
@@ -7479,9 +7480,7 @@ function PartnerDetailDrawer({
                 <p className="text-xs text-text-tertiary">
                   Expires on{" "}
                   <time dateTime={portalLinkResult.expiresAt}>
-                    {new Date(portalLinkResult.expiresAt).toLocaleDateString("en-GB", {
-                      dateStyle: "medium",
-                    })}
+                    {formatBritishDate(portalLinkResult.expiresAt)}
                   </time>
                 </p>
               ) : null}
