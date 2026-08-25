@@ -21,6 +21,7 @@ import {
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
+import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { createJobPayment } from "@/services/job-payments";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -805,6 +806,8 @@ function JobsPageContent() {
   const [jobsListSortDir, setJobsListSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover" | "unassign">(null);
+  /** Um job só selecionado → o MESMO modal de cancelamento do job card (motivo, fault, fees). */
+  const [singleCancelTarget, setSingleCancelTarget] = useState<{ id: string; reference: string } | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkCancelPresetId, setBulkCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [bulkCancelDetail, setBulkCancelDetail] = useState("");
@@ -2204,6 +2207,22 @@ function JobsPageContent() {
     loadDashboardStats,
   ]);
 
+  /**
+   * Cancel da barra de seleção: com UM job selecionado abre o modal completo
+   * do job card (motivo, fault, fees — mesmo fluxo do detail/kanban); com
+   * vários, o modal de lote de sempre (fee é decisão por job, não em massa).
+   */
+  const openBulkCancel = useCallback(() => {
+    if (selectedIds.size === 1) {
+      const only = data.find((j) => selectedIds.has(j.id));
+      if (only) {
+        setSingleCancelTarget({ id: only.id, reference: only.reference });
+        return;
+      }
+    }
+    setBulkActionModal("cancel");
+  }, [selectedIds, data]);
+
   const handleBulkArchive = useCallback(async (): Promise<boolean> => {
     if (selectedIds.size === 0) return false;
     try {
@@ -3076,13 +3095,13 @@ function JobsPageContent() {
                     {closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment" ? (
                       <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
                     ) : null}
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
@@ -3337,6 +3356,21 @@ function JobsPageContent() {
           </div>
         </div>
       </Modal>
+
+      {singleCancelTarget && (
+        <CancelJobModal
+          jobId={singleCancelTarget.id}
+          jobReference={singleCancelTarget.reference}
+          isOpen={singleCancelTarget !== null}
+          onClose={() => setSingleCancelTarget(null)}
+          onCancelled={() => {
+            setSingleCancelTarget(null);
+            setSelectedIds(new Set());
+            refresh();
+            loadDashboardStats();
+          }}
+        />
+      )}
 
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
       <Modal
