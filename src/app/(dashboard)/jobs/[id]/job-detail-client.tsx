@@ -273,6 +273,7 @@ import {
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 import {
   invoiceAmountPaid,
   invoiceBalanceDue,
@@ -335,6 +336,17 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
 const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "26rem";
 const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
 const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
+
+/** Copy the stable /pay link (full balance, or a % deposit) to the clipboard. */
+async function copyInvoicePayLink(reference: string, pct?: number): Promise<void> {
+  const url = invoicePayLinkUrl(reference, pct);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast.success(pct ? `Deposit link copied (${pct}% of balance)` : "Payment link copied");
+  } catch {
+    window.prompt("Copy payment link", url);
+  }
+}
 
 function scopeTextNeedsCollapse(text: string): boolean {
   if (!text) return false;
@@ -1422,6 +1434,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   });
   const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
   const jobMoreMenuRef = useRef<HTMLDivElement>(null);
+  const [requestPaymentMenuOpen, setRequestPaymentMenuOpen] = useState(false);
+  const requestPaymentMenuRef = useRef<HTMLDivElement>(null);
+  const [requestPaymentInitialPercent, setRequestPaymentInitialPercent] = useState(100);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
   /** Bump feito pela aba de visitas para o topo do card recarregar a lista. */
@@ -1531,6 +1546,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [jobMoreMenuOpen]);
+  useEffect(() => {
+    if (!requestPaymentMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = requestPaymentMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setRequestPaymentMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [requestPaymentMenuOpen]);
   useEffect(() => {
     if (!job?.id) return;
     setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
@@ -2232,7 +2256,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [id, syncJobFinanceViaApi, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
-  const handleOpenRequestPaymentModal = useCallback(async () => {
+  const handleOpenRequestPaymentModal = useCallback(async (opts?: { initialPercent?: number; allowWithoutEmail?: boolean }) => {
     if (!job?.id?.trim()) return;
     const inv =
       (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
@@ -2241,6 +2265,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("No invoice linked to this job yet.");
       return;
     }
+    setRequestPaymentInitialPercent(opts?.initialPercent ?? 100);
     const result = await loadFinanceBillingContact(job.id.trim());
     if (result.ok) {
       setFinanceBillingContact(result.contact);
@@ -2248,19 +2273,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } else {
       setFinanceBillingContact(null);
       setFinanceBillingLoadError(result.error);
-      toast.error(result.error);
-      return;
+      // Copying a pay link needs no email, so "Partial amount" opens anyway;
+      // only the send path is blocked (its button disables without a recipient).
+      if (!opts?.allowWithoutEmail) {
+        toast.error(result.error);
+        return;
+      }
     }
-    const gate = canSendJobInvoiceEmail({
-      invoice: inv,
-      canIncludeInvoice: result.contact.canIncludeInvoice,
-      documentEmail: result.contact.documentEmail,
-      mode: result.contact.mode,
-      loadError: null,
-    });
-    if (!gate.ok) {
-      toast.error(gate.reason);
-      return;
+    if (result.ok) {
+      const gate = canSendJobInvoiceEmail({
+        invoice: inv,
+        canIncludeInvoice: result.contact.canIncludeInvoice,
+        documentEmail: result.contact.documentEmail,
+        mode: result.contact.mode,
+        loadError: null,
+      });
+      if (!gate.ok && !opts?.allowWithoutEmail) {
+        toast.error(gate.reason);
+        return;
+      }
     }
     setRequestPaymentModalOpen(true);
   }, [job, jobInvoices, loadFinanceBillingContact]);
@@ -9653,17 +9684,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             </button>
                             <div className="min-w-0 flex-1 space-y-2">
                               {!invOpen ? (
-                                <div className="flex items-start justify-between gap-2 pt-0.5">
+                                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-0.5">
                                   <div className="min-w-0">
                                     <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
                                     {inv.due_date ? (
                                       <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
                                     ) : null}
                                   </div>
-                                  <div className="flex items-center gap-2 shrink-0">
+                                  <div className="ml-auto flex items-center gap-1.5">
                                     <p className="text-lg font-bold tabular-nums text-primary tracking-tight">
                                       {formatCurrency(inv.amount)}
                                     </p>
+                                    {inv.status !== "paid" && inv.status !== "cancelled" ? (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        icon={<Copy className="h-3 w-3" />}
+                                        title="Copy payment link (Stripe)"
+                                        aria-label="Copy payment link"
+                                        onClick={() => void copyInvoicePayLink(inv.reference)}
+                                      />
+                                    ) : null}
                                     <Button
                                       type="button"
                                       size="sm"
@@ -9747,6 +9789,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     >
                                       Receipt PDF
                                     </Button>
+                                    {inv.status !== "paid" && inv.status !== "cancelled" ? (
+                                      <>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          icon={<Copy className="h-3 w-3" />}
+                                          title="Copy Stripe link charging the full open balance"
+                                          onClick={() => void copyInvoicePayLink(inv.reference)}
+                                        >
+                                          Copy pay link
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          icon={<Copy className="h-3 w-3" />}
+                                          title="Copy Stripe link charging 50% of the open balance"
+                                          onClick={() => void copyInvoicePayLink(inv.reference, 50)}
+                                        >
+                                          Copy deposit link
+                                        </Button>
+                                      </>
+                                    ) : null}
                                     <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
                                     {inv.stripe_payment_link_url && (
                                       <>
@@ -9798,19 +9862,76 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ) : null}
                 {!clientPaidInFull ? (
                   <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      className="w-full min-h-[2.5rem] font-semibold shadow-sm"
-                      icon={<Mail className="h-3.5 w-3.5" />}
-                      loading={sendingInvoiceEmail}
-                      disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
-                      title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
-                      onClick={() => void handleOpenRequestPaymentModal()}
-                    >
-                      Request payment
-                    </Button>
+                    <div className="relative" ref={requestPaymentMenuRef}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="primary"
+                        className="w-full min-h-[2.5rem] font-semibold shadow-sm"
+                        icon={<Mail className="h-3.5 w-3.5" />}
+                        loading={sendingInvoiceEmail}
+                        disabled={sendingInvoiceEmail || loadingInvoices || jobInvoices.length === 0}
+                        aria-expanded={requestPaymentMenuOpen}
+                        aria-haspopup="menu"
+                        title="Request payment: email the invoice or share a Stripe pay link"
+                        onClick={() => setRequestPaymentMenuOpen((o) => !o)}
+                      >
+                        Request payment
+                        <ChevronDown className={cn("ml-1 h-3.5 w-3.5 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
+                      </Button>
+                      {requestPaymentMenuOpen ? (
+                        <div
+                          role="menu"
+                          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={!invoiceSendGate.ok || financeBillingLoading}
+                            title={invoiceSendGate.ok ? "Choose % and email the invoice PDF with a Stripe pay link" : invoiceSendGate.reason}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              void handleOpenRequestPaymentModal({ initialPercent: 100 });
+                            }}
+                          >
+                            <Mail className="h-3.5 w-3.5 shrink-0" />
+                            Send via email
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            title="Copy a Stripe link charging the full open balance"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+                              if (!inv?.reference) {
+                                toast.error("No invoice linked to this job yet.");
+                                return;
+                              }
+                              void copyInvoicePayLink(inv.reference);
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5 shrink-0" />
+                            Copy pay link
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            title="Pick a % of the balance, then copy the link or email it"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true });
+                            }}
+                          >
+                            <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                            Partial amount…
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                     {!invoiceSendGate.ok && !financeBillingLoading ? (
                       <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
                     ) : null}
@@ -11710,7 +11831,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               : undefined
         }
         loading={sendingInvoiceEmail}
+        initialPercent={requestPaymentInitialPercent}
         onConfirm={(pct) => void handleSendJobInvoiceEmail(pct)}
+        onCopyLink={(pct) => {
+          const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+          if (!inv?.reference) {
+            toast.error("No invoice linked to this job yet.");
+            return;
+          }
+          void copyInvoicePayLink(inv.reference, pct < 100 ? pct : undefined);
+          setRequestPaymentModalOpen(false);
+        }}
       />
     </PageTransition>
   );
