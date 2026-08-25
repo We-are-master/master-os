@@ -79,8 +79,18 @@ export function partnerEmailBaseStyles(extra = ""): string {
 }
 
 /** Partner emails omit the header logo (broken in many clients; text-only header band). */
-export function partnerEmailLogoHeaderRow(_padding = "20px 40px"): string {
-  return "";
+/**
+ * O header padrão da casa: band navy com o LOGO OFICIAL centrado em largura
+ * fixa (o asset baked segura a legibilidade no dark mode do Gmail/iOS).
+ * Voltou em 24/08/2026 a pedido do dono — tinha saído no #451 e o e-mail sem
+ * header parecia inacabado. O wordmark em texto fica de alt para imagem
+ * bloqueada.
+ */
+export function partnerEmailLogoHeaderRow(padding = "20px 40px"): string {
+  const band = escapeHtml(partnerEmailHeaderBandUrl());
+  return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:${padding}; text-align:center; line-height:0; font-size:0; mso-line-height-rule:exactly;">
+        <img src="${band}" alt="Fixfy" width="132" class="partner-email-header-img" style="display:block; width:132px; max-width:36%; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
+      </td></tr>`;
 }
 
 export function partnerEmailOuterTableOpen(): string {

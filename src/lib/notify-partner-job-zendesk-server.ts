@@ -17,6 +17,7 @@ import { type SupabaseClient } from "@supabase/supabase-js";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
+import { formatPartnerJobPriceDisplay } from "@/lib/job-pricing-resolver";
 import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links";
 import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -50,6 +51,12 @@ export interface NotifyPartnerJobZendeskInput {
   skipPush?: boolean;
   /** Profile id of the office actor, or null for system / automation calls. */
   actorUserId?: string | null;
+  /**
+   * Quem recebe, quando não é o parceiro ATUAL do job. Caso de uso: unassign e
+   * swap — o parceiro que SAIU recebe o email de "Job cancelled" (sem motivo,
+   * dono 24/08), mas a essa altura job.partner_id já é o novo ou null.
+   */
+  targetPartnerId?: string | null;
 }
 
 /** Mirror of the JSON shape the API route returns, plus the HTTP status to use. */
@@ -75,7 +82,8 @@ export async function notifyPartnerJobZendesk(
 
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, title, status, client_name, property_address, client_id, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, catalog_service_id, scope, partner_id, external_source, external_ref, zendesk_side_conversation_id, job_type, hourly_partner_rate, partner_cost, cancellation_reason, on_hold_reason, on_hold_reason_preset_id, on_hold_complaint_description")
+    // "*" de propósito: rate_basis (mig 281) pode ainda não existir no banco.
+    .select("*")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -99,6 +107,7 @@ export async function notifyPartnerJobZendesk(
     external_ref: string | null;
     zendesk_side_conversation_id: string | null;
     job_type: "hourly" | "fixed" | null;
+    rate_basis?: string | null;
     hourly_partner_rate: number | null;
     partner_cost: number | null;
     cancellation_reason: string | null;
@@ -109,7 +118,8 @@ export async function notifyPartnerJobZendesk(
   const job = jobRow as JobRow;
 
   const zendeskTicketId = job.external_source === "zendesk" ? job.external_ref : null;
-  if (!job.partner_id) {
+  const recipientPartnerId = input.targetPartnerId?.trim() || job.partner_id;
+  if (!recipientPartnerId) {
     return { status: 200, body: { ok: true, skipped: "no_partner" } };
   }
 
@@ -117,7 +127,7 @@ export async function notifyPartnerJobZendesk(
   const { data: partnerRow } = await supabase
     .from("partners")
     .select("id, contact_name, company_name, email, expo_push_token, auth_user_id, zendesk_user_id")
-    .eq("id", job.partner_id)
+    .eq("id", recipientPartnerId)
     .maybeSingle();
   const partner = partnerRow as {
     id: string;
@@ -136,9 +146,13 @@ export async function notifyPartnerJobZendesk(
   const base = appBaseUrl();
 
   const isHourly = job.job_type === "hourly";
-  const priceDisplay = isHourly
-    ? `£${Number(job.hourly_partner_rate ?? 0).toFixed(2)}/hr`
-    : `£${Number(job.partner_cost ?? 0).toFixed(2)}`;
+  const priceDisplay = formatPartnerJobPriceDisplay(
+    job.job_type,
+    job.hourly_partner_rate,
+    job.partner_cost,
+    null,
+    job.rate_basis,
+  );
   const partnerFirstName = partnerEmailGreetingName(partner);
   // Partner-scoped web report link — shipped as the primary CTA in every
   // partner email (assigned/completed/etc) so the partner can submit the
