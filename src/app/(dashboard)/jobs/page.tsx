@@ -21,6 +21,7 @@ import {
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
+import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { createJobPayment } from "@/services/job-payments";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -805,6 +806,8 @@ function JobsPageContent() {
   const [jobsListSortDir, setJobsListSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover" | "unassign">(null);
+  /** Um job só selecionado → o MESMO modal de cancelamento do job card (motivo, fault, fees). */
+  const [singleCancelTarget, setSingleCancelTarget] = useState<{ id: string; reference: string } | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkCancelPresetId, setBulkCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [bulkCancelDetail, setBulkCancelDetail] = useState("");
@@ -2204,6 +2207,22 @@ function JobsPageContent() {
     loadDashboardStats,
   ]);
 
+  /**
+   * Cancel da barra de seleção: com UM job selecionado abre o modal completo
+   * do job card (motivo, fault, fees — mesmo fluxo do detail/kanban); com
+   * vários, o modal de lote de sempre (fee é decisão por job, não em massa).
+   */
+  const openBulkCancel = useCallback(() => {
+    if (selectedIds.size === 1) {
+      const only = data.find((j) => selectedIds.has(j.id));
+      if (only) {
+        setSingleCancelTarget({ id: only.id, reference: only.reference });
+        return;
+      }
+    }
+    setBulkActionModal("cancel");
+  }, [selectedIds, data]);
+
   const handleBulkArchive = useCallback(async (): Promise<boolean> => {
     if (selectedIds.size === 0) return false;
     try {
@@ -3076,13 +3095,13 @@ function JobsPageContent() {
                     {closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment" ? (
                       <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
                     ) : null}
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
@@ -3338,6 +3357,21 @@ function JobsPageContent() {
         </div>
       </Modal>
 
+      {singleCancelTarget && (
+        <CancelJobModal
+          jobId={singleCancelTarget.id}
+          jobReference={singleCancelTarget.reference}
+          isOpen={singleCancelTarget !== null}
+          onClose={() => setSingleCancelTarget(null)}
+          onCancelled={() => {
+            setSingleCancelTarget(null);
+            setSelectedIds(new Set());
+            refresh();
+            loadDashboardStats();
+          }}
+        />
+      )}
+
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
       <Modal
         open={kanbanMove !== null}
@@ -3474,6 +3508,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     end_date: "",
     end_time: "17:00",
     job_type: "fixed",
+    rate_basis: "fixed",
     scope: "",
     report_link: "",
     hourly_client_rate: "",
@@ -3629,6 +3664,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       setForm((prev) => ({
         ...prev,
         job_type: "fixed",
+    rate_basis: "fixed",
         client_price: String(resolved.clientTotal),
         partner_cost: String(resolved.partnerTotal),
       }));
@@ -3938,6 +3974,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
       partner_name: isAutoAssign ? null : (selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined),
       status: isAutoAssign ? "auto_assigning" : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
+      rate_basis:
+        form.job_type === "fixed" && (form.rate_basis === "daily" || form.rate_basis === "half_day")
+          ? (form.rate_basis as Job["rate_basis"])
+          : null,
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
@@ -3997,6 +4037,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       end_date: "",
       end_time: "17:00",
       job_type: "fixed",
+    rate_basis: "fixed",
       scope: "",
       report_link: "",
       hourly_client_rate: "",
@@ -4196,7 +4237,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 title="Set prices on this job"
                 onClick={() => {
                   lastAutoPartnerCost.current = null;
-                  setForm((p) => ({ ...p, job_type: "fixed", partner_cost: "" }));
+                  setForm((p) => ({ ...p, job_type: "fixed", rate_basis: "fixed", partner_cost: "" }));
                 }}
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
@@ -4223,6 +4264,31 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <span className="truncate">{pricingModeLabel("hourly")}</span>
               </button>
             </div>
+            {form.job_type === "fixed" ? (
+              // O acordo por trás do preço fixo (mig 281): Day rate e Half day
+              // são o MESMO fixed; o rótulo é o que o parceiro lê no email.
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { id: "fixed", label: "Fixed price" },
+                  { id: "daily", label: "Day rate" },
+                  { id: "half_day", label: "Half day" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => update("rate_basis", b.id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                      (form.rate_basis ?? "fixed") === b.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border-light text-text-secondary hover:bg-surface-hover",
+                    )}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div
               className={cn(
                 "grid gap-2 min-w-0",

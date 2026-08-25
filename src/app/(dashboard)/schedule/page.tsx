@@ -11,7 +11,9 @@ import {
   getDateRangeForMode,
   resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
-import { getDrivingRoute, formatDuration, formatDistanceMiles, type DrivingRoute } from "@/lib/mapbox-directions";
+import { getDrivingRouteMulti, type DrivingRoute } from "@/lib/mapbox-directions";
+import { LiveMapDayRoutePanel, type DayRouteData, type DayRouteStop } from "@/components/dashboard/live-map-day-route-panel";
+import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import {
   ScheduleLiveMap,
   LIVE_MAP_TOOLBAR_BTN_CLASS,
@@ -277,6 +279,13 @@ export default function SchedulePage() {
   const [liveMapRoute, setLiveMapRoute] = useState<DrivingRoute | null>(null);
   const [liveMapRouteJobId, setLiveMapRouteJobId] = useState<string | null>(null);
   const [liveMapRouteLoading, setLiveMapRouteLoading] = useState(false);
+  /** O dia inteiro do parceiro roteado (casa → paradas → oportunidades por perto). */
+  const [dayRoute, setDayRoute] = useState<DayRouteData | null>(null);
+  const [dayRouteOpenNearby, setDayRouteOpenNearby] = useState<DayRouteStop[]>([]);
+  /** Bump para re-buscar o dia (ex.: depois de atribuir um job pelo mapa). */
+  const [dayRouteNonce, setDayRouteNonce] = useState(0);
+  /** Job clicado no mapa para atribuir direto (modo rota). */
+  const [mapAssignTarget, setMapAssignTarget] = useState<{ id: string; reference: string } | null>(null);
   /** Status row scoping the partner pins on the map (left panel). */
   const [liveMapPartnerStatus, setLiveMapPartnerStatus] = useState<LiveMapPartnerStatus | null>(null);
   const [liveMapPanNonce, setLiveMapPanNonce] = useState(0);
@@ -647,65 +656,144 @@ export default function SchedulePage() {
     return points;
   }, [jobsForSelectedDay, serviceCatalogTypeNames, liveMapAccountClientIds]);
 
-  /** Compute the next eligible job for the routed partner and fetch the driving
-   *  route from Mapbox. Runs whenever the user clicks a partner pin (or the
-   *  underlying data changes while a partner is selected). */
+  /**
+   * O DIA INTEIRO do parceiro roteado (dono, 24/08): casa → paradas na ordem
+   * agendada → rota real de carro pelo Directions, mais os jobs sem dono por
+   * perto para alocar do próprio mapa. Substitui o antigo "próximo job".
+   */
+  const routeDateYmd = useMemo(() => {
+    const { fromMs, toMs } = liveSelectedWindow;
+    if (Number.isFinite(fromMs) && Number.isFinite(toMs)) {
+      const from = new Date(fromMs);
+      const to = new Date(toMs);
+      if (from.toDateString() === to.toDateString()) {
+        return `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`;
+      }
+    }
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }, [liveSelectedWindow]);
+
   useEffect(() => {
     if (!liveMapRoutedPartnerId) {
       setLiveMapRoute(null);
       setLiveMapRouteJobId(null);
-      return;
-    }
-    const partner = liveMapPoints.find((p) => p.id === liveMapRoutedPartnerId);
-    if (!partner) {
-      setLiveMapRoute(null);
-      setLiveMapRouteJobId(null);
-      return;
-    }
-    // Next eligible job: earliest scheduled_start_at where partner matches and
-    // the job hasn't started yet (status in {scheduled, late, unassigned}).
-    const candidates = jobs
-      .filter((j) => {
-        if (j.partner_id !== liveMapRoutedPartnerId) return false;
-        if (
-          j.status !== "scheduled" &&
-          j.status !== "late" &&
-          j.status !== "unassigned" &&
-          j.status !== "auto_assigning"
-        ) {
-          return false;
-        }
-        if (typeof j.latitude !== "number" || typeof j.longitude !== "number") return false;
-        if (!j.scheduled_start_at) return false;
-        return true;
-      })
-      .sort(
-        (a, b) =>
-          new Date(a.scheduled_start_at ?? 0).getTime() -
-          new Date(b.scheduled_start_at ?? 0).getTime(),
-      );
-    const nextJob = candidates[0];
-    if (!nextJob) {
-      setLiveMapRoute(null);
-      setLiveMapRouteJobId(null);
+      setDayRoute(null);
+      setDayRouteOpenNearby([]);
       return;
     }
     let cancelled = false;
     setLiveMapRouteLoading(true);
     void (async () => {
-      const route = await getDrivingRoute(
-        { latitude: partner.latitude, longitude: partner.longitude },
-        { latitude: nextJob.latitude as number, longitude: nextJob.longitude as number },
-      );
-      if (cancelled) return;
-      setLiveMapRoute(route);
-      setLiveMapRouteJobId(nextJob.id);
-      setLiveMapRouteLoading(false);
+      try {
+        const res = await fetch(
+          `/api/partners/${liveMapRoutedPartnerId}/day-route?date=${routeDateYmd}`,
+        );
+        const json = (await res.json().catch(() => null)) as {
+          partner?: { id: string; name: string; home: { latitude: number; longitude: number; label: string } | null };
+          date?: string;
+          stops?: DayRouteStop[];
+          openNearby?: DayRouteStop[];
+        } | null;
+        if (cancelled) return;
+        if (!res.ok || !json?.partner) {
+          setDayRoute(null);
+          setDayRouteOpenNearby([]);
+          setLiveMapRoute(null);
+          return;
+        }
+        const stops = (json.stops ?? []).filter(
+          (st) => typeof st.latitude === "number" && typeof st.longitude === "number",
+        );
+        const waypoints = [
+          ...(json.partner.home ? [json.partner.home] : []),
+          ...stops.map((st) => ({ latitude: st.latitude as number, longitude: st.longitude as number })),
+        ];
+        const multi = waypoints.length >= 2 ? await getDrivingRouteMulti(waypoints) : null;
+        if (cancelled) return;
+        // Sem casa gravada, a primeira perna não existe: alinha os legs com as
+        // paradas inserindo um "leg vazio" na frente.
+        const legs = multi
+          ? json.partner.home
+            ? multi.legs
+            : [{ durationSec: 0, distanceM: 0 }, ...multi.legs]
+          : [];
+        setDayRoute({
+          partnerId: json.partner.id,
+          partnerName: json.partner.name,
+          date: json.date ?? routeDateYmd,
+          home: json.partner.home,
+          stops: json.stops ?? [],
+          openNearbyCount: (json.openNearby ?? []).length,
+          legs,
+          totalSec: multi?.durationSec ?? 0,
+          totalM: multi?.distanceM ?? 0,
+        });
+        setDayRouteOpenNearby(json.openNearby ?? []);
+        setLiveMapRoute(
+          multi
+            ? { geometry: multi.geometry, durationSec: multi.durationSec, distanceM: multi.distanceM }
+            : null,
+        );
+        setLiveMapRouteJobId(null);
+      } finally {
+        if (!cancelled) setLiveMapRouteLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [liveMapRoutedPartnerId, liveMapPoints, jobs]);
+  }, [liveMapRoutedPartnerId, routeDateYmd, dayRouteNonce]);
+
+  /** No modo rota o mapa mostra SÓ o dia do parceiro + oportunidades: paradas
+   *  numeradas na ordem, e os jobs sem dono por perto em cor de unassigned. */
+  const routeModeJobPoints = useMemo<ScheduleLiveMapJobPoint[] | null>(() => {
+    if (!dayRoute) return null;
+    const pts: ScheduleLiveMapJobPoint[] = [];
+    let ordem = 0;
+    for (const stop of dayRoute.stops) {
+      if (typeof stop.latitude !== "number" || typeof stop.longitude !== "number") continue;
+      ordem += 1;
+      pts.push({
+        id: stop.id,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        reference: stop.reference,
+        title: stop.title ?? stop.reference,
+        partnerName: dayRoute.partnerName,
+        clientName: stop.client_name ?? undefined,
+        propertyAddress: stop.property_address ?? "",
+        statusLabel: statusConfig[stop.status]?.label ?? stop.status,
+        statusCategory: liveMapCategoryForStatus(stop.status),
+        tradeLabel: resolveScheduleJobTypeKey(stop.title ?? "", serviceCatalogTypeNames),
+        scheduleLine: "",
+        routeOrder: ordem,
+      });
+    }
+    for (const open of dayRouteOpenNearby) {
+      if (typeof open.latitude !== "number" || typeof open.longitude !== "number") continue;
+      pts.push({
+        id: open.id,
+        latitude: open.latitude,
+        longitude: open.longitude,
+        reference: open.reference,
+        title: open.title ?? open.reference,
+        partnerName: null,
+        clientName: open.client_name ?? undefined,
+        propertyAddress: open.property_address ?? "",
+        statusLabel: statusConfig[open.status]?.label ?? open.status,
+        statusCategory: "unassigned",
+        tradeLabel: resolveScheduleJobTypeKey(open.title ?? "", serviceCatalogTypeNames),
+        scheduleLine: "",
+      });
+    }
+    return pts;
+  }, [dayRoute, dayRouteOpenNearby, serviceCatalogTypeNames]);
+
+  const dayRouteOpenIds = useMemo(
+    () => new Set(dayRouteOpenNearby.map((o) => o.id)),
+    [dayRouteOpenNearby],
+  );
 
   const handlePartnerMarkerClick = useCallback((partnerId: string) => {
     setLiveMapRoutedPartnerId((cur) => {
@@ -730,6 +818,20 @@ export default function SchedulePage() {
       return next;
     });
   }, []);
+
+  /** Modo rota: clicar num job sem dono abre o Assign partner na hora, com o
+   *  parceiro da rota pré-selecionado. Fora do modo rota, clique = seleção. */
+  const handleJobMarkerClickRouted = useCallback(
+    (id: string) => {
+      if (dayRoute && dayRouteOpenIds.has(id)) {
+        const alvo = dayRouteOpenNearby.find((o) => o.id === id);
+        setMapAssignTarget({ id, reference: alvo?.reference ?? "" });
+        return;
+      }
+      toggleJobSelection(id);
+    },
+    [dayRoute, dayRouteOpenIds, dayRouteOpenNearby, toggleJobSelection],
+  );
 
   const clearJobSelection = useCallback(() => setLiveMapSelectedJobIds(new Set()), []);
 
@@ -812,9 +914,9 @@ export default function SchedulePage() {
           regionPreset={liveMapRegionPreset}
           tradeFilter={liveMapTradeFilter}
           embeddedInCard
-          jobPoints={showJobsOnMap ? liveMapJobPoints : EMPTY_JOB_POINTS}
+          jobPoints={routeModeJobPoints ?? (showJobsOnMap ? liveMapJobPoints : EMPTY_JOB_POINTS)}
           selectedJobIds={liveMapSelectedJobSet}
-          onJobMarkerClick={toggleJobSelection}
+          onJobMarkerClick={handleJobMarkerClickRouted}
           onPartnerMarkerClick={handlePartnerMarkerClick}
           routeGeometry={liveMapRoute?.geometry ?? null}
           toolbarExtra={
@@ -847,7 +949,11 @@ export default function SchedulePage() {
           panNonce={liveMapPanNonce}
           resetToLondonNonce={liveMapLondonNonce}
           jobStatusFilter={liveMapJobStatusFilter}
-          searchMarker={coverageSearchMarker}
+          searchMarker={
+            dayRoute?.home
+              ? { latitude: dayRoute.home.latitude, longitude: dayRoute.home.longitude, label: "🏠 " + dayRoute.partnerName }
+              : coverageSearchMarker
+          }
           coverageCircle={coverageCircle}
           coverageHighlightUserIds={coverageHighlightUserIds}
           recentJobIds={recentJobIds}
@@ -865,78 +971,15 @@ export default function SchedulePage() {
           }
           bottomLeftOverlay={
             <div className="flex flex-col gap-2">
-              {liveMapRoutedPartnerId ? (() => {
-                const partner = partnerPointsForMap.find((p) => p.id === liveMapRoutedPartnerId);
-                const job = liveMapRouteJobId ? jobs.find((j) => j.id === liveMapRouteJobId) : null;
-                const arrivalEndMs = job?.scheduled_end_at ? new Date(job.scheduled_end_at).getTime() : null;
-                const etaMs = liveMapRoute ? Date.now() + liveMapRoute.durationSec * 1000 : null;
-                const willMissWindow = arrivalEndMs && etaMs ? etaMs > arrivalEndMs : false;
-                return (
-                  <div className="w-[300px] max-w-[92vw] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2.5 shadow-md backdrop-blur-sm space-y-1.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#ED4B00]">Route · next job</p>
-                        <p className="mt-0.5 text-[12.5px] font-semibold text-[#020040] truncate">
-                          {partner?.name ?? "Partner"}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={backToLondon}
-                          className="text-[10px] font-medium text-[#020040] hover:underline"
-                        >
-                          London
-                        </button>
-                        <button
-                          type="button"
-                          onClick={clearRoute}
-                          className="text-[10px] font-medium text-[#64748B] hover:text-[#020040]"
-                        >
-                          Clear ✕
-                        </button>
-                      </div>
-                    </div>
-                    {liveMapRouteLoading ? (
-                      <p className="text-[11px] text-[#64748B]">Calculating route…</p>
-                    ) : !job ? (
-                      <p className="text-[11px] text-[#64748B]">No upcoming job assigned to this partner.</p>
-                    ) : (
-                      <>
-                        <div className="rounded-md border border-[#E4E4E8] bg-[#FAFAFB] px-2 py-1.5 text-[11px] leading-snug">
-                          <p className="font-mono text-[10px] text-[#64748B] tracking-[0.04em]">{job.reference}</p>
-                          <p className="font-medium text-[#020040] truncate">{job.title}</p>
-                          {job.scheduled_start_at ? (
-                            <p className="mt-0.5 text-[10.5px] text-[#64748B]">
-                              Arrival {new Date(job.scheduled_start_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}
-                              {job.scheduled_end_at ? `–${new Date(job.scheduled_end_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}` : ""}
-                              {job.client_name ? ` · ${job.client_name}` : ""}
-                            </p>
-                          ) : null}
-                          {job.property_address ? (
-                            <p className="text-[10.5px] text-[#64748B] truncate">{job.property_address}</p>
-                          ) : null}
-                        </div>
-                        {liveMapRoute ? (
-                          <div className={cn(
-                            "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px]",
-                            willMissWindow ? "bg-[#FEE2E2] text-[#991B1B]" : "bg-[#ECFDF5] text-[#065F46]",
-                          )}>
-                            <span className="font-semibold">
-                              {willMissWindow ? "⚠ ETA past window" : "On track"}
-                            </span>
-                            <span className="font-mono tabular-nums">
-                              {formatDuration(liveMapRoute.durationSec)} · {formatDistanceMiles(liveMapRoute.distanceM)}
-                            </span>
-                          </div>
-                        ) : (
-                          <p className="text-[11px] text-[#64748B]">No driving route available.</p>
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })() : null}
+              {liveMapRoutedPartnerId ? (
+                <LiveMapDayRoutePanel
+                  route={dayRoute}
+                  loading={liveMapRouteLoading}
+                  onClose={clearRoute}
+                  onBackToLondon={backToLondon}
+                  onStopClick={(jobId) => window.open(`/jobs/${jobId}`, "_blank")}
+                />
+              ) : null}
               {showPartnersOnMap ? (
               <LiveMapPartnersPanel
                 points={partnerPointsForMap}
@@ -964,6 +1007,22 @@ export default function SchedulePage() {
         />
       </motion.div>
       )}
+      {mapAssignTarget ? (
+        <AssignPartnerModal
+          jobId={mapAssignTarget.id}
+          jobReference={mapAssignTarget.reference}
+          isOpen={mapAssignTarget !== null}
+          initialPartnerId={dayRoute?.partnerId ?? null}
+          onClose={() => setMapAssignTarget(null)}
+          onAssigned={() => {
+            setMapAssignTarget(null);
+            // O job ganhou dono: a rota do dia recalcula e o pin sai da lista
+            // de oportunidades sozinho.
+            setDayRouteNonce((n) => n + 1);
+            void loadLiveMap();
+          }}
+        />
+      ) : null}
     </PageTransition>
   );
 }

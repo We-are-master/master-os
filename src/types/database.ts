@@ -550,6 +550,13 @@ export interface Job {
   /** Set when an operator does "Edit this only" on an occurrence (mig 158). */
   recurrence_detached_at?: string | null;
   job_type?: "fixed" | "hourly";
+  /**
+   * O que foi COMBINADO, não como se cobra: "daily" e "half_day" são jobs
+   * fixed por baixo — o rótulo existe para o parceiro ler no email/portal
+   * exatamente o acordo ("£180 · Day rate"). Null = comportamento de sempre.
+   * Mig 281.
+   */
+  rate_basis?: "fixed" | "daily" | "half_day" | null;
   /** Snapshot rates for hourly jobs (GBP/hour). */
   hourly_client_rate?: number | null;
   hourly_partner_rate?: number | null;

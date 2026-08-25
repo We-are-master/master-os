@@ -40,6 +40,8 @@ export interface NotifyPartnerJobChangeOptions {
   skipPush?: boolean;
   /** When true, no toast — useful when you want silent best-effort firing. */
   silent?: boolean;
+  /** Quem recebe, quando não é o parceiro atual do job (unassign/swap: o que saiu). */
+  targetPartnerId?: string | null;
 }
 
 export async function notifyPartnerJobChange(opts: NotifyPartnerJobChangeOptions): Promise<PartnerNotifyApiResult> {
@@ -72,6 +74,7 @@ export async function notifyPartnerJobChange(opts: NotifyPartnerJobChangeOptions
         newDateLine: newDateLine ?? null,
         newTimeLine: newTimeLine ?? null,
         skipPush: skipPush ?? false,
+        targetPartnerId: opts.targetPartnerId ?? null,
       }),
     });
     result = (await res.json().catch(() => ({ ok: false }))) as PartnerNotifyApiResult;

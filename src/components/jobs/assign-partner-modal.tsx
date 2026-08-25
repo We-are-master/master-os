@@ -21,6 +21,8 @@ type Props = {
   onAssigned?: (updated: Job) => void;
   /** When given, the modal offers auto-assign as the alternative to picking. */
   onAutoAssign?: () => void;
+  /** Pré-seleciona este parceiro ao abrir (modo rota do mapa: "Assign to X"). */
+  initialPartnerId?: string | null;
 };
 
 const gbp = (n: number) =>
@@ -31,7 +33,7 @@ const gbp = (n: number) =>
  * modal (it calls the shared `assignPartnerToJob`), narrowed to what the office
  * decides at this point: who goes, what we pay, what the client pays.
  */
-export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign }: Props) {
+export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign , initialPartnerId }: Props) {
   const [job, setJob] = useState<Job | null>(null);
   const [partners, setPartners] = useState<AssignablePartner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,8 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
       if (cancelled) return;
       setJob(row);
       setPartners(list);
-      setSelectedId(row?.partner_id ?? "");
+      // Job sem dono + modo rota do mapa: o parceiro da rota já vem marcado.
+      setSelectedId(row?.partner_id ?? (initialPartnerId?.trim() || ""));
       setPartnerCost(row && Number(row.partner_cost) > 0 ? String(Number(row.partner_cost)) : "");
       setClientPrice(row && Number(row.client_price) > 0 ? String(Number(row.client_price)) : "");
       setLoading(false);
@@ -58,7 +61,7 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
     return () => {
       cancelled = true;
     };
-  }, [isOpen, jobId]);
+  }, [isOpen, jobId, initialPartnerId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -167,16 +170,8 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
               <div className="space-y-2 border-t border-border-light pt-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate &amp; cost</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
-                    <span>Partner cost £</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={partnerCost}
-                      onChange={(e) => setPartnerCost(e.target.value)}
-                    />
-                  </label>
+                  {/* Cliente à esquerda, parceiro à direita (padrão do dono, 24/08):
+                      lê na ordem do dinheiro — o que entra antes do que sai. */}
                   <label className="flex flex-col gap-1 text-xs text-text-secondary">
                     <span>Client price £</span>
                     <Input
@@ -185,6 +180,16 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
                       step="0.01"
                       value={clientPrice}
                       onChange={(e) => setClientPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Partner cost £</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerCost}
+                      onChange={(e) => setPartnerCost(e.target.value)}
                     />
                   </label>
                 </div>

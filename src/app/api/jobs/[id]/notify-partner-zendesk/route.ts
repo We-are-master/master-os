@@ -25,6 +25,8 @@ interface NotifyBody {
   newTimeLine?: string | null;
   /** When true, skip the Expo push send — caller already triggered it via notifyAssignedPartnerAboutJob. */
   skipPush?: boolean;
+  /** Quem recebe, quando não é o parceiro atual (unassign/swap: o que saiu). */
+  targetPartnerId?: string | null;
 }
 
 /**
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     newTimeLine: body.newTimeLine ?? null,
     skipPush: body.skipPush ?? false,
     actorUserId: auth.user.id,
+    targetPartnerId: body.targetPartnerId ?? null,
   });
 
   /**
