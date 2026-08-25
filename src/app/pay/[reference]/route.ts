@@ -103,7 +103,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
             currency: "gbp",
             unit_amount: Math.round(amount * 100),
             product_data: {
-              name: pct < 100 ? `Invoice ${reference} — ${pct}% deposit` : `Invoice ${reference}`,
+              name: pct < 100 ? `Invoice ${reference} · ${pct}% deposit` : `Invoice ${reference}`,
               ...(clientName ? { description: `Payment for ${clientName}` } : {}),
             },
           },
