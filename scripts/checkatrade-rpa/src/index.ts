@@ -256,7 +256,26 @@ async function main(): Promise<void> {
     // a fixed, obviously-robotic beat.
     const baseMs = cfg.schedule.pollIntervalSeconds * 1000;
     const jitterMs = baseMs * cfg.schedule.pollJitter * Math.random();
-    await sleep(baseMs + jitterMs);
+    /**
+     * O sono é FATIADO em ~10s, e cada fatia espia a fila de conclusão.
+     *
+     * "Aprovou, sobe" tinha um teto escondido: a conclusão só rodava no começo
+     * do ciclo, então um Validate report logo depois da passada esperava o
+     * sono inteiro (minutos). A fila é um GET barato que quase sempre volta
+     * vazio — rodarConclusoes retorna em silêncio nesse caso — e a page está
+     * ociosa entre ciclos, então não há disputa de navegador. Pedido do dono
+     * em 26/08: pickup em ~10s, igual ao envio da Housekeep.
+     */
+    const fimDoSono = Date.now() + baseMs + jitterMs;
+    while (!stopping && Date.now() < fimDoSono) {
+      await sleep(Math.min(10_000, fimDoSono - Date.now()));
+      if (stopping) break;
+      try {
+        await rodarConclusoes(page, cfg, masterOs);
+      } catch (err) {
+        logger.error("Fast completion check failed", err);
+      }
+    }
   }
 
   await context.close();

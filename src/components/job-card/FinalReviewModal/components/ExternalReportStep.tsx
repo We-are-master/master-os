@@ -299,10 +299,16 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
             : { background: "#F1F5FB", color: "#020040" }
         }
       >
-        <span aria-hidden>🤖</span>
+        {/* Rodinha, não robô parado: o modal re-lê o estado a cada 3s e este
+            chip VIRA "Submitted" sozinho quando o robô confirmar — igual ao
+            envio da Housekeep, a pedido do dono (26/08). */}
+        <span
+          aria-hidden
+          className="inline-block h-[9px] w-[9px] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
+        />
         {tentado
           ? `Express robot tried ${tentativas} of 3 · it retries on the next pass`
-          : "Waiting for the Express robot · not picked up yet"}
+          : "Waiting for the Express robot · it passes every few minutes, this updates by itself"}
         {" · you can finalise now"}
       </span>
     );
