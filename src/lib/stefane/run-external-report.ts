@@ -26,6 +26,15 @@ import {
   type ReportTemplate,
 } from "@/lib/public-report-templates";
 import { isReportTemplate } from "@/lib/report-submission";
+import {
+  partnerEmailBaseStyles,
+  partnerEmailBodyOpen,
+  partnerEmailHeadBlock,
+  partnerEmailLogoHeaderRow,
+  partnerEmailOuterTableClose,
+  partnerEmailOuterTableOpen,
+  partnerEmailPreheaderHtml,
+} from "@/lib/emails/partner-email-layout";
 
 const AVISAR = "victor@getfixfy.com";
 const MAX_TENTATIVAS = 3;
@@ -298,7 +307,79 @@ function contarPorChave(report: unknown, limpeza: boolean): Record<string, numbe
   return { all: urlsDeFoto(report).length };
 }
 
-async function avisar(assunto: string, html: string): Promise<void> {
+/** "26 Aug, 10:47" em Londres — o ISO cru com microssegundos era ilegível. */
+export function quandoLondres(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+}
+
+/** 106.2 → "1m 46s"; 34 → "34s". */
+function duracao(segundos: number | undefined): string | null {
+  if (!segundos || !Number.isFinite(segundos)) return null;
+  const s = Math.round(segundos);
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+
+const CORES = {
+  ok: { faixa: "#12704F", fundo: "#E9F7F0", selo: "OK" },
+  erro: { faixa: "#A32D2D", fundo: "#FDECEA", selo: "FAILED" },
+} as const;
+
+/**
+ * O aviso interno com a cara da casa, em inglês.
+ *
+ * Era um `<p>` cru em português — funcionava, mas destoava de todo email que
+ * sai daqui e o Gmail ainda oferecia tradução em cima. Mesmo layout dos emails
+ * do parceiro (band navy + logo), um selo de cor dizendo o desfecho antes de
+ * qualquer leitura, e o botão como única ação.
+ */
+export function avisoHtml(opts: {
+  tom: keyof typeof CORES;
+  titulo: string;
+  jobLinha: string;
+  detalhes: string[];
+  link?: string | null;
+  rotuloDoLink?: string;
+}): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const cor = CORES[opts.tom];
+  const fonte = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const detalhes = opts.detalhes
+    .map((d) => `<p style="margin:0 0 8px 0; ${fonte}; font-size:14px; line-height:21px; color:#3E3E4A;">${esc(d)}</p>`)
+    .join("");
+  const botao =
+    opts.link && opts.rotuloDoLink
+      ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;"><tr>
+           <td align="center" bgcolor="#020040" style="border-radius:8px;">
+             <a href="${esc(opts.link)}" target="_blank" style="display:inline-block; padding:11px 22px; ${fonte}; font-size:13.5px; font-weight:600; color:#FFFFFF; text-decoration:none;">${esc(opts.rotuloDoLink)}</a>
+           </td></tr></table>`
+      : "";
+  return `<!DOCTYPE html>
+<html lang="en"><head>${partnerEmailHeadBlock()}${partnerEmailBaseStyles()}</head>
+${partnerEmailBodyOpen()}
+${partnerEmailPreheaderHtml(opts.titulo)}
+${partnerEmailOuterTableOpen()}
+${partnerEmailLogoHeaderRow()}
+      <tr><td class="px-mobile" style="padding:28px 40px 32px 40px;">
+        <p style="margin:0 0 12px 0;"><span style="display:inline-block; padding:3px 10px; border-radius:999px; background:${cor.fundo}; ${fonte}; font-size:11px; font-weight:700; letter-spacing:0.6px; color:${cor.faixa};">${cor.selo}</span></p>
+        <h1 class="h1-mobile" style="margin:0 0 6px 0; ${fonte}; font-size:24px; line-height:31px; font-weight:700; color:#0A0A1F; letter-spacing:-0.4px;">${esc(opts.titulo)}</h1>
+        <p style="margin:0 0 16px 0; ${fonte}; font-size:13px; line-height:19px; color:#6B6B70;">${esc(opts.jobLinha)}</p>
+        ${detalhes}
+        ${botao}
+      </td></tr>
+${partnerEmailOuterTableClose()}
+</body></html>`;
+}
+
+export async function avisar(assunto: string, html: string): Promise<void> {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key) return;
   try {
@@ -367,10 +448,17 @@ export async function enviarRelatorioExterno(
       })
       .eq("id", jobId);
     await avisar(
-      `${j.reference} · relatório já estava na Housekeep`,
-      `<p><strong>${j.reference}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
-       <p>A Housekeep já tinha este relatório desde ${form.submetidoEm}. Nada foi reenviado.</p>
-       <p><a href="${form.url}">Abrir o relatório na Housekeep</a></p>`,
+      `${j.reference} · report was already on Housekeep`,
+      avisoHtml({
+        tom: "ok",
+        titulo: "Report already on Housekeep",
+        jobLinha: [j.reference, j.title, j.client_name].filter(Boolean).join(" · "),
+        detalhes: [
+          `Housekeep already had this report since ${quandoLondres(String(form.submetidoEm))}. Nothing was re-sent.`,
+        ],
+        link: form.url,
+        rotuloDoLink: "Open the report on Housekeep",
+      }),
     );
     return { estado: "enviado" };
   }
@@ -515,10 +603,17 @@ export async function enviarRelatorioExterno(
       .eq("id", jobId);
 
     await avisar(
-      `${ref} · relatório enviado na Housekeep`,
-      `<p><strong>${ref}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
-       <p>Confirmado pela Housekeep em ${confirmado}. Levou ${res.segundos}s.</p>
-       <p><a href="${link}">Abrir o relatório na Housekeep</a></p>`,
+      `${ref} · report submitted on Housekeep`,
+      avisoHtml({
+        tom: "ok",
+        titulo: "Report submitted on Housekeep",
+        jobLinha: [ref, j.title, j.client_name].filter(Boolean).join(" · "),
+        detalhes: [
+          `Housekeep confirmed it at ${quandoLondres(confirmado)}${duracao(res.segundos) ? ` · took ${duracao(res.segundos)}` : ""}.`,
+        ],
+        link,
+        rotuloDoLink: "Open the report on Housekeep",
+      }),
     );
     return { estado: "enviado", segundos: res.segundos };
   }
@@ -542,11 +637,15 @@ export async function enviarRelatorioExterno(
   const tentativas = await marcarFalha(supabase, job as never, motivo);
 
   await avisar(
-    `${ref} · relatório NÃO subiu na Housekeep`,
-    `<p><strong>${ref}</strong> · ${j.title ?? ""} · ${j.client_name ?? ""}</p>
-     <p><strong>Motivo:</strong> ${motivo}</p>
-     <p>Tentativa ${tentativas} de ${MAX_TENTATIVAS}.</p>
-     <p><a href="${link}">Abrir o formulário e enviar à mão</a></p>`,
+    `${ref} · report did NOT land on Housekeep`,
+    avisoHtml({
+      tom: "erro",
+      titulo: "Report did not land on Housekeep",
+      jobLinha: [ref, j.title, j.client_name].filter(Boolean).join(" · "),
+      detalhes: [`Reason: ${motivo}`, `Attempt ${tentativas} of ${MAX_TENTATIVAS}.`],
+      link,
+      rotuloDoLink: "Open the form and send it by hand",
+    }),
   );
   return { estado: "falhou", motivo, segundos: res.segundos };
 }
