@@ -27,6 +27,8 @@ type Props = {
   onEnvioDisparado: () => void;
   /** Abre o relatório para edição, oferecido quando o envio é recusado. */
   onEditReport?: () => void;
+  /** O relatório foi aprovado nesta sessão do modal — o passo 3 diz "sending". */
+  relatorioAprovado?: boolean;
 };
 
 /**
@@ -151,6 +153,7 @@ export function StepsTimeline({
   jobUuid,
   onEnvioDisparado,
   onEditReport,
+  relatorioAprovado = false,
 }: Props) {
   const invoiceState: StepState =
     invoiceStatus === "issued" ? "issued" : invoiceStatus === "on_hold" ? "on_hold" : "pending";
@@ -270,7 +273,7 @@ export function StepsTimeline({
               calado justamente quando havia algo a fazer. */}
           {jobUuid && envioExterno && !repeteAFaltaDoRelatorio ? (
             <div className="w-full">
-              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} relatorioEnviado={allUploaded} />
+              <ExternalReportStep jobUuid={jobUuid} envio={envioExterno} onEnviado={onEnvioDisparado} onEditReport={onEditReport} relatorioEnviado={allUploaded} aprovado={relatorioAprovado} />
             </div>
           ) : null}
         </div>

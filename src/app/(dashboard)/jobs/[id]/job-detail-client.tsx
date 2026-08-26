@@ -9663,28 +9663,32 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         invoiceDueDateDrafts[inv.id] ??
                         (inv.due_date ? String(inv.due_date).slice(0, 10) : "");
                       const duePrev = inv.due_date ? String(inv.due_date).slice(0, 10) : "";
+                      // Sem a seta: a linha inteira abre e fecha. A seta comia
+                      // um terço da largura do card no estreito, e a linha já
+                      // era o alvo natural do clique.
+                      const toggleInv = () =>
+                        setExpandedInvoiceIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(inv.id)) next.delete(inv.id);
+                          else next.add(inv.id);
+                          return next;
+                        });
                       return (
                         <div key={inv.id} className="rounded-lg border border-emerald-200/70 bg-white/80 p-2.5 shadow-sm dark:border-emerald-500/20 dark:bg-[#101621]/80">
                           <div className="flex items-start gap-2">
-                            <button
-                              type="button"
-                              aria-expanded={invOpen}
-                              aria-label={invOpen ? "Hide invoice details" : "Show invoice details"}
-                              onClick={() => {
-                                setExpandedInvoiceIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(inv.id)) next.delete(inv.id);
-                                  else next.add(inv.id);
-                                  return next;
-                                });
-                              }}
-                              className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
-                            >
-                              <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", invOpen && "rotate-180")} />
-                            </button>
                             <div className="min-w-0 flex-1 space-y-2">
                               {!invOpen ? (
-                                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-0.5">
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-expanded={false}
+                                  aria-label="Show invoice details"
+                                  onClick={toggleInv}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") toggleInv();
+                                  }}
+                                  className="flex cursor-pointer flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-0.5"
+                                >
                                   <div className="min-w-0">
                                     <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
                                     {inv.due_date ? (
@@ -9695,24 +9699,38 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     <p className="truncate text-lg font-bold tabular-nums text-primary tracking-tight">
                                       {formatCurrency(inv.amount)}
                                     </p>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="shrink-0"
-                                      icon={<FileText className="h-3 w-3" />}
-                                      title="Download receipt PDF"
-                                      onClick={() =>
-                                        window.open(`/api/invoices/${inv.id}/pdf`, "_blank", "noopener,noreferrer")
-                                      }
-                                    >
-                                      PDF
-                                    </Button>
+                                    {/* O clique do PDF não pode expandir a linha;
+                                        o onClick do Button não recebe o evento,
+                                        então quem segura a propagação é o span. */}
+                                    <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        icon={<FileText className="h-3 w-3" />}
+                                        title="Download receipt PDF"
+                                        onClick={() =>
+                                          window.open(`/api/invoices/${inv.id}/pdf`, "_blank", "noopener,noreferrer")
+                                        }
+                                      >
+                                        PDF
+                                      </Button>
+                                    </span>
                                   </div>
                                 </div>
                               ) : (
                                 <>
-                                  <div className="flex items-center justify-between gap-2">
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-expanded
+                                    aria-label="Hide invoice details"
+                                    onClick={toggleInv}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") toggleInv();
+                                    }}
+                                    className="flex cursor-pointer items-center justify-between gap-2"
+                                  >
                                     <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
                                     <Badge
                                       variant={
