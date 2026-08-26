@@ -35,6 +35,8 @@ const PARTNER_BADGE_ICON_LAYER_ID = "live-map-partners-badge-icon";
 const JOB_SOURCE_ID = "live-map-jobs";
 const JOB_CIRCLE_LAYER_ID = "live-map-jobs-circle";
 const JOB_ICON_LAYER_ID = "live-map-jobs-icon";
+const JOB_ORDER_BADGE_LAYER_ID = "live-map-job-order-badge";
+const JOB_ORDER_TEXT_LAYER_ID = "live-map-job-order-text";
 /** Removed teardrop pin layer from earlier experiment. */
 const LEGACY_JOB_PIN_LAYER_ID = "live-map-jobs-pin";
 
@@ -168,6 +170,8 @@ export interface ScheduleLiveMapJobPoint {
   statusCategory: LiveMapJobStatusCategory;
   tradeLabel: string;
   scheduleLine: string;
+  /** Modo rota do parceiro: posição desta parada no dia (1, 2, 3…). */
+  routeOrder?: number | null;
 }
 
 interface ScheduleLiveMapProps {
@@ -501,6 +505,7 @@ export function ScheduleLiveMap({
           jobIconId: `${JOB_ICON_PREFIX}${liveMapTradeIconKey(j.tradeLabel)}`,
           selected,
           recent,
+          ...(j.routeOrder != null ? { orderLabel: String(j.routeOrder) } : {}),
         },
       };
     });
@@ -587,6 +592,44 @@ export function ScheduleLiveMap({
         },
         jobLayerBeforeId,
       );
+    }
+    // Modo rota: bolinha numerada (1, 2, 3…) no ombro do pin — a ordem do dia
+    // do parceiro legível direto no mapa, sem abrir painel.
+    if (!map.getLayer(JOB_ORDER_BADGE_LAYER_ID)) {
+      map.addLayer({
+        id: JOB_ORDER_BADGE_LAYER_ID,
+        type: "circle",
+        source: JOB_SOURCE_ID,
+        filter: ["has", "orderLabel"],
+        paint: {
+          "circle-color": "#020040",
+          "circle-radius": 9,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#FFFFFF",
+          "circle-translate": [14, -14],
+          "circle-translate-anchor": "viewport",
+        },
+      });
+    }
+    if (!map.getLayer(JOB_ORDER_TEXT_LAYER_ID)) {
+      map.addLayer({
+        id: JOB_ORDER_TEXT_LAYER_ID,
+        type: "symbol",
+        source: JOB_SOURCE_ID,
+        filter: ["has", "orderLabel"],
+        layout: {
+          "text-field": ["get", "orderLabel"],
+          "text-size": 11,
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-allow-overlap": true,
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": "#FFFFFF",
+          "text-translate": [14, -14],
+          "text-translate-anchor": "viewport",
+        },
+      });
     }
 
     if (!map.getLayer(PARTNER_CIRCLE_LAYER_ID)) {

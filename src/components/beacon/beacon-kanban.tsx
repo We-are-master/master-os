@@ -24,6 +24,7 @@ import { fetchBeaconBoardJobs } from "@/lib/beacon-jobs";
 import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 
 type KanbanJob = {
   id: string;
@@ -569,7 +570,7 @@ function KanbanCard({
       )}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
-        <StatusPill status={job.status} />
+        <StatusPill status={job.status} job={job} />
       </div>
       <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
         <div className="flex items-center gap-1 min-w-0 flex-1 text-[13px] font-medium text-text-primary leading-[1.3]">
@@ -709,7 +710,7 @@ function JobHoverPanel({ job, anchor }: { job: KanbanJob; anchor: DOMRect }) {
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] tracking-[0.04em] text-fx-mute">{job.reference}</span>
-        <StatusPill status={job.status} />
+        <StatusPill status={job.status} job={job} />
       </div>
       <p className="mb-2 text-[13px] font-semibold leading-tight text-text-primary">{normalizeTypeOfWork(job.title) || job.title}</p>
       <dl className="space-y-1.5 text-[11.5px] leading-snug">
@@ -738,8 +739,14 @@ function HoverRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusPill({ status }: { status: JobStatus }) {
-  const label = jobStatusLabel(status);
+const SOON_LABEL = { today: "Today", tomorrow: "Tomorrow", in_2_days: "In 2 days" } as const;
+
+/** Unassigned + visit is imminent: the pill says when, not what. A card reading
+ *  "TOMORROW" is the one the office has to act on today. */
+function StatusPill({ status, job }: { status: JobStatus; job?: KanbanJob }) {
+  const timing = job ? getJobScheduleTimingKind(job) : null;
+  const isUnassigned = status === "unassigned" || status === "auto_assigning";
+  const label = isUnassigned && timing ? SOON_LABEL[timing] : jobStatusLabel(status);
   switch (status) {
     case "unassigned":
       return <Pill tone="bad">{label}</Pill>;

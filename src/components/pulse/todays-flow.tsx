@@ -19,7 +19,8 @@ import {
   ReferenceLine,
   Legend,
 } from "recharts";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { pulseMoney as formatCurrency } from "@/lib/pulse-money-display";
 import { getSupabase } from "@/services/base";
 import { SectionCard, Pill } from "@/components/fx/primitives";
 import { Modal } from "@/components/ui/modal";

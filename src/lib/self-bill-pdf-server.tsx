@@ -4,6 +4,7 @@ import { SelfBillPDF } from "@/lib/pdf/self-bill-template";
 import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { loadSelfBillPayoutLines } from "@/services/self-bills";
 import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
 import {
   isJobApprovedForSelfBillPayout,
@@ -177,6 +178,48 @@ export async function renderSelfBillPdfBuffer(
     const embaixo = montarLinhaDeTaxa(false);
     return embaixo ? [base, embaixo] : [base];
   });
+
+  /**
+   * Linhas de VISITA (mig 161).
+   *
+   * Uma visita de outro parceiro tem documento próprio; as que estão neste
+   * documento vêm de `loadSelfBillPayoutLines`, a MESMA função que soma o
+   * `net_payout`. O PDF não consulta por conta própria: foi consulta paralela
+   * que produziu linhas de £1.055 num rodapé de £430.
+   */
+  const visitPayoutLines = (await loadSelfBillPayoutLines(selfBillId, supabase)).filter((l) => l.kind === "visit");
+  if (visitPayoutLines.length > 0) {
+    const parentIds = [...new Set(visitPayoutLines.map((l) => l.jobId))];
+    const { data: parents } = await supabase
+      .from("jobs")
+      .select("id, reference, property_address")
+      .in("id", parentIds);
+    const parentById = new Map(
+      ((parents ?? []) as { id: string; reference: string | null; property_address: string | null }[])
+        .map((p) => [p.id, p]),
+    );
+    const { data: visitRows } = await supabase
+      .from("job_visits")
+      .select("id, scheduled_date, completed_at, scope")
+      .in("id", visitPayoutLines.map((l) => l.id));
+    const visitById = new Map(
+      ((visitRows ?? []) as { id: string; scheduled_date: string | null; completed_at: string | null; scope: string | null }[])
+        .map((v) => [v.id, v]),
+    );
+    for (const l of visitPayoutLines) {
+      const parent = parentById.get(l.jobId);
+      const v = visitById.get(l.id);
+      lines.push({
+        reference: `${parent?.reference ?? ""} · Visit ${l.visitIndex ?? ""}`.trim(),
+        title: v?.scope?.trim() || "Extra visit",
+        partner_cost: l.labour + l.materials,
+        materials_cost: 0,
+        property_address: parent?.property_address ?? undefined,
+        doneOn: (v?.completed_at ?? v?.scheduled_date ?? "")?.slice(0, 10) || undefined,
+        payoutStateNote: undefined,
+      });
+    }
+  }
 
   const voided = isSelfBillPayoutVoided({ status: sb.status });
   const billOrigin = sb.bill_origin;

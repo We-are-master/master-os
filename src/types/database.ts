@@ -550,6 +550,13 @@ export interface Job {
   /** Set when an operator does "Edit this only" on an occurrence (mig 158). */
   recurrence_detached_at?: string | null;
   job_type?: "fixed" | "hourly";
+  /**
+   * O que foi COMBINADO, não como se cobra: "daily" e "half_day" são jobs
+   * fixed por baixo — o rótulo existe para o parceiro ler no email/portal
+   * exatamente o acordo ("£180 · Day rate"). Null = comportamento de sempre.
+   * Mig 281.
+   */
+  rate_basis?: "fixed" | "daily" | "half_day" | null;
   /** Snapshot rates for hourly jobs (GBP/hour). */
   hourly_client_rate?: number | null;
   hourly_partner_rate?: number | null;
@@ -562,6 +569,19 @@ export interface Job {
   commission: number;
   vat: number;
   partner_agreed_value: number;
+  /**
+   * Rollup das visitas (mig 274). `client_price` / `partner_cost` /
+   * `materials_cost` são o dinheiro da **visita 1**; estes campos são a soma de
+   * todas as visitas vivas, mantida por trigger.
+   *
+   * `total_partner_cost` é exibição e margem. Nada que paga parceiro pode ler
+   * daqui: self-bill é por parceiro e visitas podem ter parceiros diferentes.
+   * Opcionais porque ambiente sem a migração não devolve as colunas.
+   */
+  visits_count?: number;
+  total_client_price?: number;
+  total_partner_cost?: number;
+  total_materials_cost?: number;
   finance_status: JobFinanceStatus;
   /**
    * Gêmea de `finance_status`, e a coluna que a checagem de coerência da Zia lê.
@@ -739,6 +759,12 @@ export interface JobVisit {
   partner_cost: number;
   materials_cost: number;
   status: JobVisitStatus;
+  /** Carimbo do botão "Complete visit" (mig 275). Libera a próxima visita e ancora o período do payout. */
+  completed_at?: string | null;
+  /** Thread do parceiro DESTA visita — a do job pertence ao parceiro primário (mig 275). */
+  zendesk_side_conversation_id?: string | null;
+  /** Self-bill do parceiro DESTA visita (mig 276). O do job é do parceiro da visita 1. */
+  self_bill_id?: string | null;
   scope?: string | null;
   notes?: string | null;
   created_at: string;

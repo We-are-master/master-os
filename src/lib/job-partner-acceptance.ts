@@ -30,6 +30,7 @@ export type JobForPartnerAcceptance = {
   catalog_pricing_preset_id: string | null;
   scope: string | null;
   job_type: "hourly" | "fixed" | null;
+  rate_basis?: string | null;
   hourly_client_rate: number | null;
   hourly_partner_rate: number | null;
   partner_cost: number | null;
@@ -56,8 +57,9 @@ export type BookedEmailResult = {
   error?: string;
 };
 
-const JOB_SELECT =
-  "id, reference, title, status, partner_id, partner_name, partner_confirmed_at, client_name, property_address, scheduled_date, catalog_service_id, catalog_pricing_preset_id, scope, job_type, hourly_client_rate, hourly_partner_rate, partner_cost, auto_assign_invited_partner_ids, auto_assign_expires_at, external_source, external_ref, zendesk_side_conversation_id, partner_booked_email_sent_at";
+// "*" de propósito: rate_basis (mig 281) pode ainda não existir no banco, e
+// um select explícito com coluna ausente derruba o carregamento do aceite.
+const JOB_SELECT = "*";
 
 const CATALOG_PRICING_SELECT =
   "id, pricing_mode, partner_cost, default_hours, pricing_presets, pricing_addons";
@@ -485,6 +487,8 @@ export async function sendBookedSideConvReply(args: {
     job.job_type,
     job.hourly_partner_rate,
     job.partner_cost,
+    null,
+    job.rate_basis ?? null,
   );
   const partnerFirstName = partnerEmailGreetingName(partner);
 

@@ -32,9 +32,11 @@ export async function rescheduleJob(job: Job, input: RescheduleInput): Promise<J
 
   const patch: Partial<Job> = {
     scheduled_date: date,
-    scheduled_start_at: input.startAt ?? undefined,
-    scheduled_end_at: input.endAt ?? undefined,
-  };
+    // null LIMPA a janela de propósito — `?? undefined` deixava o horário
+    // velho grudado na data nova, e o parceiro recebia a janela errada.
+    scheduled_start_at: input.startAt,
+    scheduled_end_at: input.endAt,
+  } as Partial<Job>;
 
   const oldDateLine = formatJobScheduleLine(job) || "Previously scheduled";
   const updated = await updateJob(job.id, patch);

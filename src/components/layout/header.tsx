@@ -6,7 +6,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Settings, Menu, LogOut, Moon, Sun, Sparkles,
+  Menu, LogOut, Moon, Sun, Sparkles,
   Search, X, History, Monitor, Check, Minus,
 } from "lucide-react";
 import type { Theme, Style } from "@/hooks/use-theme";
@@ -501,7 +501,7 @@ export function Header() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
       className={cn(
-        "z-20 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
+        "z-20 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
@@ -530,20 +530,6 @@ export function Header() {
           <History className="h-[18px] w-[18px]" />
         </Link>
         <NotificationsMenu />
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent("master-brain-open"))}
-          className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-primary/10 hover:text-primary transition-colors"
-          title="Fixfy Brain"
-        >
-          <Sparkles className="h-[18px] w-[18px]" />
-        </button>
-        <Link
-          href="/settings"
-          className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition-colors"
-        >
-          <Settings className="h-[18px] w-[18px]" />
-        </Link>
         <div className="mx-0.5 hidden h-6 w-px bg-border sm:mx-1 sm:block" />
         <div className="flex items-center gap-2.5 pl-1">
           <div className="text-right hidden sm:block">

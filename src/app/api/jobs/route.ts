@@ -288,7 +288,16 @@ export async function POST(req: NextRequest) {
   let description       = str(body.description) || null;
   // Accept bare values, Zendesk tags (`job_type_hourly` / `job_type_fixed`), or
   // Smart Price alias (`job_type_smart_price` → hourly).
-  const rateTypeFromBody = normalizeWebhookRateType(body.rate_type);
+  // "daily" e "half_day" são fixed com rótulo de acordo (mig 281): o dinheiro
+  // é o fixed de sempre; o rate_basis é o que o parceiro lê no email/portal.
+  const rawRateType = str(body.rate_type).toLowerCase().replace(/[\s-]+/g, "_");
+  const rateBasisIn: "daily" | "half_day" | null =
+    rawRateType === "daily" || rawRateType === "daily_rate" || rawRateType === "day_rate"
+      ? "daily"
+      : rawRateType === "half_day"
+        ? "half_day"
+        : null;
+  const rateTypeFromBody = rateBasisIn ? "fixed" : normalizeWebhookRateType(body.rate_type);
   let rateType: "fixed" | "hourly" = rateTypeFromBody ?? "fixed";
   // `let` because we drop the value to service_type below when it isn't a UUID
   // (typically a Zendesk ticket saved before the slug→UUID backfill).
@@ -356,7 +365,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
   }
   if (rateType !== "fixed" && rateType !== "hourly") {
-    return NextResponse.json({ error: "rate_type must be 'fixed' or 'hourly'." }, { status: 400 });
+    return NextResponse.json(
+      { error: "rate_type must be 'fixed', 'hourly', 'daily' or 'half_day'." },
+      { status: 400 },
+    );
   }
   if (catalogServiceIdIn && !isValidUUID(catalogServiceIdIn)) {
     // Webhook is feeding us a Type of Work field value that's still the
@@ -805,6 +817,9 @@ export async function POST(req: NextRequest) {
   }
   if (resolvedCatalogServiceId) {
     jobRow.catalog_service_id = resolvedCatalogServiceId;
+  }
+  if (rateBasisIn) {
+    jobRow.rate_basis = rateBasisIn;
   }
   if (catalogPresetId) {
     jobRow.catalog_pricing_preset_id = catalogPresetId;

@@ -1,30 +1,34 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Loader2, Briefcase, AlertTriangle, ExternalLink, Layers, X, Save } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Plus, Pencil, Trash2, Loader2, X, Save, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { TimeSelect } from "@/components/ui/time-select";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { ArrivalSlotPicker } from "@/components/shared/arrival-slot-picker";
+import { canonicalArrivalSlotValues } from "@/lib/job-arrival-window";
 import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
-import { mergeCatalogWithPricingPreset } from "@/lib/catalog-pricing-presets";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { listPartners } from "@/services/partners";
 import {
   listJobVisits,
-  createJobVisit,
-  updateJobVisit,
-  softDeleteJobVisit,
-  setVisitStatus,
   jobToPrimaryVisit,
   summariseVisits,
   type CreateJobVisitInput,
 } from "@/services/job-visits";
+import {
+  apiCreateJobVisit,
+  apiDeleteJobVisit,
+  apiUpdateJobVisit,
+} from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
-import { formatCurrency, cn } from "@/lib/utils";
+import { jobStatusRank } from "@/lib/job-phases";
+import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { CatalogService, Job, JobVisit, JobVisitStatus, Partner } from "@/types/database";
 
@@ -35,14 +39,44 @@ const STATUS_BADGE: Record<JobVisitStatus, { label: string; variant: "info" | "w
   cancelled:   { label: "Cancelled",   variant: "default" },
 };
 
+/** Timestamps guardados -> par (from, mins) que o slot picker entende. */
+function arrivalFromStored(startAt?: string | null, endAt?: string | null): {
+  arrival_from: string;
+  arrival_window_mins: string;
+} {
+  const from = startAt ? startAt.slice(11, 16) : "09:00";
+  const mins = startAt && endAt
+    ? Math.max(30, Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60_000))
+    : 180;
+  const slot = canonicalArrivalSlotValues(from, mins);
+  return { arrival_from: slot.from, arrival_window_mins: slot.mins };
+}
+
+/**
+ * Modal da seção de visitas vai para o `body`.
+ *
+ * A seção agora mora dentro do card de Details, e algum ancestral carrega
+ * `transform` (a animação de página). Com isso, `position: fixed` passa a se
+ * ancorar nesse ancestral em vez da janela, e o modal abria mil pixels abaixo
+ * da tela. O portal tira a árvore do modal de baixo do transform.
+ */
+function SectionPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  // Microtask como no resto do arquivo: setState direto no efeito é recusado
+  // pela regra de render em cascata.
+  useEffect(() => { queueMicrotask(() => setMounted(true)); }, []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
 type EditTarget = { mode: "create" } | { mode: "edit"; visit: JobVisit } | null;
 
 /**
  * "Visits" tab — additional visits booked under one job (mig 161).
  *
- *   • Visit 1 (primary) — read-only card synthesised from the parent job's
+ *   • Visit 1 (primary): linha de leitura montada a partir do job
  *     fields. To edit, the operator goes to the Details tab.
- *   • Visit 2+ — CRUD on `job_visits` rows. Each can have its own partner,
+ *   • Visit 2+: CRUD em `job_visits`. Cada uma com seu parceiro,
  *     service, schedule, and prices (resolved via mig 159/160 overrides).
  *
  * Status of the parent job is auto-derived in Etapa 5 (this tab triggers it
@@ -53,15 +87,36 @@ export function VisitsTab({
   onJobStatusBumpRequested,
   /** Increment (e.g. from job header ⋮ menu) to open the “Add visit” modal when this tab is shown. */
   openCreateSignal = 0,
+  onVisitsChanged,
+  onCompletePrimary,
+  completePrimaryLabel,
+  onFinishJob,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
   onJobStatusBumpRequested?: (suggestedStatus: Job["status"]) => void;
   openCreateSignal?: number;
+  /** Avisa o card para recarregar a próxima visita do topo. */
+  onVisitsChanged?: () => void;
+  /**
+   * Fecha a VISITA 1, que é o próprio job. Vem do card porque quem sabe
+   * avançar status é ele (`handleStatusChange` + as regras de `canAdvanceJob`).
+   * `undefined` quando o job não está num estágio que aceite fechar.
+   */
+  onCompletePrimary?: () => Promise<boolean>;
+  /** Rótulo da ação da visita 1, para a linha dizer o que o botão faz. */
+  completePrimaryLabel?: string;
+  /**
+   * Fecha o trabalho: leva o job para Final checks quando ainda não está lá e
+   * abre a revisão. Vem do card, que é quem tem o modal e as regras.
+   */
+  onFinishJob?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
+  /** Índice da visita recém-fechada: abre o "e agora?" logo depois do Done. */
+  const [justCompleted, setJustCompleted] = useState<number | null>(null);
   /** Account ID resolved from the job's client (clients.source_account_id). Used by the pricing resolver. */
   const [accountId, setAccountId] = useState<string | null>(null);
 
@@ -123,12 +178,26 @@ export function VisitsTab({
     }
   }, [visits, job.status, onJobStatusBumpRequested]);
 
+  async function handleComplete(visit: JobVisit) {
+    try {
+      const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
+      setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+      setJustCompleted(visit.visit_index);
+      toast.success(`Visit ${visit.visit_index} completed`);
+      onVisitsChanged?.();
+      setJustCompleted(visit.visit_index);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to complete visit");
+    }
+  }
+
   async function handleCreate(input: CreateJobVisitInput) {
     try {
-      const created = await createJobVisit(input);
+      const created = await apiCreateJobVisit(input);
       setVisits((rows) => [...rows, created]);
       setEditTarget(null);
       toast.success(`Visit ${created.visit_index} created`);
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create visit");
     }
@@ -136,30 +205,23 @@ export function VisitsTab({
 
   async function handleUpdate(id: string, patch: Partial<JobVisit>) {
     try {
-      const updated = await updateJobVisit(id, patch);
+      const updated = await apiUpdateJobVisit(job.id, id, patch);
       setVisits((rows) => rows.map((r) => r.id === id ? { ...r, ...updated } : r));
       setEditTarget(null);
       toast.success("Visit updated");
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update visit");
     }
   }
 
-  async function handleStatusChange(visit: JobVisit, status: JobVisitStatus) {
-    try {
-      const updated = await setVisitStatus(visit.id, status);
-      setVisits((rows) => rows.map((r) => r.id === visit.id ? { ...r, ...updated } : r));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update status");
-    }
-  }
-
   async function handleDelete(visit: JobVisit) {
-    if (!confirm(`Remove visit ${visit.visit_index}? This soft-deletes the row.`)) return;
+    if (!confirm(`Remove visit ${visit.visit_index}? It comes off the partner self-bill too.`)) return;
     try {
-      await softDeleteJobVisit(visit.id);
+      await apiDeleteJobVisit(job.id, visit.id);
       setVisits((rows) => rows.filter((r) => r.id !== visit.id));
       toast.success("Visit removed");
+      onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remove visit");
     }
@@ -175,67 +237,142 @@ export function VisitsTab({
   }
 
   const primary = jobToPrimaryVisit(job);
+  /**
+   * Sem parceiro na visita 1 não nasce visita 2: a visita 1 é o job, e sem
+   * dono não há a quem pagar nem documento onde pendurar o resto. O servidor
+   * repete a regra com 409.
+   */
+  const jobHasPartner = Boolean(job.partner_id?.trim());
+  /**
+   * A visita 1 é o job, então o status dela é o estágio do job traduzido:
+   * de Final checks em diante o trabalho aconteceu, e a linha diz "Completed"
+   * em vez de um "From job" que não informa nada.
+   */
+  const primaryStatus: { label: string; variant: "info" | "warning" | "success" | "default" | "primary" } =
+    job.status === "cancelled"
+      ? { label: "Cancelled", variant: "default" }
+      : jobStatusRank(job.status) >= 40
+        ? { label: "Completed", variant: "success" }
+        : job.status === "in_progress"
+          ? { label: "In progress", variant: "warning" }
+          : { label: "Scheduled", variant: "info" };
 
   return (
-    <div className="space-y-4 px-4 sm:px-5 py-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-            <Layers className="h-4 w-4 text-text-tertiary" />
-            All visits booked under this job
-          </h3>
-          <p className="text-xs text-text-tertiary mt-0.5">
-            Visit 1 = the job itself. Add extra visits when more partners/services are needed.
+    <div className="space-y-3 px-4 sm:px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Visits</p>
+          <p className="text-xs text-text-secondary">
+            {summary.count} {summary.count === 1 ? "visit" : "visits"}
+            {" · "}client {formatCurrency(summary.totalClientPrice)}
+            {" · "}partner {formatCurrency(summary.totalPartnerCost)}
           </p>
         </div>
-        <Button
-          size="sm"
-          icon={<Plus className="h-3.5 w-3.5" />}
-          onClick={() => setEditTarget({ mode: "create" })}
-        >
-          Add visit
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            disabled={!jobHasPartner}
+            title={jobHasPartner ? undefined : "Assign a partner to visit 1 first"}
+            onClick={() => setEditTarget({ mode: "create" })}
+          >
+            Add visit
+          </Button>
+          {!jobHasPartner ? (
+            <p className="max-w-[15rem] text-right text-[11px] text-text-tertiary">
+              Assign a partner to visit 1 before adding another.
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      {/* Summary tiles */}
-      <div className="grid grid-cols-3 gap-2">
-        <SummaryTile label="Visits" value={`${summary.count}`} />
-        <SummaryTile label="Total client" value={formatCurrency(summary.totalClientPrice)} />
-        <SummaryTile label="Total partner cost" value={formatCurrency(summary.totalPartnerCost)} />
+      <div className="overflow-hidden rounded-lg border border-border-light">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-surface-hover/50 text-left text-[10px] uppercase tracking-wide text-text-tertiary">
+              <th className="w-10 px-2.5 py-1.5 font-semibold">#</th>
+              <th className="px-2.5 py-1.5 font-semibold">Partner</th>
+              <th className="w-24 whitespace-nowrap px-2.5 py-1.5 font-semibold">When</th>
+              <th className="w-32 whitespace-nowrap px-2.5 py-1.5 text-right font-semibold">In / out</th>
+              <th className="w-24 px-2.5 py-1.5 font-semibold">Status</th>
+              <th className="w-20 px-2.5 py-1.5" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-light">
+            <VisitRow
+              index={1}
+              title={primary.partner_name ?? "No partner"}
+              service={job.title ?? null}
+              date={primary.scheduled_date}
+              startAt={primary.scheduled_start_at}
+              clientPrice={primary.client_price}
+              partnerCost={primary.partner_cost}
+              statusLabel={primaryStatus.label}
+              statusVariant={primaryStatus.variant}
+              onComplete={
+                onCompletePrimary
+                  ? () => {
+                      // Só pergunta "e agora?" se a visita fechou mesmo: a regra
+                      // do job pode recusar (ex.: precisa passar pelo on-site) e
+                      // aí a mensagem de recusa é a resposta, não um menu.
+                      void onCompletePrimary().then((ok) => { if (ok) setJustCompleted(1); });
+                    }
+                  : undefined
+              }
+              completeTitle={completePrimaryLabel ?? "Mark this visit done"}
+            />
+            {visits.map((v) => (
+              <VisitRow
+                key={v.id}
+                index={v.visit_index}
+                title={v.partner_name ?? "No partner"}
+                service={v.catalog_service_name ?? null}
+                date={v.scheduled_date ?? null}
+                startAt={v.scheduled_start_at ?? null}
+                clientPrice={v.client_price}
+                partnerCost={v.partner_cost}
+                statusLabel={STATUS_BADGE[v.status].label}
+                statusVariant={STATUS_BADGE[v.status].variant}
+                onEdit={() => setEditTarget({ mode: "edit", visit: v })}
+                onDelete={() => handleDelete(v)}
+                onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
+              />
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      <div className="space-y-2">
-        {/* Primary card (read-only) */}
-        <PrimaryVisitCard primary={primary} job={job} />
-
-        {/* Extras */}
-        {visits.map((v) => (
-          <VisitCard
-            key={v.id}
-            visit={v}
-            onEdit={() => setEditTarget({ mode: "edit", visit: v })}
-            onDelete={() => handleDelete(v)}
-            onStatusChange={(s) => handleStatusChange(v, s)}
-          />
-        ))}
-
-        {visits.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border-light p-6 text-center text-xs text-text-tertiary">
-            No extra visits yet. Click <strong>Add visit</strong> when you need another partner, service, or visit slot under this job.
+      {justCompleted != null ? (
+        <SectionPortal>
+        <Modal open onClose={() => setJustCompleted(null)} title={`Visit ${justCompleted} done`} size="sm">
+          <div className="space-y-4 p-4">
+            <p className="text-sm text-text-secondary">What happens next on this job?</p>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                icon={<Plus className="h-3.5 w-3.5" />}
+                onClick={() => { setJustCompleted(null); setEditTarget({ mode: "create" }); }}
+              >
+                Add another visit
+              </Button>
+              <Button
+                icon={<Check className="h-3.5 w-3.5" />}
+                disabled={!onFinishJob}
+                onClick={() => { setJustCompleted(null); onFinishJob?.(); }}
+              >
+                Finish the job
+              </Button>
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              Finishing moves the job to Final checks and opens the review.
+            </p>
           </div>
-        ) : null}
-      </div>
-
-      {/* Self-bill caveat */}
-      <div className="rounded-lg border border-amber-300/40 bg-amber-50/60 dark:bg-amber-950/15 p-3 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <p>
-          <strong>Heads-up:</strong> partners on extra visits are NOT yet wired into self-bills.
-          For now, track those payouts manually until the rollup ships next sprint.
-        </p>
-      </div>
+        </Modal>
+        </SectionPortal>
+      ) : null}
 
       {editTarget ? (
+        <SectionPortal>
         <VisitEditModal
           target={editTarget}
           jobId={job.id}
@@ -246,103 +383,82 @@ export function VisitsTab({
           onCreate={handleCreate}
           onUpdate={handleUpdate}
         />
+        </SectionPortal>
       ) : null}
     </div>
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary">{label}</p>
-      <p className="text-sm font-bold tabular-nums text-text-primary mt-0.5">{value}</p>
-    </div>
-  );
-}
-
-function PrimaryVisitCard({ primary, job }: { primary: ReturnType<typeof jobToPrimaryVisit>; job: Job }) {
-  return (
-    <div className="rounded-xl border border-primary/30 bg-primary/[0.04] p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Briefcase className="h-4 w-4 text-primary shrink-0" />
-            <p className="text-sm font-bold text-text-primary">Visit 1 — Primary</p>
-            <Badge variant="primary" size="sm">From job</Badge>
-          </div>
-          <p className="mt-1 text-xs text-text-secondary">
-            {primary.partner_name ?? <span className="italic text-text-tertiary">No partner</span>}
-            {" · "}
-            {primary.scheduled_date ?? <span className="italic text-text-tertiary">No date</span>}
-            {primary.scheduled_start_at ? ` · starts ${primary.scheduled_start_at.slice(11, 16)}` : ""}
-          </p>
-          <p className="mt-1 text-[11px] text-text-tertiary">
-            Client: <strong>{formatCurrency(primary.client_price)}</strong>
-            {" · "}Partner: <strong>{formatCurrency(primary.partner_cost)}</strong>
-            {primary.materials_cost > 0 ? ` · Materials: ${formatCurrency(primary.materials_cost)}` : ""}
-          </p>
-        </div>
-        <span className="text-[10px] text-text-tertiary shrink-0 italic">
-          Edit in <strong>Details</strong> tab
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function VisitCard({
-  visit, onEdit, onDelete, onStatusChange,
+/** Uma visita = uma linha da tabela. A visita 1 é o job e entra aqui igual às outras. */
+function VisitRow({
+  index, title, service, date, startAt, clientPrice, partnerCost,
+  statusLabel, statusVariant, onEdit, onDelete, onComplete, completeTitle,
 }: {
-  visit: JobVisit;
-  onEdit: () => void;
-  onDelete: () => void;
-  onStatusChange: (s: JobVisitStatus) => void;
+  index: number;
+  title: string;
+  service: string | null;
+  date: string | null;
+  startAt: string | null;
+  clientPrice: number;
+  partnerCost: number;
+  statusLabel: string;
+  statusVariant: "info" | "warning" | "success" | "default" | "primary";
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onComplete?: () => void;
+  completeTitle?: string;
 }) {
-  const cfg = STATUS_BADGE[visit.status];
+  const when = [
+    date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : null,
+    startAt ? startAt.slice(11, 16) : null,
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={cn(
-      "rounded-xl border bg-surface p-3",
-      visit.status === "cancelled" ? "border-border-light opacity-60" : "border-border-light",
-    )}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Layers className="h-4 w-4 text-text-tertiary shrink-0" />
-            <p className="text-sm font-semibold text-text-primary">Visit {visit.visit_index}</p>
-            <Badge variant={cfg.variant} size="sm">{cfg.label}</Badge>
-            {visit.catalog_service_name ? (
-              <Badge variant="default" size="sm">{visit.catalog_service_name}</Badge>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-text-secondary">
-            {visit.partner_name ?? <span className="italic text-text-tertiary">No partner</span>}
-            {" · "}
-            {visit.scheduled_date ?? <span className="italic text-text-tertiary">No date</span>}
-            {visit.scheduled_start_at ? ` · starts ${visit.scheduled_start_at.slice(11, 16)}` : ""}
-            {visit.scheduled_end_at ? ` · ends ${visit.scheduled_end_at.slice(11, 16)}` : ""}
-          </p>
-          <p className="mt-1 text-[11px] text-text-tertiary">
-            Client: <strong>{formatCurrency(visit.client_price)}</strong>
-            {" · "}Partner: <strong>{formatCurrency(visit.partner_cost)}</strong>
-            {visit.materials_cost > 0 ? ` · Materials: ${formatCurrency(visit.materials_cost)}` : ""}
-          </p>
-          {visit.scope ? <p className="mt-1 text-[11px] text-text-tertiary line-clamp-2">{visit.scope}</p> : null}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <select
-            className="h-7 rounded-md border border-border-light bg-card px-2 text-[11px]"
-            value={visit.status}
-            onChange={(e) => onStatusChange(e.target.value as JobVisitStatus)}
-          >
-            {(Object.keys(STATUS_BADGE) as JobVisitStatus[]).map((s) => (
-              <option key={s} value={s}>{STATUS_BADGE[s].label}</option>
-            ))}
-          </select>
-          <Button variant="ghost" size="sm" icon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit}>Edit</Button>
-          <Button variant="ghost" size="sm" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onDelete}>Remove</Button>
-        </div>
-      </div>
-    </div>
+    <tr className="align-middle">
+      <td className="px-2.5 py-2 font-mono text-[10px] uppercase text-text-tertiary">V{index}</td>
+      <td className="max-w-0 px-2.5 py-2">
+        <span className="block truncate font-medium text-text-primary">
+          {title}
+          {service ? <span className="font-normal text-text-tertiary"> · {service}</span> : null}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-2.5 py-2 text-text-secondary tabular-nums">{when || "No date"}</td>
+      <td className="whitespace-nowrap px-2.5 py-2 text-right tabular-nums">
+        <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)}</span>
+        <span className="text-text-tertiary"> / </span>
+        <span className="text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)}</span>
+      </td>
+      <td className="px-2.5 py-2">
+        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+      </td>
+      <td className="px-2.5 py-2">
+        <span className="flex items-center justify-end gap-1.5">
+          {onComplete ? (
+            <button
+              type="button"
+              onClick={onComplete}
+              title={completeTitle ?? "Mark this visit done"}
+              className="inline-flex items-center gap-1 rounded-md border border-border-light px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
+            >
+              <Check className="h-3 w-3" />
+              Done
+            </button>
+          ) : null}
+          {onEdit ? (
+            <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
+              className="text-text-tertiary transition-colors hover:text-text-primary">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
+              className="text-text-tertiary transition-colors hover:text-red-500">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </span>
+      </td>
+    </tr>
   );
 }
 
@@ -353,11 +469,10 @@ interface FormState {
   partner_id: string;
   partner_name: string;
   scheduled_date: string;
-  scheduled_start_time: string;
-  scheduled_end_time: string;
+  arrival_from: string;
+  arrival_window_mins: string;
   client_price: string;
   partner_cost: string;
-  materials_cost: string;
   scope: string;
 }
 
@@ -366,11 +481,10 @@ const EMPTY_FORM: FormState = {
   partner_id: "",
   partner_name: "",
   scheduled_date: "",
-  scheduled_start_time: "09:00",
-  scheduled_end_time: "12:00",
+  arrival_from: "09:00",
+  arrival_window_mins: "180",
   client_price: "",
   partner_cost: "",
-  materials_cost: "0",
   scope: "",
 };
 
@@ -397,15 +511,16 @@ function VisitEditModal({
         partner_id: v.partner_id ?? "",
         partner_name: v.partner_name ?? "",
         scheduled_date: v.scheduled_date ?? "",
-        scheduled_start_time: v.scheduled_start_at ? v.scheduled_start_at.slice(11, 16) : "09:00",
-        scheduled_end_time: v.scheduled_end_at ? v.scheduled_end_at.slice(11, 16) : "12:00",
+        ...arrivalFromStored(v.scheduled_start_at, v.scheduled_end_at),
         client_price: v.client_price?.toString() ?? "",
         partner_cost: v.partner_cost?.toString() ?? "",
-        materials_cost: v.materials_cost?.toString() ?? "0",
         scope: v.scope ?? "",
       };
     }
-    return EMPTY_FORM;
+    // Visita nova herda o serviço do job: quase sempre é o mesmo trabalho, e
+    // já vindo escolhido o resolver de preço tem a tripla completa assim que
+    // o parceiro entrar. Trocar é um clique.
+    return { ...EMPTY_FORM, catalog_service_id: parentCatalogServiceId ?? "" };
   });
   const [catalog, setCatalog] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -480,8 +595,17 @@ function VisitEditModal({
     }
     setSaving(true);
     try {
-      const startIso = `${form.scheduled_date}T${form.scheduled_start_time}:00`;
-      const endIso = `${form.scheduled_date}T${form.scheduled_end_time}:00`;
+      // Hora de parede de Londres, não string crua: `scheduled_start_at` é
+      // timestamptz, e sem fuso a visita nascia deslocada no BST.
+      const startIso = ukWallClockToUtcIso(form.scheduled_date, form.arrival_from);
+      const endIso = startIso
+        ? new Date(new Date(startIso).getTime() + (Number(form.arrival_window_mins) || 180) * 60_000).toISOString()
+        : null;
+      if (!startIso || !endIso) {
+        toast.error("Invalid date or time for this visit");
+        setSaving(false);
+        return;
+      }
       const payload: CreateJobVisitInput = {
         job_id: jobId,
         catalog_service_id: form.catalog_service_id || null,
@@ -493,7 +617,9 @@ function VisitEditModal({
         expected_finish_at: endIso,
         client_price: Number(form.client_price) || 0,
         partner_cost: Number(form.partner_cost) || 0,
-        materials_cost: Number(form.materials_cost) || 0,
+        // Materiais não são campo da visita: entram como extra no job, onde o
+        // ledger já sabe alocá-los.
+        materials_cost: target.mode === "edit" ? target.visit.materials_cost : 0,
         status: target.mode === "edit" ? target.visit.status : "scheduled",
         scope: form.scope.trim() || null,
         notes: null,
@@ -526,33 +652,29 @@ function VisitEditModal({
             value={form.partner_id}
             onChange={(e) => pickPartner(e.target.value)}
           >
-            <option value="">— No partner yet —</option>
+            <option value="">No partner yet</option>
             {partners.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.company_name?.trim() || p.contact_name} · {p.trade ?? "—"}
+                {p.company_name?.trim() || p.contact_name}{p.trade ? ` · ${p.trade}` : ""}
               </option>
             ))}
           </select>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1">Date *</label>
             <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
           </div>
-          <TimeSelect
-            label="Start time"
-            value={form.scheduled_start_time}
-            onChange={(v) => setForm((p) => ({ ...p, scheduled_start_time: v }))}
-          />
-          <TimeSelect
-            label="End time"
-            value={form.scheduled_end_time}
-            onChange={(v) => setForm((p) => ({ ...p, scheduled_end_time: v }))}
+          <ArrivalSlotPicker
+            arrivalFrom={form.arrival_from}
+            arrivalWindowMins={form.arrival_window_mins}
+            onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
+            rowLayout
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1">
               Client price (£)
@@ -583,12 +705,6 @@ function VisitEditModal({
               onChange={(e) => setForm((p) => ({ ...p, partner_cost: e.target.value }))}
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">Materials (£)</label>
-            <Input type="number" step="0.01" min={0} value={form.materials_cost}
-              onChange={(e) => setForm((p) => ({ ...p, materials_cost: e.target.value }))}
-            />
-          </div>
         </div>
 
         <div>
@@ -598,7 +714,7 @@ function VisitEditModal({
             onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
             rows={2}
             className="w-full rounded-lg border border-border-light bg-surface px-3 py-2 text-sm"
-            placeholder="What this visit covers — surfaced to the partner."
+            placeholder="What this visit covers. The partner sees this."
           />
         </div>
 

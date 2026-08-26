@@ -6,6 +6,8 @@ import {
   isSelfBillPayoutVoided,
   jobContributesToSelfBillPayout,
   listJobsLinkedToSelfBillIds,
+  listVisitPayoutLinesBySelfBillId,
+  type SelfBillPayoutLine,
 } from "@/services/self-bills";
 import { selfBillWisePayAmount } from "@/lib/self-bill-payment-plan";
 import type { Job, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
@@ -94,6 +96,8 @@ export function computeSelfBillAmountDue(
   jobs: SelfBillJobLine[] | undefined,
   partnerPaidByJobId: Record<string, number>,
   installments?: SelfBillPaymentInstallment[] | null,
+  /** Linhas de visita deste documento. Ver o comentário do cálculo abaixo. */
+  visits?: SelfBillPayoutLine[] | null,
 ): number {
   if (isSelfBillPayoutVoided(sb)) return 0;
   let base = 0;
@@ -101,7 +105,9 @@ export function computeSelfBillAmountDue(
     base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
   } else {
     const list = jobs ?? [];
-    if (list.length === 0) {
+    // Documento só de visita tem zero linha de job e não pode cair no
+    // `net_payout` cru: o valor dele sai das visitas, logo abaixo.
+    if (list.length === 0 && (visits ?? []).length === 0) {
       base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
     } else {
       let due = 0;
@@ -127,7 +133,25 @@ export function computeSelfBillAmountDue(
         const paid = partnerPaidByJobId[j.id] ?? 0;
         due += Math.max(0, cap - paid);
       }
-      base = Math.round(due * 100) / 100;
+      /**
+       * Dinheiro de VISITA (mig 161/276) entra pelas linhas dela, nunca por
+       * dedução a partir de `net_payout`.
+       *
+       * A primeira versão fazia `net_payout − Σ(linhas de job)` para trazer o
+       * que o PDF promete a mais. Isso transformava `net_payout` no PISO do
+       * que sai pelo Wise: documento com total velho (job desvinculado, job que
+       * parou de contribuir, recompute que não rodou) passava a pagar a
+       * diferença em silêncio. O valor tem que vir da linha, como o do job.
+       *
+       * Quem não passa `visits` fica com as linhas de job apenas: sai MENOR
+       * que o PDF, que é o erro seguro — visível na conferência, sem pagar a
+       * mais.
+       */
+      const visitCaps = (visits ?? []).reduce(
+        (acc, v) => acc + (Number(v.labour) || 0) + (Number(v.materials) || 0),
+        0,
+      );
+      base = Math.round((due + Math.max(0, visitCaps)) * 100) / 100;
     }
   }
   return selfBillWisePayAmount(sb, installments, base);
@@ -136,8 +160,10 @@ export function computeSelfBillAmountDue(
 export async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{
   map: Record<string, SelfBillJobLine[]>;
   partnerPaidByJobId: Record<string, number>;
+  /** Linhas de visita por self-bill, para o Outstanding bater com o PDF. */
+  visitsBySelfBillId: Record<string, SelfBillPayoutLine[]>;
 }> {
-  if (ids.length === 0) return { map: {}, partnerPaidByJobId: {} };
+  if (ids.length === 0) return { map: {}, partnerPaidByJobId: {}, visitsBySelfBillId: {} };
   const rows = await listJobsLinkedToSelfBillIds(ids);
   const map: Record<string, SelfBillJobLine[]> = {};
   for (const j of rows) {
@@ -146,8 +172,15 @@ export async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promis
     map[sid].push(j as SelfBillJobLine);
   }
   const jobIds = [...new Set(rows.map((r) => r.id))];
-  const partnerPaidByJobId = await fetchPartnerPaidTotalsByJobIds(jobIds);
-  return { map, partnerPaidByJobId };
+  const [partnerPaidByJobId, visitsBySelfBillId] = await Promise.all([
+    fetchPartnerPaidTotalsByJobIds(jobIds),
+    // Banco antigo não tem a coluna: o documento vale pelas linhas de job.
+    listVisitPayoutLinesBySelfBillId(ids).catch((e) => {
+      console.error("listVisitPayoutLinesBySelfBillId:", e);
+      return {} as Record<string, SelfBillPayoutLine[]>;
+    }),
+  ]);
+  return { map, partnerPaidByJobId, visitsBySelfBillId };
 }
 
 export async function bulkCancelSelfBills(ids: string[]): Promise<void> {

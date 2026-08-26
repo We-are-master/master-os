@@ -19,6 +19,10 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   onAssigned?: (updated: Job) => void;
+  /** When given, the modal offers auto-assign as the alternative to picking. */
+  onAutoAssign?: () => void;
+  /** Pré-seleciona este parceiro ao abrir (modo rota do mapa: "Assign to X"). */
+  initialPartnerId?: string | null;
 };
 
 const gbp = (n: number) =>
@@ -29,7 +33,7 @@ const gbp = (n: number) =>
  * modal (it calls the shared `assignPartnerToJob`), narrowed to what the office
  * decides at this point: who goes, what we pay, what the client pays.
  */
-export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned }: Props) {
+export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign , initialPartnerId }: Props) {
   const [job, setJob] = useState<Job | null>(null);
   const [partners, setPartners] = useState<AssignablePartner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +52,8 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
       if (cancelled) return;
       setJob(row);
       setPartners(list);
-      setSelectedId(row?.partner_id ?? "");
+      // Job sem dono + modo rota do mapa: o parceiro da rota já vem marcado.
+      setSelectedId(row?.partner_id ?? (initialPartnerId?.trim() || ""));
       setPartnerCost(row && Number(row.partner_cost) > 0 ? String(Number(row.partner_cost)) : "");
       setClientPrice(row && Number(row.client_price) > 0 ? String(Number(row.client_price)) : "");
       setLoading(false);
@@ -56,7 +61,7 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
     return () => {
       cancelled = true;
     };
-  }, [isOpen, jobId]);
+  }, [isOpen, jobId, initialPartnerId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -165,16 +170,8 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
               <div className="space-y-2 border-t border-border-light pt-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate &amp; cost</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
-                    <span>Partner cost £</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={partnerCost}
-                      onChange={(e) => setPartnerCost(e.target.value)}
-                    />
-                  </label>
+                  {/* Cliente à esquerda, parceiro à direita (padrão do dono, 24/08):
+                      lê na ordem do dinheiro — o que entra antes do que sai. */}
                   <label className="flex flex-col gap-1 text-xs text-text-secondary">
                     <span>Client price £</span>
                     <Input
@@ -185,6 +182,16 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
                       onChange={(e) => setClientPrice(e.target.value)}
                     />
                   </label>
+                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                    <span>Partner cost £</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={partnerCost}
+                      onChange={(e) => setPartnerCost(e.target.value)}
+                    />
+                  </label>
                 </div>
                 <p className="text-right text-sm font-semibold text-text-primary">
                   Margin: {marginPct == null ? "—" : `${marginPct}%`}
@@ -192,8 +199,15 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            <div className="flex items-center gap-2 pt-1">
+              {/* Two ways out of an unassigned job: pick someone, or let the
+                  invite go to everyone who matches. */}
+              {onAutoAssign ? (
+                <Button variant="outline" size="sm" onClick={onAutoAssign} disabled={saving}>
+                  Auto-assign
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose} disabled={saving}>
                 Cancel
               </Button>
               <Button size="sm" variant="primary" loading={saving} disabled={!canConfirm} onClick={() => void confirm()}>

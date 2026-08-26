@@ -80,7 +80,7 @@ import {
   Pencil,
   MoreVertical,
   XCircle,
-  UserX,
+  UserX, Layers,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -138,10 +138,14 @@ import type {
   JobExtraEntry,
   JobPayment,
   JobPaymentMethod,
+  JobVisit,
   Partner,
   QuoteLineItem,
   SelfBill,
 } from "@/types/database";
+import { listJobVisits } from "@/services/job-visits";
+import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
@@ -269,6 +273,7 @@ import {
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 import {
   invoiceAmountPaid,
   invoiceBalanceDue,
@@ -328,9 +333,20 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
   "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
 
 /** Details tab — collapsed scope read view (~7 lines). */
-const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "10rem";
+const JOB_SCOPE_COLLAPSED_MAX_HEIGHT = "26rem";
 const JOB_SCOPE_COLLAPSE_MIN_CHARS = 280;
 const JOB_SCOPE_COLLAPSE_MIN_LINES = 7;
+
+/** Copy the stable /pay link (full balance, or a % deposit) to the clipboard. */
+async function copyInvoicePayLink(reference: string, pct?: number): Promise<void> {
+  const url = invoicePayLinkUrl(reference, pct);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast.success(pct ? `Deposit link copied (${pct}% of balance)` : "Payment link copied");
+  } catch {
+    window.prompt("Copy payment link", url);
+  }
+}
 
 function scopeTextNeedsCollapse(text: string): boolean {
   if (!text) return false;
@@ -595,11 +611,17 @@ function JobDetailSelfBillPanel({
   sb,
   job,
   jobLineGross,
+  visitScope,
 }: {
   sb: SelfBill;
   job: Job;
   /** Matches Cash out — partner (cap + materials from ledger). */
   jobLineGross: number;
+  /**
+   * Documento de uma VISITA: as linhas e a nota vêm da visita, não do job.
+   * Sem isto o painel do eletricista mostrava a mão de obra do handyman.
+   */
+  visitScope?: { label: string; labour: number; materials: number };
 }) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
@@ -614,10 +636,13 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : weekLine;
-  const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
-  const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
+  const jobLabourOnBill = Math.round((visitScope ? visitScope.labour : partnerPaymentCap(job)) * 100) / 100;
+  const jobMaterialsOnBill = Math.round(
+    (visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) * 100,
+  ) / 100;
   const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
-  const payoutHoldNote = selfBillJobPayoutStateLabel(job);
+  /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
+  const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
       <div className="flex items-start gap-2">
@@ -1208,7 +1233,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     patch: Partial<Job>;
     sequenceIndex: number | null;
     actionLabel: string;
-  } | null>(null);
+      /** false = remarcação silenciosa (checkbox desmarcado no modal). */
+    notify?: boolean;
+} | null>(null);
   /** Preset minutes after arrival-from for window end (replaces manual “arrival to” time). */
   const [scheduleWindowMins, setScheduleWindowMins] = useState("");
   /** Civil end day for calendar (`scheduled_finish_date`). */
@@ -1222,6 +1249,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     ) as JobPayment[]),
   );
   const [extraHistory, setExtraHistory] = useState<ExtraHistoryEntry[]>([]);
+  /** Visitas extras (mig 161) — o topo do card mostra a próxima que vem. */
+  const [jobVisits, setJobVisits] = useState<JobVisit[]>([]);
   const [deletingExtraId, setDeletingExtraId] = useState<string | null>(null);
   const [deleteExtraTarget, setDeleteExtraTarget] = useState<ExtraHistoryEntry | null>(null);
   const [deleteLinkedPartnerAlso, setDeleteLinkedPartnerAlso] = useState(true);
@@ -1233,15 +1262,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerAccountPrice, setMoneyDrawerAccountPrice] = useState<AccountServicePrice | null>(null);
   const [financeHubOpen, setFinanceHubOpen] = useState(false);
   const [financeHubTab, setFinanceHubTab] = useState<"client" | "partner">("client");
-  const [financeHubBaseEditSide, setFinanceHubBaseEditSide] = useState<"client" | "partner" | null>(null);
-  const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState("");
-  const [savingFinanceHubBase, setSavingFinanceHubBase] = useState(false);
-  const [extraManagerFocusBucket, setExtraManagerFocusBucket] = useState<ExtraHistoryBucket | null>(null);
-  const [editExtraTarget, setEditExtraTarget] = useState<ExtraHistoryEntry | null>(null);
-  const [editExtraAmount, setEditExtraAmount] = useState("");
-  const [editExtraReason, setEditExtraReason] = useState("");
-  const [editExtraClientConfirmed, setEditExtraClientConfirmed] = useState(true);
-  const [savingExtraEdit, setSavingExtraEdit] = useState(false);
+  const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState<string | null>(null);
+  const [financeHubExtraDrafts, setFinanceHubExtraDrafts] = useState<Record<string, { amount?: string; reason?: string }>>({});
+  const [savingFinanceHub, setSavingFinanceHub] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Reports tab: office types the partner's report when he never sends one. */
   const [fillReportOpen, setFillReportOpen] = useState(false);
@@ -1411,11 +1434,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   });
   const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
   const jobMoreMenuRef = useRef<HTMLDivElement>(null);
+  const [requestPaymentMenuOpen, setRequestPaymentMenuOpen] = useState(false);
+  const requestPaymentMenuRef = useRef<HTMLDivElement>(null);
+  const [requestPaymentInitialPercent, setRequestPaymentInitialPercent] = useState(100);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
+  /** Bump feito pela aba de visitas para o topo do card recarregar a lista. */
+  const [visitsRefreshKey, setVisitsRefreshKey] = useState(0);
   /** ⋮ → “Reschedule & confirm” — one modal for date, partner, service, pricing. */
   const [quickRescheduleOpen, setQuickRescheduleOpen] = useState(false);
   const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
+  /** Padrão LIGADO: remarcar avisa cliente e parceiro; desmarcar silencia os dois. */
+  const [qrNotify, setQrNotify] = useState(true);
   const [qrDate, setQrDate] = useState("");
   const [qrTime, setQrTime] = useState("");
   const [qrWindowMins, setQrWindowMins] = useState("");
@@ -1453,6 +1483,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [invoiceDueDateDrafts, setInvoiceDueDateDrafts] = useState<Record<string, string>>({});
   const [savingInvoiceDueDateId, setSavingInvoiceDueDateId] = useState<string | null>(null);
   const [jobSelfBill, setJobSelfBill] = useState<SelfBill | null>(null);
+  /**
+   * Documentos das visitas (mig 161/276), abaixo do documento do parceiro
+   * inicial. Self-bill é por parceiro: um job com dois parceiros tem dois.
+   */
+  const [visitSelfBills, setVisitSelfBills] = useState<SelfBill[]>([]);
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
@@ -1511,6 +1546,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [jobMoreMenuOpen]);
+  useEffect(() => {
+    if (!requestPaymentMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = requestPaymentMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setRequestPaymentMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [requestPaymentMenuOpen]);
   useEffect(() => {
     if (!job?.id) return;
     setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
@@ -2048,8 +2092,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, []);
 
   const loadJobSelfBill = useCallback(async (j: Job, opts?: { syncTotals?: boolean }) => {
-    if (!j.partner_id?.trim()) {
+    /**
+     * Job sem parceiro primário ainda pode ter documento: a visita 2 tem
+     * parceiro próprio. Sair aqui escondia o self-bill dela.
+     */
+    if (!j.partner_id?.trim() && !j.reference?.trim()) {
       setJobSelfBill(null);
+      setVisitSelfBills([]);
       return;
     }
     setLoadingSelfBill(true);
@@ -2061,8 +2110,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setJob(synced.job);
           working = synced.job;
           if (synced.selfBill) {
+            // Não retorna aqui: o documento do parceiro da visita vem da
+            // consulta lá embaixo, e sair antes deixava o card mostrando só o
+            // do parceiro inicial.
             setJobSelfBill(synced.selfBill);
-            return;
           }
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Self-bill sync failed");
@@ -2085,15 +2136,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         }
       }
-      if (!working.self_bill_id?.trim()) {
-        setJobSelfBill(null);
-        return;
-      }
-      const sb = await getSelfBill(working.self_bill_id);
-      setJobSelfBill(sb);
+      const linked = working.reference?.trim()
+        ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
+        : [];
+      const primaryId = working.self_bill_id?.trim() || null;
+      const primary = primaryId
+        ? linked.find((b) => b.id === primaryId) ?? (await getSelfBill(primaryId))
+        : null;
+      setJobSelfBill(primary);
+      setVisitSelfBills(linked.filter((b) => b.id !== primaryId));
     } catch {
       toast.error("Failed to load self-bill");
       setJobSelfBill(null);
+      setVisitSelfBills([]);
     } finally {
       setLoadingSelfBill(false);
     }
@@ -2201,7 +2256,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [id, syncJobFinanceViaApi, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
-  const handleOpenRequestPaymentModal = useCallback(async () => {
+  const handleOpenRequestPaymentModal = useCallback(async (opts?: { initialPercent?: number; allowWithoutEmail?: boolean }) => {
     if (!job?.id?.trim()) return;
     const inv =
       (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
@@ -2210,6 +2265,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("No invoice linked to this job yet.");
       return;
     }
+    setRequestPaymentInitialPercent(opts?.initialPercent ?? 100);
     const result = await loadFinanceBillingContact(job.id.trim());
     if (result.ok) {
       setFinanceBillingContact(result.contact);
@@ -2217,19 +2273,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } else {
       setFinanceBillingContact(null);
       setFinanceBillingLoadError(result.error);
-      toast.error(result.error);
-      return;
+      // Copying a pay link needs no email, so "Partial amount" opens anyway;
+      // only the send path is blocked (its button disables without a recipient).
+      if (!opts?.allowWithoutEmail) {
+        toast.error(result.error);
+        return;
+      }
     }
-    const gate = canSendJobInvoiceEmail({
-      invoice: inv,
-      canIncludeInvoice: result.contact.canIncludeInvoice,
-      documentEmail: result.contact.documentEmail,
-      mode: result.contact.mode,
-      loadError: null,
-    });
-    if (!gate.ok) {
-      toast.error(gate.reason);
-      return;
+    if (result.ok) {
+      const gate = canSendJobInvoiceEmail({
+        invoice: inv,
+        canIncludeInvoice: result.contact.canIncludeInvoice,
+        documentEmail: result.contact.documentEmail,
+        mode: result.contact.mode,
+        loadError: null,
+      });
+      if (!gate.ok && !opts?.allowWithoutEmail) {
+        toast.error(gate.reason);
+        return;
+      }
     }
     setRequestPaymentModalOpen(true);
   }, [job, jobInvoices, loadFinanceBillingContact]);
@@ -2435,6 +2497,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     void loadExtraHistory(job.id);
   }, [job?.id, loadExtraHistory]);
+
+  useEffect(() => {
+    const jobId = job?.id;
+    if (!jobId) {
+      setJobVisits([]);
+      return;
+    }
+    let cancelled = false;
+    void listJobVisits(jobId)
+      .then((rows) => { if (!cancelled) setJobVisits(rows); })
+      .catch(() => { if (!cancelled) setJobVisits([]); });
+    return () => { cancelled = true; };
+  }, [job?.id, visitsRefreshKey]);
 
   useEffect(() => {
     if (!job?.id || extraHistory.length === 0) return;
@@ -3080,7 +3155,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [isAdmin, detailTab]);
 
   useEffect(() => {
-    if (!JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6) {
+    if (detailTab === 6) {
       setDetailTab(0);
     }
   }, [detailTab]);
@@ -3188,7 +3263,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const newPid = updated.partner_id ?? null;
         const partnerKeyTouched = updates.partner_id !== undefined;
         if (partnerKeyTouched && prevPid && prevPid !== newPid) {
-          notifyAssignedPartnerAboutJob({ partnerId: prevPid, job: updated, kind: "job_unassigned" });
+          // Do lado de quem sai, unassign e swap são a mesma notícia: "o job
+          // foi cancelado" — sem motivo (dono, 24/08). O que acontece com o
+          // job depois (outro parceiro, vitrine) não é assunto dele.
+          notifyAssignedPartnerAboutJob({
+            partnerId: prevPid,
+            job: updated,
+            kind: "job_cancelled_by_office",
+          });
+          void notifyPartnerJobChange({
+            jobId: updated.id,
+            jobReference: updated.reference,
+            kind: "cancelled",
+            newStatusLabel: "Cancelled",
+            skipPush: true,
+            silent: true,
+            targetPartnerId: prevPid,
+          });
         }
         if (newPid) {
           const assignedFresh = Boolean(partnerKeyTouched && newPid !== prevPid);
@@ -3707,53 +3798,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job, fixedInlineClientRate, fixedInlinePartnerCost, handleJobUpdate, refreshJobFinance]);
 
-  const saveFinanceHubInitialBalance = useCallback(
-    async (side: "client" | "partner") => {
-      if (!job) return;
-      const amount = Math.max(0, Math.round((Number(financeHubBaseDraft) || 0) * 100) / 100);
+  /** Writes the base amount for one side and hands back the updated job, so a
+   *  single Save can chain base + extras without any of them reading a stale job. */
+  const persistFinanceHubBase = useCallback(
+    async (baseJob: Job, side: "client" | "partner", amount: number): Promise<Job> => {
       const patch: Partial<Job> =
         side === "client"
           ? {
               client_price: amount,
               customer_final_payment:
                 Math.round(
-                  Math.max(0, amount + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+                  Math.max(0, amount + Number(baseJob.extras_amount ?? 0) - Number(baseJob.customer_deposit ?? 0)) * 100,
                 ) / 100,
             }
           : { partner_cost: amount };
-      setSavingFinanceHubBase(true);
+      const updated = await handleJobUpdate(baseJob.id, patch, { silent: true });
+      if (!updated) return baseJob;
+      await logFieldChanges(
+        "job",
+        baseJob.id,
+        baseJob.reference,
+        baseJob as unknown as Record<string, unknown>,
+        patch as Record<string, unknown>,
+        profile?.id,
+        profile?.full_name,
+      );
+      await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      await syncSelfBillAfterJobChange(updated);
       try {
-        const updated = await handleJobUpdate(job.id, patch, { silent: true });
-        if (!updated) return;
-        await logFieldChanges(
-          "job",
-          job.id,
-          job.reference,
-          job as unknown as Record<string, unknown>,
-          patch as Record<string, unknown>,
-          profile?.id,
-          profile?.full_name,
-        );
-        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-        await syncSelfBillAfterJobChange(updated);
-        try {
-          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
-        } catch {
-          /* non-blocking */
-        }
-        await refreshJobFinance();
-        setFinanceHubBaseEditSide(null);
-        setFinanceHubBaseDraft("");
-        toast.success(
-          side === "client" ? "Client initial balance updated" : "Partner initial balance updated",
-        );
+        await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
       } catch {
-        toast.error("Could not update initial balance");
-      } finally {
-        setSavingFinanceHubBase(false);
+        /* non-blocking */
       }
+      return updated;
     },
-    [job, financeHubBaseDraft, handleJobUpdate, profile?.id, profile?.full_name, refreshJobFinance],
+    [handleJobUpdate, profile?.id, profile?.full_name],
   );
 
   const saveAccessFeeFlags = useCallback(
@@ -4712,6 +4791,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setQrCatalogServiceId(job.catalog_service_id ?? "");
     setQrClientPrice(String(job.client_price ?? 0));
     setQrPartnerCost(String(job.partner_cost ?? 0));
+    setQrNotify(true);
     setQuickRescheduleOpen(true);
   }, [job, isOneOffScheduleUi]);
 
@@ -4758,6 +4838,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         patch: merged,
         sequenceIndex: job.recurrence_sequence_index ?? null,
         actionLabel: "reschedule",
+        notify: qrNotify,
       });
       setQuickRescheduleOpen(false);
       toast.success("Choose how to apply this change to the series.");
@@ -4767,7 +4848,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setQuickRescheduleSaving(true);
     try {
       const prev = job;
-      const updated = await handleJobUpdate(job.id, merged, { silent: true });
+      const updated = await handleJobUpdate(job.id, merged, { silent: true, notifyPartner: qrNotify });
       if (!updated) return;
       await logFieldChanges(
         "job",
@@ -4795,7 +4876,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setScheduleWindowMins(qrWindowMins.trim());
       setScheduleExpectedFinishDate(isOneOffScheduleUi ? "" : qrExpectedFinish.trim());
       setQuickRescheduleOpen(false);
-      toast.success("Booking updated — partner notified when assigned.");
+      toast.success(qrNotify ? "Booking updated — customer and partner notified." : "Booking updated silently — nobody was notified.");
     } finally {
       setQuickRescheduleSaving(false);
     }
@@ -4809,6 +4890,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     qrCatalogServiceId,
     qrClientPrice,
     qrPartnerCost,
+    qrNotify,
     partners,
     catalogServicesJobType,
     buildSchedulePatchForInputs,
@@ -5140,18 +5222,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
 
-  const openFinanceHub = useCallback((side: "client" | "partner", focus?: ExtraHistoryBucket) => {
+  const openFinanceHub = useCallback((side: "client" | "partner") => {
     setFinanceHubTab(side);
-    setExtraManagerFocusBucket(focus ?? null);
     setFinanceHubOpen(true);
-  }, []);
-
-  const openMoneyFlowFromHub = useCallback((flow: JobMoneyDrawerFlow, extraType?: string) => {
-    setFinanceHubOpen(false);
-    setExtraManagerFocusBucket(null);
-    setMoneyDrawerInitialExtraType(extraType);
-    setMoneyDrawerFlow(flow);
-    setMoneyDrawerOpen(true);
   }, []);
 
   const bucketHasLedgerEntries = useCallback(
@@ -5161,14 +5234,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         .some((row) => extraHistoryBucket(row.extraType) === bucket),
     [extraHistory],
   );
-
-  const handleOpenEditExtra = useCallback((entry: ExtraHistoryEntry) => {
-    if (isFallbackExtraEntry(entry)) return;
-    setEditExtraTarget(entry);
-    setEditExtraAmount(String(Math.round(Math.abs(Number(entry.amount)) * 100) / 100));
-    setEditExtraReason(entry.reason);
-    setEditExtraClientConfirmed(entry.clientConfirmed ?? true);
-  }, []);
 
   const handleDeleteExtraEntry = useCallback(
     (entry: ExtraHistoryEntry) => {
@@ -5293,43 +5358,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     refreshJobFinance,
   ]);
 
-  const confirmEditExtraEntry = useCallback(async () => {
-    if (!editExtraTarget || !job) return;
-    const newMag = Math.round((parseFloat(editExtraAmount) || 0) * 100) / 100;
-    if (newMag <= 0) {
-      toast.error("Enter an amount greater than zero, or remove the extra instead.");
-      return;
-    }
-    const reasonTrim = editExtraReason.trim();
-    if (!reasonTrim) {
-      toast.error("Add a reason for this extra.");
-      return;
-    }
-    const oldMag = Math.round(Math.abs(Number(editExtraTarget.amount)) * 100) / 100;
-    const reasonChanged =
-      editExtraTarget.side === "client"
-        ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed) !==
-          encodeClientExtraReason(editExtraTarget.reason, editExtraTarget.clientConfirmed ?? true)
-        : reasonTrim !== editExtraTarget.reason.trim();
-    if (Math.abs(newMag - oldMag) < 0.009 && !reasonChanged) {
-      setEditExtraTarget(null);
-      return;
-    }
-
-    setSavingExtraEdit(true);
-    setDeletingExtraId(editExtraTarget.idRaw);
-    try {
-      let workingJob: Job = job;
-      const discount = isJobExtraDiscountExtraType(editExtraTarget.extraType);
+  /** One extra, written on top of the job it is given and returned updated, so
+   *  saving three edited extras in a row never reverses the previous one. */
+  const persistExtraEntryEdit = useCallback(
+    async (
+      baseJob: Job,
+      entry: ExtraHistoryEntry,
+      newMag: number,
+      reasonTrim: string,
+      clientConfirmed: boolean,
+    ): Promise<Job> => {
+      const oldMag = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      let workingJob: Job = baseJob;
+      const discount = isJobExtraDiscountExtraType(entry.extraType);
 
       if (Math.abs(newMag - oldMag) >= 0.009) {
-        if (editExtraTarget.side === "client") {
+        if (entry.side === "client") {
           const allocation =
-            editExtraTarget.allocation === "materials"
+            entry.allocation === "materials"
               ? "materials"
-              : editExtraTarget.allocation === "labour"
+              : entry.allocation === "labour"
                 ? "labour"
-                : customerExtraLedgerAllocation(editExtraTarget.extraType);
+                : customerExtraLedgerAllocation(entry.extraType);
           const reversePatch = discount
             ? applyCustomerExtraPatch(workingJob, oldMag, allocation)
             : reverseCustomerExtraPatch(workingJob, oldMag, allocation);
@@ -5347,10 +5397,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           }
         } else {
           const allocation =
-            editExtraTarget.allocation === "materials"
+            entry.allocation === "materials"
               ? "materials"
-              : isJobExtraDiscountExtraType(editExtraTarget.extraType)
-                ? partnerDiscountAllocationFromExtraType(editExtraTarget.extraType)
+              : discount
+                ? partnerDiscountAllocationFromExtraType(entry.extraType)
                 : "partner_cost";
           const reversePatch = discount
             ? applyPartnerExtraPatch(workingJob, oldMag, allocation)
@@ -5366,29 +5416,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             await syncSelfBillAfterJobChange(workingJob);
           }
         }
-        setJob(workingJob);
       }
 
-      if (!editExtraTarget.idRaw.startsWith("local-")) {
+      if (!entry.idRaw.startsWith("local-")) {
         const storedReason =
-          editExtraTarget.side === "client"
-            ? encodeClientExtraReason(reasonTrim, editExtraClientConfirmed)
-            : reasonTrim;
-        await updateJobExtraEntry({
-          id: editExtraTarget.idRaw,
-          amount: newMag,
-          reason: storedReason,
-        });
+          entry.side === "client" ? encodeClientExtraReason(reasonTrim, clientConfirmed) : reasonTrim;
+        await updateJobExtraEntry({ id: entry.idRaw, amount: newMag, reason: storedReason });
       }
 
       setExtraHistory((prev) =>
         prev.map((row) =>
-          row.idRaw === editExtraTarget.idRaw
+          row.idRaw === entry.idRaw
             ? {
                 ...row,
                 amount: newMag,
                 reason: reasonTrim,
-                clientConfirmed: editExtraTarget.side === "client" ? editExtraClientConfirmed : row.clientConfirmed,
+                clientConfirmed: entry.side === "client" ? clientConfirmed : row.clientConfirmed,
               }
             : row,
         ),
@@ -5396,41 +5439,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       void logAudit({
         entityType: "job",
-        entityId: job.id,
-        entityRef: job.reference,
+        entityId: workingJob.id,
+        entityRef: workingJob.reference,
         action: "updated",
-        fieldName: editExtraTarget.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
+        fieldName: entry.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
         oldValue: formatCurrency(oldMag),
         newValue: formatCurrency(newMag),
         userId: profile?.id,
         userName: profile?.full_name,
         metadata: {
-          extra_entry_id: editExtraTarget.idRaw,
-          extra_type: editExtraTarget.extraType,
+          extra_entry_id: entry.idRaw,
+          extra_type: entry.extraType,
           extra_reason: reasonTrim,
         },
       }).catch(() => {});
 
-      await refreshJobFinance();
-      toast.success("Extra updated");
-      setEditExtraTarget(null);
-      setExtraManagerFocusBucket(null);
-    } catch {
-      toast.error("Could not update extra");
-    } finally {
-      setSavingExtraEdit(false);
-      setDeletingExtraId(null);
-    }
-  }, [
-    editExtraTarget,
-    editExtraAmount,
-    editExtraReason,
-    editExtraClientConfirmed,
-    job,
-    profile?.id,
-    profile?.full_name,
-    refreshJobFinance,
-  ]);
+      return workingJob;
+    },
+    [profile?.id, profile?.full_name],
+  );
 
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
@@ -6098,10 +6125,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerExtrasFromLedgerRounded = Math.round(partnerExtrasFromLedger * 100) / 100;
   const clientPriceClamp = Math.max(0, Number(job.client_price ?? 0));
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
+  /**
+   * Dinheiro das visitas 2+ (mig 161). `job.client_price` e `job.partner_cost`
+   * são a VISITA 1; o que as outras visitas cobram e custam entra por aqui,
+   * senão a tabela de visitas soma £70 e o Finance Summary insiste em £50.
+   */
+  const visitRollup = rollUpJobVisits(job, jobVisits);
+  const extraVisitsClient = Math.max(0, Math.round((visitRollup.clientPriceTotal - Number(job.client_price ?? 0)) * 100) / 100);
+  const extraVisitsPartner = Math.max(0, Math.round((visitRollup.partnerCostTotal - Number(job.partner_cost ?? 0)) * 100) / 100);
+  const extraVisitsMaterials = Math.max(0, Math.round((visitRollup.materialsCostTotal - Number(job.materials_cost ?? 0)) * 100) / 100);
+  const extraVisitsCount = Math.max(0, visitRollup.visitCount - 1);
+
   const billableRevenue = Math.max(
     jobCustomerBillableRevenueForCollections(job),
     clientPriceClamp + clientExtrasFromLedgerRounded,
-  );
+  ) + extraVisitsClient;
   const partnerStoredExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
   /**
    * Bump partnerCap by any ledger extras that exceed `partner_extras_amount`
@@ -6119,7 +6157,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /**
    * Split using the ORIGINAL (un-bumped) cap so the base stays anchored to the
    * subcontract labour; ledger-excess extras are layered on top of the resulting
-   * extra line so Initial balance + Extras still equal the (bumped) cap.
+   * extra line so Base pay + Extras still equal the (bumped) cap.
    */
   const { base: partnerCashOutBase, extra: partnerCashOutExtraRaw } = partnerCashOutDisplaySplit(
     job,
@@ -6150,11 +6188,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerMaterialsLine = partnerHasMaterialsLedger
     ? partnerMaterialsLedgerRounded
     : Math.max(0, Number(job.materials_cost ?? 0));
-  const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
+  /**
+   * O que ESTE self-bill contém: só a visita 1, que é o job. Visitas 2+ têm
+   * parceiro próprio e documento próprio — misturar aqui faria o painel
+   * prometer ao parceiro da visita 1 um valor que não é dele.
+   */
+  const partnerCashOutJobLine = Math.max(0, partnerCap + partnerMaterialsLine);
+  /** Custo total do job com todas as visitas: painel e margem, nunca pagamento. */
+  const partnerCashOutTotal = Math.max(0, partnerCashOutJobLine + extraVisitsPartner + extraVisitsMaterials);
   const directCost =
-    job.job_type === "hourly" && hourlyAutoBilling
+    (job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + partnerMaterialsLine
-      : partnerPaymentCap(job) + partnerMaterialsLine;
+      : partnerPaymentCap(job) + partnerMaterialsLine) + extraVisitsPartner + extraVisitsMaterials;
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const marginAppearance = jobDetailMarginAppearance(marginPct);
@@ -6287,11 +6332,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       );
   const partnerExtraTotalDisplay = partnerExtrasAddsTotal;
   /**
-   * Locked partner "Initial balance" — defensive against legacy schemas.
+   * Locked partner "Base pay" — defensive against legacy schemas.
    *
    * `partnerCashOutBase` relies solely on `partner_extras_amount`. If that column is missing or
    * the `job_extra_entries` ledger hasn't been migrated, the recorded extras stay at 0 while
-   * `partner_cost` grows, which would make Initial balance drift upward on refresh.
+   * `partner_cost` grows, which would make Base pay drift upward on refresh.
    *
    * We subtract the MAX of every available "extras against partner_cost" source so the base
    * stays anchored to the original subcontract labour regardless of which source lags.
@@ -6377,220 +6422,178 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return { entries, groups, emptyText };
   };
 
-  const renderExtraManagerPanel = (side: "client" | "partner", focusBucket: ExtraHistoryBucket | null) => {
-    const { entries, groups, emptyText } = getExtraManagerData(side);
-    const clientSide = side === "client";
+  // Extras, one row at a time: the pencil turns the row itself into the editor,
+  // so fixing an amount never means opening a second modal on top of this one.
+  const clientBaseAmount = Math.max(0, Math.round(Number(job.client_price ?? 0) * 100) / 100);
+  const financeHubEntries = getExtraManagerData(financeHubTab).entries;
+  const financeHubLiveBase = financeHubTab === "client" ? clientBaseAmount : partnerInitialBalance;
+  const financeHubBaseValue = financeHubBaseDraft ?? String(financeHubLiveBase);
+  const financeHubExtraValue = (entry: ExtraHistoryEntry) => {
+    const draft = financeHubExtraDrafts[entry.idRaw];
+    return {
+      amount: draft?.amount ?? String(Math.round(Math.abs(Number(entry.amount)) * 100) / 100),
+      reason: draft?.reason ?? entry.reason,
+    };
+  };
+  /** Total the user is looking at right now: it follows the fields, not the saved job. */
+  const financeHubTotal =
+    (Number(financeHubBaseValue) || 0) +
+    financeHubEntries.reduce((sum, entry) => {
+      const typed = Number(financeHubExtraValue(entry).amount) || 0;
+      const sign = extraHistorySignedAmount(entry) < 0 ? -1 : 1;
+      return sum + sign * Math.abs(typed);
+    }, 0);
+  const financeHubDirty =
+    (financeHubBaseDraft != null &&
+      Math.abs((Number(financeHubBaseDraft) || 0) - financeHubLiveBase) >= 0.009) ||
+    financeHubEntries.some((entry) => {
+      const draft = financeHubExtraDrafts[entry.idRaw];
+      if (!draft || isFallbackExtraEntry(entry)) return false;
+      const liveAmount = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      const amountChanged =
+        draft.amount != null && Math.abs((parseFloat(draft.amount) || 0) - liveAmount) >= 0.009;
+      const reasonChanged = draft.reason != null && draft.reason.trim() !== entry.reason.trim();
+      return amountChanged || reasonChanged;
+    });
+  const setFinanceHubExtraDraft = (entry: ExtraHistoryEntry, patch: { amount?: string; reason?: string }) =>
+    setFinanceHubExtraDrafts((prev) => ({ ...prev, [entry.idRaw]: { ...prev[entry.idRaw], ...patch } }));
+  const resetFinanceHubDrafts = () => {
+    setFinanceHubBaseDraft(null);
+    setFinanceHubExtraDrafts({});
+  };
+
+  /** Extras as plain fields: no pencil, no edit mode, no second modal. Type it, hit Save. */
+  const renderFinanceHubExtras = () => {
+    const canEdit = job.status !== "cancelled" && job.status !== "deleted";
+    if (financeHubEntries.length === 0) {
+      return <p className="text-xs text-text-tertiary">No extras on this side.</p>;
+    }
     return (
-      <div className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full sm:w-auto shrink-0 whitespace-nowrap !flex-nowrap"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            disabled={job.status === "cancelled" || job.status === "deleted"}
-            onClick={() => openMoneyFlowFromHub(clientSide ? "client_extra" : "partner_extra")}
-          >
-            {clientSide ? "Charge or discount" : "Extra & deduction"}
-          </Button>
-        </div>
-        <div className="max-h-[36vh] space-y-3 overflow-y-auto pr-1">
-          {entries.length === 0 ? <p className="text-xs text-text-tertiary">{emptyText}</p> : null}
-          {entries.length > 0
-            ? groups
-                .filter((group) => group.entries.length > 0)
-                .map((group) => {
-                  const groupTotal = group.entries.reduce((sum, row) => sum + extraHistorySignedAmount(row), 0);
-                  const groupHasEditableEntries = group.entries.some((row) => !isFallbackExtraEntry(row));
-                  const groupFocused = focusBucket === group.key;
-                  return (
-                    <div
-                      key={group.key}
-                      className={cn(
-                        "rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]",
-                        groupFocused && "ring-2 ring-primary/35",
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2 pb-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
-                          {!groupHasEditableEntries ? (
-                            <Badge variant="outline" size="sm" className="h-4 text-[9px]">Summary only</Badge>
-                          ) : null}
-                        </div>
-                        <span
-                          className={cn(
-                            "text-[11px] font-semibold tabular-nums",
-                            clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                          )}
-                        >
-                          {formatSignedCurrency(groupTotal)}
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {group.entries.map((entry) => (
-                          <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
-                                {entry.side === "client" && !isJobExtraDiscountExtraType(entry.extraType) ? (
-                                  <Badge
-                                    variant={
-                                      entry.clientConfirmed == null
-                                        ? "outline"
-                                        : entry.clientConfirmed
-                                          ? "success"
-                                          : "warning"
-                                    }
-                                    size="sm"
-                                  >
-                                    {entry.clientConfirmed == null
-                                      ? "Confirmation unknown"
-                                      : entry.clientConfirmed
-                                        ? "Client confirmed"
-                                        : "Not confirmed"}
-                                  </Badge>
-                                ) : null}
-                                {entry.createdAt ? (
-                                  <span className="text-[10px] text-text-tertiary">
-                                    · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                                  </span>
-                                ) : null}
-                                {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
-                              </div>
-                              {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
-                            </div>
-                            <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
-                              <span
-                                className={cn(
-                                  "text-xs font-semibold tabular-nums",
-                                  clientSide ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
-                                )}
-                              >
-                                {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                              </span>
-                              {!isFallbackExtraEntry(entry) ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditExtra(entry)}
-                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                    className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
-                                    title="Edit amount or reason"
-                                    aria-label="Edit extra"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteExtraEntry(entry)}
-                                    disabled={deletingExtraId === entry.idRaw || savingExtraEdit}
-                                    className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
-                                    title="Remove this extra"
-                                    aria-label="Remove extra"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })
-            : null}
-        </div>
+      <div className="max-h-[38vh] space-y-2 overflow-y-auto pr-1">
+        {financeHubEntries.map((entry) => {
+          const locked = isFallbackExtraEntry(entry) || !canEdit;
+          const value = financeHubExtraValue(entry);
+          return (
+            <div key={entry.id} className="flex flex-wrap items-center gap-2">
+              <span className="w-20 shrink-0 truncate text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                {entry.extraType}
+              </span>
+              {locked ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-text-tertiary">
+                  {isFallbackExtraEntry(entry) ? "From job totals, not itemized" : value.reason}
+                </span>
+              ) : (
+                <Input
+                  value={value.reason}
+                  onChange={(e) => setFinanceHubExtraDraft(entry, { reason: e.target.value })}
+                  className="h-9 min-w-[8rem] flex-1 text-xs"
+                  placeholder="Reason"
+                  aria-label={`${entry.extraType} reason`}
+                  disabled={savingFinanceHub}
+                />
+              )}
+              {locked ? (
+                <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums">
+                  {formatCurrency(Math.abs(Number(entry.amount)))}
+                </span>
+              ) : (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={value.amount}
+                  onChange={(e) => setFinanceHubExtraDraft(entry, { amount: e.target.value })}
+                  className="h-9 w-24 shrink-0 text-sm tabular-nums"
+                  aria-label={`${entry.extraType} amount`}
+                  disabled={savingFinanceHub}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => handleDeleteExtraEntry(entry)}
+                disabled={locked || savingFinanceHub || deletingExtraId === entry.idRaw}
+                className="shrink-0 text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-30"
+                title="Remove this extra"
+                aria-label="Remove extra"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     );
   };
 
-  const renderFinanceHubInitialBalanceRow = (
-    side: "client" | "partner",
-    displayAmount: number,
-    editSourceAmount: number,
-  ) => {
-    const editing = financeHubBaseEditSide === side;
-    // Editable before anyone is assigned too: on an unassigned job this number
-    // is the budget for whoever takes it, and needing to leave for Setup to type
-    // it is why this panel felt read-only.
-    const canEdit = job.status !== "cancelled" && job.status !== "deleted";
+  /** The whole modal saves at once: base first, then every extra the user touched. */
+  const saveFinanceHub = async () => {
+    if (!job) return;
+    const side = financeHubTab;
+    const entries = financeHubEntries;
+    const liveBase = side === "client" ? clientBaseAmount : partnerInitialBalance;
 
-    return (
-      <div className="rounded-md border border-border-light/70 bg-background/60 px-2.5 py-2 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-text-primary">Initial balance</span>
-            <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
-          </div>
-          {editing ? (
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={financeHubBaseDraft}
-                onChange={(e) => setFinanceHubBaseDraft(e.target.value)}
-                className="h-8 w-[7.5rem] text-xs tabular-nums"
-                autoFocus
-                disabled={savingFinanceHubBase}
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 px-2 text-xs"
-                disabled={savingFinanceHubBase}
-                onClick={() => {
-                  setFinanceHubBaseEditSide(null);
-                  setFinanceHubBaseDraft("");
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-8 px-2 text-xs"
-                loading={savingFinanceHubBase}
-                onClick={() => void saveFinanceHubInitialBalance(side)}
-              >
-                Save
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="font-semibold tabular-nums text-text-primary">
-                {formatCurrency(Math.max(0, displayAmount))}
-              </span>
-              {canEdit ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 shrink-0 whitespace-nowrap !flex-nowrap px-2.5 text-[11px] font-medium"
-                  icon={<Pencil className="h-3 w-3" />}
-                  title="Edit initial balance"
-                  aria-label="Edit initial balance"
-                  onClick={() => {
-                    setFinanceHubBaseEditSide(side);
-                    setFinanceHubBaseDraft(String(Math.max(0, Math.round(editSourceAmount * 100) / 100)));
-                  }}
-                >
-                  Edit balance
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </div>
-        {side === "partner" && Math.abs(displayAmount - editSourceAmount) > 0.02 ? (
-          <p className="mt-1 text-[10px] text-text-tertiary leading-snug">
-            Labour cap stored on job: {formatCurrency(Math.max(0, editSourceAmount))}
-          </p>
-        ) : null}
+    const baseAmount =
+      financeHubBaseDraft == null ? liveBase : Math.max(0, Math.round((Number(financeHubBaseDraft) || 0) * 100) / 100);
+    if (financeHubBaseDraft != null && !Number.isFinite(Number(financeHubBaseDraft))) {
+      toast.error(side === "client" ? "Base price must be a number." : "Base pay must be a number.");
+      return;
+    }
+    const baseDirty = Math.abs(baseAmount - liveBase) >= 0.009;
 
-      </div>
-    );
+    const dirtyExtras: { entry: ExtraHistoryEntry; amount: number; reason: string }[] = [];
+    for (const entry of entries) {
+      const draft = financeHubExtraDrafts[entry.idRaw];
+      if (!draft || isFallbackExtraEntry(entry)) continue;
+      const liveAmount = Math.round(Math.abs(Number(entry.amount)) * 100) / 100;
+      const amount =
+        draft.amount == null ? liveAmount : Math.round((parseFloat(draft.amount) || 0) * 100) / 100;
+      const reason = (draft.reason ?? entry.reason).trim();
+      const reasonChanged =
+        entry.side === "client"
+          ? encodeClientExtraReason(reason, entry.clientConfirmed ?? true) !==
+            encodeClientExtraReason(entry.reason, entry.clientConfirmed ?? true)
+          : reason !== entry.reason.trim();
+      if (Math.abs(amount - liveAmount) < 0.009 && !reasonChanged) continue;
+      if (amount <= 0) {
+        toast.error(`${entry.extraType}: enter an amount above zero, or remove the line.`);
+        return;
+      }
+      if (!reason) {
+        toast.error(`${entry.extraType}: add a reason.`);
+        return;
+      }
+      dirtyExtras.push({ entry, amount, reason });
+    }
+
+    if (!baseDirty && dirtyExtras.length === 0) {
+      setFinanceHubOpen(false);
+      return;
+    }
+
+    setSavingFinanceHub(true);
+    try {
+      let current: Job = job;
+      if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
+      for (const row of dirtyExtras) {
+        current = await persistExtraEntryEdit(
+          current,
+          row.entry,
+          row.amount,
+          row.reason,
+          row.entry.clientConfirmed ?? true,
+        );
+      }
+      setJob(current);
+      await refreshJobFinance();
+      setFinanceHubBaseDraft(null);
+      setFinanceHubExtraDrafts({});
+      setFinanceHubOpen(false);
+      toast.success("Finances updated");
+    } catch {
+      toast.error("Could not save the finances");
+    } finally {
+      setSavingFinanceHub(false);
+    }
   };
 
   let finalSplitRemain = finalBalanceTotal;
@@ -6606,6 +6609,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const finalLabour = finalSplitRemain;
 
   const statusActions = getJobStatusActions(job);
+  /**
+   * "Done" da visita 1 na tabela de visitas. A visita 1 é o job, então quem
+   * fecha ela é a mesma transição do topo (Job completed -> final_check), com
+   * as regras de `handleStatusChange` intactas. Sem essa ação disponível no
+   * estágio atual, a linha não mostra botão.
+   */
+  const primaryVisitDoneAction = statusActions.find((a) => a.status === "final_check" && !a.special);
+  /**
+   * Job ainda em campo mostra "Done" na visita 1 mesmo quando a barra de topo
+   * oferece outra coisa (em `scheduled` ela oferece "Start Job"): marcar a
+   * visita como feita é dizer que o trabalho aconteceu. `handleStatusChange`
+   * roda `canAdvanceJob` e recusa com mensagem se o estágio não permitir, então
+   * o botão não fura regra nenhuma.
+   */
+  const primaryVisitDoneTarget: Job["status"] | null =
+    primaryVisitDoneAction
+      ? "final_check"
+      : (["scheduled", "late", "in_progress"] as const).includes(job.status as "scheduled")
+        ? "final_check"
+        : null;
   /** Primary bar: keep cancel out of the strip — it lives under ⋮. */
   const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled");
   const showCancelInJobMoreMenu = statusActions.some((a) => a.status === "cancelled");
@@ -7072,8 +7095,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
                           onClick={() => {
                             setJobMoreMenuOpen(false);
+                            setDetailTab(0);
                             setVisitOpenCreateSignal((k) => k + 1);
-                            setDetailTab(6);
                           }}
                         >
                           <Plus className="h-3.5 w-3.5 shrink-0" />
@@ -7499,6 +7522,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                      * gravada nenhuma.
                      */
                     const arrivalDisplay = agreedArrivalRange ?? slotLabel;
+                    /**
+                     * Com visitas extras, "visit date" tem que ser a próxima que
+                     * vem, não a primeira que aconteceu: quem abre o card quer
+                     * saber quando alguém pisa lá de novo.
+                     */
+                    const nextVisit = nextVisitLine(job, jobVisits, Date.now());
+                    const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
                         <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
@@ -7508,6 +7538,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
                           </span>
                         </div>
+                        {nextIsExtra && nextVisit ? (
+                          <button
+                            type="button"
+                            onClick={() => setDetailTab(0)}
+                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            title="Open the Visits tab"
+                          >
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <span>
+                              <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
+                              {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
+                              {nextVisit.partnerName ? (
+                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                              ) : null}
+                            </span>
+                          </button>
+                        ) : null}
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
                           <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
                           <span>
@@ -7940,7 +7987,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 6 as const }] : []),
                     { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
@@ -7964,17 +8010,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
-              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED && detailTab === 6 ? (
-                <VisitsTab
-                  job={job}
-                  openCreateSignal={visitOpenCreateSignal}
-                  onJobStatusBumpRequested={(suggestedStatus) => {
-                    if (job.status !== suggestedStatus) {
-                      void updateJob(job.id, { status: suggestedStatus });
-                    }
-                  }}
-                />
-              ) : null}
               {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -8167,77 +8202,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 pt-2 border-t border-border">
                 <div className="flex items-center justify-between gap-2">
                   <JobCardTitleWithHint
-                    title="Notes"
-                    hint="Internal only — not shown to the client; use for access, keys, or context beyond the scope."
-                    titleClassName="text-xs font-semibold text-text-primary"
-                  />
-                  {!additionalNotesEditing ? (
-                    <button
-                      type="button"
-                      onClick={() => setAdditionalNotesEditing(true)}
-                      className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                      title="Edit additional notes"
-                      aria-label="Edit additional notes"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </div>
-                {!additionalNotesEditing ? (
-                  additionalNotesReadText ? (
-                    <p className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap">{additionalNotesReadText}</p>
-                  ) : (
-                    <p className="text-sm text-text-tertiary italic">No additional notes yet — use the pencil to add some.</p>
-                  )
-                ) : (
-                  <>
-                    <textarea
-                      value={additionalNotesDraft}
-                      onChange={(e) => setAdditionalNotesDraft(e.target.value)}
-                      rows={3}
-                      placeholder="Parking, entry, preferences…"
-                      className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                      autoFocus
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        loading={savingAdditionalNotes}
-                        onClick={async () => {
-                          if (!job) return;
-                          setSavingAdditionalNotes(true);
-                          try {
-                            await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
-                            setAdditionalNotesEditing(false);
-                          } finally {
-                            setSavingAdditionalNotes(false);
-                          }
-                        }}
-                      >
-                        Save additional notes
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={savingAdditionalNotes}
-                        onClick={() => {
-                          setAdditionalNotesDraft(job.additional_notes ?? "");
-                          setAdditionalNotesEditing(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-border">
-                <div className="flex items-center justify-between gap-2">
-                  <JobCardTitleWithHint
                     title="Report link (optional)"
                     hint="External URL — Google Drive, Notion, shared doc. Not shown to the client."
                     titleClassName="text-xs font-semibold text-text-primary"
@@ -8274,12 +8238,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         href={reportLinkReadHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block text-sm text-primary break-all hover:underline"
+                        className="block truncate text-sm text-primary hover:underline"
+                        title={reportLinkReadRaw}
                       >
                         {reportLinkReadRaw}
                       </a>
                     ) : (
-                      <p className="text-sm text-text-primary break-all">{reportLinkReadRaw}</p>
+                      <p className="truncate text-sm text-text-primary" title={reportLinkReadRaw}>{reportLinkReadRaw}</p>
                     )
                   ) : (
                     <p className="text-sm text-text-tertiary italic">No report link yet — use the pencil to add one.</p>
@@ -8340,6 +8305,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
+              {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
+                <div className="pt-2 border-t border-border">
+                  <VisitsTab
+                    job={job}
+                    openCreateSignal={visitOpenCreateSignal}
+                    onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
+                    onCompletePrimary={
+                      primaryVisitDoneTarget
+                        ? async () => {
+                            const updated = await handleStatusChange(job, primaryVisitDoneTarget);
+                            return !!updated;
+                          }
+                        : undefined
+                    }
+                    completePrimaryLabel={primaryVisitDoneAction?.label ?? "Mark visit 1 done"}
+                    onFinishJob={() => {
+                      /**
+                       * Fechar o trabalho pela tabela de visitas é o mesmo
+                       * caminho do topo: leva para Final checks quando ainda
+                       * não está lá (com `canAdvanceJob` valendo) e abre a
+                       * revisão. Job já em Final checks em diante só abre.
+                       */
+                      void (async () => {
+                        if (jobStatusRank(job.status) < 40) {
+                          const updated = await handleStatusChange(job, "final_check");
+                          if (!updated) return;
+                        }
+                        openFinalReview();
+                      })();
+                    }}
+                    onJobStatusBumpRequested={(suggestedStatus) => {
+                      void handleStatusChange(job, suggestedStatus);
+                    }}
+                  />
+                </div>
+              ) : null}
               </div>
               ) : null}
 
@@ -8647,7 +8648,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div>
                       <FinSetupFieldLabel
                         label="Job price"
-                        hint="Main price for the job before any add-ons (same as Initial balance in Finance summary)."
+                        hint="Main price for the job before any add-ons (same as Base price in Finance summary)."
                       />
                       <Input
                         type="number"
@@ -8995,13 +8996,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     title="Base client price at the start of this job (field client_price). Extras are tracked below."
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Initial balance</span>
-                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                      <span className="text-text-primary">Base price</span>
                     </div>
                     <span className="font-semibold tabular-nums text-text-primary shrink-0">
                       {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsClient > 0.005 ? `+${formatCurrency(extraVisitsClient)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   {(job.customer_deposit ?? 0) > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
@@ -9236,13 +9246,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     title="Subcontract labour agreed at the start of this job. Stays locked — extras and materials are tracked below."
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Initial balance</span>
-                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                      <span className="text-text-primary">Base pay</span>
                     </div>
                     <span className="font-semibold tabular-nums text-text-primary shrink-0">
                       {formatCurrency(partnerInitialBalance)}
                     </span>
                   </div>
+                  {extraVisitsCount > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
+                      <span className="text-text-primary">
+                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
+                      </span>
+                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                        {extraVisitsPartner > 0.005 ? `+${formatCurrency(extraVisitsPartner)}` : formatCurrency(0)}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
                     <div className="flex items-center gap-1.5">
                       <JobCardHint
@@ -9665,21 +9684,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             </button>
                             <div className="min-w-0 flex-1 space-y-2">
                               {!invOpen ? (
-                                <div className="flex items-start justify-between gap-2 pt-0.5">
+                                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-0.5">
                                   <div className="min-w-0">
                                     <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
                                     {inv.due_date ? (
                                       <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
                                     ) : null}
                                   </div>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <p className="text-lg font-bold tabular-nums text-primary tracking-tight">
+                                  <div className="ml-auto flex min-w-0 items-center gap-1.5">
+                                    <p className="truncate text-lg font-bold tabular-nums text-primary tracking-tight">
                                       {formatCurrency(inv.amount)}
                                     </p>
                                     <Button
                                       type="button"
                                       size="sm"
                                       variant="outline"
+                                      className="shrink-0"
                                       icon={<FileText className="h-3 w-3" />}
                                       title="Download receipt PDF"
                                       onClick={() =>
@@ -9759,6 +9779,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     >
                                       Receipt PDF
                                     </Button>
+                                    {inv.status !== "paid" && inv.status !== "cancelled" ? (
+                                      <>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          icon={<Copy className="h-3 w-3" />}
+                                          title="Copy Stripe link charging the full open balance"
+                                          onClick={() => void copyInvoicePayLink(inv.reference)}
+                                        >
+                                          Copy pay link
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          icon={<Copy className="h-3 w-3" />}
+                                          title="Copy Stripe link charging 50% of the open balance"
+                                          onClick={() => void copyInvoicePayLink(inv.reference, 50)}
+                                        >
+                                          Copy deposit link
+                                        </Button>
+                                      </>
+                                    ) : null}
                                     <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
                                     {inv.stripe_payment_link_url && (
                                       <>
@@ -9810,19 +9852,78 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ) : null}
                 {!clientPaidInFull ? (
                   <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      className="w-full min-h-[2.5rem] font-semibold shadow-sm"
-                      icon={<Mail className="h-3.5 w-3.5" />}
-                      loading={sendingInvoiceEmail}
-                      disabled={!invoiceSendGate.ok || sendingInvoiceEmail || loadingInvoices || financeBillingLoading}
-                      title={invoiceSendGate.ok ? "Request payment — choose % and email invoice PDF" : invoiceSendGate.reason}
-                      onClick={() => void handleOpenRequestPaymentModal()}
-                    >
-                      Request payment
-                    </Button>
+                    <div className="relative" ref={requestPaymentMenuRef}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="primary"
+                        className="w-full min-h-[2.5rem] font-semibold shadow-sm"
+                        icon={<Mail className="h-3.5 w-3.5" />}
+                        loading={sendingInvoiceEmail}
+                        disabled={sendingInvoiceEmail || loadingInvoices || jobInvoices.length === 0}
+                        aria-expanded={requestPaymentMenuOpen}
+                        aria-haspopup="menu"
+                        title="Request payment: email the invoice or share a Stripe pay link"
+                        onClick={() => setRequestPaymentMenuOpen((o) => !o)}
+                      >
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                          Request payment
+                          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
+                        </span>
+                      </Button>
+                      {requestPaymentMenuOpen ? (
+                        <div
+                          role="menu"
+                          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={!invoiceSendGate.ok || financeBillingLoading}
+                            title={invoiceSendGate.ok ? "Choose % and email the invoice PDF with a Stripe pay link" : invoiceSendGate.reason}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              void handleOpenRequestPaymentModal({ initialPercent: 100 });
+                            }}
+                          >
+                            <Mail className="h-3.5 w-3.5 shrink-0" />
+                            Send via email
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            title="Copy a Stripe link charging the full open balance"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+                              if (!inv?.reference) {
+                                toast.error("No invoice linked to this job yet.");
+                                return;
+                              }
+                              void copyInvoicePayLink(inv.reference);
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5 shrink-0" />
+                            Copy pay link
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            title="Pick a % of the balance, then copy the link or email it"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
+                            onClick={() => {
+                              setRequestPaymentMenuOpen(false);
+                              void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true });
+                            }}
+                          >
+                            <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                            Partial amount…
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                     {!invoiceSendGate.ok && !financeBillingLoading ? (
                       <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
                     ) : null}
@@ -9867,10 +9968,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               {!job.partner_id?.trim() ? (
                 <p className="text-[10px] text-text-tertiary leading-snug -mt-1">Assign a partner on this job to use self billing.</p>
               ) : null}
-              {!job.partner_id?.trim() ? null : loadingSelfBill ? (
+              {visitSelfBills.length > 0 ? (
+                /* Um documento por parceiro: cada bloco leva o nome de quem
+                   recebe, senão dois cartões seguidos viram um só na leitura. */
+                <div className="space-y-3">
+                  {jobSelfBill ? (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
+                      </p>
+                      <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                    </div>
+                  ) : null}
+                  {visitSelfBills.map((sb) => (
+                    <div key={sb.id} className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {sb.partner_name?.trim() || "Visit partner"}
+                      </p>
+                      {/* Linha do documento da visita: o valor dele, não o do job. */}
+                      <JobDetailSelfBillPanel
+                        sb={sb}
+                        job={job}
+                        jobLineGross={Number(sb.net_payout ?? 0)}
+                        visitScope={{
+                          label: sb.partner_name?.trim() || "Visit partner",
+                          // O documento da visita já guarda os próprios totais.
+                          labour: Number(sb.job_value ?? 0),
+                          materials: Number(sb.materials ?? 0),
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutTotal} />
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
@@ -10577,328 +10710,89 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       <Modal
         open={financeHubOpen}
         onClose={() => {
+          if (savingFinanceHub) return;
           setFinanceHubOpen(false);
-          setExtraManagerFocusBucket(null);
-          setFinanceHubBaseEditSide(null);
-          setFinanceHubBaseDraft("");
+          resetFinanceHubDrafts();
         }}
         title="Edit job finances"
-        size="lg"
+        size="md"
       >
-        <div className="p-4 space-y-4">
+        <div className="space-y-4 p-4">
           <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]">
-            <button
-              type="button"
-              onClick={() => {
-                setFinanceHubTab("client");
-                setExtraManagerFocusBucket(null);
-                setFinanceHubBaseEditSide(null);
-                setFinanceHubBaseDraft("");
-              }}
-              className={cn(
-                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
-                financeHubTab === "client"
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              Cash in — client
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFinanceHubTab("partner");
-                setExtraManagerFocusBucket(null);
-                setFinanceHubBaseEditSide(null);
-                setFinanceHubBaseDraft("");
-              }}
-              className={cn(
-                "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors",
-                financeHubTab === "partner"
-                  ? "bg-rose-600 text-white shadow-sm"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              Cash out — partner
-            </button>
-          </div>
-
-          {financeHubTab === "client" ? (
-            <div className="space-y-4 rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 dark:border-emerald-500/25 dark:bg-emerald-950/15">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Client total</span>
-                  <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm">
-                    {amountDue > 0.02 ? "Pending" : "Settled"}
-                  </Badge>
-                </div>
-                <span className="text-base font-bold tabular-nums">{formatCurrency(billableRevenue)}</span>
-              </div>
-              {renderFinanceHubInitialBalanceRow(
-                "client",
-                Math.max(0, Number(job.client_price ?? 0)),
-                Math.max(0, Number(job.client_price ?? 0)),
-              )}
-              {isAdmin ? (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="whitespace-nowrap !flex-nowrap"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  disabled={job.status === "cancelled" || job.status === "deleted"}
-                  onClick={() => openMoneyFlowFromHub("client_pay")}
-                >
-                  Record Received Payment
-                </Button>
-              ) : null}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
-                {renderExtraManagerPanel("client", extraManagerFocusBucket)}
-              </div>
-              <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
-                {customerPayments.length === 0 ? (
-                  <p className="text-xs text-text-tertiary">No payments recorded yet.</p>
-                ) : (
-                  customerPayments.map((p) => {
-                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">
-                              {ledgerTag ?? (p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance")}
-                            </span>
-                            <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                            </span>
-                          </div>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
-                              className="text-text-tertiary hover:text-red-500 transition-colors"
-                              aria-label="Remove payment"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div className="flex items-center justify-between pt-1 text-xs">
-                  <span className={cn("font-semibold", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
-                    {amountDue > 0.02 ? "Amount due" : "Fully collected"}
-                  </span>
-                  <span className={cn("font-bold tabular-nums", amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400")}>
-                    {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4 rounded-lg border border-rose-200/80 bg-rose-50/40 p-3 dark:border-rose-500/25 dark:bg-rose-950/15">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Partner total</span>
-                  <Badge
-                    variant={
-                      partnerUsesClawbackUi
-                        ? partnerClawbackOwed > 0.02
-                          ? "warning"
-                          : "success"
-                        : partnerPayRemaining > 0.02
-                          ? "warning"
-                          : "success"
-                    }
-                    size="sm"
-                  >
-                    {partnerUsesClawbackUi
-                      ? partnerClawbackOwed > 0.02
-                        ? "Pending"
-                        : "Settled"
-                      : partnerPayRemaining > 0.02
-                        ? "Pending"
-                        : "Settled"}
-                  </Badge>
-                </div>
-                <span className="text-base font-bold tabular-nums">{formatCurrencyPrecise(partnerCashOutSummaryAmount)}</span>
-              </div>
-              {renderFinanceHubInitialBalanceRow(
-                "partner",
-                partnerInitialBalance,
-                Math.max(0, Number(job.partner_cost ?? 0)),
-              )}
-              {isAdmin ? (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="whitespace-nowrap !flex-nowrap"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                  onClick={() => openMoneyFlowFromHub("partner_pay")}
-                >
-                  Record partner payment
-                </Button>
-              ) : null}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary mb-2">Extras</p>
-                {renderExtraManagerPanel("partner", extraManagerFocusBucket)}
-              </div>
-              {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
-                <div className="space-y-1.5 border-t border-border-light/80 pt-3 dark:border-[#2f3642]">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Payment history</p>
-                  {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
-                    <p className="text-xs text-text-tertiary">No payouts recorded yet.</p>
-                  ) : null}
-                  {partnerPayoutLedgerRows.map((p) => {
-                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[10px] font-semibold uppercase text-text-tertiary">{ledgerTag ?? "Partner payout"}</span>
-                            <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                            </span>
-                          </div>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-rose-700 dark:text-rose-300">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin ? (
-                            <button
-                              type="button"
-                              onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })}
-                              className="text-text-tertiary hover:text-red-500 transition-colors"
-                              aria-label="Remove payment"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {partnerLegacyCostAsPayoutRows.map((p) => {
-                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                    return (
-                      <div key={p.id} className="flex items-start justify-between gap-2 rounded-md border border-orange-500/20 bg-surface-hover/40 px-2.5 py-2">
-                        <div className="min-w-0">
-                          <Badge variant="warning" size="sm">Extra cost</Badge>
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate mt-1">{noteRest}</p> : null}
-                        </div>
-                        <span className="text-xs font-semibold tabular-nums text-orange-700 dark:text-orange-400">
-                          +{formatCurrencyPrecise(Number(p.amount))}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {!partnerUsesClawbackUi ? (
-                    <div className="flex items-center justify-between pt-1 text-xs">
-                      <span className={cn("font-semibold", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
-                        {partnerPayRemaining > 0.02 ? "Amount due" : "Fully paid out"}
-                      </span>
-                      <span className={cn("font-bold tabular-nums", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>
-                        {partnerPayRemaining > 0.02 ? formatCurrency(partnerPayRemaining) : formatCurrency(0)}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </Modal>
-
-      <Modal
-        open={editExtraTarget != null}
-        onClose={() => {
-          if (savingExtraEdit) return;
-          setEditExtraTarget(null);
-        }}
-        title="Edit extra"
-      >
-        {editExtraTarget ? (
-          <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{editExtraTarget.extraType}</p>
-              <p className="text-xs text-text-secondary">
-                {editExtraTarget.side === "client" ? "Client charge or discount" : "Partner payout or discount"}
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={editExtraAmount}
-                onChange={(e) => setEditExtraAmount(e.target.value)}
-                className="h-9 text-sm"
-                autoFocus
-              />
-              {isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
-                <p className="text-[10px] text-text-tertiary mt-1">Stored as a discount — enter the positive amount to reduce the bill.</p>
-              ) : null}
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
-              <textarea
-                value={editExtraReason}
-                onChange={(e) => setEditExtraReason(e.target.value)}
-                rows={3}
-                className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[80px]")}
-              />
-            </div>
-            {editExtraTarget.side === "client" && !isJobExtraDiscountExtraType(editExtraTarget.extraType) ? (
-              <label className="inline-flex items-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={editExtraClientConfirmed}
-                  onChange={(e) => setEditExtraClientConfirmed(e.target.checked)}
-                />
-                Client confirmed this extra
-              </label>
-            ) : null}
-            <div className="flex flex-wrap justify-end gap-2 pt-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={savingExtraEdit}
-                onClick={() => setEditExtraTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={savingExtraEdit}
+            {(["client", "partner"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                disabled={savingFinanceHub}
                 onClick={() => {
-                  handleDeleteExtraEntry(editExtraTarget);
-                  setEditExtraTarget(null);
+                  setFinanceHubTab(tab);
+                  resetFinanceHubDrafts();
                 }}
+                className={cn(
+                  "flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-60",
+                  financeHubTab !== tab
+                    ? "text-text-secondary hover:text-text-primary"
+                    : tab === "client"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-rose-600 text-white shadow-sm",
+                )}
               >
-                Remove
-              </Button>
-              <Button size="sm" loading={savingExtraEdit} onClick={() => void confirmEditExtraEntry()}>
-                Save changes
-              </Button>
-            </div>
+                {tab === "client" ? "Cash in — client" : "Cash out — partner"}
+              </button>
+            ))}
           </div>
-        ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <JobCardTitleWithHint
+              className="min-w-0 flex-1"
+              title={financeHubTab === "client" ? "Base price" : "Base pay"}
+              hint={
+                financeHubTab === "client"
+                  ? "Agreed with the client, before extras"
+                  : "Agreed with the partner, before extras"
+              }
+              titleClassName="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary"
+            />
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={financeHubBaseValue}
+              onChange={(e) => setFinanceHubBaseDraft(e.target.value)}
+              className="h-9 w-24 shrink-0 text-sm tabular-nums"
+              aria-label={financeHubTab === "client" ? "Base price" : "Base pay"}
+              disabled={savingFinanceHub || job.status === "cancelled" || job.status === "deleted"}
+            />
+            <span className="w-3.5 shrink-0" aria-hidden />
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+            {renderFinanceHubExtras()}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Total</span>
+            <span className="text-lg font-bold tabular-nums">{formatCurrency(Math.max(0, financeHubTotal))}</span>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={savingFinanceHub}
+              onClick={() => {
+                setFinanceHubOpen(false);
+                resetFinanceHubDrafts();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" loading={savingFinanceHub} disabled={!financeHubDirty} onClick={() => void saveFinanceHub()}>
+              Save
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal
@@ -11802,24 +11696,36 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               />
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 border-t border-border-light pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={quickRescheduleSaving}
-              onClick={() => setQuickRescheduleOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              loading={quickRescheduleSaving}
-              onClick={() => void confirmQuickReschedule()}
-            >
-              Confirm &amp; Update
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-light pt-2">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={qrNotify}
+                disabled={quickRescheduleSaving}
+                onChange={(e) => setQrNotify(e.target.checked)}
+              />
+              Notify customer &amp; partner
+            </label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={quickRescheduleSaving}
+                onClick={() => setQuickRescheduleOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                loading={quickRescheduleSaving}
+                onClick={() => void confirmQuickReschedule()}
+              >
+                Confirm &amp; Update
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -11861,7 +11767,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               const scheduleChanged = SCHEDULE_KEYS.some(
                 (k) => k in patch && (before[k] ?? null) !== (refreshed[k] ?? null),
               );
-              if (partnerChanged) {
+              if (recurringScopePending.notify === false) {
+                /* remarcação silenciosa: escolha explícita no modal */
+              } else if (partnerChanged) {
                 notifyAssignedPartnerAboutJob({
                   partnerId: refreshed.partner_id,
                   job: refreshed,
@@ -11915,7 +11823,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               : undefined
         }
         loading={sendingInvoiceEmail}
+        initialPercent={requestPaymentInitialPercent}
         onConfirm={(pct) => void handleSendJobInvoiceEmail(pct)}
+        onCopyLink={(pct) => {
+          const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+          if (!inv?.reference) {
+            toast.error("No invoice linked to this job yet.");
+            return;
+          }
+          void copyInvoicePayLink(inv.reference, pct < 100 ? pct : undefined);
+          setRequestPaymentModalOpen(false);
+        }}
       />
     </PageTransition>
   );

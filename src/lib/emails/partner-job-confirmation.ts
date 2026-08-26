@@ -61,8 +61,12 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   jobType: "hourly" | "fixed";
   /** £ display value (e.g. "£45.00/hr" or "£280.00"). */
   priceDisplay: string;
-  /** Where the partner submits the report — typically the partner app deep link. */
-  reportUrl: string;
+  /**
+   * Onde o parceiro envia o relatório. `null` esconde o botão inteiro: o token
+   * de relatório é ligado a (job, parceiro do job), então o parceiro de uma
+   * visita extra receberia 403 se clicasse.
+   */
+  reportUrl: string | null;
   /** Support email (defaults to support@getfixfy.com). */
   supportEmail?: string;
   /** Support phone (defaults to +44 20 4538 4668). */
@@ -199,7 +203,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
     scope: escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 36),
     pill: data.jobType === "hourly" ? "Hourly" : "Fixed",
-    url: escapeHtml(data.reportUrl),
+    url: escapeHtml(data.reportUrl ?? ""),
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
@@ -298,13 +302,14 @@ ${partnerEmailLogoHeaderRow()}
       ${notesBlock}
 
       <!-- CTA -->
+      ${data.reportUrl ? `
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-mobile">
           <tr><td align="center" style="border-radius:8px; background-color:#ED4B00;">
             <a href="${safe.url}" target="_blank" style="display:inline-block; padding:16px 36px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:600; color:#FFFFFF; text-decoration:none; border-radius:8px;">Submit job report</a>
           </td></tr>
         </table>
-      </td></tr>
+      </td></tr>` : ""}
 
       <!-- Helper text -->
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
@@ -341,8 +346,7 @@ Scope of work
 ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
-
-Submit job report: ${data.reportUrl}
+${data.reportUrl ? `\nSubmit job report: ${data.reportUrl}` : ""}
 
 Need help? Email ${supportEmail} or call ${supportPhone}.
 
@@ -454,13 +458,16 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
     telefone: data.clientPhone?.trim() ? escapeHtml(data.clientPhone.trim()) : "",
     telefoneHref: data.clientPhone?.trim() ? escapeHtml(telHref(data.clientPhone.trim())) : "",
     reason: data.reason ? escapeHtml(data.reason) : null,
-    url: escapeHtml(data.reportUrl),
+    url: escapeHtml(data.reportUrl ?? ""),
     support: escapeHtml(supportEmail),
     supportTel: escapeHtml(supportPhone),
     supportTelHref: telHref(supportPhone),
   };
 
-  const reasonBlock = safe.reason
+  // Cancelled nunca leva motivo (dono, 24/08): o mesmo email cobre cancelamento
+  // de verdade, unassign e swap — do lado do parceiro é tudo "o job saiu", e o
+  // motivo interno não é assunto dele.
+  const reasonBlock = safe.reason && data.kind !== "cancelled"
     ? `<div style="margin-top:14px; padding:14px; background:#FFF5EE; border:1px solid #FEE5D6; border-radius:6px; font-size:13px; color:#9A2A00;"><strong>Reason:</strong> ${safe.reason}</div>`
     : "";
 
@@ -552,7 +559,7 @@ ${partnerEmailLogoHeaderRow()}
 </table>
 </body></html>`;
 
-  const reasonText = data.reason ? `\nReason: ${data.reason}\n` : "";
+  const reasonText = data.reason && data.kind !== "cancelled" ? `\nReason: ${data.reason}\n` : "";
   const name = data.partnerFirstName || "there";
   const introText =
     data.kind === "cancelled"
@@ -629,7 +636,7 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
   const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
 ${partnerEmailHeadBlock()}
-${partnerEmailBaseStyles(`    .schedule-stack td { display: block !important; width: 100% !important; padding: 12px 0 !important; }
+${partnerEmailBaseStyles(`    .schedule-cell { display: block !important; width: 100% !important; padding: 6px 0 !important; }
     .schedule-arrow { display: none !important; }`)}
 </head>
 ${partnerEmailBodyOpen()}
@@ -653,16 +660,24 @@ ${partnerEmailLogoHeaderRow("16px 40px")}
       <tr><td style="padding:0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="schedule-stack" style="border-collapse:collapse;">
           <tr>
-            <td valign="top" width="46%" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px; padding:16px 18px;">
-              <p style="margin:0 0 6px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Was</p>
-              <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:21px; font-weight:600; color:#6B6B85; text-decoration:line-through;">${safe.oldDate}</p>
-              ${safe.oldTime ? `<p style="margin:0; font-size:13px; line-height:19px; color:#6B6B85; text-decoration:line-through;">${safe.oldTime}</p>` : ""}
+            <td valign="top" width="46%" class="schedule-cell" style="padding:0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+                <tr><td style="padding:16px 18px; word-break:break-word;">
+                  <p style="margin:0 0 6px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Was</p>
+                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:21px; font-weight:600; color:#6B6B85; text-decoration:line-through;">${safe.oldDate}</p>
+                  ${safe.oldTime ? `<p style="margin:0; font-size:13px; line-height:19px; color:#6B6B85; text-decoration:line-through;">${safe.oldTime}</p>` : ""}
+                </td></tr>
+              </table>
             </td>
             <td align="center" valign="middle" width="8%" class="schedule-arrow" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:20px; color:#6B6B85; padding:0 4px;">→</td>
-            <td valign="top" width="46%" style="background-color:#E4F4EC; border:1px solid #B5DCC8; border-radius:10px; padding:16px 18px;">
-              <p style="margin:0 0 6px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#0E8A5F;">📅 New schedule</p>
-              <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:21px; font-weight:700; color:#0A5A3F;">${safe.newDate}</p>
-              ${safe.newTime ? `<p style="margin:0; font-size:13px; line-height:19px; color:#0A5A3F;">${safe.newTime}</p>` : ""}
+            <td valign="top" width="46%" class="schedule-cell" style="padding:0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#E4F4EC; border:1px solid #B5DCC8; border-radius:10px;">
+                <tr><td style="padding:16px 18px; word-break:break-word;">
+                  <p style="margin:0 0 6px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#0E8A5F;">📅 New schedule</p>
+                  <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:21px; font-weight:700; color:#0A5A3F;">${safe.newDate}</p>
+                  ${safe.newTime ? `<p style="margin:0; font-size:13px; line-height:19px; color:#0A5A3F;">${safe.newTime}</p>` : ""}
+                </td></tr>
+              </table>
             </td>
           </tr>
         </table>

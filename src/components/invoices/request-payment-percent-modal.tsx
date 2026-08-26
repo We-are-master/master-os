@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { Copy } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { clampDepositPercent, depositAmountFromPercent } from "@/lib/quote-deposit";
@@ -15,7 +16,11 @@ type RequestPaymentPercentModalProps = {
   recipientEmail?: string | null;
   billingModeLabel?: string;
   loading?: boolean;
+  /** Slider position when the modal opens (default 50). */
+  initialPercent?: number;
   onConfirm: (requestPercent: number) => void | Promise<void>;
+  /** When set, shows a "Copy link" action for the chosen % (Stripe pay link). */
+  onCopyLink?: (requestPercent: number) => void;
 };
 
 export function RequestPaymentPercentModal({
@@ -25,13 +30,20 @@ export function RequestPaymentPercentModal({
   recipientEmail,
   billingModeLabel,
   loading = false,
+  initialPercent = 50,
   onConfirm,
+  onCopyLink,
 }: RequestPaymentPercentModalProps) {
-  const [percent, setPercent] = useState(50);
+  const [percent, setPercent] = useState(initialPercent);
 
-  useEffect(() => {
-    if (open) setPercent(50);
-  }, [open, invoice?.id]);
+  // Reset the slider whenever the modal (re)opens for an invoice — done during
+  // render (not in an effect) so there is no flash of the previous value.
+  const openKey = open ? `${invoice?.id ?? ""}:${initialPercent}` : null;
+  const [prevOpenKey, setPrevOpenKey] = useState<string | null>(openKey);
+  if (openKey !== prevOpenKey) {
+    setPrevOpenKey(openKey);
+    if (openKey !== null) setPercent(initialPercent);
+  }
 
   const baseAmount = useMemo(
     () => (invoice ? invoiceRequestBaseAmount(invoice) : 0),
@@ -109,6 +121,19 @@ export function RequestPaymentPercentModal({
             >
               Cancel
             </Button>
+            {onCopyLink ? (
+              <Button
+                type="button"
+                variant="outline"
+                icon={<Copy className="h-3.5 w-3.5" />}
+                disabled={amountDueNow <= 0 || loading}
+                title="Copy a Stripe link charging this % of the balance"
+                onClick={() => onCopyLink(percentClamped)}
+                className="w-full sm:w-auto"
+              >
+                Copy link
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="primary"

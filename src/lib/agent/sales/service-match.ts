@@ -57,21 +57,21 @@ const OTHER_TEAM =
  * "fit skirting and paint it" é Carpenter. A trade maior ganha o empate.
  */
 const PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ["(EICR) Electrical Installation Condition Report", /\beicr\b|electrical installation condition|electrical safety (check|certificate|report)/i],
-  ["(FRA) Fire Risk Assessment", /fire risk assessment|\bfra\b/i],
-  ["(FAC) Fire Alarm Certificate", /fire alarm/i],
+  ["Electrical Safety Report", /\beicr\b|electrical installation condition|electrical safety (check|certificate|report)/i],
+  ["Fire Risk Assessment", /fire risk assessment|\bfra\b/i],
+  ["Fire Alarm Certificate", /fire alarm/i],
   ["Emergency Lighting Certificate", /emergency light/i],
-  ["(FES) Fire Extinguisher Service", /fire extinguisher/i],
-  ["(PAT) Portable Appliance Testing", /\bpat\b|portable appliance/i],
-  ["(EOT) End of Tenancy", /end of tenancy|\beot\b|move[- ]out clean/i],
-  ["(AB) After Builders Cleaning", /after builder|post[- ]construction clean|builders clean/i],
-  ["(DC) Deep Cleaning", /deep clean|spring clean/i],
+  ["Fire Extinguisher Service", /fire extinguisher/i],
+  ["Appliance Testing", /\bpat\b|portable appliance/i],
+  ["End of Tenancy Clean", /end of tenancy|\beot\b|move[- ]out clean/i],
+  ["After Builders Clean", /after builder|post[- ]construction clean|builders clean/i],
+  ["Deep Clean", /deep clean|spring clean/i],
   // Certificados de gás vêm antes de qualquer coisa que o veto de gás alcance.
   // São linhas ativas e precificadas do catálogo, e o dono tem 3 parceiros com
   // capacidade ociosa de ~10/dia.
-  ["(GSC) Gas Safety Certificate", /gas safety cert|\bgsc\b|landlord gas/i],
-  ["(CP12)Gas Safety Check", /\bcp12\b|gas safety check/i],
-  ["(EPC) Energy Performance Certificate", /\bepc\b|energy performance/i],
+  ["Gas Safety Certificate", /gas safety cert|\bgsc\b|landlord gas/i],
+  ["Gas Safety Check", /\bcp12\b|gas safety check/i],
+  ["Energy Performance Certificate", /\bepc\b|energy performance/i],
   ["Builder", /\bbuild(er|ing)?\b|extension|loft conversion|stud wall|brickwork|blockwork|render|screed|structural|knock through|\brsj\b|steel beam|damp proof|underpin/i],
   ["Carpenter", /carpen|joiner|\bskirting\b|architrave|wardrobe|shelv|\bshelf\b|\bdoor\s*(hang|fit|frame)|kitchen fit|worktop|flooring|laminate|floorboard|staircase|\bbespoke\b|cabinet|cupboard|alcove|\bcat\s*flap\b/i],
   ["Painter", /\b(?:re)?paint(er|ing|ed)?\b|decorat|\bwallpaper|papering|emulsion|gloss|undercoat|redecorat/i],

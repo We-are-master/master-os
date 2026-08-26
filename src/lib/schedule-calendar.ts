@@ -186,10 +186,13 @@ function addOneCalendarDayYmd(ymd: string): string {
 function formatMediumDateEnGbFromYmd(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
     day: "numeric",
     month: "short",
-    year: "numeric",
-  }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+    year: "2-digit",
+  })
+    .format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)))
+    .replace(",", "");
 }
 
 /**

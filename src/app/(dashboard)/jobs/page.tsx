@@ -21,13 +21,14 @@ import {
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
+import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { createJobPayment } from "@/services/job-payments";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3,
+  Plus, Filter, List, LayoutGrid, Download, RefreshCw, BarChart3, UserPlus,
   ArrowRight, Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
@@ -68,7 +69,11 @@ import {
   buildZendeskCustomFields,
 } from "@/lib/zendesk-form-ids";
 import { getArchivedDeletedJobsOverlappingScheduleCount } from "@/services/job-period-overlap-queries";
-import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
+import {
+  refreshSelfBillPayoutState,
+  refreshSelfBillPayoutStatesForJobIds,
+  selfBillIdsTouchedByJob,
+} from "@/services/self-bills";
 import { refreshWorkforceSelfBillsForJobIds } from "@/services/workforce-self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { computeOfficeTimerElapsedSeconds, formatOfficeTimer, statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
@@ -78,7 +83,9 @@ import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
 import { getAccountIdsForBu } from "@/services/business-units";
 import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
-import { patchOfficeCancelZeroJobEconomics } from "@/lib/job-cancel-economics";
+import { patchOfficeCancelZeroJobEconomics, patchOfficeCancelLostSnapshot } from "@/lib/job-cancel-economics";
+import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
+import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
@@ -92,12 +99,14 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { MarginValue } from "@/components/shared/margin-value";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
 import {
+  clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   jobHasPartnerSet,
@@ -614,6 +623,23 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
+/**
+ * Bolinha da aba Final check: verde = report entregue, âmbar = report
+ * dispensado, vermelho = ainda nada. `report_submitted` (legado) conta como
+ * entregue para os jobs de antes da mig 168.
+ */
+function FinalCheckReportDot({ job }: { job: Job }) {
+  const done = Boolean(job.final_report_submitted || job.report_submitted);
+  const skipped = !done && Boolean(job.final_report_skipped);
+  const cls = done ? "bg-emerald-500" : skipped ? "bg-amber-400" : "bg-red-400";
+  const label = done ? "Report submitted" : skipped ? "Report skipped" : "No report yet";
+  return (
+    <span className="inline-flex h-4 w-4 items-center justify-center" title={label} aria-label={label} role="img">
+      <span className={`h-2.5 w-2.5 rounded-full ${cls}`} />
+    </span>
+  );
+}
+
 const JOB_SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
 
 const JOB_SORT_CREATED: ColumnSortOption[] = [
@@ -760,6 +786,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Assign modal opened from the Partner column of the list. */
+  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -778,6 +806,8 @@ function JobsPageContent() {
   const [jobsListSortDir, setJobsListSortDir] = useState<"asc" | "desc">("asc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover" | "unassign">(null);
+  /** Um job só selecionado → o MESMO modal de cancelamento do job card (motivo, fault, fees). */
+  const [singleCancelTarget, setSingleCancelTarget] = useState<{ id: string; reference: string } | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkCancelPresetId, setBulkCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [bulkCancelDetail, setBulkCancelDetail] = useState("");
@@ -2080,6 +2110,8 @@ function JobsPageContent() {
         }
         const patch: Record<string, unknown> = {
           ...patchOfficeCancelZeroJobEconomics(),
+          ...patchOfficeCancelLostSnapshot(j),
+          ...clearAutoAssignQueuePatch(),
           status: "cancelled",
           cancellation_reason: reason,
           // Mesmo motivo do cancelamento individual: o id é o que faz o
@@ -2097,6 +2129,9 @@ function JobsPageContent() {
         }
         if (upErr) throw upErr;
         updatedCount += 1;
+        void fetch(`/api/jobs/${encodeURIComponent(j.id)}/auto-assign-cancel-cleanup`, {
+          method: "POST",
+        }).catch((e) => console.error("auto-assign-cancel-cleanup", j.reference, e));
         const mergedForBump = { ...j, ...patch } as Job;
         void bumpLinkedInvoiceAmountsToJobSchedule(mergedForBump).catch((e) =>
           console.error("bumpLinkedInvoiceAmountsToJobSchedule", j.reference, e),
@@ -2131,11 +2166,20 @@ function JobsPageContent() {
       }
       await Promise.all(
         cancelledForInvoices.map((j) =>
-          cancelOpenInvoicesForJobCancellation({
-            jobReference: j.reference,
-            cancellationReason: reason,
-            primaryInvoiceId: j.invoice_id,
-          }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
+          Promise.all([
+            cancelOpenInvoicesForJobCancellation({
+              jobReference: j.reference,
+              cancellationReason: reason,
+              primaryInvoiceId: j.invoice_id,
+            }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
+            cancelOpenSelfBillsForJobCancellation({
+              jobReference: j.reference,
+              primarySelfBillId: j.self_bill_id,
+            }).catch((e) => console.error("cancelOpenSelfBillsForJobCancellation", j.reference, e)),
+            cancelOpenVisitsForJobCancellation(j.id).catch((e) =>
+              console.error("cancelOpenVisitsForJobCancellation", j.reference, e),
+            ),
+          ]),
         ),
       );
       await Promise.all([
@@ -2163,6 +2207,22 @@ function JobsPageContent() {
     loadDashboardStats,
   ]);
 
+  /**
+   * Cancel da barra de seleção: com UM job selecionado abre o modal completo
+   * do job card (motivo, fault, fees — mesmo fluxo do detail/kanban); com
+   * vários, o modal de lote de sempre (fee é decisão por job, não em massa).
+   */
+  const openBulkCancel = useCallback(() => {
+    if (selectedIds.size === 1) {
+      const only = data.find((j) => selectedIds.has(j.id));
+      if (only) {
+        setSingleCancelTarget({ id: only.id, reference: only.reference });
+        return;
+      }
+    }
+    setBulkActionModal("cancel");
+  }, [selectedIds, data]);
+
   const handleBulkArchive = useCallback(async (): Promise<boolean> => {
     if (selectedIds.size === 0) return false;
     try {
@@ -2181,11 +2241,19 @@ function JobsPageContent() {
         return false;
       }
       const forInvoices = eligible.map((j) => ({ reference: j.reference, invoice_id: j.invoice_id }));
-      const selfBillIds = [
-        ...new Set(
-          eligible.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
-        ),
-      ];
+      /**
+       * Todos os documentos que o job toca, não só o da coluna.
+       *
+       * `jobs.self_bill_id` conhece só o parceiro da visita 1. Job com visita
+       * de outro parceiro deixava o documento DELE vivo com o valor cheio: o
+       * job some da tela e o parceiro continua a ser pago por ele.
+       */
+      const selfBillIds = await selfBillIdsTouchedByJob(eligible.map((j) => j.id)).catch((err) => {
+        console.error("selfBillIdsTouchedByJob (delete):", err);
+        return eligible
+          .map((r) => r.self_bill_id)
+          .filter((x): x is string => Boolean(x && String(x).trim()));
+      });
       await softDeleteInvoicesForArchivedJobs(forInvoices, profile?.id);
       const ts = new Date().toISOString();
       const uid = profile?.id ?? null;
@@ -2235,11 +2303,13 @@ function JobsPageContent() {
         toast.message("No deleted jobs selected.");
         return false;
       }
-      const selfBillIds = [
-        ...new Set(
-          rows.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
-        ),
-      ];
+      // Mesma razão do delete: o recover tem que reacertar todos os documentos.
+      const selfBillIds = await selfBillIdsTouchedByJob(rows.map((j) => j.id)).catch((err) => {
+        console.error("selfBillIdsTouchedByJob (recover):", err);
+        return rows
+          .map((r) => r.self_bill_id)
+          .filter((x): x is string => Boolean(x && String(x).trim()));
+      });
       await Promise.all(
         rows.map((j) => {
           const next = parseRestoredJobStatus(j.deleted_previous_status);
@@ -2473,9 +2543,19 @@ function JobsPageContent() {
                 Auto assign
               </Badge>
             ) : (
-              <span className="text-[11px] text-text-tertiary italic block">
+              <button
+                type="button"
+                title="Assign a partner"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setAssignTarget({ id: item.id, reference: item.reference });
+                }}
+                className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] italic text-text-tertiary transition-colors hover:bg-primary/10 hover:not-italic hover:text-primary"
+              >
+                <UserPlus className="h-3 w-3 shrink-0" aria-hidden />
                 Unassigned
-              </span>
+              </button>
             )}
           </div>
         );
@@ -2611,7 +2691,15 @@ function JobsPageContent() {
       minWidth: "44px",
       cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
       headerClassName: "w-11 normal-case",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
+      // Na aba Final check a seta vira a bolinha do report: o que a revisão
+      // quer saber de cada linha é "tem report para revisar?". Atualiza em
+      // tempo real via o realtimeTable:"jobs" que esta lista já assina.
+      render: (item) =>
+        status === "final_check" ? (
+          <FinalCheckReportDot job={item} />
+        ) : (
+          <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
+        ),
     },
   ];
 
@@ -3007,13 +3095,13 @@ function JobsPageContent() {
                     {closedJobsFilter === "all" || closedJobsFilter === "awaiting_payment" ? (
                       <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
                     ) : null}
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
@@ -3269,6 +3357,21 @@ function JobsPageContent() {
         </div>
       </Modal>
 
+      {singleCancelTarget && (
+        <CancelJobModal
+          jobId={singleCancelTarget.id}
+          jobReference={singleCancelTarget.reference}
+          isOpen={singleCancelTarget !== null}
+          onClose={() => setSingleCancelTarget(null)}
+          onCancelled={() => {
+            setSingleCancelTarget(null);
+            setSelectedIds(new Set());
+            refresh();
+            loadDashboardStats();
+          }}
+        />
+      )}
+
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
       <Modal
         open={kanbanMove !== null}
@@ -3320,6 +3423,26 @@ function JobsPageContent() {
           </div>
         </div>
       </Modal>
+      {assignTarget && (
+        <AssignPartnerModal
+          jobId={assignTarget.id}
+          jobReference={assignTarget.reference}
+          isOpen={assignTarget !== null}
+          onClose={() => setAssignTarget(null)}
+          onAssigned={() => {
+            setAssignTarget(null);
+            refresh();
+            void loadDashboardStats();
+          }}
+          onAutoAssign={() => {
+            const id = assignTarget.id;
+            setAssignTarget(null);
+            void fetch(`/api/jobs/${id}/dispatch-auto-assign-invites`, { method: "POST" })
+              .then(() => { toast.success("Invites sent to matching partners"); refresh(); })
+              .catch(() => toast.error("Could not send the invites"));
+          }}
+        />
+      )}
       <ExportCsvModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
@@ -3385,6 +3508,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     end_date: "",
     end_time: "17:00",
     job_type: "fixed",
+    rate_basis: "fixed",
     scope: "",
     report_link: "",
     hourly_client_rate: "",
@@ -3540,6 +3664,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       setForm((prev) => ({
         ...prev,
         job_type: "fixed",
+    rate_basis: "fixed",
         client_price: String(resolved.clientTotal),
         partner_cost: String(resolved.partnerTotal),
       }));
@@ -3849,6 +3974,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
       partner_name: isAutoAssign ? null : (selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined),
       status: isAutoAssign ? "auto_assigning" : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
+      rate_basis:
+        form.job_type === "fixed" && (form.rate_basis === "daily" || form.rate_basis === "half_day")
+          ? (form.rate_basis as Job["rate_basis"])
+          : null,
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
@@ -3908,6 +4037,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       end_date: "",
       end_time: "17:00",
       job_type: "fixed",
+    rate_basis: "fixed",
       scope: "",
       report_link: "",
       hourly_client_rate: "",
@@ -4107,7 +4237,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 title="Set prices on this job"
                 onClick={() => {
                   lastAutoPartnerCost.current = null;
-                  setForm((p) => ({ ...p, job_type: "fixed", partner_cost: "" }));
+                  setForm((p) => ({ ...p, job_type: "fixed", rate_basis: "fixed", partner_cost: "" }));
                 }}
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
@@ -4134,6 +4264,31 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <span className="truncate">{pricingModeLabel("hourly")}</span>
               </button>
             </div>
+            {form.job_type === "fixed" ? (
+              // O acordo por trás do preço fixo (mig 281): Day rate e Half day
+              // são o MESMO fixed; o rótulo é o que o parceiro lê no email.
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { id: "fixed", label: "Fixed price" },
+                  { id: "daily", label: "Day rate" },
+                  { id: "half_day", label: "Half day" },
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => update("rate_basis", b.id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                      (form.rate_basis ?? "fixed") === b.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border-light text-text-secondary hover:bg-surface-hover",
+                    )}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div
               className={cn(
                 "grid gap-2 min-w-0",

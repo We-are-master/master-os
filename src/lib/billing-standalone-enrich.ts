@@ -30,6 +30,8 @@ export type BillingEnrichmentState = {
   pipelineJobs: PipelineJobRunwayRow[];
   clientIdToAccountId: Record<string, string>;
   jobsBySelfBillId: Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["map"];
+  /** Linhas de visita por self-bill: somam no Outstanding junto com as de job. */
+  visitsBySelfBillId: Awaited<ReturnType<typeof computeLinkedJobsMapsForSelfBillIds>>["visitsBySelfBillId"];
   partnerPaidByJobId: Record<string, number>;
   partnerTermsById: Record<string, string | null>;
   partnerAvatarById: Record<string, string | null>;
@@ -48,6 +50,7 @@ export const EMPTY_BILLING_ENRICHMENT: BillingEnrichmentState = {
   pipelineJobs: [],
   clientIdToAccountId: {},
   jobsBySelfBillId: {},
+  visitsBySelfBillId: {},
   partnerPaidByJobId: {},
   partnerTermsById: {},
   partnerAvatarById: {},
@@ -243,14 +246,15 @@ export async function enrichDeferredBillingRows(
 /** Lazy: linked job lines + partner paid totals for specific self-bill ids. */
 export async function enrichSelfBillJobsForIds(
   sbIds: string[],
-): Promise<Pick<BillingEnrichmentState, "jobsBySelfBillId" | "partnerPaidByJobId">> {
+): Promise<Pick<BillingEnrichmentState, "jobsBySelfBillId" | "visitsBySelfBillId" | "partnerPaidByJobId">> {
   if (sbIds.length === 0) {
-    return { jobsBySelfBillId: {}, partnerPaidByJobId: {} };
+    return { jobsBySelfBillId: {}, visitsBySelfBillId: {}, partnerPaidByJobId: {} };
   }
   const linked = await computeLinkedJobsMapsForSelfBillIds(sbIds);
   billingPerfMark("billing:selfbill-jobs:end");
   return {
     jobsBySelfBillId: linked.map,
+    visitsBySelfBillId: linked.visitsBySelfBillId,
     partnerPaidByJobId: linked.partnerPaidByJobId,
   };
 }

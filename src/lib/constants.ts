@@ -102,5 +102,17 @@ export const STATUS_COLORS = {
   processing: "blue",
 } as const;
 
-/** Extra visits tab + ⋮ “Add visit” on job detail — off until multi-visit / recurrence UX is shipped. */
-export const JOB_DETAIL_MULTI_VISITS_UI_ENABLED = false;
+/**
+ * Visitas extras no job card.
+ *
+ * Ficou desligada enquanto a visita não tinha para onde mandar o dinheiro: o
+ * custo do parceiro da visita 2 não entrava em self-bill nenhum. Agora entra:
+ * um documento por parceiro, valor contando desde o rascunho e o "done"
+ * liberando o pagamento (migrações 274 a 277).
+ *
+ * O que ainda NÃO existe, e é bom saber antes de usar: o parceiro de uma visita
+ * extra recebe o email de confirmação, mas não vê o job no app do parceiro e
+ * não envia o relatório dela. Toda query de parceiro lê `jobs.partner_id`, que
+ * é o dono da visita 1.
+ */
+export const JOB_DETAIL_MULTI_VISITS_UI_ENABLED = true;

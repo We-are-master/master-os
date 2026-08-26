@@ -71,6 +71,26 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    /**
+     * Só aprova o que está feito.
+     *
+     * Com visitas, um documento pode conter trabalho ainda agendado: aprovar
+     * nesse estado libera pagamento de visita que ninguém fez. A checagem é
+     * sobre as VISITAS ligadas — o lado job já tem o próprio filtro de status
+     * dentro do recompute.
+     */
+    const { data: openVisits, error: openErr } = await admin
+      .from("job_visits")
+      .select("visit_index, status")
+      .eq("self_bill_id", id)
+      .is("deleted_at", null)
+      .not("status", "in", "(completed,cancelled)");
+    if (!openErr && (openVisits ?? []).length > 0) {
+      const abertas = (openVisits as { visit_index: number }[]).map((v) => `V${v.visit_index}`).join(", ");
+      skipped.push({ id, reference: sb.reference, reason: `Visit not done yet: ${abertas}` });
+      continue;
+    }
+
     const stamp = new Date().toISOString();
     const { error } = await admin
       .from("self_bills")
