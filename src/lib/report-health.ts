@@ -281,6 +281,13 @@ const contagem = (fotos: unknown): Record<string, number> => {
  * foto. Os tetos (5 por cômodo na limpeza, 20 por metade no resto) também
  * bloqueiam aqui: estourar teto é escolha, não acidente, e o excedente seria
  * cortado em silêncio no envio.
+ *
+ * Exceto quando o excesso JÁ ESTAVA salvo: o app do parceiro manda 20 fotos
+ * por cômodo, remover foto não existe na edição, e cobrar o teto ali fazia o
+ * relatório ineditável — foi como um horário impossível ficou sem conserto em
+ * 26/08 (JOB-9475). O que já está no relatório não é escolha de quem edita, e
+ * quem corta o excedente para a plataforma é o envio. O teto volta a valer no
+ * instante em que a submissão ACRESCENTA foto por cima dele.
  */
 export function validarSubmissaoDeReport(input: {
   template: ReportTemplate;
@@ -301,6 +308,11 @@ export function validarSubmissaoDeReport(input: {
   photosRefused?: boolean;
   timerStartedAt?: string | null;
   timerEndedAt?: string | null;
+  /**
+   * Fotos que o relatório já tinha ANTES desta submissão (edição). O teto só
+   * bloqueia o que passar do maior entre ele e o que já estava salvo.
+   */
+  fotosJaSalvas?: { start?: unknown; final?: unknown };
 }): VereditoDaSubmissao {
   const saude = reportHealth({
     template: input.template,
@@ -322,21 +334,23 @@ export function validarSubmissaoDeReport(input: {
   const slots = input.photosRefused
     ? { start: [], final: [] }
     : photoSlotsForTemplate(input.template);
-  for (const [rotuloMetade, fotos, lista] of [
-    ["Before", input.startPhotos, slots.start],
-    ["After", input.finalPhotos, slots.final],
+  for (const [rotuloMetade, fotos, jaSalvas, lista] of [
+    ["Before", input.startPhotos, input.fotosJaSalvas?.start ?? null, slots.start],
+    ["After", input.finalPhotos, input.fotosJaSalvas?.final ?? null, slots.final],
   ] as const) {
     const mapa = contagem(fotos);
+    // O que já estava salvo não bloqueia: só o que esta submissão acrescenta.
+    const mapaJa = contagem(jaSalvas);
     if (lista.length > 0 && !Array.isArray(fotos)) {
       for (const s of lista) {
         const n = mapa[s.key] ?? 0;
-        if (s.max && n > s.max) {
+        if (s.max && n > s.max && n > (mapaJa[s.key] ?? 0)) {
           motivos.push(`${rotuloMetade} · ${s.label}: ${n} photos — maximum ${s.max}`);
         }
       }
     } else {
       const n = total(mapa);
-      if (n > HOUSEKEEP_MAX_FOTOS) {
+      if (n > HOUSEKEEP_MAX_FOTOS && n > total(mapaJa)) {
         motivos.push(`${rotuloMetade} photos: ${n} — the client platform takes ${HOUSEKEEP_MAX_FOTOS}`);
       }
     }

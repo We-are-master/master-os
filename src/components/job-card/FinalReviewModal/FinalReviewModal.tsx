@@ -19,9 +19,12 @@ type EnvioExterno = EstadoEnvioExterno;
 /**
  * Estado do envio do relatório para a plataforma de origem.
  *
- * Enquanto estiver enviando, pergunta de 3 em 3 segundos e para sozinho quando
- * termina. O envio leva de 8 a 35 segundos porque preenche um formulário de
- * verdade do outro lado, então segurar a tela não é opção.
+ * Pergunta de 3 em 3 segundos enquanto o modal está aberto, e só para quando o
+ * envio TERMINOU. A versão anterior só perguntava depois de ver "enviando" uma
+ * vez — mas o POST dispara e devolve na hora, e o `started_at` cai no banco um
+ * instante DEPOIS da primeira releitura: o passo 3 congelava no chip neutro
+ * com o envio acontecendo por baixo (visto em 26/08, JOB-9475). Um GET local a
+ * cada 3s por modal aberto é barato; um passo que mente é caro.
  */
 function useEnvioExterno(
   jobUuid: string | null | undefined,
@@ -76,7 +79,7 @@ function useEnvioExterno(
 
     void buscar();
     const t = setInterval(() => {
-      if (estadoRef.current === "enviando") void buscar();
+      if (estadoRef.current !== "enviado") void buscar();
     }, 3000);
     return () => {
       vivo = false;
@@ -148,6 +151,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     // Forçar é decisão para um job, não um modo. Sem isto, quem liberou uma vez
     // sairia com o bloqueio desligado no próximo job sem ter escolhido isso.
     setForcarSemEnvio(false);
+    setRelatorioAprovado(false);
     onClose();
   };
 
@@ -173,13 +177,33 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
       jobUuid && envioExterno && !envioExterno.bloqueio &&
       envioExterno.estado !== "enviado" && envioExterno.estado !== "enviando";
     if (!podeEnviar) return;
+    jaDisparouRef.current = true;
     void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
-      // Avisa o passo 3 na hora, senão ele fica no texto de espera: o polling
-      // dele só liga depois de ver o estado "enviando" uma vez, e sem isto a
-      // rodinha nunca apareceria.
       .then(() => recarregar())
       .catch((err) => console.error("[final-review] envio externo falhou:", err));
   };
+
+  /**
+   * A aprovação vale mesmo quando o clique veio ANTES de o estado carregar.
+   *
+   * O disparo no "Approve report →" checa bloqueio, e para isso precisa do GET
+   * já respondido. Quem revisa rápido clicava antes disso: o disparo era
+   * engolido em silêncio, nada tentava de novo, e o passo 3 dizia "goes when
+   * you approve" com a aprovação já dada (26/08, JOB-9475). O clique agora fica
+   * registrado, e o disparo acontece quando o estado chegar — uma vez só.
+   */
+  const [relatorioAprovado, setRelatorioAprovado] = useState(false);
+  const jaDisparouRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) {
+      jaDisparouRef.current = false;
+      return;
+    }
+    if (!relatorioAprovado || jaDisparouRef.current) return;
+    if (!envioExterno || envioExterno.bloqueio || envioExterno.estado !== "nao_enviado") return;
+    dispararEnvio();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dispara quando o estado chega após a aprovação
+  }, [isOpen, relatorioAprovado, envioExterno]);
 
   /**
    * UM clique: manda o relatório, espera a plataforma confirmar, e finaliza.
@@ -372,6 +396,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      setRelatorioAprovado(true);
                       dispararEnvio();
                       setEtapa("financeiro");
                     }}
@@ -409,6 +434,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 jobUuid={jobUuid}
                 onEnvioDisparado={recarregar}
                 onEditReport={onEditReport}
+                relatorioAprovado={relatorioAprovado}
               />
 
               <FinanceCards

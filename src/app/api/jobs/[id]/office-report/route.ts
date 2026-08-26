@@ -151,6 +151,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       writeStart ? (overwrite ? startEnvelope?.photos : null) : startEnvelope?.photos,
     ),
     finalPhotos: plannedPhotoShape(template, "final", fotos, overwrite ? finalEnvelope?.photos : null),
+    // Teto não cobra o que o relatório já tinha: só o que este POST acrescenta.
+    fotosJaSalvas: { start: startEnvelope?.photos ?? null, final: finalEnvelope?.photos ?? null },
     timerStartedAt: timerStartedAt ?? job.partner_timer_started_at ?? null,
     timerEndedAt: timerEndedAt ?? job.partner_timer_ended_at ?? null,
   });
