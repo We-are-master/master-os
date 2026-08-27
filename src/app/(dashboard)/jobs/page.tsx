@@ -32,8 +32,11 @@ import {
   ArrowRight, Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
-  Timer, ArrowUpRight, Phone, Copy, MapPin, Link2, Check,
+  Timer, Route as RouteIcon, ArrowUpRight, Phone, Copy, MapPin, Link2, Check, Map as MapIcon,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { PartnerRouteView } from "@/components/jobs/partner-route-view";
+import { JobsMapView } from "@/components/jobs/jobs-map-view";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -649,22 +652,25 @@ function FinalCheckReportDot({ job }: { job: Job }) {
  * gente cobra depois. Em inglês, como todo conteúdo que sai do OS.
  */
 function mensagemDoReportPraParceiro(job: Job, url: string): string {
+  const cabecalho = [job.reference, job.title].filter(Boolean).join(" · ");
   return [
-    [job.reference, job.title].filter(Boolean).join(" · "),
+    cabecalho,
     [job.client_name, job.property_address].filter(Boolean).join(" · "),
     "",
     "Please submit the work report here:",
     url,
-  ].join("\n");
+  ]
+    .filter((l) => l !== null && l !== undefined)
+    .join("\n");
 }
 
 /**
  * Copia a mensagem do report num clique, ao lado da bolinha do Final check.
  *
- * Existe porque o caminho até aqui eram quatro passos: abrir o job, achar o
- * painel do link, copiar, e escrever nome e endereço à mão no WhatsApp. Na
- * revisão de final check o que se faz o dia inteiro é cobrar report de
- * parceiro, e isso merecia um clique na própria linha.
+ * Existe porque o caminho até aqui eram quatro: abrir o job, achar o painel do
+ * link, copiar, e escrever nome e endereço à mão no WhatsApp. Na revisão de
+ * final check o que se faz o dia inteiro é cobrar report de parceiro, e isso
+ * merecia um clique na própria linha.
  *
  * O link é o mesmo `/api/jobs/[id]/partner-report-link` do painel: token por
  * (job, parceiro) e short link estável, então copiar duas vezes dá a mesma URL.
@@ -856,7 +862,7 @@ function JobsPageContent() {
   });
   const { profile } = useProfile();
   const { officeCancellationPresets, accessFees } = useFrontendSetup();
-  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "route" | "map">("list");
   const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("jobs_kpis_visible_v1");
   /** Kanban drop that needs a decision before it saves. Null while nothing is pending. */
   const [kanbanMove, setKanbanMove] = useState<
@@ -961,6 +967,22 @@ function JobsPageContent() {
     if (status !== "closed" || closedJobsFilter !== "archived") return;
     if (viewMode !== "list") setViewMode("list");
   }, [closedJobsFilter, status, viewMode]);
+
+  // Route view is a per-partner day plan; without a concrete partner it has no meaning.
+  const routeViewEligible = filterPartner !== "all" && filterPartner !== "__none__";
+
+  /**
+   * A data que o clique num parceiro roteia no modo mapa. Rota é de UM dia:
+   * filtro num dia único usa esse dia; qualquer período largo (semana, mês,
+   * All) cai em hoje, que é o dia que quem está despachando quer ver.
+   */
+  const mapRouteDateYmd = useMemo(() => {
+    if (scheduleRange && scheduleRange.from === scheduleRange.to) return scheduleRange.from;
+    return ukTodayYmd(new Date());
+  }, [scheduleRange]);
+  useEffect(() => {
+    if (viewMode === "route" && !routeViewEligible) setViewMode("list");
+  }, [viewMode, routeViewEligible]);
 
   useEffect(() => {
     if (status === "closed" && closedJobsFilter === "archived") setSelectedIds(new Set());
@@ -2835,7 +2857,7 @@ function JobsPageContent() {
       // quer saber de cada linha é "tem report para revisar?". Atualiza em
       // tempo real via o realtimeTable:"jobs" que esta lista já assina.
       // Ao lado dela, o link do report para cobrar do parceiro sem sair da
-      // lista: só quando ainda falta report, porque cobrar report entregue é
+      // lista — só quando ainda falta report, porque cobrar report entregue é
       // ruído.
       render: (item) =>
         status === "final_check" ? (
@@ -3098,8 +3120,16 @@ function JobsPageContent() {
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {([{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }] as const).map(({ id, icon: Icon }) => (
-                  <button key={id} onClick={() => setViewMode(id)} title={id === "list" ? "List" : "Kanban"} aria-label={id === "list" ? "List" : "Kanban"} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
+                {(
+                  [
+                    { id: "list", icon: List, label: "List" },
+                    { id: "kanban", icon: LayoutGrid, label: "Kanban" },
+                    { id: "map", icon: MapIcon, label: "Map" },
+                    // Route only exists for one partner's day: no partner filter, no button.
+                    ...(routeViewEligible ? [{ id: "route", icon: RouteIcon, label: "Route" }] : []),
+                  ] as { id: "list" | "kanban" | "route" | "map"; icon: LucideIcon; label: string }[]
+                ).map(({ id, icon: Icon, label }) => (
+                  <button key={id} onClick={() => setViewMode(id)} title={label} aria-label={label} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
               <ExpandingSearch value={search} onChange={setSearch} placeholder="Search jobs…" />
@@ -3345,6 +3375,29 @@ function JobsPageContent() {
                       </div>
                     );
                   }}
+                />
+              )}
+            </div>
+          )}
+          {viewMode === "map" && (
+            <div className="min-h-[560px]">
+              {loading ? (
+                <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>
+              ) : (
+                <JobsMapView jobs={scheduleSortedData} dateYmd={mapRouteDateYmd} onOpenJob={openJobDetail} />
+              )}
+            </div>
+          )}
+          {viewMode === "route" && routeViewEligible && (
+            <div className="min-h-[400px]">
+              {loading ? (
+                <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>
+              ) : (
+                <PartnerRouteView
+                  jobs={scheduleSortedData}
+                  partnerId={filterPartner}
+                  partnerName={filterPartnersList.find((p) => p.id === filterPartner)?.name ?? "Partner"}
+                  onOpenJob={openJobDetail}
                 />
               )}
             </div>
