@@ -36,6 +36,27 @@ import { mapearPedidoDePagamento } from "./requestPayment.js";
 /** Texto da ação que abre a conclusão, confirmado ao vivo em job aceito. */
 const ACAO_CONCLUIR = /mark job as complete/i;
 
+/**
+ * Quebra do AMBIENTE, não do job: internet caída, Mac dormindo, navegador
+ * fechado debaixo da navegação.
+ *
+ * O teto de três tentativas existe para o robô não bater a cabeça num job que
+ * a plataforma recusa. Gastar essas três com o wifi caindo é outra coisa: o
+ * job sai da fila para sempre por um motivo que não tem nada a ver com ele, e
+ * só volta com alguém clicando. Foi o que tirou o JOB-9529 da fila em 27/08
+ * (`page.goto: Target page, context or browser has been closed`, no mesmo
+ * minuto em que o log tinha ERR_INTERNET_DISCONNECTED).
+ *
+ * Sem tentativa contada, o job simplesmente espera a próxima passada.
+ */
+const FALHA_DE_INFRA =
+  /net::ERR_|browser has been closed|Target page, context or browser has been closed|Target closed|Protocol error|browserContext\.close|ECONNRESET|ECONNREFUSED|socket hang up/i;
+
+function ehFalhaDeInfra(err: unknown): boolean {
+  return FALHA_DE_INFRA.test(err instanceof Error ? `${err.message}` : String(err));
+}
+
+
 type Controle = {
   tag: string;
   tipo: string;
@@ -69,6 +90,24 @@ async function lerControles(page: Page): Promise<Controle[]> {
       aria: el.getAttribute("aria-label") ?? "",
     }));
   })()`) as Promise<Controle[]>;
+}
+
+/**
+ * O estado que a página do job declara, para o motivo dizer algo aproveitável.
+ *
+ * "completion action not on the page" sozinho é um beco: o JOB-9481 gastou as
+ * três tentativas com essa frase em cinco minutos (26/08) e ninguém consegue
+ * dizer, lendo o card, se o job já estava concluído lá, se foi cancelado ou se
+ * a tela mudou. O status da própria página responde isso sem clique nenhum.
+ */
+async function statusDaPagina(page: Page): Promise<string | null> {
+  const texto = await page
+    .evaluate(`(document.body.innerText ?? "").slice(0, 4000)`)
+    .catch(() => "");
+  const m = /\b(completed|complete|cancelled|canceled|declined|expired|booked|in progress|awaiting)\b/i.exec(
+    String(texto),
+  );
+  return m ? m[1].toLowerCase() : null;
 }
 
 /** Abre o job e conta o que viu. Não clica. */
@@ -134,11 +173,23 @@ async function concluir(page: Page, item: ItemDaFila): Promise<{ ok: boolean; mo
   const botao = page.getByText(ACAO_CONCLUIR).first();
   if (!(await botao.isVisible({ timeout: 10_000 }).catch(() => false))) {
     const controles = await lerControles(page);
+    const status = await statusDaPagina(page);
     logger.warn(`[completion] ${item.reference}: acao de concluir nao esta na pagina`, {
       url: page.url(),
+      status,
       controles: controles.map((c) => c.texto).filter(Boolean).slice(0, 25),
     });
-    return { ok: false, motivo: "completion action not on the page" };
+    /**
+     * O status entra no motivo, mas NÃO conclui por conta própria.
+     *
+     * Tentador aceitar "completed" aqui e carimbar o job como concluído: a
+     * ausência da ação é a mesma prova que o fim do fluxo exige. Só que lá ela
+     * vem DEPOIS de um Complete job que nós apertamos, e aqui viria de uma
+     * palavra solta no texto da página, que pode ser um item de menu. Carimbar
+     * entrega por dedução é exatamente o buraco que a Housekeep já cobrou.
+     * Quem vê "completed" no card marca à mão, com o olho em cima.
+     */
+    return { ok: false, motivo: `completion action not on the page${status ? ` (page says: ${status})` : ""}` };
   }
 
   /**
@@ -242,6 +293,21 @@ async function concluir(page: Page, item: ItemDaFila): Promise<{ ok: boolean; mo
 }
 
 /**
+ * Espaço entre duas tentativas do MESMO job, na memória do processo.
+ *
+ * As três tentativas existem para um job cuja causa pode mudar entre uma e
+ * outra. Sem espaçamento elas não mudam nada: o JOB-9481 queimou as três em
+ * cinco minutos contra uma tela que não ia mudar (26/08). Meia hora é curto o
+ * bastante para o job ainda sair no mesmo dia e longo o bastante para a causa
+ * (sessão, deploy deles, job ainda não aceito) ter chance de mudar.
+ *
+ * Na memória, não no banco, de propósito: reiniciar o robô é uma decisão
+ * humana e deve dar um recomeço limpo.
+ */
+const ESPERA_ENTRE_TENTATIVAS_MS = 30 * 60_000;
+const ultimaTentativa = new Map<string, number>();
+
+/**
  * Um ciclo do braço. Chamado de dentro do loop, dentro da janela de horário.
  *
  * Nunca lança: uma falha aqui não pode parar a colheita de lead, que é o que
@@ -269,6 +335,9 @@ export async function rodarConclusoes(
   logger.info(`[completion] ${fila.length} job(s) esperando conclusao (modo: ${modo})`);
 
   for (const item of fila.slice(0, cfg.completion.maxPerCycle)) {
+    const ultima = ultimaTentativa.get(item.jobId);
+    if (ultima && Date.now() - ultima < ESPERA_ENTRE_TENTATIVAS_MS) continue;
+    ultimaTentativa.set(item.jobId, Date.now());
     try {
       if (modo === "map") {
         await mapear(page, item);
@@ -290,6 +359,12 @@ export async function rodarConclusoes(
       }
     } catch (err) {
       const motivo = String(err).slice(0, 300);
+      // Ambiente quebrado não é job quebrado: sai sem registrar, e sem gastar
+      // tentativa. Sair do laço inteiro porque a próxima vai quebrar igual.
+      if (ehFalhaDeInfra(err)) {
+        logger.warn(`[completion] ${item.reference}: ambiente caiu, sem gastar tentativa — ${motivo}`);
+        return;
+      }
       logger.error(`[completion] ${item.reference} explodiu`, err);
       // Registrar a falha é o que faz a tentativa contar. Sem isso, um job
       // quebrado voltaria à fila para sempre.
