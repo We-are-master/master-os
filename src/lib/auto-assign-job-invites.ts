@@ -19,6 +19,7 @@ import { upsertShortLink, jobPartnerShortLinkEntityRef } from "@/lib/short-links
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
+import { autoAssignGate, autoAssignGateBlockText } from "@/lib/auto-assign-gate";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -415,10 +416,15 @@ type JobAutoAssignRow = {
   auto_assign_invited_partner_ids: string[] | null;
   latitude?: number | null;
   longitude?: number | null;
+  job_type: string | null;
+  client_price: number | null;
+  partner_cost: number | null;
+  hourly_client_rate: number | null;
+  hourly_partner_rate: number | null;
 };
 
 const JOB_AUTO_ASSIGN_SELECT =
-  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids, latitude, longitude";
+  "id, reference, title, status, partner_id, client_name, property_address, scope, scheduled_date, scheduled_start_at, scheduled_end_at, catalog_service_id, external_source, external_ref, auto_assign_invited_partner_ids, latitude, longitude, job_type, client_price, partner_cost, hourly_client_rate, hourly_partner_rate";
 
 /**
  * Quantos parceiros o Auto assign vai chamar, ANTES de chamar. Roda o mesmo
@@ -550,6 +556,33 @@ export async function ensureAndDispatchAutoAssignInvites(
   }
   if (job.partner_id) {
     return { ok: false, error: "Job already has a partner assigned.", status: 409 };
+  }
+
+  // Portão (Fase 2): oferta incompleta ou com margem abaixo do piso não sai —
+  // nem pelo botão. O job volta para unassigned (Needs Review) com o motivo
+  // na resposta, e o escritório completa/ajusta antes de tentar de novo.
+  {
+    const { serviceType: gateServiceType } = await resolveJobMatchServiceType(supabase, job);
+    const gate = autoAssignGate({
+      serviceType: gateServiceType || job.title,
+      propertyAddress: job.property_address,
+      scope: job.scope,
+      scheduledStartAt: job.scheduled_start_at,
+      scheduledEndAt: job.scheduled_end_at,
+      jobType: job.job_type,
+      clientPrice: job.client_price,
+      partnerCost: job.partner_cost,
+      hourlyClientRate: job.hourly_client_rate,
+      hourlyPartnerRate: job.hourly_partner_rate,
+    });
+    if (!gate.ok) {
+      await supabase.from("jobs").update({ status: "unassigned" }).eq("id", jobId);
+      return {
+        ok: false,
+        error: autoAssignGateBlockText(gate) ?? "Auto assign blocked.",
+        status: 422,
+      };
+    }
   }
 
   let partnerIds = (job.auto_assign_invited_partner_ids ?? []).filter(Boolean);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { ChevronDown, ExternalLink } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -47,7 +48,7 @@ function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return formatBritishDate(d);
 }
 
 function fmtDateTime(iso: string): string {

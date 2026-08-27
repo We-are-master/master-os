@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import PublicReportForm from "./public-report-form";
 import PublicBidForm from "./public-bid-form";
+import PublicPhotoGallery from "./public-photo-gallery";
 import {
   FIXFY_BORDER,
   FIXFY_MUTED,
@@ -51,6 +52,8 @@ type QuoteSummary = {
   startDateOption2: string | null;
   status: string;
   lineItems: { description: string; quantity: number; unitPrice: number; total: number }[];
+  /** Fotos do site (service_request) — galeria com lightbox nas duas visões. */
+  photoUrls?: string[];
   /** Distinguishes the three token surfaces (customer accept/reject, partner bid, partner report). */
   tokenKind?: "customer" | "partner_bid" | "partner_report";
   linkedJob?: LinkedJob | null;
@@ -108,6 +111,7 @@ function QuoteRespondContent() {
             startDateOption2: data.startDateOption2 ?? null,
             status: data.status ?? "",
             lineItems: data.lineItems ?? [],
+            photoUrls: data.photoUrls ?? [],
             tokenKind: data.tokenKind ?? "customer",
             linkedJob: data.linkedJob ?? null,
             bidContext: data.bidContext ?? null,
@@ -229,6 +233,7 @@ function QuoteRespondContent() {
               quoteTitle={summary.title}
               propertyAddress={summary.propertyAddress}
               scope={summary.scope}
+              photoUrls={summary.photoUrls ?? []}
               partnerName={summary.bidContext.partnerName}
               existingBid={summary.bidContext.existingBid}
               onSubmitted={(msg) => setResult({ success: true, message: msg })}
@@ -377,6 +382,9 @@ function QuoteRespondContent() {
                   <p className="mb-1 text-[11px] font-medium" style={{ color: FIXFY_MUTED }}>Scope of work</p>
                   <p className="whitespace-pre-wrap text-sm" style={{ color: FIXFY_NAVY }}>{summary.scope.trim()}</p>
                 </div>
+              ) : null}
+              {(summary.photoUrls?.length ?? 0) > 0 ? (
+                <PublicPhotoGallery urls={summary.photoUrls!} />
               ) : null}
               <div className="flex flex-wrap gap-4 border-t pt-2" style={{ borderColor: FIXFY_BORDER }}>
                 {(summary.startDateOption1 || summary.startDateOption2) && (

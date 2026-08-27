@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
 import { ExternalLink, CalendarClock, UserPlus } from "lucide-react";
 import { toast } from "sonner";
@@ -265,7 +266,7 @@ function formatDay(ymd: string): string {
   const d = new Date(`${ymd}T12:00:00`);
   return Number.isNaN(d.getTime())
     ? ymd
-    : d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+    : formatBritishDate(d);
 }
 
 function arrivalWindow(job: Job): string {

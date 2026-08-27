@@ -35,15 +35,19 @@ export function ukYmdStartOfWallClockDayMs(ymd: string): number | null {
   return null;
 }
 
+/** Standard UI date, e.g. `Fri 28 Aug 26` — weekday initials for faster reading. */
 export function formatBritishDate(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: UK_TIMEZONE,
+    weekday: "short",
     day: "numeric",
     month: "short",
-    year: "numeric",
-  }).format(d);
+    year: "2-digit",
+  })
+    .format(d)
+    .replace(",", "");
 }
 
 /** e.g. "08:00" or "8:00 am" style — uses en-GB 12h clock in London. */
@@ -58,18 +62,21 @@ export function formatBritishTimeOnly(date: Date | string): string {
   }).format(d);
 }
 
+/** Standard UI date + time, e.g. `Fri 28 Aug 26, 02:30 pm`. */
 export function formatBritishDateTime(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-GB", {
+  const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: UK_TIMEZONE,
+    weekday: "short",
     day: "numeric",
     month: "short",
-    year: "numeric",
+    year: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
   }).format(d);
+  return parts.replace(",", "");
 }
 
 /**

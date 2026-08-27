@@ -318,6 +318,36 @@ async function ciclo(): Promise<void> {
       continue;
     }
     /**
+     * RECLAMAÇÃO age antes do fluxo de preço: complaint não é pedido de quote
+     * nem booking. Trava dupla igual ao vigia de cancelamentos — match
+     * inequívoco de job → hold pela engine oficial (parceiro avisado, ledger,
+     * invoices); qualquer dúvida → nota interna e o humano aplica a macro.
+     */
+    if (tri.classe === "reclamacao" && !triados.has(t.id)) {
+      try {
+        const { tratarReclamacao } = await import("../../src/lib/zendesk-quoter/reclamacoes");
+        const rr = await tratarReclamacao({ id: t.id, subject: t.subject }, apiKey);
+        if (rr.acao === "hold") {
+          await postarNotaInterna(t.id, rr.nota);
+          try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu; a tag é extra */ }
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          console.log(`[harvey] ⛔ #${t.id} reclamacao casou com ${rr.reference} (${rr.como}) — job on hold`);
+          continue;
+        }
+        if (rr.acao === "nota" && notasTriagem < MAX_NOTAS_TRIAGEM_POR_CICLO) {
+          await postarNotaInterna(t.id, rr.nota);
+          try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* idem */ }
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          notasTriagem++;
+          console.log(`[harvey] ✎ #${t.id} reclamacao sem match inequivoco — nota interna pro humano`);
+          continue;
+        }
+        // "nada": o classificador discordou da triagem; segue o fluxo antigo.
+      } catch (err) {
+        console.error(`[harvey] reclamacao falhou no ${t.id}: ${err}`);
+      }
+    }
+    /**
      * PARCEIRO confirmando agendamento vem ANTES do classificador.
      *
      * O e-mail deles diz "your booking is confirmed", e o classificador lia
@@ -420,6 +450,23 @@ async function ciclo(): Promise<void> {
     }
   }
   console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s), ${notasTriagem} triagem(ns)`);
+
+  // Vigia de OFERTAS em todo ciclo (Fase 3 do auto-flow): expira convites
+  // vencidos, convida parceiros novos sem reenviar email a quem já recebeu, e
+  // marca encalhe de 24h. Nasce em ensaio — só age com HARVEY_OFERTAS_ARMADO=1.
+  try {
+    const { varrerOfertas } = await import("../../src/lib/auto-assign-sweep");
+    const ro = await varrerOfertas();
+    if (ro.analisados > 0) {
+      console.log(
+        `[harvey] ofertas (${ro.armado ? "ARMADO" : "ensaio"}): ${ro.analisados} job(s), ` +
+          `${ro.bloqueadosPeloPortao} portao, ${ro.convitesExpirados} expirado(s), ` +
+          `${ro.novosConvidados} novo(s) convidado(s), ${ro.encalhados} encalhe(s)`,
+      );
+    }
+  } catch (err) {
+    console.error(`[harvey] vigia de ofertas morreu: ${err}`);
+  }
 
   // Vigia de cancelamentos em TODO ciclo (dono, 19/08): o aviso chega, cai em
   // auto-solved e ninguém vê — o Harvey vê, cancela no OS com match

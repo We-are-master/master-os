@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { Plus, ClipboardList } from "lucide-react";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
 import { fetchAccountRequests } from "@/lib/server-fetchers/portal-requests";
@@ -24,7 +25,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 export default async function PortalRequestsPage() {

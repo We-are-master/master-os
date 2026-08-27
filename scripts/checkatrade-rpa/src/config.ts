@@ -142,6 +142,13 @@ export type RpaConfig = {
     mode: "off" | "map" | "live"; // COMPLETION_MODE
     /** Teto por ciclo, para a conclusão não roubar a vez da colheita de lead. */
     maxPerCycle: number;          // COMPLETION_MAX_PER_CYCLE
+    /**
+     * Pedido de pagamento EXTRA ao cliente depois da conclusão (material do
+     * report). Nasce em "off" e só conhece "map" por enquanto: mapear a tela
+     * de Request payment sem clicar em nada que comprometa. "live" só depois
+     * do mapa conferido — mesmo protocolo do próprio completion.
+     */
+    requestPaymentMode: "off" | "map"; // REQUEST_PAYMENT_MODE
   };
 
   masterOs: {
@@ -237,6 +244,9 @@ export function loadConfig(): RpaConfig {
         return m === "map" || m === "live" ? m : "off";
       })(),
       maxPerCycle: Math.max(1, envNum("COMPLETION_MAX_PER_CYCLE", 3)),
+      requestPaymentMode: ((): "off" | "map" => {
+        return envStr("REQUEST_PAYMENT_MODE")?.toLowerCase() === "map" ? "map" : "off";
+      })(),
     },
     masterOs: {
       // MASTER_OS_BASE_URL overrides config.json — Docker points it at

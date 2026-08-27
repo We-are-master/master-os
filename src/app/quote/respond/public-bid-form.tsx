@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import PublicPhotoGallery from "./public-photo-gallery";
 import {
   splitBidNotes,
   type PartnerBidProposalPayload,
@@ -21,6 +22,8 @@ interface PublicBidFormProps {
   quoteTitle: string;
   propertyAddress: string | null;
   scope: string | null;
+  /** Fotos do site — grade + lightbox, o alvo do "#photos" do email. */
+  photoUrls?: string[];
   partnerName: string | null;
   existingBid: PublicBidExistingBid | null;
   onSubmitted: (msg: string) => void;
@@ -55,6 +58,7 @@ export default function PublicBidForm({
   quoteTitle,
   propertyAddress,
   scope,
+  photoUrls = [],
   partnerName,
   existingBid,
   onSubmitted,
@@ -174,6 +178,12 @@ export default function PublicBidForm({
         <section className="rounded-md bg-[#F7F7FB] border border-[#E4E4EC] p-3">
           <p className="text-[10px] uppercase tracking-wide text-[#6B6B70] mb-1">Scope</p>
           <p className="text-[13px] text-[#3A3A55] whitespace-pre-wrap">{scope.trim()}</p>
+        </section>
+      ) : null}
+
+      {photoUrls.length > 0 ? (
+        <section className="rounded-md bg-[#F7F7FB] border border-[#E4E4EC] p-3">
+          <PublicPhotoGallery urls={photoUrls} />
         </section>
       ) : null}
 

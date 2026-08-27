@@ -178,13 +178,18 @@ export function resolvePartnerHourlyForJob(input: {
   return { ...hourly, fixedPartnerTotal: null };
 }
 
-/** Rótulo humano do acordo (mig 281): só daily/half_day ganham sufixo. */
+/** Rótulo humano do acordo (mig 281). */
 export function rateBasisLabel(basis: string | null | undefined): string | null {
   if (basis === "daily") return "Day rate";
   if (basis === "half_day") return "Half day";
   return null;
 }
 
+/**
+ * O rótulo vem NA FRENTE do valor, em todos os modos (dono, 25/08):
+ * "Hourly · £45.00/hr", "Fixed · £250.00", "Day rate · £180.00",
+ * "Half day · £100.00". O parceiro lê primeiro O QUE combinou, depois quanto.
+ */
 export function formatPartnerJobPriceDisplay(
   jobType: "hourly" | "fixed" | null | undefined,
   hourlyPartnerRate: number | null | undefined,
@@ -193,14 +198,14 @@ export function formatPartnerJobPriceDisplay(
   rateBasis?: string | null,
 ): string {
   if (jobType === "hourly" && fixedBandTotal != null && fixedBandTotal > 0) {
-    return `£${fixedBandTotal.toFixed(2)}`;
+    return `Fixed · £${fixedBandTotal.toFixed(2)}`;
   }
   if (jobType === "hourly") {
-    return `£${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
+    return `Hourly · £${Number(hourlyPartnerRate ?? 0).toFixed(2)}/hr`;
   }
   const base = `£${Number(partnerCost ?? 0).toFixed(2)}`;
-  const label = rateBasisLabel(rateBasis);
-  return label ? `${base} · ${label}` : base;
+  const label = rateBasisLabel(rateBasis) ?? "Fixed";
+  return `${label} · ${base}`;
 }
 
 export function resolveJobPricing(input: {

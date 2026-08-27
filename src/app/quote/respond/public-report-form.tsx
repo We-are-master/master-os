@@ -168,6 +168,7 @@ export default function PublicReportForm({
             <input
               type="number"
               min={0}
+              step="any"
               value={typeof val === "number" ? val : ""}
               onChange={(e) => setField(f.key, e.target.value === "" ? null : Number(e.target.value))}
               className={fieldInputClass()}
@@ -355,11 +356,20 @@ export default function PublicReportForm({
           </div>
           <label className="shrink-0 cursor-pointer text-[12px] font-semibold underline" style={{ color: FIXFY_ORANGE }}>
             Add photos
+            {/*
+              SEM `capture` (reclamação dos parceiros, 27/08): `capture="environment"`
+              abre a câmera DIRETO e não oferece a galeria — e o parceiro fotografa
+              enquanto trabalha, com o celular na mão suja, e preenche o relatório
+              depois, no carro. As fotos já existem no rolo dele. Pior: com `capture`
+              o `multiple` morre (câmera tira uma por vez), então ele voltava aqui
+              seis vezes para seis fotos. Sem o atributo, o iOS abre o menu
+              "Photo Library / Take Photo / Choose File" e o Android o seletor com
+              câmera e galeria: quem quiser fotografar na hora continua podendo.
+            */}
             <input
               type="file"
               accept={accept}
               multiple
-              capture="environment"
               className="sr-only"
               onChange={(e) => onPhotosChange(slot.key, e.target.files)}
             />

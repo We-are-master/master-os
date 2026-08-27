@@ -60,11 +60,39 @@ const fim = DIA ?? hojeLdn();
 const ini = SEMANA ? segundaDe(fim) : fim;
 const proximo = (() => { const d = new Date(`${fim}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
 
-const q = async (t, f) => {
-  const r = await fetch(`${SB}/rest/v1/${t}?${f}`, { headers: SH });
-  const j = await r.json();
-  return Array.isArray(j) ? j : [];
+const dorme = (ms) => new Promise((ok) => setTimeout(ok, ms));
+/**
+ * O Mac acorda antes do Wi-Fi subir e o launchd dispara em cima disso. Sem isto
+ * um ENOTFOUND derruba o relatorio inteiro e ninguem fica sabendo (21/08/2026).
+ */
+const comRetry = async (fn, oque, seguroRepetir = () => true) => {
+  const esperas = [2000, 8000, 20000];
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= esperas.length || !seguroRepetir(e)) throw new Error(`${oque}: ${e?.message ?? e}`);
+      console.log(`rede caiu em ${oque} (${e?.message ?? e}) — tentando de novo em ${esperas[i] / 1000}s`);
+      await dorme(esperas[i]);
+    }
+  }
 };
+
+/**
+ * Só as falhas em que a conexão nunca subiu. Repetir um POST que talvez tenha
+ * chegado manda o relatório duas vezes, e ninguém quer isso.
+ */
+const nemChegouASair = (e) => {
+  const cod = String(e?.cause?.code ?? e?.code ?? "");
+  return ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "UND_ERR_CONNECT_TIMEOUT", "ENETDOWN", "ENETUNREACH"].includes(cod);
+};
+
+const q = async (t, f) =>
+  comRetry(async () => {
+    const r = await fetch(`${SB}/rest/v1/${t}?${f}`, { headers: SH });
+    const j = await r.json();
+    return Array.isArray(j) ? j : [];
+  }, t);
 const n = (v) => Number(v) || 0;
 const soma = (a, ...ks) => a.reduce((s, r) => s + ks.reduce((x, k) => x + n(r[k]), 0), 0);
 /** "£1.234,56 (R$ 8.641,92)" — a libra manda, o real acompanha. */
@@ -179,14 +207,19 @@ if (!ENVIAR) { console.log("(modo seco: nada enviado)\n"); process.exit(0); }
 const cfg = await q("company_settings", "select=daily_brief_emails&limit=1");
 const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
 if (!para.length || !env.RESEND_API_KEY) { console.log("sem destinatario ou sem RESEND_API_KEY"); process.exit(1); }
-const r = await fetch("https://api.resend.com/emails", {
-  method: "POST",
-  headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-  body: JSON.stringify({
-    from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-    to: para,
-    subject: assunto,
-    html,
-  }),
-});
+const r = await comRetry(
+  () =>
+    fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
+        to: para,
+        subject: assunto,
+        html,
+      }),
+    }),
+  "resend",
+  nemChegouASair,
+);
 console.log(r.ok ? `enviado para ${para.join(", ")}` : `falhou: ${(await r.text()).slice(0, 200)}`);

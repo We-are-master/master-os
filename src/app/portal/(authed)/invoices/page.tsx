@@ -1,4 +1,5 @@
 import { Receipt, ExternalLink } from "lucide-react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
 import {
   fetchAccountInvoices,
@@ -23,7 +24,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 export default async function PortalInvoicesPage() {

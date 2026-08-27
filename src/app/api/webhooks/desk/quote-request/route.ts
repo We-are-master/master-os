@@ -153,7 +153,8 @@ export async function POST(req: NextRequest) {
     scope: scopeOut ?? "",
     customer_accepted: false,
     customer_deposit_paid: false,
-    draft_route_completed: true,
+    // draft_route_completed saiu: a coluna não existe no banco vivo e o
+    // PostgREST rejeita o insert inteiro por causa dela.
     external_source: "zendesk",
     external_ref: ticketId,
   };

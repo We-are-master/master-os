@@ -86,12 +86,19 @@ const dorme = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
  * O marcador sozinho responde "alguém tentou", que é outra pergunta. Depois do
  * incidente de 2026-08-12 havia 1013 contatos marcados para 37 entregas, e um
  * dedupe por marcador teria trancado os outros 976 para sempre.
+ *
+ * A pergunta é sobre a PESSOA, não sobre o lead. Até 24/08/2026 exigia-se que
+ * o marcador gravado fosse o MESMO lead (`v === leadId`), e com isso a mesma
+ * pessoa voltando ao board do Checkatrade com uma oportunidade nova levava a
+ * mensagem de primeiro contato de novo, por cima de uma conversa viva. O
+ * `leadId` continua no parâmetro porque o chamador tem, mas ele não decide
+ * mais: qualquer marcador mais entrega já responde "sim, já falamos".
  */
-export async function jaFalamos(client: RespondIoClient, phone: string, leadId: string | null) {
+export async function jaFalamos(client: RespondIoClient, phone: string, _leadId?: string | null) {
   try {
     const c = await client.getContact(phoneIdentifier(phone));
     const v = c.custom_fields?.find((f) => f.name === "checkatrade_lead_id")?.value;
-    if (!(typeof v === "string" && v.length > 0 && (!leadId || v === leadId))) return false;
+    if (!(typeof v === "string" && v.length > 0)) return false;
     const msgs = await client.messages(phoneIdentifier(phone), 20);
     return msgs.some((m) => (m.status ?? []).some((s) => ["delivered", "read", "sent"].includes(s.value)));
   } catch (err) {

@@ -359,6 +359,7 @@ export function FillReportModal({
             <input
               type="number"
               min={0}
+              step="any"
               value={typeof val === "number" ? val : ""}
               onChange={(e) => setField(f.key, e.target.value === "" ? null : Number(e.target.value))}
               className={inputClass}

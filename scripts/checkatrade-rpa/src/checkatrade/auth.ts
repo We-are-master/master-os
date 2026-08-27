@@ -25,7 +25,29 @@ export async function getOrCreateContext(
 ): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
   const browser = await chromium.launch({ headless: cfg.headless });
   const hasStorageState = existsSync(STORAGE_STATE_PATH);
-  const context = await browser.newContext(hasStorageState ? { storageState: STORAGE_STATE_PATH } : {});
+  /**
+   * O navegador do RPA vive em Londres, aconteça o que acontecer com a máquina.
+   *
+   * O members app do Checkatrade desenha a data do slot no fuso do NAVEGADOR, e
+   * a data dele vem sem hora. Sem fixar nada, o Chromium herdava o fuso do Mac,
+   * que é São Paulo, três horas atrás: toda data caía para o dia anterior. Visto
+   * no log em 22/08/2026, às 19:25 de Londres, um job com três slots
+   * (Morning/Afternoon/Evening) lido como "offered: 2026-08-22 x3" — slots de
+   * hoje à noite que não existem. Eram de 23/08.
+   *
+   * Isso mandou 8 jobs para o OS um dia antes do que o cliente marcou, e dois
+   * clientes ligaram no mesmo dia dizendo que era terça e não segunda.
+   *
+   * O conserto é o relógio, não um "+1 dia" no resultado: somar um dia fixo
+   * quebraria no dia em que o RPA rodar de uma máquina em Londres (aí seriam
+   * dois erros somados), e quebraria de novo se o Checkatrade passar a mandar a
+   * data com hora. Fixando o fuso, o RPA lê exatamente o que o cliente lê.
+   */
+  const context = await browser.newContext({
+    timezoneId: "Europe/London",
+    locale: "en-GB",
+    ...(hasStorageState ? { storageState: STORAGE_STATE_PATH } : {}),
+  });
   const page = await context.newPage();
 
   if (!hasStorageState) {

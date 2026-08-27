@@ -24,13 +24,13 @@ function escapeHtml(s: string): string {
  * POST /api/jobs/on-hold-submit   (public, token-authenticated, multipart)
  *
  * The partner's reply to an on-hold complaint, sent from the "Resolve this
- * job" link in the on-hold email. Accepts a written summary + photos
- * (already downscaled client-side).
+ * job" link in the on-hold email. Accepts a written summary + attachments
+ * (images already downscaled client-side; PDFs and the rest come whole).
  *
  * Body: multipart/form-data
  *   token      partner-scoped on-hold token (createPartnerOnHoldToken)
  *   notes      written summary (required)
- *   photos[]   zero or more image files
+ *   photos[]   zero or more files, any format (photo, PDF receipt, certificate)
  *
  * Behaviour:
  *   - Uploads photos to the private `job-photos` bucket under
@@ -122,20 +122,27 @@ export async function POST(req: NextRequest) {
     const f = photoFiles[i];
     const bytes = new Uint8Array(await f.arrayBuffer());
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const path = `${job.id}/on-hold/${ts}-${i}.jpg`;
+    /**
+     * A extensão vem do ARQUIVO, não é `.jpg` chapado (27/08): o anexo agora
+     * pode ser recibo em PDF, e um PDF salvo como `.jpg` não abre em lugar
+     * nenhum — nem no storage, nem no Zendesk para quem for resolver.
+     */
+    const ext = (f.name.match(/\.[a-z0-9]{1,5}$/i)?.[0] ?? (f.type === "application/pdf" ? ".pdf" : ".jpg")).toLowerCase();
+    const contentType = f.type || "application/octet-stream";
+    const path = `${job.id}/on-hold/${ts}-${i}${ext}`;
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, {
-      contentType: f.type || "image/jpeg",
+      contentType,
       upsert: false,
     });
     if (upErr) {
-      console.error("[on-hold-submit] photo upload failed:", upErr);
+      console.error("[on-hold-submit] attachment upload failed:", upErr);
       continue;
     }
     newPaths.push(path);
 
     if (zendeskReady) {
       try {
-        const tk = await uploadAttachment(Buffer.from(bytes), `resolution-${i + 1}.jpg`, f.type || "image/jpeg");
+        const tk = await uploadAttachment(Buffer.from(bytes), `resolution-${i + 1}${ext}`, contentType);
         uploadTokens.push(tk);
       } catch (err) {
         console.error("[on-hold-submit] zendesk attachment upload failed:", err);

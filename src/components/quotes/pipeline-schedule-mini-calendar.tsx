@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, ChevronDown, Repeat as RepeatIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -72,12 +73,7 @@ function formatWeekRangeLabel(anchor: Date): string {
 }
 
 function formatDayLabel(d: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(d);
+  return formatBritishDate(d);
 }
 
 function startMondayLocal(d: Date): Date {

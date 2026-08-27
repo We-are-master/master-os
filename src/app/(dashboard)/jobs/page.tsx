@@ -32,7 +32,7 @@ import {
   ArrowRight, Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
-  Timer, ArrowUpRight, Phone, Copy, MapPin,
+  Timer, ArrowUpRight, Phone, Copy, MapPin, Link2, Check,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
@@ -637,6 +637,83 @@ function FinalCheckReportDot({ job }: { job: Job }) {
     <span className="inline-flex h-4 w-4 items-center justify-center" title={label} aria-label={label} role="img">
       <span className={`h-2.5 w-2.5 rounded-full ${cls}`} />
     </span>
+  );
+}
+
+/**
+ * A mensagem pronta que o escritório cola pro parceiro, com o link do report.
+ *
+ * O link sozinho não serve: quem recebe no WhatsApp tem cinco jobs abertos e
+ * não sabe qual é este. Nome e endereço do cliente vão junto porque é por eles
+ * que o parceiro reconhece a casa, e a referência vai porque é por ela que a
+ * gente cobra depois. Em inglês, como todo conteúdo que sai do OS.
+ */
+function mensagemDoReportPraParceiro(job: Job, url: string): string {
+  return [
+    [job.reference, job.title].filter(Boolean).join(" · "),
+    [job.client_name, job.property_address].filter(Boolean).join(" · "),
+    "",
+    "Please submit the work report here:",
+    url,
+  ].join("\n");
+}
+
+/**
+ * Copia a mensagem do report num clique, ao lado da bolinha do Final check.
+ *
+ * Existe porque o caminho até aqui eram quatro passos: abrir o job, achar o
+ * painel do link, copiar, e escrever nome e endereço à mão no WhatsApp. Na
+ * revisão de final check o que se faz o dia inteiro é cobrar report de
+ * parceiro, e isso merecia um clique na própria linha.
+ *
+ * O link é o mesmo `/api/jobs/[id]/partner-report-link` do painel: token por
+ * (job, parceiro) e short link estável, então copiar duas vezes dá a mesma URL.
+ */
+function FinalCheckReportLinkButton({ job }: { job: Job }) {
+  const [estado, setEstado] = useState<"parado" | "buscando" | "copiado">("parado");
+
+  const copiar = async (e: React.MouseEvent) => {
+    // A linha inteira é clicável e abre o job: sem isto, copiar navega junto.
+    e.stopPropagation();
+    e.preventDefault();
+    if (estado === "buscando") return;
+    setEstado("buscando");
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/partner-report-link`);
+      const data = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok || !data.url) {
+        toast.error(data.error ?? "Could not build the report link.");
+        setEstado("parado");
+        return;
+      }
+      await navigator.clipboard.writeText(mensagemDoReportPraParceiro(job, data.url));
+      setEstado("copiado");
+      toast.success("Report link and job details copied.");
+      setTimeout(() => setEstado("parado"), 2000);
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Could not copy the report link."));
+      setEstado("parado");
+    }
+  };
+
+  const rotulo = estado === "copiado" ? "Copied" : "Copy report link for the partner";
+  return (
+    <button
+      type="button"
+      onClick={copiar}
+      title={rotulo}
+      aria-label={rotulo}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-primary disabled:opacity-50"
+      disabled={estado === "buscando"}
+    >
+      {estado === "buscando" ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : estado === "copiado" ? (
+        <Check className="h-3.5 w-3.5 text-emerald-500" />
+      ) : (
+        <Link2 className="h-3.5 w-3.5" />
+      )}
+    </button>
   );
 }
 
@@ -2747,16 +2824,27 @@ function JobsPageContent() {
     {
       key: "actions",
       label: "",
-      width: "44px",
-      minWidth: "44px",
-      cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
-      headerClassName: "w-11 normal-case",
+      width: status === "final_check" ? "80px" : "44px",
+      minWidth: status === "final_check" ? "80px" : "44px",
+      cellClassName:
+        status === "final_check"
+          ? "px-2 sm:px-3 text-center align-middle"
+          : "w-11 px-2 sm:px-3 text-center align-middle",
+      headerClassName: status === "final_check" ? "normal-case" : "w-11 normal-case",
       // Na aba Final check a seta vira a bolinha do report: o que a revisão
       // quer saber de cada linha é "tem report para revisar?". Atualiza em
       // tempo real via o realtimeTable:"jobs" que esta lista já assina.
+      // Ao lado dela, o link do report para cobrar do parceiro sem sair da
+      // lista: só quando ainda falta report, porque cobrar report entregue é
+      // ruído.
       render: (item) =>
         status === "final_check" ? (
-          <FinalCheckReportDot job={item} />
+          <span className="inline-flex items-center gap-1.5">
+            <FinalCheckReportDot job={item} />
+            {!(item.final_report_submitted || item.report_submitted || item.final_report_skipped) ? (
+              <FinalCheckReportLinkButton job={item} />
+            ) : null}
+          </span>
         ) : (
           <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
         ),

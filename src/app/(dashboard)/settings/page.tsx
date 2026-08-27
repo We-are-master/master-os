@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useEffect, useCallback, useMemo } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
@@ -371,8 +372,8 @@ function ProfileTab() {
             <CardTitle>Account Info</CardTitle>
           </CardHeader>
           <div className="px-5 pb-5 space-y-3">
-            <InfoRow label="Member Since" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "-"} />
-            <InfoRow label="Last Login" value={profile?.last_login_at ? new Date(profile.last_login_at).toLocaleDateString() : "Current session"} />
+            <InfoRow label="Member Since" value={profile?.created_at ? formatBritishDate(profile.created_at) : "-"} />
+            <InfoRow label="Last Login" value={profile?.last_login_at ? formatBritishDate(profile.last_login_at) : "Current session"} />
             <InfoRow label="Status" value={profile?.is_active !== false ? "Active" : "Inactive"} />
             <InfoRow label="Role" value={profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1) : "-"} />
           </div>

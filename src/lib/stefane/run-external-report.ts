@@ -39,7 +39,33 @@ import {
 const AVISAR = "victor@getfixfy.com";
 const MAX_TENTATIVAS = 3;
 
+/**
+ * Depois disto, um envio que começou e não terminou está MORTO, não em
+ * andamento. O envio mais pesado que existe (limpeza com 124 fotos) leva
+ * poucos minutos; dez é folgado o bastante para não matar um envio vivo e
+ * curto o bastante para ninguém ficar olhando um "enviando" que não anda.
+ */
+export const ENVIO_TRAVADO_MS = 10 * 60_000;
+
+/** `started_at` recente = alguém está enviando agora. Velho = processo morreu. */
+export function envioEmAndamento(startedAt: string | null | undefined): boolean {
+  if (!startedAt) return false;
+  const t = new Date(startedAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < ENVIO_TRAVADO_MS;
+}
+
 export type EstadoEnvio = "enviando" | "enviado" | "falhou" | "nao_elegivel";
+
+export type OpcoesDeEnvio = {
+  /** Preenche o formulário deles inteiro e NÃO aperta Submit. */
+  simular?: boolean;
+  /**
+   * Pula o nosso mínimo de fotos por cômodo e deixa a página deles julgar.
+   * Ignorado fora do dry run: ver o bloco que o consome.
+   */
+  ignorarMinimoDeFotos?: boolean;
+};
 
 const JOB_SELECT =
   "id, reference, title, status, report_link, start_report, final_report, final_report_submitted, " +
@@ -190,27 +216,33 @@ export function motivoNaoElegivel(job: {
   if (job.external_report_manual_at) return "marked as sent manually";
   if (!job.final_report_submitted) return "the partner has not sent the final report yet";
   if (!job.report_link) return "this job has no platform link: nowhere to upload";
-  // A Housekeep pede foto de antes E de depois em todo relatório, e mandar sem
-  // uma das metades é como o relatório volta recusado. O guarda antigo somava as
-  // duas e só exigia que o total passasse de zero, então três fotos do antes e
-  // nenhuma do depois passava direto: bloqueava o caso vazio e deixava passar
-  // justamente o caso pela metade.
-  //
-  // A exigência do "antes" só vale para template que TEM seção de chegada. O de
-  // certificado não tem: o anexo dele mora na conclusão, e exigir antes ali
-  // recusaria todo certificado por um motivo que não existe.
-  //
-  // As checagens de foto e de tentativas vêm ANTES da bifurcação de
-  // plataforma: valem igual para a Housekeep (Stefane) e para o Express (fila
-  // do robô, que pula job sem foto em silêncio — melhor dizer aqui).
+  /**
+   * FOTO: o mínimo é de cada plataforma, não um número nosso (dono, 27/08).
+   *
+   * Uma foto resolve no Checkatrade — o robô do Express anexa o que tiver e
+   * conclui. Exigir antes E depois ali barrava job pronto por uma regra que só
+   * existe do outro lado: o JOB do print ficou parado em "no before photos"
+   * com foto de sobra para o que o Checkatrade pede.
+   *
+   * A Housekeep é que recusa relatório pela metade, e por isso mantém as duas
+   * metades. O guarda antigo somava as duas e só exigia total maior que zero,
+   * então três do antes e nenhuma do depois passava direto.
+   *
+   * A exigência do "antes" só vale para template que TEM seção de chegada. O de
+   * certificado não tem: o anexo dele mora na conclusão, e exigir antes ali
+   * recusaria todo certificado por um motivo que não existe.
+   */
   const antes = urlsDeFoto(job.start_report).length;
   const depois = urlsDeFoto(job.final_report).length;
-  const temSecaoDeChegada = photoSlotsForTemplate(templateDoReport(job)).start.length > 0;
-  if (antes === 0 && depois === 0) {
-    return "no photos on the report: the client platform requires before and after";
+  const ehExpress = ehCheckatrade(job.report_link);
+  if (antes + depois === 0) {
+    return "no photos on the report: the client platform needs at least one";
   }
-  if (temSecaoDeChegada && antes === 0) return "no before photos: the client platform requires both";
-  if (depois === 0) return "no after photos: the client platform requires both";
+  if (!ehExpress) {
+    const temSecaoDeChegada = photoSlotsForTemplate(templateDoReport(job)).start.length > 0;
+    if (temSecaoDeChegada && antes === 0) return "no before photos: the client platform requires both";
+    if (depois === 0) return "no after photos: the client platform requires both";
+  }
   /**
    * Horário impossível bloqueia AQUI, com instrução — descoberto no JOB-9437.
    *
@@ -402,7 +434,86 @@ export async function avisar(assunto: string, html: string): Promise<void> {
 export async function enviarRelatorioExterno(
   supabase: SupabaseClient,
   jobId: string,
-  opcoes?: { simular?: boolean },
+  opcoes?: OpcoesDeEnvio,
+): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
+  const marca: MarcaDeTrava = { travou: false };
+  try {
+    return await executarEnvio(supabase, jobId, opcoes, marca);
+  } catch (err) {
+    return registrarEnvioExplodido(supabase, jobId, err, marca, opcoes?.simular);
+  }
+}
+
+/** Quem chama sabe se a trava chegou a ser tomada. Ver `registrarEnvioExplodido`. */
+type MarcaDeTrava = { travou: boolean };
+
+/**
+ * O envio que explodiu por fora do fluxo previsto, escrito no card em vez de
+ * sumir.
+ *
+ * `enviarRelatorioExterno` sempre foi disparada e esquecida (`void ... .catch`)
+ * porque preencher demora meio minuto e ninguém segura o clique. Só que o
+ * `.catch` da rota apenas imprimia no console: um `throw` daqui de dentro
+ * (Playwright pendurado, storage recusando assinatura, Housekeep fora do ar)
+ * deixava `started_at` gravado, `external_report_error` nulo e tentativa em
+ * zero. Do lado de fora era um "enviando" silencioso, sem email e sem log no
+ * card. Foi o que aconteceu com o JOB-9520 em 27/08.
+ *
+ * Tentativa só conta se a trava chegou a ser tomada: explodir antes disso é
+ * não ter tentado, e gastar tentativa por isso empurraria o job para o teto de
+ * três sem nunca ter aberto a Housekeep.
+ */
+async function registrarEnvioExplodido(
+  supabase: SupabaseClient,
+  jobId: string,
+  err: unknown,
+  marca: MarcaDeTrava,
+  simular?: boolean,
+): Promise<{ estado: EstadoEnvio; motivo: string }> {
+  const motivo = `unexpected error: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
+  console.error("[stefane] envio explodiu:", err);
+
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("id, reference, title, client_name, report_link, external_report_attempts")
+    .eq("id", jobId)
+    .maybeSingle();
+  const j = (job ?? {}) as Record<string, unknown>;
+
+  // Dry run não conta tentativa nem grava erro: ele não tocou na Housekeep.
+  if (simular) {
+    await supabase.from("jobs").update({ external_report_started_at: null }).eq("id", jobId);
+    return { estado: "falhou", motivo };
+  }
+
+  const tentativas = marca.travou
+    ? await marcarFalha(supabase, (job ?? { id: jobId }) as never, motivo)
+    : (await gravarMotivo(supabase, jobId, motivo), null);
+
+  await avisar(
+    `${j.reference ?? "job"} · report did NOT land on Housekeep`,
+    avisoHtml({
+      tom: "erro",
+      titulo: "Report did not land on Housekeep",
+      jobLinha: [j.reference, j.title, j.client_name].filter(Boolean).join(" · "),
+      detalhes: [
+        `Reason: ${motivo}`,
+        tentativas === null
+          ? "It broke before opening the form, so no attempt was used."
+          : `Attempt ${tentativas} of ${MAX_TENTATIVAS}.`,
+      ],
+      link: (j.report_link as string | null) ?? null,
+      rotuloDoLink: "Open the form and send it by hand",
+    }),
+  );
+  return { estado: "falhou", motivo };
+}
+
+async function executarEnvio(
+  supabase: SupabaseClient,
+  jobId: string,
+  opcoes: OpcoesDeEnvio | undefined,
+  marca: MarcaDeTrava,
 ): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
   if (!job) return { estado: "nao_elegivel", motivo: "job not found" };
@@ -520,7 +631,22 @@ export async function enviarRelatorioExterno(
     antes: contarPorChave(j.start_report, limpeza),
     depois: contarPorChave(j.final_report, limpeza),
   });
-  if (faltas.length > 0) {
+  /**
+   * O mínimo por cômodo é NOSSO, lido do formulário deles uma vez. Quando ele
+   * barra um job que não dá para consertar (foto de chegada não se refaz), a
+   * pergunta que sobra é se a Housekeep recusaria mesmo, ou se a nossa tabela é
+   * que está mais dura que a página.
+   *
+   * `ignorarMinimoDeFotos` responde isso perguntando à fonte: preenche o
+   * formulário deles e conta os campos que a PÁGINA marca como inválidos.
+   *
+   * Só vale em dry run, e isso é trava de desenho, não conveniência: valendo,
+   * ele mandaria um relatório que já sabemos incompleto, e a checagem existe
+   * justamente para isso não acontecer. Quem quer enviar assim mesmo tem o
+   * formulário deles e a mão.
+   */
+  const pularMinimo = Boolean(opcoes?.ignorarMinimoDeFotos && opcoes?.simular);
+  if (faltas.length > 0 && !pularMinimo) {
     // Cinco linhas cabem no card. O resto vira contagem, porque a lista inteira
     // de treze campos empurra o motivo para fora da tela e ninguém lê nenhum.
     const mostrar = faltas.slice(0, 5).join("; ");
@@ -529,9 +655,42 @@ export async function enviarRelatorioExterno(
     await gravarMotivo(supabase, jobId, motivo);
     return { estado: "nao_elegivel", motivo };
   }
+  if (faltas.length > 0) {
+    console.log(`[stefane] ensaio ignorando o nosso mínimo: ${faltas.join("; ")}`);
+  }
 
-  // Trava de concorrência: só um envio por job por vez. `started_at` nulo é a
-  // condição, então dois cliques seguidos não viram dois preenchimentos.
+  /**
+   * Trava de concorrência COM VALIDADE: só um envio por job por vez, mas trava
+   * de processo morto não é trava, é beco.
+   *
+   * A condição era `started_at IS NULL` e mais nada. Bastava o processo morrer
+   * no meio do envio (deploy, reload do dev server, Playwright pendurado) para
+   * `started_at` ficar gravado para sempre: o card mostrava "enviando" eterno,
+   * e toda tentativa seguinte batia aqui e voltava "a submission is already
+   * running". Sem erro, sem tentativa contada, sem saída — o JOB-9520 entrou
+   * nisso em 27/08 e a Housekeep nunca recebeu nada.
+   *
+   * Agora a trava vale por `ENVIO_TRAVADO_MS`. Passou disso, quem chega assume.
+   *
+   * Em DOIS passos, e isso não é preciosismo: `.or()` num UPDATE do PostgREST
+   * escreve a linha e devolve representação VAZIA. O primeiro desenho disto
+   * era um `.or(is.null, lt.limite)` só, e o `data` voltava nulo mesmo tendo
+   * gravado: o código lia "não travei", devolvia "a submission is already
+   * running" e ia embora, deixando a trava recém-carimbada para trás. Cada
+   * tentativa re-armava a trava e desistia. Era isso que fazia o relatório não
+   * subir sozinho de jeito nenhum.
+   *
+   * Passo 1 solta a trava vencida. Passo 2 é o CAS de sempre, com filtro
+   * simples, que o PostgREST devolve direito. Dois processos podem soltar a
+   * mesma trava vencida; só um ganha o passo 2, que é o que importa.
+   */
+  const limiteDeTrava = new Date(Date.now() - ENVIO_TRAVADO_MS).toISOString();
+  await supabase
+    .from("jobs")
+    .update({ external_report_started_at: null })
+    .eq("id", jobId)
+    .lt("external_report_started_at", limiteDeTrava);
+
   const { data: travado } = await supabase
     .from("jobs")
     .update({ external_report_started_at: new Date().toISOString(), external_report_error: null })
@@ -540,6 +699,8 @@ export async function enviarRelatorioExterno(
     .select("id")
     .maybeSingle();
   if (!travado) return { estado: "enviando", motivo: "a submission is already running" };
+  // Daqui para a frente, explodir gasta tentativa: a Housekeep foi aberta.
+  marca.travou = true;
 
   // O bloco "before" da Housekeep é o report de chegada; o "after", o final.
   const [fotosAntes, fotosDepois] = await Promise.all([
