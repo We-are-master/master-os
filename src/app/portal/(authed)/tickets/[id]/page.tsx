@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Briefcase, Calendar, MapPin, User } from "lucide-react";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
@@ -34,7 +35,7 @@ const JOB_STATUS_LABEL: Record<string, string> = {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 interface PageProps {

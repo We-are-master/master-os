@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth } from "@/lib/auth-api";
-import { enviarRelatorioExterno, motivoNaoElegivel, previewEnvio } from "@/lib/stefane/run-external-report";
+import { enviarRelatorioExterno, envioEmAndamento, motivoNaoElegivel, previewEnvio } from "@/lib/stefane/run-external-report";
 
 /**
  * STEFANE — botão "Approve Report" do card.
@@ -39,9 +39,15 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const j = job as unknown as Record<string, unknown>;
+  /**
+   * "Enviando" tem prazo. `started_at` gravado e antigo é processo que morreu
+   * no meio (deploy, reload, Playwright pendurado), não envio em curso: lido
+   * como "enviando" para sempre, ele deixava o card girando e o botão de
+   * reenviar escondido, sem erro nenhum na tela para explicar.
+   */
   const estado = j.external_report_submitted_at
     ? "enviado"
-    : j.external_report_started_at
+    : envioEmAndamento(j.external_report_started_at as string | null)
       ? "enviando"
       : j.external_report_error
         ? "falhou"
@@ -122,6 +128,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   // Dispara e devolve. O erro vai para as colunas e para o email, não para esta
   // resposta, porque quem clicou já saiu da tela quando ele acontecer.
+  //
+  // Este catch é a última rede, e não a única: `enviarRelatorioExterno` cuida
+  // do próprio estouro (limpa a trava, grava o motivo, avisa). Antes ele só
+  // imprimia no console, e um throw lá dentro deixava o card em "enviando"
+  // eterno sem uma linha de erro em lugar nenhum.
   void enviarRelatorioExterno(supabase, id, { simular }).catch((err) => {
     console.error("[stefane] envio falhou fora do fluxo:", err);
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
@@ -1401,12 +1402,7 @@ function BillingStandaloneInner() {
 
   const cfMax = Math.max(1, ...cashflow.flatMap((d) => [d.moneyIn, d.moneyOut]));
 
-  const dateLabel = new Date().toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const dateLabel = formatBritishDate(new Date());
 
   return (
     <PageTransition>

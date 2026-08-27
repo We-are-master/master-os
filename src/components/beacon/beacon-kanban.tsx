@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Clock, MapPin, X } from "lucide-react";
@@ -696,11 +697,7 @@ function JobHoverPanel({ job, anchor }: { job: KanbanJob; anchor: DOMRect }) {
   const address = (job.property_address ?? "").trim();
   const window_ = formatArrivalWindow(job.scheduled_start_at, job.scheduled_end_at);
   const day = job.scheduled_date
-    ? new Date(`${job.scheduled_date}T12:00:00`).toLocaleDateString("en-GB", {
-        weekday: "short",
-        day: "2-digit",
-        month: "short",
-      })
+    ? formatBritishDate(new Date(`${job.scheduled_date}T12:00:00`))
     : "";
 
   return createPortal(

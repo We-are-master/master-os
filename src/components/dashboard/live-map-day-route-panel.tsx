@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatDistanceMiles } from "@/lib/mapbox-directions";
 
@@ -50,13 +51,30 @@ export function LiveMapDayRoutePanel({
   onClose,
   onBackToLondon,
   onStopClick,
+  onReorder,
 }: {
   route: DayRouteData | null;
   loading: boolean;
   onClose: () => void;
   onBackToLondon: () => void;
   onStopClick?: (jobId: string) => void;
+  /** Drag de parada: recebe TODOS os ids na nova ordem — a decisão que vale
+   *  para o mapa, o painel e o email das 17h do parceiro (route_seq). */
+  onReorder?: (orderedJobIds: string[]) => void;
 }) {
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
+
+  const soltar = (alvo: number) => {
+    setOverIdx(null);
+    const origem = dragIdx;
+    setDragIdx(null);
+    if (origem == null || !route || origem === alvo || !onReorder) return;
+    const ids = route.stops.map((s) => s.id);
+    const [movido] = ids.splice(origem, 1);
+    ids.splice(alvo, 0, movido!);
+    onReorder(ids);
+  };
   return (
     <div className="w-[280px] max-w-[80vw] space-y-2 rounded-lg border border-[#E4E4E8] bg-white/95 p-2.5 shadow-lg backdrop-blur">
       <div className="flex items-center justify-between gap-2">
@@ -107,7 +125,29 @@ export function LiveMapDayRoutePanel({
               const windowEndMs = stop.scheduled_end_at ? new Date(stop.scheduled_end_at).getTime() : null;
               const aperto = etaMs != null && windowEndMs != null && etaMs > windowEndMs;
               return (
-                <div key={stop.id}>
+                <div
+                  key={stop.id}
+                  draggable={!!onReorder}
+                  onDragStart={() => setDragIdx(i)}
+                  onDragEnd={() => {
+                    setDragIdx(null);
+                    setOverIdx(null);
+                  }}
+                  onDragOver={(e) => {
+                    if (dragIdx == null) return;
+                    e.preventDefault();
+                    setOverIdx(i);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    soltar(i);
+                  }}
+                  className={cn(
+                    onReorder && "cursor-grab active:cursor-grabbing",
+                    dragIdx === i && "opacity-50",
+                    overIdx === i && dragIdx !== i && "rounded-md ring-2 ring-[#ED4B00]/60",
+                  )}
+                >
                   {leg ? (
                     <p className="py-0.5 pl-[26px] text-[10px] text-[#64748B]">
                       ↓ {formatDuration(leg.durationSec)} drive · {formatDistanceMiles(leg.distanceM)}
@@ -148,6 +188,12 @@ export function LiveMapDayRoutePanel({
               );
             })}
           </div>
+
+          {onReorder && route.stops.length >= 2 ? (
+            <p className="text-[10px] text-[#64748B]">
+              Drag stops to set the day order · it becomes the partner&apos;s email order.
+            </p>
+          ) : null}
 
           <div className="flex items-center justify-between rounded-md bg-[#020040]/5 px-2 py-1.5 text-[11px]">
             <span className="font-semibold text-[#020040]">

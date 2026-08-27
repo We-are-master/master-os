@@ -7,6 +7,10 @@ import { createPortal } from "react-dom";
  * Hover card for dense lists: wraps a cell and, after a short pause, floats a
  * preview next to it. Portal + fixed positioning so table overflow never clips
  * it. Mouse-only by design — touch has no hover, and tap already opens the row.
+ *
+ * O card aceita mouse: sair da célula dá um respiro curto antes de fechar, e
+ * entrar no card cancela o fechamento — dá pra clicar em ações dentro dele
+ * (abrir o job, copiar telefone) sem o preview sumir no caminho.
  */
 export function HoverPreview({
   content,
@@ -22,12 +26,28 @@ export function HoverPreview({
 }) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   const hide = useCallback(() => {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
     setPos(null);
+  }, []);
+
+  /** Fechar com atraso: a ponte célula → card não pode derrubar o preview. */
+  const scheduleHide = useCallback(() => {
+    if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setPos(null), 160);
+  }, []);
+
+  const cancelHide = useCallback(() => {
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
   }, []);
 
   const show = useCallback(() => {
@@ -47,9 +67,10 @@ export function HoverPreview({
 
   const onEnter = useCallback(() => {
     if (content == null) return;
+    cancelHide();
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(show, openDelayMs);
-  }, [content, openDelayMs, show]);
+  }, [content, openDelayMs, show, cancelHide]);
 
   useEffect(() => {
     if (!pos) return;
@@ -64,17 +85,20 @@ export function HoverPreview({
 
   useEffect(() => () => {
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
   }, []);
 
   return (
-    <div ref={anchorRef} onMouseEnter={onEnter} onMouseLeave={hide} className={className}>
+    <div ref={anchorRef} onMouseEnter={onEnter} onMouseLeave={scheduleHide} className={className}>
       {children}
       {pos && content != null && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card p-3 shadow-xl ring-1 ring-black/5 dark:ring-white/10 pointer-events-none"
+              className="fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card p-3.5 shadow-xl ring-1 ring-black/5 dark:ring-white/10"
               style={{ top: pos.top, left: pos.left }}
               role="tooltip"
+              onMouseEnter={cancelHide}
+              onMouseLeave={scheduleHide}
             >
               {content}
             </div>,

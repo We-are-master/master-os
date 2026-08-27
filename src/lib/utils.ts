@@ -115,13 +115,13 @@ export function normalizeCalendarDateToYmd(input: string | undefined | null): st
   return "";
 }
 
-/** Display YYYY-MM-DD as DD/MM/YYYY (UK) for UI labels. */
+/** Display YYYY-MM-DD in the standard UI date format (e.g. `Fri 28 Aug 26`). */
 export function formatYmdUkDisplay(ymd: string | undefined | null): string {
   const n = normalizeCalendarDateToYmd(ymd ?? "");
   if (!n) return "";
   const [y, mo, d] = n.split("-").map((x) => Number(x));
   const dt = new Date(Date.UTC(y, mo - 1, d));
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).format(dt);
+  return formatBritishDate(dt);
 }
 
 /** True if string is a parseable ISO-like datetime (timestamptz-safe for Supabase). */

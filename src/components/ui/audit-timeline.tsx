@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/motion";
 import {
@@ -80,7 +81,7 @@ function timeAgo(dateStr: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatBritishDate(dateStr);
 }
 
 interface AuditTimelineProps {
@@ -321,7 +322,7 @@ function groupByDate(logs: AuditLog[]): [string, AuditLog[]][] {
 
   for (const log of logs) {
     const d = new Date(log.created_at).toDateString();
-    const label = d === today ? "Today" : d === yesterday ? "Yesterday" : new Date(log.created_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const label = d === today ? "Today" : d === yesterday ? "Yesterday" : formatBritishDate(log.created_at);
     const arr = groups.get(label) ?? [];
     arr.push(log);
     groups.set(label, arr);

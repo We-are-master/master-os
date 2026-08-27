@@ -55,7 +55,7 @@ export type ResultadoConfirmacao =
   | { estado: "falhou"; motivo: string };
 
 const JOB_SELECT =
-  "id, reference, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
+  "id, reference, title, status, partner_id, scheduled_date, scheduled_start_at, scheduled_end_at, " +
   "client_id, client_name, client_confirmation_sent_at";
 
 /** `2026-08-21` → `Thursday 21 August`, em Londres, como o cliente lê. */
@@ -145,6 +145,31 @@ export async function enviarConfirmacaoDoCliente(
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
   if (!job) return { estado: "falhou", motivo: "job not found" };
   const j = job as unknown as Record<string, unknown>;
+
+  /**
+   * SEM PARCEIRO NÃO SE FALA COM O CLIENTE. Regra do dono (26/08/2026).
+   *
+   * Esta função nasceu disparando no nascimento do job, com o argumento de que
+   * "recebemos e agendamos" é verdade mesmo sem parceiro definido. Na prática
+   * não é o que o cliente lê: ele recebe um `booking_confirmed`, a mensagem
+   * dispara o workflow "Booking - Confirmed" do respond.io, o contato vira
+   * Converted, e ele responde "Hi, I would like to cancel this order" — porque
+   * para ele acabou de nascer um pedido que ele não reconhece.
+   *
+   * E o custo é maior que o susto: job `unassigned` é job que ainda estamos
+   * tentando colocar. Confirmar antes de ter quem vá é prometer uma visita que
+   * pode não existir, e transforma um job que talvez fosse devolvido em
+   * silêncio numa reclamação com o cliente final no meio.
+   *
+   * Agora o gatilho é o parceiro, não o nascimento. Os três chamadores
+   * continuam chamando; o portão é aqui, uma vez só, porque a regra é uma só e
+   * espalhá-la por três lugares é garantir que um deles fique para trás.
+   * Quando o parceiro aceita, `job-partner-acceptance` chama de novo e a
+   * confirmação sai — no momento em que ela é verdade.
+   */
+  if (!j.partner_id) {
+    return anotarPulo("no partner assigned yet: nothing to confirm to the client");
+  }
 
   const clientId = typeof j.client_id === "string" ? j.client_id : null;
   if (!clientId) return anotarPulo("job has no client record");

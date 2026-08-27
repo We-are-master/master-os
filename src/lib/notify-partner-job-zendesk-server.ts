@@ -398,6 +398,34 @@ export async function notifyPartnerJobZendesk(
   } else if (zendeskTicketId && !partnerEmailEnabled) {
     // Intentional policy skip — not an error (partner email only on assign + complete).
     zendeskResult = { ok: true, skipped: `kind_${kind}` };
+  } else if (!zendeskTicketId && partnerEmailEnabled && partner.email) {
+    /**
+     * Job SEM ticket: o email sai pelo Resend, direto pro parceiro.
+     *
+     * A side conversation era o ÚNICO canal de email daqui, então job criado
+     * sem Zendesk deixava o parceiro só com o push — e push de "Job cancelled"
+     * some da bandeja em horas, enquanto o parceiro segue achando que tem o
+     * job de amanhã (dono, 27/08: "quando unassigned tem que chegar email").
+     * Mesmo padrão de fallback do send-partner-report-link.
+     */
+    try {
+      const key = process.env.RESEND_API_KEY?.trim();
+      if (!key) throw new Error("RESEND_API_KEY missing");
+      const { Resend } = await import("resend");
+      const { error: sendErr } = await new Resend(key).emails.send({
+        from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
+        to: [partner.email],
+        replyTo: "support@getfixfy.com",
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+      if (sendErr) throw new Error(sendErr.message ?? "send failed");
+      zendeskResult = { ok: true, skipped: "no_ticket_sent_via_resend" };
+    } catch (err) {
+      console.error("[notify-partner-zendesk] resend fallback failed:", err);
+      zendeskResult = { ok: false, error: `resend_fallback: ${String(err).slice(0, 200)}` };
+    }
   }
 
   // ─── Always sync custom_status_id on the main ticket ─────────────

@@ -355,7 +355,6 @@ async function dispatchJobTerminalNotice(args: {
           customerName: clientName,
           reference: String(job.reference ?? ""),
           title: String(job.title ?? ""),
-          reason: (job.cancellation_reason as string | null) ?? null,
         });
 
   try {

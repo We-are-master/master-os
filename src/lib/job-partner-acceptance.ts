@@ -16,6 +16,10 @@ import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { isPartnerEligibleForWork } from "@/lib/partner-status";
+import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { resolveJobMatchServiceType } from "@/lib/zendesk-job-ingest";
+import type { Partner } from "@/types/database";
 
 export type JobForPartnerAcceptance = {
   id: string;
@@ -202,9 +206,17 @@ export async function claimAutoAssignJob(args: {
   jobId: string;
   partnerId: string;
   partnerName: string | null;
+  /**
+   * false = aceite vindo da vitrine por type of work (Fase 2): o parceiro não
+   * está na fila de convidados, mas o chamador JÁ validou o match. A
+   * atomicidade continua nas condições status='auto_assigning' +
+   * partner_id IS NULL — primeiro update que passa leva, o segundo afeta zero
+   * linhas.
+   */
+  requireInvited?: boolean;
 }): Promise<AutoAssignClaimResult> {
   const now = new Date().toISOString();
-  const { data, error } = await args.supabase
+  let query = args.supabase
     .from("jobs")
     .update({
       partner_id: args.partnerId,
@@ -216,9 +228,11 @@ export async function claimAutoAssignJob(args: {
     })
     .eq("id", args.jobId)
     .eq("status", "auto_assigning")
-    .is("partner_id", null)
-    .contains("auto_assign_invited_partner_ids", [args.partnerId])
-    .select("id, reference");
+    .is("partner_id", null);
+  if (args.requireInvited !== false) {
+    query = query.contains("auto_assign_invited_partner_ids", [args.partnerId]);
+  }
+  const { data, error } = await query.select("id, reference");
 
   if (error) {
     console.error("[claimAutoAssignJob] update failed:", error);
@@ -260,10 +274,40 @@ export async function processAutoAssignJobAccept(args: {
   const partnerLabel = partnerDisplayName(partner);
   const partnerName = args.partnerName ?? partnerNameForJobRow(partner);
 
+  const isInvited = (job.auto_assign_invited_partner_ids ?? []).includes(args.partnerId);
+
+  // Vitrine por type of work (Fase 2): parceiro ativo cujo trade casa com o
+  // job pode aceitar mesmo sem estar na fila de convidados — o portal mostra
+  // o job para ele, então o aceite tem que valer. O match é validado AQUI, no
+  // servidor, nunca confiado ao portal.
+  let isVitrineEligible = false;
+  if (!isInvited && job.status === "auto_assigning" && job.partner_id === null) {
+    try {
+      const { data: fullPartner } = await args.supabase
+        .from("partners")
+        .select("*")
+        .eq("id", args.partnerId)
+        .maybeSingle();
+      if (fullPartner && isPartnerEligibleForWork(fullPartner as Partner)) {
+        const { serviceType, catalogServiceId } = await resolveJobMatchServiceType(
+          args.supabase,
+          job,
+        );
+        isVitrineEligible = partnerMatchesTypeOfWork(
+          fullPartner as Partner,
+          serviceType,
+          catalogServiceId,
+        );
+      }
+    } catch (err) {
+      console.error("[processAutoAssignJobAccept] vitrine eligibility check failed:", err);
+    }
+  }
+
   const isAutoClaimable =
     job.status === "auto_assigning" &&
     job.partner_id === null &&
-    (job.auto_assign_invited_partner_ids ?? []).includes(args.partnerId);
+    (isInvited || isVitrineEligible);
 
   const isAlreadyWinner =
     job.status === "scheduled" && job.partner_id === args.partnerId;
@@ -319,7 +363,7 @@ export async function processAutoAssignJobAccept(args: {
         ok: false,
         error: "job_taken",
         message:
-          "This job has already been taken by another partner. Thanks for being quick!",
+          "This job has already been booked by another professional. Thanks for being quick!",
         jobReference: job.reference,
       };
     }
@@ -336,6 +380,7 @@ export async function processAutoAssignJobAccept(args: {
     jobId: args.jobId,
     partnerId: args.partnerId,
     partnerName,
+    requireInvited: !isVitrineEligible,
   });
 
   if (!claim.claimed) {
@@ -348,7 +393,7 @@ export async function processAutoAssignJobAccept(args: {
       error: claim.reason === "job_taken" ? "job_taken" : "not_available",
       message:
         claim.reason === "job_taken"
-          ? "This job has already been taken by another partner. Thanks for being quick!"
+          ? "This job has already been booked by another professional. Thanks for being quick!"
           : "This job is no longer available.",
       jobReference: job.reference,
     };

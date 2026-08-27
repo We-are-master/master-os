@@ -25,6 +25,8 @@ import {
   patchOfficeCancelZeroJobEconomics,
 } from "@/lib/job-cancel-economics";
 import { clearAutoAssignQueuePatch } from "@/lib/job-partner-assign";
+import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
+import { runOfficeCancelAutoAssignCleanup } from "@/lib/office-cancel-auto-assign-cleanup";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
@@ -210,6 +212,11 @@ async function cancelarNoOs(job: Job, ticketId: number): Promise<void> {
   };
   const { error } = await supabase.from("jobs").update(patch).eq("id", job.id);
   if (error) throw new Error(`cancel ${job.reference}: ${error.message}`);
+
+  await cancelOpenVisitsForJobCancellation(job.id, supabase).catch(() => {});
+  // Convites pendentes viram "lost" e as side conversations de oferta fecham,
+  // igual ao cancel do escritório — sem isso a oferta segue viva no portal.
+  await runOfficeCancelAutoAssignCleanup(supabase, job.id).catch(() => {});
 
   // Ticket do job espelha o status na hora (Cancelled + tags coerentes).
   await syncJobZendeskStatus(job.id).catch(() => {});

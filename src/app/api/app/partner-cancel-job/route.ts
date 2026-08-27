@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
 import { cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { cancelOpenSelfBillsForJobCancellation, syncSelfBillAfterJobChange } from "@/services/self-bills";
+import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
 import type { Job } from "@/types/database";
 
 /** Authorization: Bearer (partner user JWT — required for RPC `partner_cancel_job`). */
@@ -16,12 +17,33 @@ function bearerToken(headers: Headers): string | null {
 }
 
 /**
- * Wraps DB `partner_cancel_job` (`auth.uid()` + partner row) plus service-role invoice / self-bill void
- * parity with `updateJob(..., cancelled)`.
+ * DESATIVADO (dono, 24/08/2026): parceiro não cancela job pelo app/portal.
+ * Cancelar é decisão do escritório — o parceiro escreve para o suporte, o
+ * escritório cancela ou troca o parceiro no OS, e quem sai recebe o email de
+ * "Job cancelled" (sem motivo). A migração 280 desarma a RPC
+ * `partner_cancel_job` no banco para chamadas diretas; esta rota devolve a
+ * mesma instrução para o app antigo.
  *
- * Intended for the Fixfy Partner app — same bearer pattern as `/api/app/partner-cancel-notify`.
+ * O código original (RPC + void de invoices/self-bills) fica logo abaixo,
+ * inalcançável de propósito, para o dia em que isso for reaberto com regras.
  */
 export async function POST(req: NextRequest) {
+  const auth = await getUserFromBearer(req);
+  if (!auth.user) {
+    return NextResponse.json({ error: "Unauthorized", message: auth.message }, { status: 401 });
+  }
+
+  return NextResponse.json(
+    {
+      error: "partner_cancel_disabled",
+      message:
+        "Cancellations are handled by the Fixfy office. Email support@getfixfy.com (or reply to your job email) and we will sort it out and reassign the job.",
+    },
+    { status: 403 },
+  );
+}
+
+async function postDesativado(req: NextRequest) {
   const auth = await getUserFromBearer(req);
   if (!auth.user) {
     return NextResponse.json({ error: "Unauthorized", message: auth.message }, { status: 401 });
@@ -113,6 +135,11 @@ export async function POST(req: NextRequest) {
       },
       admin,
     ),
+    job.status === "cancelled"
+      ? cancelOpenVisitsForJobCancellation(job.id, admin).catch((e) =>
+          console.error("[partner-cancel-job] visits cancel:", e),
+        )
+      : Promise.resolve(0),
   ]);
 
   return NextResponse.json({
@@ -123,3 +150,6 @@ export async function POST(req: NextRequest) {
       typeof payload.partner_cancellation_fee === "number" ? payload.partner_cancellation_fee : null,
   });
 }
+
+// Referência viva para o TypeScript não reclamar do código preservado.
+void postDesativado;

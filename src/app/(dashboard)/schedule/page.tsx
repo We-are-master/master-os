@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import { PageTransition } from "@/components/layout/page-transition";
 import { BeaconHeader, type BeaconView } from "@/components/beacon/beacon-header";
 import { BeaconKanban } from "@/components/beacon/beacon-kanban";
@@ -653,6 +654,26 @@ export default function SchedulePage() {
         scheduleLine: formatJobScheduleLine(j) ?? "",
       });
     }
+    /**
+     * A sequência do dia é PERMANENTE (dono, 25/08): unassigned e scheduled
+     * ganham a bolinha de ordem sempre, com ou sem parceiro selecionado. Sem
+     * parceiro, a numeração é o dia inteiro em ordem de chegada; com parceiro
+     * selecionado, o modo rota (routeModeJobPoints) assume e renumera só os
+     * jobs dele.
+     */
+    const sequenciaveis = new Set(["unassigned", "auto_assigning", "scheduled", "late"]);
+    const ordenados = jobsForSelectedDay
+      .filter((j) => sequenciaveis.has(j.status))
+      .sort((a, b) => {
+        const am = a.scheduled_start_at ? new Date(a.scheduled_start_at).getTime() : Infinity;
+        const bm = b.scheduled_start_at ? new Date(b.scheduled_start_at).getTime() : Infinity;
+        return am - bm;
+      });
+    const ordemPorId = new Map(ordenados.map((j, i) => [j.id, i + 1]));
+    for (const pt of points) {
+      const ordem = ordemPorId.get(pt.id);
+      if (ordem != null) pt.routeOrder = ordem;
+    }
     return points;
   }, [jobsForSelectedDay, serviceCatalogTypeNames, liveMapAccountClientIds]);
 
@@ -744,6 +765,34 @@ export default function SchedulePage() {
       cancelled = true;
     };
   }, [liveMapRoutedPartnerId, routeDateYmd, dayRouteNonce]);
+
+  /** Drag no painel de rota: a ordem decidida vira route_seq (mig 282) e passa
+   *  a mandar no painel, na numeração do mapa e no email das 17h do parceiro.
+   *  Otimista na tela; as pernas de deslocamento recalculam no refetch. */
+  const handleDayRouteReorder = useCallback(
+    (orderedJobIds: string[]) => {
+      setDayRoute((atual) => {
+        if (!atual) return atual;
+        const porId = new Map(atual.stops.map((s) => [s.id, s]));
+        const stops = orderedJobIds.map((id) => porId.get(id)).filter((s): s is DayRouteStop => !!s);
+        return stops.length === atual.stops.length ? { ...atual, stops } : atual;
+      });
+      void fetch("/api/jobs/route-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedJobIds }),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const json = (await res.json().catch(() => null)) as { error?: string } | null;
+            toast.error(json?.error ?? "Failed to save route order");
+          }
+        })
+        .catch(() => toast.error("Failed to save route order"))
+        .finally(() => setDayRouteNonce((n) => n + 1));
+    },
+    [],
+  );
 
   /** No modo rota o mapa mostra SÓ o dia do parceiro + oportunidades: paradas
    *  numeradas na ordem, e os jobs sem dono por perto em cor de unassigned. */
@@ -978,6 +1027,7 @@ export default function SchedulePage() {
                   onClose={clearRoute}
                   onBackToLondon={backToLondon}
                   onStopClick={(jobId) => window.open(`/jobs/${jobId}`, "_blank")}
+                  onReorder={handleDayRouteReorder}
                 />
               ) : null}
               {showPartnersOnMap ? (

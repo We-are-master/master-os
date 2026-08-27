@@ -1,6 +1,7 @@
 "use client";
 
 import type { ListResult } from "@/services/base";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -1975,19 +1976,54 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     const supabase = getSupabase();
     try {
       const ids = Array.from(selectedIds);
-      const { error } = await supabase
-        .from("partners")
-        .update({ status: newStatus })
-        .in("id", ids);
-      if (error) throw error;
-      toast.success(`${ids.length} partners updated to ${statusConfig[newStatus].label}`);
+      if (newStatus === "active") {
+        // Bulk activate mirrors the individual Activate: status reasons,
+        // verified flag and the welcome email. account_type is left untouched;
+        // the individual modal is where the tier gets picked.
+        const { error } = await supabase
+          .from("partners")
+          .update({
+            status: "active",
+            partner_status_reasons: ["was_activated"],
+            verified: true,
+          })
+          .in("id", ids);
+        if (error) throw error;
+        const newlyActivated = partners.filter(
+          (p) => selectedIds.has(p.id) && p.status !== "active",
+        );
+        const results = await Promise.allSettled(
+          newlyActivated.map((p) =>
+            fetch(`/api/partners/${p.id}/send-activated-email`, { method: "POST" }),
+          ),
+        );
+        const sent = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
+        if (newlyActivated.length > 0 && sent < newlyActivated.length) {
+          toast.message(
+            `${ids.length} partners activated · welcome email sent to ${sent} of ${newlyActivated.length}`,
+          );
+        } else {
+          toast.success(
+            newlyActivated.length > 0
+              ? `${ids.length} partners activated · welcome email sent to ${sent}`
+              : `${ids.length} partners activated`,
+          );
+        }
+      } else {
+        const { error } = await supabase
+          .from("partners")
+          .update({ status: newStatus })
+          .in("id", ids);
+        if (error) throw error;
+        toast.success(`${ids.length} partners updated to ${statusConfig[newStatus].label}`);
+      }
       setSelectedIds(new Set());
       refresh();
       loadCounts();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk update failed");
     }
-  }, [selectedIds, refresh, loadCounts]);
+  }, [selectedIds, partners, refresh, loadCounts]);
 
   const handleBulkVerify = useCallback(async (verified: boolean) => {
     if (selectedIds.size === 0) return;
@@ -3199,7 +3235,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                         </div>
                         {doc?.expires_at && (
                           <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                            Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                            Expires: {formatBritishDate(doc.expires_at)}
                           </p>
                         )}
                         {req.docType === "certification" && matchedDocs.length > 0 && (
@@ -3293,7 +3329,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                             </div>
                             {doc?.expires_at && (
                               <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                                Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                                Expires: {formatBritishDate(doc.expires_at)}
                               </p>
                             )}
                             {matchedDocs.length > 0 && (
@@ -3886,7 +3922,7 @@ function PartnerDocumentDetailModal({
           <div className="rounded-lg bg-surface-hover p-3">
             <p className="text-text-tertiary">Expiration date</p>
             <p className={`font-medium mt-0.5 ${isExpired ? "text-red-500" : "text-text-primary"}`}>
-              {doc.expires_at ? new Date(doc.expires_at).toLocaleDateString() : "No expiry"}
+              {doc.expires_at ? formatBritishDate(doc.expires_at) : "No expiry"}
             </p>
           </div>
           <div className="rounded-lg bg-surface-hover p-3">
@@ -5380,20 +5416,43 @@ function PartnerDetailDrawer({
                 Activate
               </Button>
             ) : !isPartnerInactiveStage(partner) ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 shrink-0 text-[11px]"
-                icon={<XCircle className="h-3 w-3" />}
-                onClick={() => {
-                  setDeactivatePreset("");
-                  setDeactivateOtherText("");
-                  setDeactivateOtherStage("inactive");
-                  setDeactivateOpen(true);
-                }}
-              >
-                Deactivate
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 text-[11px]"
+                  icon={<Mail className="h-3 w-3" />}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const res = await fetch(`/api/partners/${partner.id}/send-activated-email`, { method: "POST" });
+                        const data = (await res.json().catch(() => ({}))) as { sentTo?: string; warning?: string; error?: string };
+                        if (res.ok && data.sentTo) toast.success(`Welcome email sent to ${data.sentTo}`);
+                        else if (data.warning) toast.message("Welcome email not sent: Resend not configured");
+                        else toast.error(data.error ?? "Welcome email failed");
+                      } catch {
+                        toast.error("Welcome email failed");
+                      }
+                    })();
+                  }}
+                >
+                  Resend welcome
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 text-[11px]"
+                  icon={<XCircle className="h-3 w-3" />}
+                  onClick={() => {
+                    setDeactivatePreset("");
+                    setDeactivateOtherText("");
+                    setDeactivateOtherStage("inactive");
+                    setDeactivateOpen(true);
+                  }}
+                >
+                  Deactivate
+                </Button>
+              </div>
             ) : null
           ) : null}
         </div>
@@ -5901,7 +5960,7 @@ function PartnerDetailDrawer({
               )}
               <div className="flex items-center gap-1.5 text-text-tertiary col-span-2 sm:col-span-1">
                 <Calendar className="h-3.5 w-3.5 shrink-0" />
-                <span>Joined {new Date(partner.joined_at).toLocaleDateString()}</span>
+                <span>Joined {formatBritishDate(partner.joined_at)}</span>
               </div>
             </div>
 
@@ -6603,7 +6662,7 @@ function PartnerDetailDrawer({
                           }}
                         >
                           <span className="font-medium">{d.name}</span>
-                          <span className="text-text-tertiary"> · expired {new Date(d.expires_at!).toLocaleDateString()}</span>
+                          <span className="text-text-tertiary"> · expired {formatBritishDate(d.expires_at!)}</span>
                         </button>
                       </li>
                     ))}
@@ -7035,7 +7094,7 @@ function PartnerDetailDrawer({
                       </div>
                       {doc?.expires_at && (
                         <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                          Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                          Expires: {formatBritishDate(doc.expires_at)}
                         </p>
                       )}
                       {req.docType === "certification" && matchedDocs.length > 0 && (
@@ -7139,7 +7198,7 @@ function PartnerDetailDrawer({
                           </div>
                           {doc?.expires_at && (
                             <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
-                              Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                              Expires: {formatBritishDate(doc.expires_at)}
                             </p>
                           )}
                           {matchedDocs.length > 0 && (
@@ -7219,7 +7278,7 @@ function PartnerDetailDrawer({
                           Certificate no: {extractCertificateNumber(doc)}
                         </p>
                       )}
-                      {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {new Date(doc.expires_at).toLocaleDateString()}</p>}
+                      {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {formatBritishDate(doc.expires_at)}</p>}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {doc.file_path && (
@@ -7479,9 +7538,7 @@ function PartnerDetailDrawer({
                 <p className="text-xs text-text-tertiary">
                   Expires on{" "}
                   <time dateTime={portalLinkResult.expiresAt}>
-                    {new Date(portalLinkResult.expiresAt).toLocaleDateString("en-GB", {
-                      dateStyle: "medium",
-                    })}
+                    {formatBritishDate(portalLinkResult.expiresAt)}
                   </time>
                 </p>
               ) : null}

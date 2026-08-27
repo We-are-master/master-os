@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   amanhaEmLondres,
+  confirmacaoRecente,
   dentroDaJanelaDoLembrete,
   horaEmLondres,
 } from "@/lib/client-confirmation/sweep-24h";
@@ -46,5 +47,27 @@ describe("janela do lembrete de véspera", () => {
 
   it("às 18h de Londres, o alvo é o dia seguinte", () => {
     assert.equal(amanhaEmLondres(new Date("2026-08-24T17:00:00Z")), "2026-08-25");
+  });
+});
+
+/**
+ * Assign de última hora: a confirmação de booking que acabou de sair JÁ disse
+ * data e janela de amanhã. O lembrete de véspera não pode ser a segunda
+ * mensagem da mesma noite (dono, 26/08).
+ */
+describe("uma mensagem por noite", () => {
+  const agora = new Date("2026-08-26T18:30:00Z");
+
+  it("confirmação de 2 horas atrás cala o lembrete", () => {
+    assert.equal(confirmacaoRecente("2026-08-26T16:30:00Z", agora), true);
+  });
+
+  it("confirmação de 3 dias atrás deixa o lembrete trabalhar", () => {
+    assert.equal(confirmacaoRecente("2026-08-23T16:30:00Z", agora), false);
+  });
+
+  it("sem confirmação (ou data podre) não bloqueia nada", () => {
+    assert.equal(confirmacaoRecente(null, agora), false);
+    assert.equal(confirmacaoRecente("not-a-date", agora), false);
   });
 });
