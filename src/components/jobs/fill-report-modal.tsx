@@ -21,6 +21,7 @@ import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-ph
 import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { plannedPhotoShape } from "@/lib/report-submission";
+import { createSignedJobReportAssetUrl } from "@/services/job-reports";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
@@ -208,20 +209,78 @@ export function FillReportModal({
     return m;
   }, [photoSlots]);
 
-  /** Fotos já salvas no relatório, por slot — em edição elas ficam e contam. */
-  const existentesPorSlot = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const payload of [existingStart, existingFinal]) {
-      const p = payload?.photos;
-      if (Array.isArray(p)) continue; // trade plano: conta na metade, não por slot
-      if (p && typeof p === "object") {
+  /**
+   * Fotos já salvas no relatório, com as URLs — em edição elas ficam, contam e
+   * APARECEM. Antes o modal abria com todo bloco em "None added" mesmo com cem
+   * fotos salvas, e a leitura natural era que editar tinha apagado tudo: em
+   * 25/08 um horário impossível deixou de ser corrigido por esse susto. O
+   * servidor nunca apagou nada (mergeReportPhotos só acrescenta); o que faltava
+   * era a tela dizer isso com as próprias fotos.
+   */
+  const fotosSalvas = useMemo(() => {
+    const clean = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((u): u is string => typeof u === "string" && u.trim().length > 0) : [];
+    const porSlot = { start: new Map<string, string[]>(), final: new Map<string, string[]>() };
+    // Envelope plano (trade): a metade tem um bloco só, sem chave de slot.
+    const soltas = { start: [] as string[], final: [] as string[] };
+    for (const metade of ["start", "final"] as const) {
+      const p = (metade === "start" ? existingStart : existingFinal)?.photos;
+      if (Array.isArray(p)) {
+        soltas[metade] = clean(p);
+      } else if (p && typeof p === "object") {
         for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-          if (Array.isArray(v)) m.set(k, Math.max(m.get(k) ?? 0, v.length));
+          const urls = clean(v);
+          if (urls.length) porSlot[metade].set(k, urls);
         }
       }
     }
-    return m;
+    return { porSlot, soltas };
   }, [existingStart, existingFinal]);
+
+  /**
+   * URL assinada por foto salva: o bucket é privado, e a URL crua rende só o
+   * quadrado quebrado (visto em 26/08, na primeira vez que elas apareceram).
+   * Mesmo signer do card do relatório, uma hora de validade — mais que a vida
+   * de um modal aberto.
+   */
+  const [assinadas, setAssinadas] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!open) return;
+    let vivo = true;
+    const todas = [
+      ...fotosSalvas.soltas.start,
+      ...fotosSalvas.soltas.final,
+      ...[...fotosSalvas.porSlot.start.values()].flat(),
+      ...[...fotosSalvas.porSlot.final.values()].flat(),
+    ];
+    const faltando = [...new Set(todas)].filter((u) => !assinadas[u]);
+    if (!faltando.length) return;
+    void Promise.all(
+      faltando.map(async (u) => [u, await createSignedJobReportAssetUrl(u, 60 * 60)] as const),
+    ).then((pares) => {
+      if (!vivo) return;
+      setAssinadas((prev) => {
+        const out = { ...prev };
+        for (const [u, s] of pares) if (s) out[u] = s;
+        return out;
+      });
+    });
+    return () => {
+      vivo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- assina quando abre ou as salvas mudam
+  }, [open, fotosSalvas]);
+
+  /** Quantas já existem por slot, nas duas metades — para o teto de upload. */
+  const existentesPorSlot = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const metade of ["start", "final"] as const) {
+      for (const [k, urls] of fotosSalvas.porSlot[metade]) {
+        m.set(k, Math.max(m.get(k) ?? 0, urls.length));
+      }
+    }
+    return m;
+  }, [fotosSalvas]);
 
   const onPhotosChange = (slot: string, files: FileList | null) => {
     if (!files) return;
@@ -300,6 +359,7 @@ export function FillReportModal({
             <input
               type="number"
               min={0}
+              step="any"
               value={typeof val === "number" ? val : ""}
               onChange={(e) => setField(f.key, e.target.value === "" ? null : Number(e.target.value))}
               className={inputClass}
@@ -353,6 +413,43 @@ export function FillReportModal({
           </div>
         );
     }
+  };
+
+  /**
+   * Miniatura de foto que JÁ ESTÁ no relatório: com selo, sem X.
+   *
+   * Remover não existe do lado do servidor (a edição só acrescenta), então um
+   * X aqui seria promessa falsa. O selo responde a pergunta que o modal vazio
+   * fazia nascer: "cadê as fotos que o parceiro mandou?".
+   */
+  const renderSavedThumb = (url: string, i: number) => {
+    const assinada = assinadas[url];
+    return (
+      <div key={`saved-${i}`} className="relative" title="Already on the report · kept when you save">
+        {/\.pdf(\?|$)/i.test(url) || !assinada ? (
+          // PDF, ou a assinatura ainda não chegou: um tile calmo em vez do
+          // quadrado de imagem quebrada.
+          <div
+            className="flex h-16 flex-col items-center justify-center rounded-[6px] border bg-[#FAFAFB] p-1.5"
+            style={{ borderColor: BORDER }}
+          >
+            <FileText className="h-4 w-4" style={{ color: NAVY }} />
+          </div>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={assinada}
+            alt=""
+            loading="lazy"
+            className="h-16 w-full rounded-[6px] border object-cover"
+            style={{ borderColor: BORDER }}
+          />
+        )}
+        <span className="absolute bottom-0.5 right-0.5 rounded-[4px] bg-black/55 px-1 text-[8px] font-semibold text-white">
+          saved
+        </span>
+      </div>
+    );
   };
 
   const renderThumb = (slot: string, f: File, i: number) => {
@@ -427,6 +524,8 @@ export function FillReportModal({
         ? ["kept"] // a metade do app fica como está; o servidor confere a real
         : plannedPhotoShape(template, "start", photos, isEdit ? existingStart?.photos : null),
       finalPhotos: plannedPhotoShape(template, "final", photos, isEdit ? existingFinal?.photos : null),
+      // Teto não cobra o que o parceiro já salvou: só o que se adiciona aqui.
+      fotosJaSalvas: { start: existingStart?.photos ?? null, final: existingFinal?.photos ?? null },
       // Só a presença importa aqui: o item de horários não bloqueia.
       timerStartedAt: startTime ? "typed" : timerStartedAt,
       timerEndedAt: finishTime ? "typed" : timerEndedAt,
@@ -459,9 +558,11 @@ export function FillReportModal({
   };
 
   /** "(min 5 · max 20)" no rótulo, e a contagem em laranja enquanto não fecha. */
-  const contadorDoSlot = (slot: ReportPhotoSlot) => {
+  const contadorDoSlot = (slot: ReportPhotoSlot, salvas: number) => {
     if (!slot.min && !slot.max) return null;
-    const n = (photos[slot.key]?.length ?? 0);
+    // As salvas contam: com vinte fotos do parceiro no bloco, "min 5" em
+    // laranja dizia que estava vazio, e vazio aqui se lê como apagado.
+    const n = (photos[slot.key]?.length ?? 0) + salvas;
     const faltando = slot.min ? n < slot.min : false;
     const excedeu = slot.max ? n > slot.max : false;
     return (
@@ -481,15 +582,16 @@ export function FillReportModal({
     );
   };
 
-  const renderPhotoSlot = (slot: ReportPhotoSlot) => {
+  const renderPhotoSlot = (metade: "start" | "final", slot: ReportPhotoSlot) => {
     const files = photos[slot.key] ?? [];
+    const salvas = fotosSalvas.porSlot[metade].get(slot.key) ?? [];
     return (
       <div key={slot.key} className="space-y-1.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <label className="text-[12px] font-semibold" style={{ color: NAVY }}>
               {slot.label}
-              {contadorDoSlot(slot)}
+              {contadorDoSlot(slot, salvas.length)}
             </label>
             {/* O que a Housekeep quer ver nesta foto, com as palavras deles. */}
             {slot.hint ? (
@@ -511,13 +613,31 @@ export function FillReportModal({
             />
           </label>
         </div>
-        {files.length > 0 ? (
+        {salvas.length > 0 || files.length > 0 ? (
           <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+            {salvas.map(renderSavedThumb)}
             {files.map((f, i) => renderThumb(slot.key, f, i))}
           </div>
         ) : (
           <p className="text-[11px]" style={{ color: MUTED }}>None added</p>
         )}
+      </div>
+    );
+  };
+
+  /**
+   * O envelope plano (trade) não tem slot para ancorar as salvas, então elas
+   * entram numa faixa própria no topo do bloco de fotos da metade.
+   */
+  const faixaDeSalvas = (metade: "start" | "final") => {
+    const urls = fotosSalvas.soltas[metade];
+    if (!urls.length) return null;
+    return (
+      <div className="space-y-1.5">
+        <p className="text-[11px] font-semibold" style={{ color: NAVY }}>
+          {urls.length} photo(s) already on the report · they stay when you save
+        </p>
+        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">{urls.map(renderSavedThumb)}</div>
       </div>
     );
   };
@@ -740,7 +860,8 @@ export function FillReportModal({
                 {photoSlots.start.length > 0 ? (
                   <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
                     {avisoDeFotos("start")}
-                    {photoSlots.start.map(renderPhotoSlot)}
+                    {faixaDeSalvas("start")}
+                    {photoSlots.start.map((s) => renderPhotoSlot("start", s))}
                   </div>
                 ) : null}
               </>,
@@ -754,7 +875,8 @@ export function FillReportModal({
             {photoSlots.final.length > 0 ? (
               <div className="space-y-2 border-t pt-3" style={{ borderColor: BORDER }}>
                 {avisoDeFotos("final")}
-                {photoSlots.final.map(renderPhotoSlot)}
+                {faixaDeSalvas("final")}
+                {photoSlots.final.map((s) => renderPhotoSlot("final", s))}
               </div>
             ) : null}
           </>,

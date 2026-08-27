@@ -66,6 +66,7 @@ export function ExternalReportStep({
   onEnviado,
   onEditReport,
   relatorioEnviado = false,
+  aprovado = false,
 }: {
   jobUuid: string;
   envio?: EstadoEnvioExterno;
@@ -78,6 +79,12 @@ export function ExternalReportStep({
   onEditReport?: () => void;
   /** Há relatório no job. Sem isso não existe o que editar. */
   relatorioEnviado?: boolean;
+  /**
+   * O relatório já foi aprovado nesta sessão do modal. Muda só o estado
+   * neutro: "goes when you approve" com a aprovação dada era o passo mentindo
+   * no segundo entre o clique e o `started_at` chegar ao banco.
+   */
+  aprovado?: boolean;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -292,10 +299,16 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
             : { background: "#F1F5FB", color: "#020040" }
         }
       >
-        <span aria-hidden>🤖</span>
+        {/* Rodinha, não robô parado: o modal re-lê o estado a cada 3s e este
+            chip VIRA "Submitted" sozinho quando o robô confirmar — igual ao
+            envio da Housekeep, a pedido do dono (26/08). */}
+        <span
+          aria-hidden
+          className="inline-block h-[9px] w-[9px] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
+        />
         {tentado
           ? `Express robot tried ${tentativas} of 3 · it retries on the next pass`
-          : "Waiting for the Express robot · not picked up yet"}
+          : "Waiting for the Express robot · it passes every few minutes, this updates by itself"}
         {" · you can finalise now"}
       </span>
     );
@@ -320,6 +333,20 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
         {preview ? <PreviewBox preview={preview} carregando={carregando} onCancelar={() => setPreview(null)} onEnviar={() => void enviar()} /> : acoes(semTentativas, bloqueio)}
         {linhaDaRecusa}
       </div>
+    );
+  }
+
+  if (aprovado) {
+    // Aprovou e o envio ainda não apareceu como "enviando": está a caminho, e
+    // o polling do modal troca este chip sozinho em segundos.
+    return (
+      <span className={chip} style={{ background: "#F1F5FB", color: "#020040" }}>
+        <span
+          aria-hidden
+          className="inline-block h-[9px] w-[9px] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
+        />
+        Approved · sending to the client platform, this updates by itself
+      </span>
     );
   }
 

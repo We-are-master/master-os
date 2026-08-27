@@ -10,6 +10,7 @@ import {
 } from "@/lib/report-submission";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
+import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     .from("jobs")
     // Single-line literal: supabase-js infers the row type from the select
     // string, and a concatenated one degrades every column to `unknown`.
-    .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted, partner_timer_started_at, partner_timer_ended_at")
+    .select("id, reference, status, partner_id, start_report_submitted, final_report_submitted, final_report, partner_timer_started_at, partner_timer_ended_at")
     .eq("id", tokenJobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -174,6 +175,17 @@ export async function POST(req: NextRequest) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
   }
+
+  // Material comprado on site vira dinheiro do job na hora: reembolso do
+  // parceiro (materials_cost) + cobrança do cliente (extras_amount, custo+30%
+  // quando o parceiro não deu o valor). Delta contra o final anterior, para o
+  // caso raro de regravação com só o start submetido — nunca soma duas vezes.
+  await aplicarMaterialExtraDoReport(supabase, job.id, {
+    finalData,
+    previousFinalData: job.final_report_submitted
+      ? ((job.final_report as { data?: Record<string, unknown> } | null)?.data ?? null)
+      : null,
+  });
 
   // The partner is on a phone, on site, and the read takes several seconds:
   // it runs after the response so the form closes at the speed it always did.

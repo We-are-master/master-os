@@ -72,23 +72,31 @@ function infoRow(label: string, valueHtml: string): string {
 </tr>`;
 }
 
-function buildPhotoSection(photoUrls: string[]): string {
+function buildPhotoSection(photoUrls: string[], bidUrl: string): string {
   if (photoUrls.length === 0) {
     return `<tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
       <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
       <p style="margin:0; font-size:14px; line-height:22px; color:#4A4A55; font-style:italic;">No site photos were attached to this request.</p>
     </td></tr>`;
   }
+  /**
+   * Clicar numa foto abre a GALERIA da página de bid (#photos), não o arquivo
+   * cru no storage. O link direto abria uma foto pelada numa aba sem próxima
+   * nem voltar — a reclamação dos parceiros (27/08). A imagem continua
+   * embutida no email; o clique é que muda de destino.
+   */
+  const galeria = escapeHtmlAttr(`${bidUrl}#photos`);
   const imgs = photoUrls
     .map((u, i) => {
       const href = escapeHtmlAttr(u);
       const n = i + 1;
-      return `<p style="margin:0 0 8px 0; font-size:13px;"><a href="${href}" style="color:#020040; font-weight:600;">Site photo ${n}</a></p>
-<img src="${href}" alt="Site photo ${n}" width="520" style="display:block; max-width:100%; height:auto; border-radius:8px; border:1px solid #E8E8EE; margin-bottom:16px;" />`;
+      return `<a href="${galeria}" target="_blank" style="text-decoration:none;">
+<img src="${href}" alt="Site photo ${n} — tap to open the gallery" width="520" style="display:block; max-width:100%; height:auto; border-radius:8px; border:1px solid #E8E8EE; margin-bottom:16px;" /></a>`;
     })
     .join("");
   return `<tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-    <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
+    <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
+    <p style="margin:0 0 12px 0; font-size:12px; color:#6B6B85;"><a href="${galeria}" style="color:#ED4B00; font-weight:600;">Tap any photo to open the gallery</a> — swipe through all ${photoUrls.length}.</p>
     ${imgs}
   </td></tr>`;
 }
@@ -221,7 +229,7 @@ ${partnerEmailLogoHeaderRow("24px 24px 18px 24px")}
       </td></tr>
 
 ${scopeBlock}
-${buildPhotoSection(data.photoUrls)}
+${buildPhotoSection(data.photoUrls, data.bidUrl)}
 
       <tr><td align="center" class="px-mobile btn-mobile" style="padding:8px 40px 8px 40px;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">

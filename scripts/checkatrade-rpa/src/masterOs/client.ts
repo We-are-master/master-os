@@ -159,6 +159,11 @@ export type ItemDaFila = {
   ehCertificado: boolean;
   /** URLs assinadas, válidas por uma hora. */
   fotos: string[];
+  /**
+   * £ de material cobrado do cliente no report (report-material-extra). Depois
+   * de concluir, é o valor do Request payment extra no portal. 0 = nada a pedir.
+   */
+  extraCobranca?: number;
 };
 
 export type FilaDeConclusao = { fila: ItemDaFila[]; total: number };

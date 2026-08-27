@@ -16,8 +16,9 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { urlsDeFoto } from "@/lib/stefane/run-external-report";
+import { avisar, avisoHtml, quandoLondres, urlsDeFoto } from "@/lib/stefane/run-external-report";
 import { pickReportTemplate } from "@/lib/public-report-templates";
+import { parseMaterialExtra } from "@/lib/report-material-extra";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +107,13 @@ export async function GET(req: NextRequest) {
     // documento, e concluir vazio é pior do que não concluir.
     if (fotos.length === 0) continue;
 
+    // Material cobrado do cliente no report (report-material-extra): depois de
+    // concluir, o robô do Express pede esse pagamento extra ao cliente pelo
+    // portal. Zero = nada a pedir.
+    const extraCobranca = parseMaterialExtra(
+      ((j.final_report as { data?: Record<string, unknown> } | null)?.data ?? null),
+    ).charge;
+
     fila.push({
       jobId: j.id,
       reference: j.reference,
@@ -115,6 +123,7 @@ export async function GET(req: NextRequest) {
       // na tela deles.
       ehCertificado: pickReportTemplate({ title: j.title }) === "certificate",
       fotos,
+      extraCobranca,
     });
   }
 
@@ -130,30 +139,66 @@ export async function POST(req: NextRequest) {
     | null;
   if (!body?.jobId) return NextResponse.json({ error: "jobId is required" }, { status: 400 });
 
+  // Para o email — o mesmo aviso da Housekeep, com o desfecho no assunto.
+  // Copiado de lá a pedido do dono (26/08): o robô trabalhava em silêncio e
+  // só quem abrisse o job descobria se a conclusão entrou.
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("reference, title, client_name, report_link, external_report_attempts")
+    .eq("id", body.jobId)
+    .maybeSingle();
+  const jobLinha = [job?.reference, job?.title, job?.client_name].filter(Boolean).join(" · ");
+  const linkDoJob = String(job?.report_link ?? "").split("?")[0] || null;
+
   if (body.ok) {
+    const agora = new Date().toISOString();
     const { error } = await supabase
       .from("jobs")
-      .update({ external_report_submitted_at: new Date().toISOString(), external_report_error: null })
+      .update({ external_report_submitted_at: agora, external_report_error: null })
       .eq("id", body.jobId);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await avisar(
+      `${job?.reference ?? "job"} · job completed on Checkatrade`,
+      avisoHtml({
+        tom: "ok",
+        titulo: "Job completed on Checkatrade",
+        jobLinha,
+        detalhes: [`The Express robot attached the photos and marked it complete at ${quandoLondres(agora)}.`],
+        link: linkDoJob,
+        rotuloDoLink: "Open the job on Checkatrade",
+      }),
+    );
     return NextResponse.json({ ok: true });
   }
 
   // Falhou: guarda o motivo e conta a tentativa, com o mesmo teto de três da
   // Housekeep, para o robô não bater a cabeça a noite inteira.
-  const { data: atual } = await supabase
-    .from("jobs")
-    .select("external_report_attempts")
-    .eq("id", body.jobId)
-    .maybeSingle();
+  const motivo = (body.motivo ?? "unknown error").slice(0, 400);
+  const tentativas = (job?.external_report_attempts ?? 0) + 1;
 
   const { error } = await supabase
     .from("jobs")
     .update({
-      external_report_error: (body.motivo ?? "unknown error").slice(0, 400),
-      external_report_attempts: (atual?.external_report_attempts ?? 0) + 1,
+      external_report_error: motivo,
+      external_report_attempts: tentativas,
     })
     .eq("id", body.jobId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  await avisar(
+    `${job?.reference ?? "job"} · Checkatrade completion FAILED`,
+    avisoHtml({
+      tom: "erro",
+      titulo: "Checkatrade completion failed",
+      jobLinha,
+      detalhes: [
+        `Reason: ${motivo}`,
+        tentativas >= 3
+          ? `Attempt ${tentativas} of 3 · out of attempts, it needs a person now.`
+          : `Attempt ${tentativas} of 3 · the robot retries on its next pass.`,
+      ],
+      link: linkDoJob,
+      rotuloDoLink: "Open the job on Checkatrade",
+    }),
+  );
   return NextResponse.json({ ok: false, registrado: true });
 }
