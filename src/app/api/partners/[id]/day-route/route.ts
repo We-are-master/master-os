@@ -83,8 +83,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
   }
 
-  const STOP_SELECT =
-    "id, reference, title, status, client_name, property_address, latitude, longitude, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, partner_cost, job_type, hourly_partner_rate";
+  // select("*") defensivo (padrão da mig 281): route_seq só existe pós-282 e a
+  // rota não pode morrer num 400 de coluna enquanto o SQL não for colado.
+  const STOP_SELECT = "*";
 
   const [{ data: stopRows }, { data: openRows }] = await Promise.all([
     supabase
@@ -120,6 +121,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     partner_cost: number | null;
     job_type: string | null;
     hourly_partner_rate: number | null;
+    route_seq?: number | null;
   };
 
   // Parada cega geocoda na hora e grava — uma vez só por job.
@@ -139,6 +141,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   };
 
   const stops = await completar((stopRows ?? []) as Row[]);
+  // Ordem decidida à mão (drag no painel, mig 282) vence a janela de chegada;
+  // sem route_seq, fica a ordem do banco (scheduled_start_at asc).
+  if (stops.some((s) => s.route_seq != null)) {
+    stops.sort((a, b) => (a.route_seq ?? Number.MAX_SAFE_INTEGER) - (b.route_seq ?? Number.MAX_SAFE_INTEGER));
+  }
   const openNearby = ((openRows ?? []) as Row[]).filter(
     (r) => r.latitude != null && r.longitude != null,
   );

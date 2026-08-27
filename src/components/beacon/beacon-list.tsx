@@ -90,6 +90,14 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
       bucket.items.push(j);
       bucket.revenue += (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0);
     }
+    // Dentro de cada grupo, janela de chegada mais cedo primeiro; sem horário, no fim.
+    for (const bucket of out.values()) {
+      bucket.items.sort((a, b) => {
+        const ta = a.scheduled_start_at ? new Date(a.scheduled_start_at).getTime() : Infinity;
+        const tb = b.scheduled_start_at ? new Date(b.scheduled_start_at).getTime() : Infinity;
+        return ta === tb ? 0 : ta - tb;
+      });
+    }
     return out;
   }, [jobs]);
 

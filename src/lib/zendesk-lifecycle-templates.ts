@@ -77,21 +77,16 @@ export function buildJobCompletedHtml(args: CommonArgs): string {
 
 export function buildJobCancelledHtml(args: CommonArgs): string {
   const fname = firstName(args.customerName) || "there";
-  const reasonBlock = args.reason?.trim()
-    ? `
-  <div style="background:#F7F7FB;border:1px solid #E4E4EC;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
-    <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#6B6B85;">Reason</p>
-    <p style="margin:0;font-size:14px;line-height:21px;color:#3A3A55;white-space:pre-wrap;">${escapeHtml(args.reason!.trim())}</p>
-  </div>`
-    : "";
+  // Sem bloco de Reason (dono, 26/08): o motivo interno ("Client cancelled",
+  // troca de parceiro, margem) é conversa de escritório. Quem recebe só precisa
+  // saber QUE cancelou e que respondendo a gente resolve.
   const body = `
   <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
     Hi ${escapeHtml(fname)}, the job <strong>#${escapeHtml(args.reference)}</strong>
     (${escapeHtml(args.title)}) has been cancelled.
   </p>
-  ${reasonBlock}
   <p style="margin:0;font-size:13px;line-height:20px;color:#6B6B85;">
-    If this wasn't expected, just reply to this email — we're happy to help reschedule
+    If this wasn't expected, just reply to this email. We're happy to help reschedule
     or sort out any questions.
   </p>
   `;
