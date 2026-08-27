@@ -31,6 +31,7 @@ import type { Page } from "playwright";
 import type { RpaConfig } from "../config.js";
 import type { ItemDaFila, MasterOsClient } from "../masterOs/client.js";
 import { logger } from "../logger.js";
+import { mapearPedidoDePagamento } from "./requestPayment.js";
 
 /** Texto da ação que abre a conclusão, confirmado ao vivo em job aceito. */
 const ACAO_CONCLUIR = /mark job as complete/i;
@@ -276,6 +277,17 @@ export async function rodarConclusoes(
       const r = await concluir(page, item);
       await masterOs.registrarConclusao(item.jobId, r.ok, r.motivo);
       logger.info(`[completion] ${item.reference}: ${r.ok ? "concluido" : `falhou — ${r.motivo}`}`);
+      /**
+       * Material do report vira pedido de pagamento extra DEPOIS da conclusão.
+       * Por ora só o mapa (REQUEST_PAYMENT_MODE=map): lista a tela e tira
+       * print, sem clicar em nada que cobre o cliente. O live nasce quando o
+       * mapa for conferido — dinheiro de verdade não se clica no escuro.
+       */
+      if (r.ok && cfg.completion.requestPaymentMode === "map" && Number(item.extraCobranca ?? 0) > 0) {
+        await mapearPedidoDePagamento(page, item).catch((err) =>
+          logger.warn(`[request-payment:map] ${item.reference} falhou: ${String(err).slice(0, 200)}`),
+        );
+      }
     } catch (err) {
       const motivo = String(err).slice(0, 300);
       logger.error(`[completion] ${item.reference} explodiu`, err);

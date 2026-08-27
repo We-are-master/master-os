@@ -17,6 +17,7 @@
  */
 
 import { HOUSEKEEP_MAX_FOTOS } from "@/lib/public-report-templates";
+import { parseMaterialExtra } from "@/lib/report-material-extra";
 
 /**
  * A Housekeep tem DOIS formulários, e a diferença não é cosmética.
@@ -268,9 +269,17 @@ function montarDescricao(f: Record<string, unknown>, base: string): string {
   const texto = (v: unknown) => String(v ?? "").trim();
   const materiais = texto(f.materials_used) || texto(f.materials_charges_note);
   const cobranca = texto(f.additional_charges_note);
+  // O VALOR do material (campos novos do report) também só existe em prosa do
+  // lado deles — é a linha que justifica o "Additional charges? Yes".
+  const extra = parseMaterialExtra(f);
 
   const linhas = [base];
   if (materiais) linhas.push(`Materials/parts used: ${materiais}`);
+  if (extra.charge > 0) {
+    linhas.push(
+      `Materials bought on site: £${extra.cost.toFixed(2)} · charged to the customer: £${extra.charge.toFixed(2)}`,
+    );
+  }
   if (cobranca) linhas.push(`Additional charges: ${cobranca}`);
   return linhas.join("\n\n");
 }
@@ -569,11 +578,22 @@ export function payloadDoReport(input: {
    * "Additional charges? No" no radio, e "Materials/parts used: £24" na
    * descrição logo abaixo. Quem lê do outro lado escolhe em qual acreditar.
    */
-  const cobrou = Boolean(f.additional_charges ?? f.materials_charges);
+  /**
+   * O VALOR de material (campos novos do report) também é cobrança: £ na mão
+   * do cliente sem "Additional charges? Yes" é o relatório se contradizendo.
+   * E quando só o número existe (parceiro não escreveu nota), a nota nasce
+   * dos próprios números — a Housekeep exige o texto junto do radio.
+   */
+  const materialExtra = parseMaterialExtra(f);
+  const cobrou = Boolean(f.additional_charges ?? f.materials_charges) || materialExtra.charge > 0;
   let textoCobranca: string | null = null;
   if (cobrou) {
+    const notaMaterial =
+      materialExtra.charge > 0
+        ? `Materials bought on site: charged £${materialExtra.charge.toFixed(2)} to the customer`
+        : null;
     const r = exigirTexto(
-      f.additional_charges_note ?? f.materials_charges_note ?? f.materials_used,
+      f.additional_charges_note ?? f.materials_charges_note ?? f.materials_used ?? notaMaterial,
       "What additional work was required & how much did you charge",
       "there are additional charges",
     );
@@ -622,7 +642,14 @@ export function payloadDoReport(input: {
       recomendaServicos: recomenda,
       servicosRecomendados: textoRecomendacao,
       trabalhoAdicionalCobranca: textoCobranca,
-      clienteAprovouCobranca: Boolean(f.additional_charges_approved),
+      // Resposta explícita do parceiro ganha sempre. Quando a cobrança veio SÓ
+      // do valor de material (bool nunca respondido), o padrão é "aprovado":
+      // material no job se combina com o cliente antes de comprar — é o nosso
+      // processo, e "No" aqui faria a Housekeep estornar uma cobrança devida.
+      clienteAprovouCobranca:
+        typeof f.additional_charges_approved === "boolean"
+          ? f.additional_charges_approved
+          : materialExtra.charge > 0,
       // Sempre "bom" a menos que o parceiro tenha sinalizado problema: é
       // feedback nosso sobre a Housekeep, não sobre o job, e reclamar sem
       // motivo com quem manda 153 jobs não ajuda ninguém.

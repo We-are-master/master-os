@@ -222,6 +222,23 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         optional: true,
       },
       {
+        // O VALOR do material vira dinheiro do job na hora da gravação
+        // (report-material-extra.ts): custo reembolsa o parceiro, cobrança
+        // entra na receita. Em branco, cobrança = custo + 30% (regra da casa).
+        key: "materials_extra_cost",
+        label: "Materials bought on site (£)",
+        hint: "What was paid for parts/materials. Reimbursed to the partner. Leave empty if none.",
+        type: "number",
+        optional: true,
+      },
+      {
+        key: "materials_extra_charge",
+        label: "Materials charge to the client (£)",
+        hint: "Leave empty to charge cost + 30% (our standard).",
+        type: "number",
+        optional: true,
+      },
+      {
         key: "completion_status",
         label: "Completion status",
         type: "select",
@@ -278,6 +295,22 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         label: "Materials note",
         hint: "What you bought and how much you charged. The client platform requires this.",
         type: "text",
+        showIf: { key: "materials_charges", equals: true },
+      },
+      {
+        key: "materials_extra_cost",
+        label: "Materials bought on site (£)",
+        hint: "What was paid for materials. Reimbursed to the partner. Leave empty if none.",
+        type: "number",
+        optional: true,
+        showIf: { key: "materials_charges", equals: true },
+      },
+      {
+        key: "materials_extra_charge",
+        label: "Materials charge to the client (£)",
+        hint: "Leave empty to charge cost + 30% (our standard).",
+        type: "number",
+        optional: true,
         showIf: { key: "materials_charges", equals: true },
       },
       {
@@ -344,6 +377,20 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
     final: [
       { key: "job_complete",       label: "Job complete?",            type: "boolean" },
       { key: "customer_inspected", label: "Customer inspected the work?", type: "boolean" },
+      {
+        key: "materials_extra_cost",
+        label: "Materials bought on site (£)",
+        hint: "Cleaning products/supplies paid on site. Reimbursed to the partner. Leave empty if none.",
+        type: "number",
+        optional: true,
+      },
+      {
+        key: "materials_extra_charge",
+        label: "Materials charge to the client (£)",
+        hint: "Leave empty to charge cost + 30% (our standard).",
+        type: "number",
+        optional: true,
+      },
     ],
   },
   certificate: {

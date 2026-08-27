@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { avisar, avisoHtml, quandoLondres, urlsDeFoto } from "@/lib/stefane/run-external-report";
 import { pickReportTemplate } from "@/lib/public-report-templates";
+import { parseMaterialExtra } from "@/lib/report-material-extra";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +107,13 @@ export async function GET(req: NextRequest) {
     // documento, e concluir vazio é pior do que não concluir.
     if (fotos.length === 0) continue;
 
+    // Material cobrado do cliente no report (report-material-extra): depois de
+    // concluir, o robô do Express pede esse pagamento extra ao cliente pelo
+    // portal. Zero = nada a pedir.
+    const extraCobranca = parseMaterialExtra(
+      ((j.final_report as { data?: Record<string, unknown> } | null)?.data ?? null),
+    ).charge;
+
     fila.push({
       jobId: j.id,
       reference: j.reference,
@@ -115,6 +123,7 @@ export async function GET(req: NextRequest) {
       // na tela deles.
       ehCertificado: pickReportTemplate({ title: j.title }) === "certificate",
       fotos,
+      extraCobranca,
     });
   }
 
