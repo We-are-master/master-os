@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cobranca diaria de relatorio, 20h de Londres.
+
+  Instalar:
+    cp scripts/launchd/com.fixfy.partner-missing-reports.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.fixfy.partner-missing-reports.plist
+
+  Desligar:
+    launchctl unload ~/Library/LaunchAgents/com.fixfy.partner-missing-reports.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fixfy.partner-missing-reports</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/victorsouza/master-os &amp;&amp; npx tsx scripts/partner-missing-reports-email.mts --enviar</string>
+  </array>
+  <!--
+    DUAS horas locais, de proposito.
+
+    O Mac roda em UTC-3 e o Reino Unido troca de BST para GMT no fim de
+    outubro, entao uma hora fixa aqui escorrega uma hora no inverno:
+      verao  (BST): 16h locais = 20h de Londres
+      inverno (GMT): 17h locais = 20h de Londres
+
+    As duas passadas disparam o ano inteiro; quem decide se e hora e o guarda
+    do script, que le o relogio de Londres e so envia entre 20h e 22h. A trava
+    de um-email-por-parceiro-por-dia impede email dobrado quando as duas
+    passadas caem dentro da janela.
+  -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/Users/victorsouza/master-os/.logs/partner-missing-reports.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/victorsouza/master-os/.logs/partner-missing-reports.log</string>
+</dict>
+</plist>
