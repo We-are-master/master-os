@@ -1,6 +1,7 @@
 "use client";
 
 import type { JobDetailBundle } from "@/services/jobs";
+import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -891,11 +892,7 @@ function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string
   return entries
     .slice(0, 25)
     .map((entry) => {
-      const when = new Date(entry.createdAt).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
+      const when = formatBritishDate(entry.createdAt);
       const by = entry.userName ? ` · ${entry.userName}` : "";
       const reason = entry.reason?.trim() ? `\nReason: ${entry.reason.trim()}` : "";
       const line = `${when} · ${entry.extraType} · ${formatSignedCurrency(extraHistorySignedAmount(entry))}${by}${reason}`;
@@ -2956,6 +2953,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? sortPricingPresetsDisplay(parsePricingPresets(partnerAssignService.pricing_presets))
         : [],
     [partnerAssignService],
+  );
+  /**
+   * Bands por modo (dono, 24/08): Half Day e Daily Rate são presets FIXED no
+   * catálogo (fixed_price + partner_cost) e moram no braço Fixed; o braço
+   * Hourly só oferece bands hourly. Antes tudo aparecia no Hourly.
+   */
+  const partnerAssignHourlyPresetOptions = useMemo(
+    () => partnerAssignPresetOptions.filter((b) => b.pricing_mode !== "fixed"),
+    [partnerAssignPresetOptions],
+  );
+  const partnerAssignFixedPresetOptions = useMemo(
+    () => partnerAssignPresetOptions.filter((b) => b.pricing_mode === "fixed"),
+    [partnerAssignPresetOptions],
   );
   const applyPartnerAssignHourlyFromCatalog = useCallback(
     (service: CatalogService, presetId?: string | null) => {
@@ -9094,7 +9104,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               </span>
                             )}
                             <span className="text-[10px] text-text-tertiary">
-                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              · {formatBritishDate(p.payment_date)}
                             </span>
                           </div>
                           {ledgerTag ? (
@@ -9359,11 +9369,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     )}
                                     <span className="text-[10px] text-text-tertiary">
                                       ·{" "}
-                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
-                                        day: "2-digit",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}
+                                      {formatBritishDate(p.payment_date)}
                                     </span>
                                   </div>
                                   {ledgerTag ? (
@@ -9415,11 +9421,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     </Badge>
                                     <span className="text-[10px] text-text-tertiary">
                                       ·{" "}
-                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
-                                        day: "2-digit",
-                                        month: "short",
-                                        year: "numeric",
-                                      })}
+                                      {formatBritishDate(p.payment_date)}
                                     </span>
                                   </div>
                                   {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
@@ -11115,7 +11117,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     applyPartnerAssignHourlyFromCatalog(service);
                   }}
                 />
-                {partnerAssignPresetOptions.length > 0 ? (
+                {partnerAssignHourlyPresetOptions.length > 0 ? (
                   <Select
                     label="Price band"
                     value={partnerAssignPresetId}
@@ -11129,7 +11131,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     }}
                     options={[
                       { value: "", label: "Default" },
-                      ...partnerAssignPresetOptions.map((p) => ({
+                      ...partnerAssignHourlyPresetOptions.map((p) => ({
                         value: p.id,
                         label: p.label,
                       })),
@@ -11231,6 +11233,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             ) : (
               <div className="space-y-2">
+                {partnerAssignFixedPresetOptions.length > 0 ? (
+                  <Select
+                    label="Rate"
+                    value={partnerAssignPresetId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setPartnerAssignPresetId(id);
+                      const band = partnerAssignFixedPresetOptions.find((b) => b.id === id);
+                      if (band) {
+                        if (Number(band.fixed_price) > 0) setPartnerAssignFixedClientPrice(String(band.fixed_price));
+                        if (Number(band.partner_cost) > 0) setPartnerAssignFixedCost(String(band.partner_cost));
+                      }
+                    }}
+                    options={[
+                      { value: "", label: "Custom fixed price" },
+                      ...partnerAssignFixedPresetOptions.map((b) => ({ value: b.id, label: b.label })),
+                    ]}
+                  />
+                ) : null}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <label className="flex flex-col gap-1 text-xs text-text-secondary">
                     <span>Client price £</span>
@@ -11439,6 +11460,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       const titleOut =
                         normalizeTypeOfWork(partnerAssignService.name) || partnerAssignService.name;
                       partnerPatch.job_type = "hourly";
+                      partnerPatch.rate_basis = null;
                       partnerPatch.catalog_service_id = partnerAssignService.id;
                       partnerPatch.catalog_pricing_preset_id = partnerAssignPresetId || null;
                       partnerPatch.title = titleOut;
@@ -11456,6 +11478,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ) / 100;
                     } else {
                       partnerPatch.job_type = "fixed";
+                      // O band fixed escolhido vira o acordo gravado: Half Day
+                      // e Daily Rate são o que o parceiro lê no email/portal.
+                      const fixedBand = partnerAssignFixedPresetOptions.find(
+                        (b) => b.id === partnerAssignPresetId,
+                      );
+                      partnerPatch.catalog_pricing_preset_id = fixedBand ? fixedBand.id : null;
+                      partnerPatch.rate_basis = fixedBand
+                        ? /half\s*day/i.test(fixedBand.label)
+                          ? "half_day"
+                          : /daily|day\s*rate/i.test(fixedBand.label)
+                            ? "daily"
+                            : "fixed"
+                        : null;
                       partnerPatch.partner_cost = partnerAssignBaseCost;
                       const clientPrice = Math.round(Math.max(0, Number(partnerAssignFixedClientPrice) || 0) * 100) / 100;
                       partnerPatch.client_price = clientPrice;

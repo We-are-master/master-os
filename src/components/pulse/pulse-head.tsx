@@ -1,6 +1,7 @@
 "use client";
 
 import { Crown, Download } from "lucide-react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { LiveIndicator } from "@/components/fx/primitives";
@@ -146,10 +147,5 @@ function getGreeting() {
 }
 
 function formatLongDate(d: Date): string {
-  return d.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  return formatBritishDate(d);
 }

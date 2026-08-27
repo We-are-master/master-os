@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, Suspense } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
@@ -181,7 +182,7 @@ function renderAccountNextPayment(item: Account, orgCtx: AccountPaymentOrgContex
   if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
   const iso = dueDateIsoFromAccountPaymentTerms(new Date(), item.payment_terms, orgCtx);
   const d = new Date(iso + "T12:00:00");
-  const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const label = formatBritishDate(d);
   const isOverdue = d < new Date();
   return (
     <span className={cn("text-xs font-medium tabular-nums", isOverdue ? "text-red-500" : "text-text-primary")}>
@@ -2046,12 +2047,7 @@ function AccountDetailDrawer({
                 const terms = edit.payment_terms;
                 if (!terms) return null;
                 const iso = dueDateIsoFromAccountPaymentTerms(new Date(), terms, paymentOrgCtx);
-                const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-                });
+                const label = formatBritishDate(new Date(iso + "T12:00:00"));
                 const isDor = /due\s+on\s+receipt/i.test(terms);
                 return (
                   <div className="flex items-start gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
@@ -2128,7 +2124,7 @@ function AccountDetailDrawer({
                         {invoiceStatusBadge(inv.status)}
                       </div>
                       <p className="text-[11px] text-text-tertiary">{inv.client_name}{inv.job_reference ? ` · ${inv.job_reference}` : ""}</p>
-                      <p className="text-xs text-text-tertiary mt-0.5">Due {new Date(inv.due_date).toLocaleDateString()}</p>
+                      <p className="text-xs text-text-tertiary mt-0.5">Due {formatBritishDate(inv.due_date)}</p>
                     </div>
                     <p className="text-sm font-bold tabular-nums shrink-0">{formatCurrency(inv.amount)}</p>
                   </div>
@@ -2309,7 +2305,7 @@ function PortalUsersTabSection({ accountId, accountName }: { accountId: string; 
                   </p>
                   <p className="text-[10px] text-text-tertiary mt-0.5">
                     {u.last_signed_in_at
-                      ? `Last signed in ${new Date(u.last_signed_in_at).toLocaleDateString()}`
+                      ? `Last signed in ${formatBritishDate(u.last_signed_in_at)}`
                       : "Never signed in"}
                   </p>
                 </div>
@@ -2357,7 +2353,7 @@ function PaymentTermsModal({
 
   const iso = local ? dueDateIsoFromAccountPaymentTerms(new Date(), local, paymentOrgCtx) : null;
   const nextLabel = iso
-    ? new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    ? formatBritishDate(new Date(iso + "T12:00:00"))
     : null;
 
   return (

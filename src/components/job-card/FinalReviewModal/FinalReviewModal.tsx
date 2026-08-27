@@ -218,8 +218,6 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * bloqueio de verdade (foto faltando) nada disso roda, porque aí o caminho é
    * consertar o relatório, e é o passo 3 que diz como.
    */
-  const [enviandoAgora, setEnviandoAgora] = useState(false);
-
   const aprovarEEnviar = async () => {
     const precisaEnviar =
       !!jobUuid && !!envioExterno && !envioExterno.bloqueio && envioExterno.estado !== "enviado";
@@ -230,39 +228,25 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
       return;
     }
 
-    setEnviandoAgora(true);
-    try {
-      if (envioExterno?.estado !== "enviando") {
-        await fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" });
-      }
-      /**
-       * Espera até 6 minutos, do mesmo tamanho do teto do lado do servidor.
-       *
-       * Um relatório de limpeza com 124 fotos leva minutos para subir, e foi
-       * por desistir cedo que o JOB-9454 entrou na Housekeep e ficou marcado
-       * como falha aqui dentro. Quem manda no relógio é o número de fotos.
-       */
-      const limite = Date.now() + 6 * 60_000;
-      while (Date.now() < limite) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const r = await fetch(`/api/jobs/${jobUuid}/submit-external-report`).catch(() => null);
-        if (!r?.ok) continue;
-        const d = (await r.json()) as { estado?: string };
-        if (d.estado === "enviando") continue;
-        break;
-      }
-    } finally {
-      setEnviandoAgora(false);
-      recarregar();
-    }
     /**
-     * Finaliza de todo jeito depois da espera.
+     * Dispara e SAI — o envio termina em segundo plano (dono, 27/08).
      *
-     * Se o envio falhou, o passo 3 já está mostrando o motivo e o bloqueio
-     * volta a valer no próximo render: quem decide entre consertar e forçar é
-     * a pessoa, com o motivo na tela. Segurar o clique aqui em silêncio seria
-     * o beco de novo.
+     * A espera de até 6 minutos aqui dentro nunca fez o envio acontecer: a
+     * rota devolve 202 na hora e o preenchimento roda no servidor de qualquer
+     * jeito. O laço só ficava OLHANDO, e o preço era a tela inteira travada em
+     * "Sending report…" com a pessoa parada na frente dela — às vezes minutos,
+     * às vezes para sempre quando o processo do envio morria no meio.
+     *
+     * Quem conta o desfecho é o passo 3, que já se atualiza sozinho enquanto o
+     * card está aberto, e o chip vivo do card depois de fechado. Falha grava
+     * `external_report_error` e dispara o email de aviso, então nada some em
+     * silêncio por ninguém estar olhando.
      */
+    if (envioExterno?.estado !== "enviando") {
+      void fetch(`/api/jobs/${jobUuid}/submit-external-report`, { method: "POST" })
+        .catch(() => {})
+        .finally(() => recarregar());
+    }
     onApprove();
   };
 
@@ -314,7 +298,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * descrição —, porque aí nenhum clique resolve e o caminho é o passo 3.
    */
   const canApprove =
-    attestationsOk && docsReady && !submitting && !enviandoAgora && (!envioBloqueado || forcarSemEnvio);
+    attestationsOk && docsReady && !submitting && (!envioBloqueado || forcarSemEnvio);
 
   /**
    * O botão diz o que está acontecendo: "Finalise & approve" quando o
@@ -494,13 +478,11 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                   onApprove={aprovarEEnviar}
                   forcado={aprovandoForcado}
                   rotulo={
-                    enviandoAgora
-                      ? "Sending report…"
-                      : aprovandoForcado
-                        ? "Force approve"
-                        : envioPendente
-                          ? "Send report & finalise"
-                          : "Finalise & approve"
+                    aprovandoForcado
+                      ? "Force approve"
+                      : envioPendente
+                        ? "Send report & finalise"
+                        : "Finalise & approve"
                   }
                 />
               </>

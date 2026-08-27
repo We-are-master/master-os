@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -162,7 +163,7 @@ export function SelfBillHistoryClient() {
         const at = settledAt(r);
         return (
           <span className="text-[12.5px] tabular-nums text-text-secondary">
-            {at ? new Date(at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+            {at ? formatBritishDate(at) : "—"}
           </span>
         );
       },

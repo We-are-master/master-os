@@ -48,6 +48,7 @@ import {
 } from "@/lib/zendesk-webhook-pricing";
 import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
+import { autoAssignGate, suggestedPartnerMarginPctFor } from "@/lib/auto-assign-gate";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -588,6 +589,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // A chave única do auto assign: ligada, TODO job injetado nasce candidato —
+  // o portão (completude + piso de margem) decide logo abaixo se entra de
+  // verdade ou cai em unassigned (Needs Review). Desligada, nada muda.
+  if (!autoAssign && process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
+    autoAssign = true;
+    zendeskCorrections.push("auto_assign_forced_by_global_switch");
+  }
+
   propertyAddress = propertyAddress.trim();
   if (!propertyAddress) {
     return NextResponse.json(
@@ -702,7 +711,8 @@ export async function POST(req: NextRequest) {
       catalog: catalog.row,
       accountOverride,
       band: bandResult.hasBands ? bandResult.band : null,
-      setupMarginPct: targetMarginPct,
+      // 40% trades / 30% cleaning — a categoria decide a sugestão (Fase 2).
+      setupMarginPct: suggestedPartnerMarginPctFor(serviceType, targetMarginPct),
     });
     hourlyClientRate = hourlyResolved.hourlyClientRate;
     hourlyPartnerRate = hourlyResolved.hourlyPartnerRate;
@@ -742,10 +752,35 @@ export async function POST(req: NextRequest) {
       clientPrice,
       partnerCostSent,
       partnerCost,
-      targetMarginPct,
+      targetMarginPct: suggestedPartnerMarginPctFor(serviceType, targetMarginPct),
     });
     clientPrice = fixedResolved.clientPrice;
     partnerCost = fixedResolved.partnerCost;
+  }
+
+  // ─── Portão do auto assign (Fase 2) ─────────────────────────────────
+  // Sem os seis campos (Trade, Postcode, Customer Price, Arrival Window,
+  // Scope, Partner Suggested Pay) ou com margem abaixo do piso, o job NÃO
+  // entra na vitrine: nasce unassigned com o motivo gravado (Needs Review).
+  let autoAssignBlocked: string[] | null = null;
+  if (autoAssign) {
+    const gate = autoAssignGate({
+      serviceType,
+      propertyAddress,
+      scope: description,
+      scheduledStartAt: startIso,
+      scheduledEndAt: endIso,
+      jobType: rateType,
+      clientPrice,
+      partnerCost,
+      hourlyClientRate,
+      hourlyPartnerRate,
+    });
+    if (!gate.ok) {
+      autoAssign = false;
+      autoAssignBlocked = gate.missing;
+      console.warn("[api/jobs] auto assign blocked by gate:", gate.missing.join(", "));
+    }
   }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
@@ -843,6 +878,12 @@ export async function POST(req: NextRequest) {
   }
   if (internalNotesIn) {
     jobRow.internal_notes = internalNotesIn;
+  }
+  if (autoAssignBlocked) {
+    const aviso = `NEEDS REVIEW · auto assign blocked: ${autoAssignBlocked.join(", ")}.`;
+    jobRow.internal_notes = jobRow.internal_notes
+      ? `${aviso}\n${String(jobRow.internal_notes)}`
+      : aviso;
   }
 
   const { data: inserted, error: insErr } = await supabase
@@ -1019,6 +1060,7 @@ export async function POST(req: NextRequest) {
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
       ...(routedPartner ? { routed_partner: routedPartner } : {}),
       ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
+      ...(autoAssignBlocked ? { warning: "auto_assign_blocked", auto_assign_blocked: autoAssignBlocked } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
     },

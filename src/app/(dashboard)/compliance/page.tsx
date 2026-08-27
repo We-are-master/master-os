@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { toast } from "sonner";
 import { Plus, FileCheck, Calendar, Upload, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -47,7 +48,7 @@ const STATUS_BADGE: Record<ComplianceCertificateStatus, { label: string; variant
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 function daysLeftFromExpiry(expiry: string): number {

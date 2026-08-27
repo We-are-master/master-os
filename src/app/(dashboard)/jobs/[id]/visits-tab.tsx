@@ -409,7 +409,7 @@ function VisitRow({
   completeTitle?: string;
 }) {
   const when = [
-    date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : null,
+    date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" }) : null,
     startAt ? startAt.slice(11, 16) : null,
   ].filter(Boolean).join(" ");
 

@@ -22,6 +22,7 @@ import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
+import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskCancellationFields } from "@/lib/zendesk-job-cancellation-sync";
@@ -184,6 +185,9 @@ export async function cancelJobFromZendeskWebhook(
       },
       supabase,
     ).catch((e) => console.error("[zendesk-cancel-webhook] self-bill cancel:", e)),
+    cancelOpenVisitsForJobCancellation(job.id, supabase).catch((e) =>
+      console.error("[zendesk-cancel-webhook] visits cancel:", e),
+    ),
   ]);
 
   await supabase.from("audit_logs").insert({

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { notFound } from "next/navigation";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { ArrowLeft, Calendar, MapPin, User, Briefcase } from "lucide-react";
@@ -42,7 +43,7 @@ function fmtDateTime(iso: string | null): string {
 }
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 interface PageProps {
