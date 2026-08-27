@@ -870,7 +870,7 @@ function JobsPageContent() {
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
   /** Assign modal opened from the Partner column of the list. */
-  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string } | null>(null);
+  const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string; initialPartnerId?: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -3384,7 +3384,17 @@ function JobsPageContent() {
               {loading ? (
                 <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>
               ) : (
-                <JobsMapView jobs={scheduleSortedData} dateYmd={mapRouteDateYmd} onOpenJob={openJobDetail} />
+                <JobsMapView
+                  jobs={scheduleSortedData}
+                  dateYmd={mapRouteDateYmd}
+                  onOpenJob={openJobDetail}
+                  // O ranking escolhe QUEM; o modal continua decidindo preço e
+                  // disparando os avisos — assign de um clique sem confirmação
+                  // seria dinheiro e notificação real no escuro.
+                  onAssignJob={(job, partnerId) =>
+                    setAssignTarget({ id: job.id, reference: job.reference, initialPartnerId: partnerId })
+                  }
+                />
               )}
             </div>
           )}
@@ -3628,6 +3638,7 @@ function JobsPageContent() {
         <AssignPartnerModal
           jobId={assignTarget.id}
           jobReference={assignTarget.reference}
+          initialPartnerId={assignTarget.initialPartnerId}
           isOpen={assignTarget !== null}
           onClose={() => setAssignTarget(null)}
           onAssigned={() => {
