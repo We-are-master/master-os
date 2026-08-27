@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatBritishDate } from "@/lib/utils/date";
 import { toast } from "sonner";
 import { Plus, CalendarClock, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -43,7 +44,7 @@ const STATUS_BADGE: Record<PpmStatus, { label: string; variant: "success" | "war
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 export default function PpmPage() {

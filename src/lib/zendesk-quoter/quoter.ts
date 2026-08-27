@@ -18,6 +18,8 @@
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { soOqueENovo } from "./sem-citacao";
 
 const MAX_IMAGENS = 6;
@@ -35,6 +37,7 @@ export type TicketLido = {
   id: number;
   subject: string;
   requesterName: string | null;
+  requesterEmail: string | null;
   organizationId: number | null;
   /** O thread em texto, na ordem, com quem falou. */
   thread: string;
@@ -74,7 +77,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
       html_body?: string;
       attachments?: Array<{ file_name: string; content_url: string; content_type: string; size: number }>;
     }>;
-    users?: Array<{ id: number; name: string; role: string }>;
+    users?: Array<{ id: number; name: string; role: string; email?: string | null }>;
   };
 
   const quem = new Map((cJson.users ?? []).map((u) => [u.id, `${u.name} (${u.role})`]));
@@ -126,6 +129,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     id: tJson.ticket.id,
     subject: tJson.ticket.subject,
     requesterName: requester?.name ?? null,
+    requesterEmail: requester?.email?.trim() || null,
     organizationId: tJson.ticket.organization_id,
     thread: partes.join("\n\n---\n\n"),
     threadNova: partesNovas.join("\n\n---\n\n"),
@@ -210,9 +214,11 @@ export function montarNotaInterna(
   ticket: TicketLido,
   pedido: PedidoConsolidado,
   resultado: ResultadoPriceCheck,
+  quoteRef?: string | null,
 ): string {
   const linhas: string[] = [
     "🤖 AI QUOTE DRAFT — internal only (phase 1: review and send manually)",
+    ...(quoteRef ? [`Quote ${quoteRef} created in the OS (Quotes → New).`] : []),
     "",
     "── Ready to send to the customer (copy from here) ──",
     resultado.presentable,
@@ -257,7 +263,106 @@ export type ResultadoDoQuoter = {
   nota: string;
   pedido: PedidoConsolidado;
   resultado: ResultadoPriceCheck;
+  /** Referência da quote criada no OS (ou já existente), quando deu certo. */
+  quoteRef: string | null;
 };
+
+/**
+ * O rascunho deixa de morrer no Zendesk: a mesma cotação vira uma linha em
+ * `quotes` no OS, idempotente por (external_source, external_ref) — o MESMO
+ * contrato do webhook /api/webhooks/desk/quote-request.
+ *
+ * A chave única do auto-flow (AUTO_ASSIGN_ALL_JOBS=1) decide o modo: ligada,
+ * a quote nasce em `bidding` como partner quote e o broadcast do portal a
+ * mostra em Available Quotes na hora; desligada, nasce draft interna e o
+ * Start Bidding continua sendo decisão de gente.
+ */
+export async function garantirQuoteNoOs(
+  ticket: TicketLido,
+  pedido: PedidoConsolidado,
+  resultado: ResultadoPriceCheck,
+): Promise<{ quoteId: string; reference: string; jaExistia: boolean } | null> {
+  const supabase = createServiceClient();
+  const ticketRef = String(ticket.id);
+
+  const { data: existing } = await supabase
+    .from("quotes")
+    .select("id, reference")
+    .eq("external_source", "zendesk")
+    .eq("external_ref", ticketRef)
+    .maybeSingle();
+  if (existing) {
+    const e = existing as { id: string; reference: string };
+    return { quoteId: e.id, reference: e.reference, jaExistia: true };
+  }
+
+  // O trade canônico sai do próprio price-check (primeiro serviço casado);
+  // sem match nenhum a quote ainda nasce, só sem tipo forte.
+  const tradeBruto = resultado.quote.services[0]?.trade ?? "";
+  const serviceType = normalizeTypeOfWork(tradeBruto).trim() || tradeBruto.trim() || "General Maintenance";
+  const catalogServiceId = await resolveQuoteCatalogServiceId(supabase, serviceType).catch(() => null);
+
+  const clientName = ticket.requesterName?.trim() || ticket.subject.slice(0, 80);
+  let clientId: string | null = null;
+  const email = ticket.requesterEmail?.trim().toLowerCase() || null;
+  if (email) {
+    const { data: clientRow } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("email", email)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (clientRow) clientId = (clientRow as { id: string }).id;
+  }
+
+  const { data: refData, error: refErr } = await supabase.rpc("next_quote_ref");
+  if (refErr || !refData) {
+    console.error("[quoter] next_quote_ref falhou:", refErr);
+    return null;
+  }
+
+  const total = resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
+  const autoFlow = process.env.AUTO_ASSIGN_ALL_JOBS === "1";
+  const { data: inserted, error: insertErr } = await supabase
+    .from("quotes")
+    .insert({
+      reference: String(refData),
+      title: serviceType,
+      client_id: clientId,
+      client_name: clientName,
+      client_email: email,
+      property_address: null,
+      service_type: serviceType,
+      catalog_service_id: catalogServiceId,
+      status: autoFlow && catalogServiceId ? "bidding" : "draft",
+      total_value: total,
+      cost: arredonda2(resultado.quote.materialsCost),
+      sell_price: total,
+      margin_percent: 0,
+      partner_cost: 0,
+      partner_quotes_count: 0,
+      quote_type: autoFlow && catalogServiceId ? "partner" : "internal",
+      deposit_percent: 0,
+      deposit_required: 0,
+      scope: pedido.scopeOfWork || pedido.quoteRequest,
+      customer_accepted: false,
+      customer_deposit_paid: false,
+      external_source: "zendesk",
+      external_ref: ticketRef,
+    })
+    .select("id, reference")
+    .single();
+  if (insertErr || !inserted) {
+    console.error("[quoter] insert em quotes falhou:", insertErr);
+    return null;
+  }
+  const i = inserted as { id: string; reference: string };
+  return { quoteId: i.id, reference: i.reference, jaExistia: false };
+}
+
+const arredonda2 = (v: number) => Math.round(v * 100) / 100;
 
 export async function cotarTicket(ticketId: number, postar: boolean): Promise<ResultadoDoQuoter> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -266,9 +371,19 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
   const ticket = await lerTicketCompleto(ticketId);
   const pedido = await consolidarPedido(ticket, apiKey);
   const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.scopeOfWork);
-  const nota = montarNotaInterna(ticket, pedido, resultado);
+
+  let quoteRef: string | null = null;
+  if (postar) {
+    const criada = await garantirQuoteNoOs(ticket, pedido, resultado).catch((e) => {
+      console.error("[quoter] garantirQuoteNoOs:", e);
+      return null;
+    });
+    quoteRef = criada?.reference ?? null;
+  }
+
+  const nota = montarNotaInterna(ticket, pedido, resultado, quoteRef);
   if (postar) await postarNotaInterna(ticketId, nota);
-  return { ticketId, nota, pedido, resultado };
+  return { ticketId, nota, pedido, resultado, quoteRef };
 }
 
 

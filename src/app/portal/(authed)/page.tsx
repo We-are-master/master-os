@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { ClipboardList, FileText, Briefcase, Receipt, ArrowRight } from "lucide-react";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
 import { fetchPortalDashboardKpis } from "@/lib/server-fetchers/portal-dashboard";
@@ -34,7 +35,7 @@ function timeAgo(iso: string): string {
   if (h < 24)   return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30)   return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatBritishDate(iso);
 }
 
 export default async function PortalDashboardPage() {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatBritishDate } from "@/lib/utils/date";
 import { Briefcase, ChevronRight } from "lucide-react";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
@@ -36,7 +37,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBritishDate(iso);
 }
 
 export default async function PortalJobsPage() {

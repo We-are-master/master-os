@@ -12,6 +12,7 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
+import { cancelOpenVisitsForJobCancellation } from "./job-visits";
 import {
   applyOfficeRescheduleStatus,
   jobPatchApprovesReport,
@@ -1191,6 +1192,22 @@ export async function updateJob(
       ]);
     } catch (e) {
       console.error("cancelOpenInvoicesForJobCancellation/selfBill:", e);
+    }
+  }
+  if (row.status === "cancelled") {
+    // Fora do gate skipCancelDocVoid: o flag pausa a anulação de documentos
+    // financeiros (o fluxo de fees finaliza depois), mas as visitas não têm um
+    // segundo dono — ou cancelam aqui, ou ficam agendadas para sempre.
+    void cancelOpenVisitsForJobCancellation(row.id).catch((e) => {
+      console.error("cancelOpenVisitsForJobCancellation:", e);
+    });
+    // Convites de auto assign viram lost e as side conversations fecham em
+    // QUALQUER caminho que cancele por updateJob (o hook de cancel já chama
+    // isso por conta própria; repetir é seguro — a rota só toca 'invited').
+    if (typeof window !== "undefined") {
+      void fetch(`/api/jobs/${encodeURIComponent(row.id)}/auto-assign-cancel-cleanup`, {
+        method: "POST",
+      }).catch((e) => console.error("auto-assign-cancel-cleanup:", e));
     }
   }
   const partnerId = row.partner_id?.trim();

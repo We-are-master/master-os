@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
           ok: false,
           error: "job_taken",
           jobReference: job.reference,
-          message: "This job has already been taken by another partner. Thanks for being quick!",
+          message: "This job has already been booked by another professional. Thanks for being quick!",
         },
         { status: 409 },
       );

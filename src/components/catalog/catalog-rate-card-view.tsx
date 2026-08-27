@@ -1,4 +1,5 @@
 import type { CatalogRateCardPayload } from "@/lib/catalog-rate-card-core";
+import { formatBritishDate } from "@/lib/utils/date";
 import type { CatalogRateCardContent } from "@/lib/catalog-rate-card-content-types";
 import type { CatalogRateCardServiceRow } from "@/lib/catalog-rate-card-core";
 import { FIXFY_WHITE_LOGO_URL } from "@/lib/client-catalog-content";
@@ -89,11 +90,7 @@ function ServiceCard({ svc }: { svc: CatalogRateCardServiceRow }) {
 }
 
 export function CatalogRateCardView({ payload, content, className }: CatalogRateCardViewProps) {
-  const generated = new Date(payload.generatedAt).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const generated = formatBritishDate(payload.generatedAt);
   const { hero, about, commitments, pricingIntro } = content;
 
   return (

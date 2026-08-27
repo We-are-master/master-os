@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/** Quantas linhas lemos antes de escolher. Duplicata real e sempre 2 ou 3. */
+const MATCH_LIMIT = 20;
+
 export function clientNamesEqual(a: string | null | undefined, b: string | null | undefined): boolean {
   const x = String(a ?? "").trim().toLowerCase();
   const y = String(b ?? "").trim().toLowerCase();
@@ -43,6 +46,23 @@ function canonicalName(row: ClientRow | null | undefined, fallback: string): str
 }
 
 /**
+ * O mesmo email pode estar em mais de um cliente da conta (dado sujo, nao erro).
+ * Escolhe a linha cujo nome bate com o do ticket; sem nenhuma, devolve null e o
+ * chamador cai na busca por nome.
+ */
+export function pickClientMatchedByEmail(
+  rows: ClientRow[],
+  clientName: string,
+  accountCompanyName: string | null | undefined,
+): ClientRow | null {
+  const usaveis = rows.filter(
+    (row) => row.id && shouldReuseClientByEmail(row.full_name, clientName, accountCompanyName),
+  );
+  // Entre as permitidas, o nome do ticket desempata; senao vale a mais antiga.
+  return usaveis.find((row) => clientNamesEqual(row.full_name, clientName)) ?? usaveis[0] ?? null;
+}
+
+/**
  * Find or create the end-customer client for a Zendesk job.
  *
  * Email-only reuse is skipped when the matched row's full_name differs from
@@ -65,10 +85,15 @@ export async function resolveClientIdForZendeskJob(
       .eq("source_account_id", accountId)
       .ilike("email", clientEmail)
       .is("deleted_at", null)
-      .maybeSingle();
+      .order("created_at", { ascending: true })
+      .limit(MATCH_LIMIT);
     if (emailErr) throw new Error(emailErr.message);
-    const row = (byEmail ?? null) as ClientRow | null;
-    if (row?.id && shouldReuseClientByEmail(row.full_name, clientName, accountCompanyName)) {
+    const row = pickClientMatchedByEmail(
+      ((byEmail ?? []) as ClientRow[]),
+      clientName,
+      accountCompanyName,
+    );
+    if (row?.id) {
       await backfillClientPhone(supabase, row, clientPhone);
       return {
         clientId: row.id,
@@ -84,9 +109,11 @@ export async function resolveClientIdForZendeskJob(
     .eq("source_account_id", accountId)
     .ilike("full_name", clientName)
     .is("deleted_at", null)
-    .maybeSingle();
+    .order("created_at", { ascending: true })
+    .limit(MATCH_LIMIT);
   if (nameErr) throw new Error(nameErr.message);
-  const nameRow = (byName ?? null) as ClientRow | null;
+  // Mesmo nome repetido na conta: a linha mais antiga e a canonica.
+  const nameRow = (((byName ?? []) as ClientRow[]).find((row) => row.id) ?? null) as ClientRow | null;
   if (nameRow?.id) {
     await backfillClientPhone(supabase, nameRow, clientPhone);
     if (clientEmail) {

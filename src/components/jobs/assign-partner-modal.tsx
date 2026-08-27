@@ -33,7 +33,7 @@ const gbp = (n: number) =>
  * modal (it calls the shared `assignPartnerToJob`), narrowed to what the office
  * decides at this point: who goes, what we pay, what the client pays.
  */
-export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign , initialPartnerId }: Props) {
+export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAssigned, onAutoAssign, initialPartnerId }: Props) {
   const [job, setJob] = useState<Job | null>(null);
   const [partners, setPartners] = useState<AssignablePartner[]>([]);
   const [loading, setLoading] = useState(true);
