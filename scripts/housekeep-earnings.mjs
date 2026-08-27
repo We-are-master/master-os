@@ -176,6 +176,24 @@ async function main() {
           method: "PATCH", headers: SHW,
           body: JSON.stringify({ ...fecha, payment_status: "paid", finance_status: "paid", payment_amount: it.valor, paid_at: (e.pagoEm ?? new Date().toISOString().slice(0, 10)) + "T12:00:00Z" }),
         });
+        // A evidência da baixa: qual linha de qual payout pagou este job.
+        // Mesmo desenho do Checkatrade — sem isto o job vira "paid" e a prova
+        // (o extrato da Housekeep daquele dia) evapora na hora da baixa.
+        await fetch(`${SB}/rest/v1/audit_logs`, {
+          method: "POST", headers: SHW,
+          body: JSON.stringify({
+            entity_type: "job", entity_id: job.id, entity_ref: job.reference,
+            action: "payment_settled", user_name: "Zia",
+            new_value: `£${it.valor.toFixed(2)}`,
+            metadata: {
+              source: "housekeep_payout",
+              payout_de: e.pagoEm ?? null,
+              postcode: it.pc,
+              dia_do_servico: it.dia,
+              valor: it.valor,
+            },
+          }),
+        }).catch(() => {});
         // A invoice fecha junto, sempre. Fechar o job e deixar a invoice viva
         // é o que faz o "Ready to receive" cobrar quem ja pagou.
         if (job.invoice_id) {

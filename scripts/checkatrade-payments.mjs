@@ -272,6 +272,30 @@ async function main() {
         body: JSON.stringify({ ...fecha, payment_status: "paid", finance_status: "paid", payment_amount: g.soma, paid_at: quando }),
       });
 
+      // A EVIDÊNCIA da baixa, gravada onde ela pode ser cobrada depois.
+      //
+      // O email "You got paid by" é a prova de que este job foi pago, e até
+      // 27/08/2026 ela evaporava no momento da baixa: o job virava "paid" e
+      // ninguém sabia dizer POR QUÊ. A linha de auditoria fica no card do job
+      // (a timeline já lê audit_logs) e o relatório da Zia mostra a origem.
+      await fetch(`${SB}/rest/v1/audit_logs`, {
+        method: "POST", headers: SHW,
+        body: JSON.stringify({
+          entity_type: "job", entity_id: g.job.id, entity_ref: g.job.reference,
+          action: "payment_settled", user_name: "Zia",
+          new_value: `£${g.soma.toFixed(2)}`,
+          metadata: {
+            source: "checkatrade_payout",
+            cliente: g.cred.map((c) => c.cliente).filter(Boolean)[0] ?? null,
+            gross: g.cred.reduce((a, c) => a + (c.gross ?? 0), 0) || null,
+            fee: g.cred.reduce((a, c) => a + (c.fee ?? 0), 0) || null,
+            net: g.soma,
+            pago_em: quando.slice(0, 10),
+            emails: g.cred.length,
+          },
+        }),
+      }).catch(() => {});
+
       if (!g.job.invoice_id) continue;
       const inv = (await (await fetch(`${SB}/rest/v1/invoices?select=id,reference,status,amount&id=eq.${g.job.invoice_id}`, { headers: SH })).json())[0];
       if (!inv || inv.status === "paid") continue;
