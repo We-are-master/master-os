@@ -11,6 +11,7 @@ import {
 } from "@/lib/report-submission";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
+import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -126,7 +127,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // app in real time — that one is never rewritten. One typed by the office or
   // the public link carries its source and can be edited like the rest.
   const startEnvelope = (job.start_report ?? null) as { source?: unknown; photos?: unknown } | null;
-  const finalEnvelope = (job.final_report ?? null) as { photos?: unknown } | null;
+  const finalEnvelope = (job.final_report ?? null) as {
+    photos?: unknown;
+    data?: Record<string, unknown>;
+  } | null;
   const startIsFromApp = !!job.start_report_submitted && typeof startEnvelope?.source !== "string";
   const writeStart = !job.start_report_submitted || (overwrite && !startIsFromApp);
 
@@ -197,6 +201,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
   }
 
+  // Material comprado on site vira dinheiro do job (reembolso do parceiro +
+  // cobrança do cliente) — por DELTA contra o report anterior, então editar o
+  // report corrige o valor em vez de somar de novo. Nunca derruba a gravação.
+  const materialExtra = await aplicarMaterialExtraDoReport(admin, job.id, {
+    finalData,
+    previousFinalData: job.final_report_submitted ? finalEnvelope?.data ?? null : null,
+  });
+
   // Read the expiry off the attached certificate once the report is safely
   // saved. It takes several seconds, so it runs after the response — the modal
   // closes as fast as it always did and the date lands on the next refresh.
@@ -214,5 +226,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     photoFailures: result.photoFailures,
     nota: veredito.nota,
     faixa: veredito.faixa,
+    materialExtra,
   });
 }

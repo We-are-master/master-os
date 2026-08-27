@@ -43,6 +43,33 @@ export async function prepareUploadFile(file: File, slotKey: string, index: numb
   return new File([blob], `${slotKey}-${index}.jpg`, { type: "image/jpeg" });
 }
 
+/** Só imagem de verdade passa pelo canvas; PDF e o resto não são desenháveis. */
+export function isDownscalableImage(file: File): boolean {
+  return file.type.startsWith("image/") && !isPdfFile(file);
+}
+
+/**
+ * Prepara um anexo de QUALQUER formato: imagem encolhe, o resto vai inteiro.
+ *
+ * Diferente do `prepareUploadFile`, que só conhece foto e PDF: aqui o parceiro
+ * manda recibo, certificado, planilha, o que ele tiver na mão (dono, 27/08).
+ * Encolher continua valendo para foto porque foto de celular tem 4-8 MB e ele
+ * está no 4G na porta do cliente.
+ *
+ * Imagem que o navegador não consegue decodificar vai como está em vez de
+ * derrubar o envio: melhor um arquivo grande no servidor do que a tela
+ * travada em "Processing photos…" com o parceiro sem entender o que houve.
+ */
+export async function prepareAttachmentFile(file: File, baseName: string): Promise<File> {
+  if (!isDownscalableImage(file)) return file;
+  try {
+    const blob = await downscaleImage(file);
+    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
 /**
  * Splits the typed field map into the start and final halves the API expects,
  * dropping blanks and fields whose `showIf` gate is closed. Same rule on both

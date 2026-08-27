@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { isDownscalableImage, prepareAttachmentFile } from "@/lib/report-photo-upload";
 
 const ORANGE = "#ED4B00";
 // Deep navy → ember diagonal, matching the partner on-hold email header.
 const BG_GRADIENT = "linear-gradient(155deg,#01001F 0%,#050048 48%,#7A1E00 100%)";
 const HEADER_GRADIENT = "linear-gradient(135deg,#020034 0%,#0A0A4A 100%)";
 
-const MAX_PHOTO_LONG_EDGE = 1600;
-const PHOTO_JPEG_QUALITY = 0.75;
 const MAX_PHOTOS = 12;
 const SUPPORT_PHONE = "+44 20 4538 4668";
 const SUPPORT_PHONE_HREF = "+442045384668";
@@ -31,25 +30,6 @@ type State =
   | { kind: "error"; message: string };
 
 /** Client-side downscale → JPEG (keeps uploads small, mirrors the report form). */
-async function downscaleImage(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  const longest = Math.max(bitmap.width, bitmap.height);
-  const scale = longest > MAX_PHOTO_LONG_EDGE ? MAX_PHOTO_LONG_EDGE / longest : 1;
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not process image.");
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  const blob: Blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Image encode failed."))), "image/jpeg", PHOTO_JPEG_QUALITY);
-  });
-  bitmap.close();
-  return blob;
-}
-
 function friendlyError(code?: string): string {
   switch (code) {
     case "missing_token":
@@ -106,7 +86,17 @@ export function OnHoldClient() {
     };
   }, [token]);
 
-  const previews = useMemo(() => photos.map((f) => ({ url: URL.createObjectURL(f), name: f.name })), [photos]);
+  const previews = useMemo(
+    () =>
+      photos.map((f) => ({
+        url: URL.createObjectURL(f),
+        name: f.name,
+        // Miniatura só para o que o navegador desenha; PDF e recibo viram
+        // cartãozinho com o nome, em vez de imagem quebrada.
+        isImage: isDownscalableImage(f),
+      })),
+    [photos],
+  );
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews]);
 
   const addPhotos = (files: FileList | null) => {
@@ -129,8 +119,7 @@ export function OnHoldClient() {
       form.set("token", token);
       form.set("notes", notes.trim());
       for (let i = 0; i < photos.length; i++) {
-        const blob = await downscaleImage(photos[i]);
-        form.append("photos[]", new File([blob], `photo-${i + 1}.jpg`, { type: "image/jpeg" }));
+        form.append("photos[]", await prepareAttachmentFile(photos[i], `photo-${i + 1}`));
       }
       setProgress("Sending your update…");
       const res = await fetch("/api/jobs/on-hold-submit", { method: "POST", body: form });
@@ -267,14 +256,20 @@ export function OnHoldClient() {
                   <span className="text-[11px] text-slate-400">{photos.length}/{MAX_PHOTOS}</span>
                 </div>
                 <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 px-4 py-6 text-center transition hover:border-orange-300 hover:bg-orange-50/40">
-                  <span className="text-2xl">📷</span>
-                  <span className="text-[13px] font-medium text-slate-600">Tap to add photos</span>
-                  <span className="text-[11px] text-slate-400">Work area, completed work, receipts, certificates…</span>
+                  <span className="text-2xl">📎</span>
+                  <span className="text-[13px] font-medium text-slate-600">Tap to add photos or files</span>
+                  <span className="text-[11px] text-slate-400">Work area, completed work, receipts, certificates — photo or PDF</span>
+                  {/*
+                    Sem `capture` e sem `accept`: o primeiro forçava a câmera e
+                    escondia a galeria; o segundo dizia "receipts, certificates" e
+                    só aceitava imagem, então quem tinha o recibo em PDF não
+                    conseguia anexar nada (dono, 27/08). Qualquer formato entra;
+                    o `job-photos` não restringe MIME e o preparo só encolhe
+                    imagem, o resto sobe inteiro.
+                  */}
                   <input
                     type="file"
-                    accept="image/*"
                     multiple
-                    capture="environment"
                     className="sr-only"
                     disabled={photos.length >= MAX_PHOTOS}
                     onChange={(e) => addPhotos(e.target.files)}
@@ -284,13 +279,20 @@ export function OnHoldClient() {
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                     {previews.map((p, i) => (
                       <div key={`${p.name}-${i}`} className="relative">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.url} alt="" className="h-20 w-full rounded-lg border border-slate-200 object-cover" />
+                        {p.isImage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.url} alt="" className="h-20 w-full rounded-lg border border-slate-200 object-cover" />
+                        ) : (
+                          <div className="flex h-20 w-full flex-col items-center justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1.5 text-center">
+                            <span className="text-lg leading-none">📄</span>
+                            <span className="w-full truncate text-[10px] text-slate-500">{p.name}</span>
+                          </div>
+                        )}
                         <button
                           type="button"
                           onClick={() => removePhoto(i)}
                           className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-slate-900/80 text-[12px] leading-none text-white"
-                          aria-label="Remove photo"
+                          aria-label="Remove attachment"
                         >
                           ×
                         </button>

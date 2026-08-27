@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
+import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import {
   verifyPartnerBidToken,
   verifyPartnerReportToken,
@@ -103,7 +104,7 @@ export async function GET(req: NextRequest) {
     const { data: quoteRow, error: quoteError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type",
+        "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type, request_id",
       )
       .eq("id", quoteId)
       .single();
@@ -244,6 +245,22 @@ export async function GET(req: NextRequest) {
     }),
   );
 
+  /**
+   * As fotos do site, para a galeria da página (27/08): o email de Quote
+   * Request só linkava o arquivo cru — clicava e abria UMA foto, sem galeria.
+   * Mesma origem que o email usa: as imagens do service_request da quote.
+   */
+  let photoUrls: string[] = [];
+  const requestId = (quote as { request_id?: string | null }).request_id;
+  if (requestId) {
+    const { data: sr } = await supabase
+      .from("service_requests")
+      .select("images")
+      .eq("id", requestId)
+      .maybeSingle();
+    photoUrls = normalizeJsonImageArray((sr as { images?: unknown } | null)?.images);
+  }
+
   const responseBody = {
     reference: quote.reference,
     title: quote.title,
@@ -257,6 +274,7 @@ export async function GET(req: NextRequest) {
     startDateOption2: fmtDate(quote.start_date_option_2 ?? undefined),
     status: quote.status,
     lineItems,
+    photoUrls,
     tokenKind,
     linkedJob,
     bidContext,
